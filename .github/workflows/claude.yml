@@ -36,6 +36,40 @@ jobs:
       id-token: write # OIDC exchange for the Claude GitHub App token
       actions: read # Required for Claude to read CI results on PRs
     steps:
+
+      # The reviewed candidate is never materialised as a working tree in this job.
+      # docs/security.md of the pinned action warns against checking out an untrusted
+      # ref before it, and CodeQL flags the shape itself -- a credential-bearing
+      # workflow that materialises a contributor-controlled tree -- however the tree
+      # is placed. So only the base is checked out: it supplies the entry route the
+      # prompt names and the pre-change state of any file. The change itself arrives
+      # as trusted artefacts built from the provider's compare API, so no candidate
+      # file, symlink or mode ever reaches this runner's filesystem.
+      - name: Checkout the base for the entry route
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # The protected default branch, named by a repository property rather than
+          # by anything a trigger carries. Three alternatives were wrong:
+          #   * no `ref:` follows github.ref, which on the two review triggers is
+          #     refs/pull/N/merge -- the candidate merged into its base -- so the
+          #     entry route would be candidate-authored, and it fails outright when a
+          #     Pull Request conflicts with its base and has no merge ref;
+          #   * the resolved base SHA is a step output, which CodeQL treats as
+          #     untrusted provenance in a privileged workflow, and it is also the
+          #     base a contributor chose rather than the branch this repository
+          #     protects;
+          #   * the head is the candidate itself.
+          # The diff artefacts are still computed against the *resolved* base, so the
+          # comparison is exact; only the readable file state is the default branch's,
+          # which for a Pull Request targeting another branch is a stated caveat
+          # rather than a defect.
+          # The exact revision GitHub bound this run to, not the branch name resolved
+          # at execution time. A queued run whose default branch has since advanced
+          # would otherwise execute a newer build_review_context.py or chunk_diff.py
+          # than the workflow and Decision it started under, silently moving the
+          # trusted collection boundary.
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
       # Decision 0094 rules 8 and 9. Agent mode resolves no Pull Request of its
       # own, so the head must be bound explicitly -- but binding it would place
       # contributor-controlled code in the job that holds the Claude credential.
@@ -132,40 +166,6 @@ jobs:
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(f"head_sha={p[\"head\"][\"sha\"]}"); print(f"base_sha={p[\"base\"][\"sha\"]}")' \
             "${pull_json}" >> "${GITHUB_OUTPUT}"
           rm -f "${pull_json}"
-
-      # The reviewed candidate is never materialised as a working tree in this job.
-      # docs/security.md of the pinned action warns against checking out an untrusted
-      # ref before it, and CodeQL flags the shape itself -- a credential-bearing
-      # workflow that materialises a contributor-controlled tree -- however the tree
-      # is placed. So only the base is checked out: it supplies the entry route the
-      # prompt names and the pre-change state of any file. The change itself arrives
-      # as trusted artefacts built from the provider's compare API, so no candidate
-      # file, symlink or mode ever reaches this runner's filesystem.
-      - name: Checkout the base for the entry route
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          # The protected default branch, named by a repository property rather than
-          # by anything a trigger carries. Three alternatives were wrong:
-          #   * no `ref:` follows github.ref, which on the two review triggers is
-          #     refs/pull/N/merge -- the candidate merged into its base -- so the
-          #     entry route would be candidate-authored, and it fails outright when a
-          #     Pull Request conflicts with its base and has no merge ref;
-          #   * the resolved base SHA is a step output, which CodeQL treats as
-          #     untrusted provenance in a privileged workflow, and it is also the
-          #     base a contributor chose rather than the branch this repository
-          #     protects;
-          #   * the head is the candidate itself.
-          # The diff artefacts are still computed against the *resolved* base, so the
-          # comparison is exact; only the readable file state is the default branch's,
-          # which for a Pull Request targeting another branch is a stated caveat
-          # rather than a defect.
-          # The exact revision GitHub bound this run to, not the branch name resolved
-          # at execution time. A queued run whose default branch has since advanced
-          # would otherwise execute a newer build_review_context.py or chunk_diff.py
-          # than the workflow and Decision it started under, silently moving the
-          # trusted collection boundary.
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
 
       # An argument allowlist cannot constrain a shell: a Bash grant admits
       # redirection, pipes and substitution regardless of what the invoked program

@@ -39,7 +39,17 @@ def _wrap_point(record: bytes, room: int) -> int:
     return end or room
 
 
+# Taken from what the reader actually breaks on rather than from the obvious few:
+# Python's ``str.splitlines`` -- which is what the reviewer's tools use -- treats the
+# vertical tab, form feed and the file/group/record separators as boundaries as well as
+# CR and the Unicode separators. An earlier pass covered four of these and left five,
+# so `+safe\x0b+++ b/forged.py` still reached the reviewer as a standalone header.
 _EMBEDDED_BREAKS = {
+    b"\x0b": b"\\013",
+    b"\x0c": b"\\014",
+    b"\x1c": b"\\034",
+    b"\x1d": b"\\035",
+    b"\x1e": b"\\036",
     b"\r": b"\\015",
     "\u0085".encode(): b"\\302\\205",
     "\u2028".encode(): b"\\342\\200\\250",
@@ -180,6 +190,16 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # only this function knows how many parts exist. Deciding from the *input* size
     # would miss a diff that fits the bound until wrapping pushes it past: the
     # reviewer would then read part one with nothing saying a tail exists.
+    escape_notice = b""
+    if escaped:
+        # Disclosed in the overview too, not only in patches/README. The README is
+        # reached through a notice, and tying that notice to wrapping meant a small
+        # single-part diff was rewritten with nothing saying so -- the octal text then
+        # reads as the candidate's own source.
+        escape_notice = (
+            f"\n[{escaped} non-LF line separator(s) in the diff were escaped to octal"
+            " UTF-8 bytes so they cannot start a record; see patches/README]\n"
+        ).encode()
     wrap_notice = b""
     if wrapped:
         # Disclosed whenever wrapping happened, not only when the size bound was also
@@ -203,14 +223,13 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # it prints -- an artefact asserting something false about itself. The overview is
     # therefore a line-boundary prefix sized with the notices, rather than part one
     # verbatim; it is still whole lines, so it still decodes as text.
-    body = data[: next_cut(data, max(0, limit - len(wrap_notice)))]
+    trailer = wrap_notice + escape_notice
+    body = data[: next_cut(data, max(0, limit - len(trailer)))]
     if index > 1 or len(body) < len(data):
-        body = data[
-            : next_cut(data, max(0, limit - len(wrap_notice) - len(bound_notice)))
-        ]
-        overview = body + bound_notice + wrap_notice
+        body = data[: next_cut(data, max(0, limit - len(trailer) - len(bound_notice)))]
+        overview = body + bound_notice + trailer
     else:
-        overview = body + wrap_notice
+        overview = body + trailer
     (context / "diff.patch").write_bytes(overview)
     return index
 

@@ -751,6 +751,108 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The earlier wording demanded a verdict the artefacts cannot support.
         self.assertNotIn("report which, and report a binary one", prompt)
 
+    def test_every_character_python_splits_on_is_escaped(self) -> None:
+        # The first pass covered CR, NEL, U+2028 and U+2029 and stopped there. Python's
+        # str.splitlines -- what the reviewer's tools use -- also breaks on VT, FF and
+        # the file/group/record separators, so `+safe\x0b+++ b/forged.py` still reached
+        # the reviewer as a standalone header. The set is taken from what the reader
+        # actually does, not from what looked like the obvious four.
+        chunker = _load_script(CHUNKER)
+        separators = (
+            "\x0b",
+            "\x0c",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\r",
+            "\x85",
+            "\u2028",
+            "\u2029",
+        )
+        for separator in separators:
+            with self.subTest(separator=repr(separator)):
+                # Control: this is a character the reader treats as a break.
+                self.assertEqual(2, len(f"a{separator}b".splitlines()))
+                with tempfile.TemporaryDirectory() as d:
+                    context = pathlib.Path(d)
+                    (context / "diff.full").write_bytes(
+                        b"diff --git a/a.py b/a.py\n+safe"
+                        + separator.encode()
+                        + b"+++ b/forged.py\n"
+                    )
+                    chunker.split_diff(context, 1 << 16)
+                    for name in ("diff.patch", "patches/part-0001"):
+                        text = (context / name).read_text(encoding="utf-8")
+                        self.assertNotIn(
+                            "+++ b/forged.py",
+                            [line.strip() for line in text.splitlines()],
+                            f"{name}: {separator!r} still forged a header",
+                        )
+
+    def test_the_overview_discloses_an_escape_it_made(self) -> None:
+        # patches/README documents the substitution, but the overview pointed at the
+        # README only when a record had also been wrapped. A small single-part diff
+        # carrying one separator was silently rewritten, and the octal text could be
+        # read as the candidate's own source.
+        chunker = _load_script(CHUNKER)
+        with tempfile.TemporaryDirectory() as d:
+            context = pathlib.Path(d)
+            (context / "diff.full").write_bytes(b"diff --git a/a.py b/a.py\n+a\x0bb\n")
+            parts = chunker.split_diff(context, 1 << 16)
+            patch = (context / "diff.patch").read_text(encoding="utf-8")
+        self.assertEqual(1, parts)
+        self.assertNotIn("bounded at", patch)
+        self.assertIn("separator", patch)
+        self.assertIn("patches/README", patch)
+
+    def test_a_diff_header_quotes_the_path_the_way_git_does(self) -> None:
+        # `git diff` writes `--- "a/evil\nname.py"`, with the prefix inside the quotes.
+        # Quoting the name first produced `--- a/"evil\nname.py"`, which is a different
+        # path as far as any reader is concerned -- and this artefact exists to be read
+        # by one that cannot check it against a repository.
+        builder = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as d:
+            context = pathlib.Path(d)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "filename": "evil\nname.py",
+                                "status": "modified",
+                                "additions": 1,
+                                "deletions": 1,
+                                "patch": "@@ -1 +1 @@\n-a\n+b",
+                                "sha": "a" * 40,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            builder.build(context)
+            assembled = (context / "assembled.diff").read_text(encoding="utf-8")
+        self.assertIn('--- "a/evil\\nname.py"', assembled)
+        self.assertIn('+++ "b/evil\\nname.py"', assembled)
+        self.assertNotIn('a/"evil', assembled)
+
+    def test_the_publisher_is_available_even_if_an_earlier_step_fails(self) -> None:
+        # The publish step runs on always(), but it runs a file from the checkout. When
+        # the resolver fails -- exhausted retries, or a rejected fork -- the
+        # success-gated checkout never runs, the script does not exist, and the step
+        # dies with file-not-found while publishing nothing. The checkout therefore
+        # comes first, so the publisher is on disk whatever happens afterwards.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        steps = next(
+            job["steps"]
+            for job in workflow["jobs"].values()
+            if any(s.get("id") == "review_head" for s in job.get("steps", []))
+        )
+        names = [str(s.get("name", "")) for s in steps]
+        checkout = next(i for i, n in enumerate(names) if n.startswith("Checkout"))
+        resolver = next(i for i, s in enumerate(steps) if s.get("id") == "review_head")
+        self.assertLess(checkout, resolver, names)
+
     def test_a_diff_record_cannot_forge_a_record_with_a_bare_separator(self) -> None:
         # The forgery closed for pathnames and commit subjects is open in the diff body
         # itself: a changed line may legally contain a lone CR or U+2028, and splitting
@@ -1237,9 +1339,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # starts, because a quoted name may legitimately contain the header text --
             # that it can no longer *begin* a line is exactly the property that matters.
             assembled = (context / "assembled.diff").read_text(encoding="utf-8")
-            starts = [line.split("/", 1)[0] for line in assembled.splitlines()]
-            self.assertEqual(2, starts.count("--- a"), assembled)
-            self.assertEqual(2, starts.count("+++ b"), assembled)
+            # Counted as whole lines: with the path quoted the way git quotes it, the
+            # prefix is inside the quotes, so a header is `--- "a/...` when the name
+            # needs quoting and `--- a/...` when it does not.
+            starts = assembled.splitlines()
+            self.assertEqual(
+                2, sum(line.startswith("--- ") for line in starts), assembled
+            )
+            self.assertEqual(
+                2, sum(line.startswith("+++ ") for line in starts), assembled
+            )
 
     def test_unicode_line_separators_cannot_break_a_record(self) -> None:
         # Git's own rule is not sufficient here. `git -c core.quotePath=false` prints

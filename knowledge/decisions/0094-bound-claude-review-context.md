@@ -204,8 +204,11 @@ No new dependency, service or runtime is introduced.
 
    `status` cannot distinguish the two further -- a mode-only change and a binary
    content change both arrive as `modified` with no hunks -- so `no-patch.txt` carries
-   each entry's blob identity beside its status and the prompt requires the reviewer to
-   report which case it judged and to report a binary one as not examined. The reviewer
+   each entry's blob identity beside its status. It does **not** require the reviewer
+   to say which case it is: on the assembled fallback there is no old mode and no old
+   blob, so that judgement has nothing to rest on, and asking for it contradicted the
+   same paragraph's own admission that status cannot distinguish them. The reviewer
+   reports such an entry as not examined. The reviewer
    is told plainly that a file's pre-change state is **only what the diff shows**: this
    slice collects no base bytes, so nothing may present the checkout, which is the
    default branch (rule 21), as the pre-change revision. Supplying the exact pre-change
@@ -457,17 +460,18 @@ No new dependency, service or runtime is introduced.
    is a step output, which CodeQL treats as untrusted provenance in a privileged
    workflow, and it is in any case the base a contributor chose rather than the branch
    this repository protects. The head is the candidate itself. The default branch
-   supplies the entry route the prompt names and a readable pre-change state; the
-   comparison is still asked for against the *resolved* base, so the diff is exact,
-   and only the readable file state is the default branch's -- a stated caveat for a
-   Pull Request targeting another branch rather than a defect; the change itself arrives only as the artefacts of rule 12, built from the
+   supplies the entry route the prompt names. It is **not** a pre-change state, and
+   this Decision must not call it one: the prompt tells the reviewer never to use that
+   checkout for this change's state, and the rules below say the same, so describing it
+   as readable pre-change state here would license exactly the reading the prompt
+   forbids. The comparison is still asked for against the *resolved* base, so the diff
+   is exact; the change itself arrives only as the artefacts of rule 12, built from the
    provider's comparison for the two resolved revisions. No candidate file, mode or
    symlink is ever written to the runner, and the reviewer is given no
    `--add-dir`.
 
-   What this costs is real and is accepted: the reviewer can read a file's state
-   before the change but not after it, so an added file is visible only through the
-   diff. The gain is that an entire hazard class -- candidate-authored entry routes,
+   What this costs is real and is accepted: the reviewer sees this change only through
+   the artefacts, so both sides of every changed file come from the diff alone. The gain is that an entire hazard class -- candidate-authored entry routes,
    symlinked reads, mode tricks, and execution of candidate content -- cannot arise
    rather than being guarded against. Read confinement remains defence-in-depth
    only: a `settings` deny list covers the obvious runner paths **for every granted

@@ -168,8 +168,8 @@ def write_assembled(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     """Write the per-file hunks, so a refused unified diff still carries the change."""
     (context / "assembled.diff").write_text(
         "".join(
-            f"--- a/{quote_path(base_path_of(entry))}\n"
-            f"+++ b/{quote_path(str(entry['filename']))}\n"
+            f"--- {quote_path('a/' + base_path_of(entry))}\n"
+            f"+++ {quote_path('b/' + str(entry['filename']))}\n"
             + (
                 f"{entry['patch']}\n"
                 if entry.get("patch") is not None
