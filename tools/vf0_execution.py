@@ -1381,11 +1381,13 @@ class DockerBackend:
     ) -> bool:
         """Recognize the target-bound missing-object result of Docker inspect."""
 
-        expected = f"error: no such object: {container_ref}".encode("ascii")
+        prefix = b"error: no such object: "
+        diagnostic = result.stderr.strip()
         return (
             result.returncode != 0
             and result.stdout.strip() in {b"", b"[]"}
-            and result.stderr.strip().lower() == expected
+            and diagnostic[: len(prefix)].lower() == prefix
+            and diagnostic[len(prefix) :] == container_ref.encode("ascii")
         )
 
     def _cleanup_presence(self, container_id: str, cleanup_nonce: str) -> bool | None:

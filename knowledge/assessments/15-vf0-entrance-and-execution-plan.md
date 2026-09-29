@@ -1565,3 +1565,28 @@ that trusted-host premise. Built-in OCI read-only mounts and equal snapshots do
 not exclude hostile-host transient changes. Live token-secrecy and forged-trailer
 controls, input-shape/error projection, executable-format parity and display
 escaping remain explicit producer/runtime qualifications before activation.
+
+### AUD45 exact cleanup diagnostic reference and retained liveness limit
+
+The missing-object recognizer now normalizes only the native error prefix and
+compares the container reference suffix exactly. An uppercase diagnostic
+reference for a lowercase owned identity failed the added regression on exact
+`8cf777401236986d34cd59cef5b8a7ab28a3c415` before parser editing. Known native
+prefix variants remain accepted; other targets, appended/multiline diagnostics
+and transport failures remain unknown. This is narrow identity-parser hardening:
+current controller-generated names/IDs are lowercase and trusted Docker echoes
+the queried reference, so no admitted evidence path to actual false cleanup was
+demonstrated. It does not authenticate a hostile controller host or Docker daemon.
+
+Native Claude's exact8cf review also identified a distinct partial-R4 liveness
+limit, independently reproduced with a clock-controlled transport double. An
+owned-container inspection that consumes the finite settlement deadline can
+result in `OCI_CLEANUP_UNVERIFIED` before the first removal attempt; the uncertain
+create fallback may repeat that path. No successful result or verified absence
+is returned, but the resource-bounded container can remain running. This is
+**not fixed** and is not the already retained late-create case. Original #15's
+mandatory producer/runtime qualification must resolve or select the actual
+cleanup/availability boundary before activation. It does not block the selected
+inactive source integration and supplies no assertion of cleanup under daemon
+unavailability. The review's representation-order, trusted requested OCI pin,
+identity-display and caller-type limitations remain individual PR dispositions.

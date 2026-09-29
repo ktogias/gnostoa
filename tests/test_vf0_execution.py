@@ -2934,6 +2934,10 @@ class VF0DockerBackendTests(unittest.TestCase):
         for diagnostic, expected in (
             (native, False),
             (native.lower(), False),
+            (
+                native.replace(container_id.encode(), container_id.upper().encode()),
+                None,
+            ),
             (b"Error: No such object: other-container\n", None),
             (
                 b"dial unix /var/run/docker.sock: connect: no such file or directory",
