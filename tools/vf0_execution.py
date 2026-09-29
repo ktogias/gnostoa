@@ -1727,16 +1727,8 @@ def _backend_runtime_identities(
 ) -> tuple[str | None, str | None]:
     backend_type = type(backend)
     if backend_type is SubprocessBackend:
-        return (
-            "gnostoa-local-subprocess-v1",
-            _identity_digest(
-                {
-                    "containment_executable": _LOCAL_CONTAINMENT_EXECUTABLE,
-                    "wrapper_executable": _LOCAL_CONTAINMENT_WRAPPER_EXECUTABLE,
-                    "wrapper_source": _LOCAL_CONTAINMENT_WRAPPER_SOURCE,
-                }
-            ),
-        )
+        # Fixed paths and wrapper source do not identify the actual host runtime.
+        return "gnostoa-local-subprocess-v1", None
     if backend_type is DockerBackend:
         docker_backend = cast(DockerBackend, backend)
         return "gnostoa-docker-oci-v1", docker_backend.image

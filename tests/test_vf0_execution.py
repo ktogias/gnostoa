@@ -258,6 +258,10 @@ class VF0ExecutionEntryTests(unittest.TestCase):
                 self.assertIsNot(backend, controller_receivers[0])
                 self.assertEqual(identity, observation.backend_identity)
                 self.assertEqual(subject_unchanged, observation.subject_unchanged)
+                self.assertEqual(
+                    backend.image if type(backend) is DockerBackend else None,
+                    observation.runtime_identity,
+                )
 
 
 class VF0SubjectTests(unittest.TestCase):
@@ -1709,6 +1713,25 @@ class VF0SubjectTests(unittest.TestCase):
             (None, None),
             module._backend_runtime_identities(ConfiguredBackend("/runtime/b")),
         )
+
+    def test_local_backend_runtime_is_explicitly_unbound(self) -> None:
+        capture = UntrustedCapture("completed", 0, b"local", b"", 5)
+        with (
+            mock.patch.object(SubprocessBackend, "run", return_value=capture),
+            tempfile.TemporaryDirectory() as td,
+        ):
+            repo, subject = _repo(Path(td))
+            observation = execute(
+                repo,
+                subject,
+                [_evidence("pass")],
+                ["/bin/true"],
+                SubprocessBackend(),
+            )
+        self.assertEqual("gnostoa-local-subprocess-v1", observation.backend_identity)
+        self.assertIsNone(observation.runtime_identity)
+        self.assertFalse(observation.subject_unchanged)
+        self.assertEqual(capture, observation.capture)
 
     def test_runtime_identity_distinguishes_pinned_oci_images(self) -> None:
         module = importlib.import_module("tools.vf0_execution")

@@ -973,7 +973,10 @@ record; unit PASS alone does not close R2–R5 runtime obligations.
 The local subprocess backend supplies bounded conformance execution only. It does
 not enforce a read-only subject or isolate the caller's host files and cannot
 establish immutable-subject or production security claims. Custom backend doubles
-have no authenticated runtime identity. OCI unit doubles prove command and cleanup
+have no authenticated runtime identity. The built-in local backend retains its
+backend-kind identity but reports `runtime_identity=null`: fixed executable paths
+and wrapper source do not identify the actual host binaries, kernel or command
+runtime. OCI unit doubles prove command and cleanup
 contracts; only actual fixed-fixture OCI execution supports runtime conformance.
 Neither result admits a production evidence producer.
 
@@ -1424,3 +1427,21 @@ exact-candidate verification and review. Final prepared-tree, receipt, full-suit
 and live-OCI identities remain outside the prepared tree in the PR record.
 No production gate, public command, admission adapter or original VF0 obligation
 is activated or satisfied by this component correction.
+
+### AUD40 leave the unmeasured local runtime unbound
+
+The [current-head Codex finding](https://github.com/ktogias/gnostoa/pull/319#discussion_r4128222183)
+identified that the local runtime digest encoded only fixed executable paths and
+wrapper source. The [pre-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881048042)
+and [corrected contemporaneous RED record](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881057941)
+bind LOCAL-ID-1 to exact parent `1a11594fd427167e3df672b229ae7510f3b7b417`.
+The Development Container execute-level regression failed because the returned
+observation asserted a non-null runtime digest; an independent reviewer reproduced
+the same value through real local execution against unchanged parent production.
+The component now keeps `gnostoa-local-subprocess-v1` as the backend identity and
+leaves its runtime identity unbound. It acquires no new host/runtime authority.
+The regression and existing rebuilt-backend observation test require local null
+runtime identity while preserving the pinned OCI identity distinction. Final
+verification and reviewer dispositions belong in the external exact-candidate
+record. This correction does not qualify the local backend for untrusted evidence
+or alter the original VF0 activation obligations.
