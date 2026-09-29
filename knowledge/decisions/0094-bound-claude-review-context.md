@@ -288,8 +288,18 @@ No new dependency, service or runtime is introduced.
    and commit subjects, reappearing in the diff body itself. They are escaped to their
    octal UTF-8 bytes, as pathnames are, and `patches/README` says how many and why. A CR
    directly before an LF is a Windows line ending rather than a separator of its own and
-   is left alone. This is the one substitution the parts carry: they are otherwise
-   byte-for-byte, and the README distinguishes the two.
+   is left alone -- matched directly, as a CR not followed by an LF, rather than by
+   swapping CRLF for a placeholder and back: a placeholder the input can itself contain
+   turns the candidate's own bytes into a CRLF the diff never had. `patches/README`
+   lists every escaped form against what it stands for, because a disclosure naming
+   four of nine sends the reviewer to a note that does not describe what was done.
+   This is the one substitution the parts carry: they are otherwise byte-for-byte, and
+   the README distinguishes the two.
+
+   **A one-sided change names the nonexistent side `/dev/null`**, as unified diff does.
+   Writing `--- a/<name>` for an added file tells a reviewer with no tree and no base
+   that the file existed before the change, and on the assembled fallback that header
+   is the only description of it the reviewer gets.
 
    The parts are also **hard-wrapped** at a reader-visible line length. Fixing the
    UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line

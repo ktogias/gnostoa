@@ -164,12 +164,31 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     )
 
 
+def old_side(entry: dict[str, Any]) -> str:
+    """Return the diff header's left side, or /dev/null when there was no left side.
+
+    Unified diff names the nonexistent side `/dev/null`. Writing `--- a/<name>` for an
+    added file tells a reviewer with no tree and no base that the file existed before
+    the change, and on the assembled fallback that header is the only description of it
+    the reviewer gets.
+    """
+    if entry.get("status") == "added":
+        return "/dev/null"
+    return quote_path("a/" + base_path_of(entry))
+
+
+def new_side(entry: dict[str, Any]) -> str:
+    """Return the diff header's right side, or /dev/null for a removal."""
+    if entry.get("status") == "removed":
+        return "/dev/null"
+    return quote_path("b/" + str(entry["filename"]))
+
+
 def write_assembled(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     """Write the per-file hunks, so a refused unified diff still carries the change."""
     (context / "assembled.diff").write_text(
         "".join(
-            f"--- {quote_path('a/' + base_path_of(entry))}\n"
-            f"+++ {quote_path('b/' + str(entry['filename']))}\n"
+            f"--- {old_side(entry)}\n+++ {new_side(entry)}\n"
             + (
                 f"{entry['patch']}\n"
                 if entry.get("patch") is not None

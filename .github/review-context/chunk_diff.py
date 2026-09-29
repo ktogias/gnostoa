@@ -13,6 +13,7 @@ triggers runs from the repository's default branch, so it is not candidate-suppl
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 from review_context_paths import within
@@ -57,6 +58,19 @@ _EMBEDDED_BREAKS = {
 }
 
 
+_ESCAPED_LABELS = (
+    (b"\\013", "VT, the vertical tab"),
+    (b"\\014", "FF, the form feed"),
+    (b"\\034", "FS, the file separator"),
+    (b"\\035", "GS, the group separator"),
+    (b"\\036", "RS, the record separator"),
+    (b"\\015", "CR, a carriage return not followed by a line feed"),
+    (b"\\302\\205", "U+0085, the next-line character"),
+    (b"\\342\\200\\250", "U+2028, the line separator"),
+    (b"\\342\\200\\251", "U+2029, the paragraph separator"),
+)
+
+
 def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
     """Return ``data`` with non-LF line separators escaped, and how many were found.
 
@@ -71,14 +85,21 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
     its own, and is left alone: rewriting it would alter every record of a CRLF-authored
     file for no gain.
     """
-    out = data.replace(b"\r\n", b"\x00CRLF\x00")
-    found = 0
+    # No sentinel: a placeholder swapped in and out can be supplied by the input
+    # itself, and the swap back then turns the candidate's own bytes into a CRLF the
+    # diff never had. A lone CR is matched directly instead, by asking for a CR that is
+    # not followed by LF.
+    # A function, not a replacement string: `re` reads `\015` in a replacement as an
+    # octal escape and would turn it straight back into the CR being escaped.
+    out, found = re.subn(rb"\r(?!\n)", lambda _match: _EMBEDDED_BREAKS[b"\r"], data)
     for raw, escaped in _EMBEDDED_BREAKS.items():
+        if raw == b"\r":
+            continue
         count = out.count(raw)
         if count:
             found += count
             out = out.replace(raw, escaped)
-    return out.replace(b"\x00CRLF\x00", b"\r\n"), found
+    return out, found
 
 
 def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
@@ -155,10 +176,16 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     notes = ""
     if escaped:
         notes += (
-            f"{escaped} non-LF line separator(s) -- a lone CR, or U+0085, U+2028 or\n"
-            "U+2029 -- were escaped to their octal UTF-8 bytes. A reader that treats\n"
-            "those as line breaks would otherwise see the text after one of them as a\n"
-            "record of its own, so candidate content could pose as a file header.\n"
+            f"{escaped} non-LF line separator(s) were escaped to their octal UTF-8\n"
+            "bytes. A reader that treats them as line breaks would otherwise see the\n"
+            "text after one as a record of its own, so candidate content could pose as\n"
+            "a file header. The escaped forms, and what each stands for:\n"
+            + "".join(
+                f"  {escape.decode()} for {label}\n"
+                for escape, label in _ESCAPED_LABELS
+            )
+            + "A CR directly before an LF is a line ending, not a separator, and is\n"
+            "left as it is.\n"
             "\n"
         )
     if wrapped:

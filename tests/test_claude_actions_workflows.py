@@ -789,6 +789,75 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                             f"{name}: {separator!r} still forged a header",
                         )
 
+    def test_escaping_uses_no_sentinel_that_content_can_supply(self) -> None:
+        # CRLF was protected by swapping it for a placeholder and swapping back. A diff
+        # containing that placeholder's own bytes had them turned into a real CRLF, so
+        # the published diff no longer matched the candidate's. A substitution scheme
+        # whose marker the input can contain is not a substitution scheme.
+        chunker = _load_script(CHUNKER)
+        payload = b"+keep\x00CRLF\x00tail\r\nnext\r alone\n"
+        escaped, count = chunker.escape_embedded_breaks(payload)
+        # The sentinel bytes survive untouched ...
+        self.assertIn(b"\x00CRLF\x00", escaped)
+        # ... a real CRLF is left alone, being a line ending rather than a separator ...
+        self.assertIn(b"tail\r\nnext", escaped)
+        # ... and only the lone CR is escaped.
+        self.assertEqual(1, count)
+        self.assertIn(b"\\015 alone", escaped)
+
+    def test_the_readme_lists_every_separator_it_escapes(self) -> None:
+        # The overview sends the reviewer to patches/README for any escape, and the
+        # README named four separators while the code escapes nine. A disclosure that
+        # does not match what was done is the defect this Decision keeps closing, in
+        # the disclosure itself.
+        chunker = _load_script(CHUNKER)
+        with tempfile.TemporaryDirectory() as d:
+            context = pathlib.Path(d)
+            (context / "diff.full").write_bytes(b"diff --git a/a.py b/a.py\n+a\x1eb\n")
+            chunker.split_diff(context, 1 << 16)
+            readme = (context / "patches" / "README").read_text(encoding="utf-8")
+        for octal in ("013", "014", "034", "035", "036", "015"):
+            with self.subTest(octal=octal):
+                self.assertIn(octal, readme)
+
+    def test_a_one_sided_change_uses_the_null_side_header(self) -> None:
+        # Unified diff names the nonexistent side /dev/null. Writing `--- a/<name>` for
+        # an added file tells a reviewer with no tree and no base that the file existed
+        # before the change, which is exactly the false claim this surface exists to
+        # avoid -- and on the 406 fallback this is the only description it gets.
+        builder = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as d:
+            context = pathlib.Path(d)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "filename": "new.py",
+                                "status": "added",
+                                "additions": 1,
+                                "deletions": 0,
+                                "patch": "@@ -0,0 +1 @@\n+a",
+                                "sha": "a" * 40,
+                            },
+                            {
+                                "filename": "gone.py",
+                                "status": "removed",
+                                "additions": 0,
+                                "deletions": 1,
+                                "patch": "@@ -1 +0,0 @@\n-a",
+                                "sha": "b" * 40,
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            builder.build(context)
+            assembled = (context / "assembled.diff").read_text(encoding="utf-8")
+        self.assertIn("--- /dev/null\n+++ b/new.py\n", assembled)
+        self.assertIn("--- a/gone.py\n+++ /dev/null\n", assembled)
+
     def test_the_overview_discloses_an_escape_it_made(self) -> None:
         # patches/README documents the substitution, but the overview pointed at the
         # README only when a record had also been wrapped. A small single-part diff
