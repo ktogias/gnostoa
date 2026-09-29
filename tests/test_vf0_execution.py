@@ -19,6 +19,7 @@ import tracemalloc
 import unittest
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import fields, replace
+from decimal import Inexact, localcontext
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -354,6 +355,33 @@ class VF0SubjectTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaisesRegex(ExecutionRejected, reason):
                     ExecutionLimits(**kwargs)
+
+    def test_cpu_bound_requires_exact_integer_nanocpu_representation(self) -> None:
+        for cpus in (0.3, 2.01, 1.23456789):
+            with self.subTest(cpus=cpus):
+                self.assertEqual(cpus, ExecutionLimits(cpus=cpus).cpus)
+
+        for cpus in (
+            0.30000000000000004,
+            0.3333333333333333,
+            7.999999999999999,
+        ):
+            with self.subTest(cpus=cpus):
+                with self.assertRaisesRegex(ExecutionRejected, "^CPU_BOUND$"):
+                    ExecutionLimits(cpus=cpus)
+
+    def test_cpu_nanocpu_check_rejects_under_reduced_decimal_precision(self) -> None:
+        with localcontext() as context:
+            context.prec = 9
+            self.assertEqual(0.3, ExecutionLimits(cpus=0.3).cpus)
+            with self.assertRaisesRegex(ExecutionRejected, "^CPU_BOUND$"):
+                ExecutionLimits(cpus=0.30000000000000004)
+
+    def test_valid_cpu_ignores_decimal_inexact_trap(self) -> None:
+        with localcontext() as context:
+            context.prec = 1
+            context.traps[Inexact] = True
+            self.assertEqual(2.01, ExecutionLimits(cpus=2.01).cpus)
 
     def test_custom_backend_capture_respects_declared_output_limit(self) -> None:
         class OversizedBackend:

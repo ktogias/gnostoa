@@ -1668,3 +1668,102 @@ image is compatible.
 Whole-call host trust, local non-isolation, slow owned-inspect and late-create
 remain separately unfixed qualifications under original #15. VF0 and #318 stay
 gated; no whole-Issue-6 implementation or authenticated producer is introduced.
+
+### AUD48 — reject CPU limits that Docker cannot represent as NanoCPUs
+
+The exact pre-edit candidate is `8aae675cca3577bc3cde91654e28b4aae3ad6527`
+(tree `f21ac8f2afcfb9ecf36b12d00de3e5f566e538c0`), based on protected
+`main` `638e59a30d9b55dda6d2834f34dd6a472d06eef1`. Fresh provider read-back starting at
+`2026-09-29T11:24:58Z` confirmed PR #319 remains open at this head and Issue #15 is
+the sole open `roadmap:now` selection. The owner explicitly selected this
+narrow CPU-input correction to finish PR #319, characterizing it as an
+implementation detail that adds no abstraction, architecture or dependency.
+This records that selection; it does not claim a public-contract change, VF0
+activation, producer admission or a provider-side change to the broader Issue
+#15 readiness state.
+
+The exact CodeRabbit full review of `8aae675` reports that some fractional CPU
+limits pass `ExecutionLimits` and then fail Docker container creation. The
+observable contract for this repair is: validate the exact decimal string that
+will be sent as Docker `--cpus`; reject before backend or Docker dispatch with
+stable reason `CPU_BOUND` unless multiplying that decimal by 1,000,000,000 yields
+an integer; preserve supported values such as `0.3`, `2.01` and `1.23456789`; and
+never round or alter a requested limit. The official [Docker CLI parser](https://github.com/docker/cli/blob/master/opts/opts.go)
+parses the argument as an exact rational and rejects non-integral NanoCPUs. This
+repair mirrors that consumer contract with Python's standard-library decimal
+arithmetic, reusing the existing `ExecutionLimits` boundary and Decision 0092's
+verified `NanoCpus` contract. It adds no package, runtime abstraction, public
+schema or dependency; no third-party implementation is copied.
+
+Pre-change evidence mode: `failing RED/reproducer`, bound to exact parent
+`8aae675`. This is ordinary pre-change evidence, not a reconstruction or
+emergency path. The retained Python and create-only Docker probes
+`/tmp/gnostoa-pr319-aud48-handoff/aud48-cpu-bound-red-20260929.txt` and
+`/tmp/gnostoa-pr319-aud48-handoff/aud48-cpu-bound-matrix-20260929.txt` record
+that `ExecutionLimits(cpus=0.30000000000000004)` accepts the value and produces
+`300000000.00000006` NanoCPUs. Docker accepts `0.3`, `2.01` and `1.23456789`
+(each stopped control container was removed immediately), but rejects
+`0.30000000000000004`, `0.3333333333333333` and `7.999999999999999` with
+`value is too precise` (exit 125). No container was started. The test-only RED
+file has SHA-256
+`8b2708553d53ec11c8464776c2c04a601971aa314f1e688e9fca704eb0347758`; the
+focused run in Development Container image
+`sha256:a5118b7adc26aa7e42e089d9cb7a1b59859cab48360ee661d7ade720b5b1a812`
+ran one test and produced exactly the three intended failures because
+`ExecutionRejected` was not raised. The retained RED log SHA-256 is
+`9492e46a924207ece6340311f12f458931399c7a389091bc887695a0c8735e1d`. The
+pre-edit production and original test SHA-256 values are
+`b0f71fc412e04b0756e4166c9ae858efe4862fcc4859564efd5e16baa7f264ce` and
+`0eb70821078022ddbf344528fb0460157149d36e1e973ec985afde46c57c9b54`,
+respectively.
+
+Initial behavior map, before the production edit:
+
+| ID | Exact obligation and expected observable behavior | Hypothesis / ambiguity and resolution | Intended implementation path | Evidence state | Executor / reviewer disposition |
+| --- | --- | --- | --- | --- | --- |
+| AUD48-CPU-01 | Decision 0092's bounded CPU limit must be representable by Docker's `NanoCpus` consumer. The exact decimal string sent to `--cpus`, multiplied by 1,000,000,000, must be an integer; otherwise refuse with `CPU_BOUND`. Preserve `0.3`, `2.01` and `1.23456789`. | The prior [CodeRabbit exact-head review](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5816697703) identified a Docker parser failure. The exact-parent Python/Docker matrix independently reproduces all three rejected values and all three accepted controls. A first binary-float product check was too strict and rejected valid `2.01`; the retained control failure below caused it to be replaced with exact decimal-string arithmetic. Do not round: rounding would change a requested resource limit. | `ExecutionLimits.__post_init__` in `tools/vf0_execution.py`; focused constructor regressions in `tests/test_vf0_execution.py`. | Baseline RED: FAIL as intended on exact parent, 1 test / 3 failing subcases; Docker matrix confirms consumer behavior. The float-based trial failed the valid `2.01` control and is rejected. The first exact-candidate full suites passed but review then showed their Decimal check was context-sensitive; those results are superseded. Context-independent integer-ratio Green: PASS, 2 focused regressions, log SHA-256 `1b934e5790729f9a6a3afe0d7648a1a83901be0c1c5558ebfc01a5412dc4f1c7`. Final exact-candidate `extended` and packaged-runtime results are recorded in the unedited top-level PR review-candidate seal. Alignment: SUPPORTS. | Executor evidence: exact-candidate seal. Reviewer convergence PENDING. |
+
+The pre-edit path hashes are retained in the initial candidate record. The
+first production trial used binary-float multiplication and was rejected when
+the focused positive control showed that it refused valid `2.01`; the retained
+log is `/tmp/gnostoa-pr319-aud48-handoff/aud48-cpu-float-trial-rejected.txt`
+(SHA-256 `6083033d2093dfc5dc7dd48f4aa0755cd437acf36fe5498e2317fe69d67ce687`).
+The implementation now follows the exact decimal string passed to Docker, as
+its `ParseCPUs` consumer does. The corrected focused Green ran one test
+successfully in the Development Container; its log SHA-256 is
+`db26885d790ea664466db87c7db641a8b1249e0f56cbf402fb3a8d802e99b994`.
+Pre-preparation source hashes are `a2f28c9a7c59ebab3ad72da504387286ea900a6db4fc41e40111eac07e42aba5`
+for `tools/vf0_execution.py` and
+`8b2708553d53ec11c8464776c2c04a601971aa314f1e688e9fca704eb0347758` for the
+regression file. The final exact commit, prepared tree and parent-bound receipt
+are recorded in the unedited top-level PR comment whose first line is
+`Exact review candidate: <commit SHA>`. This repair does not resolve
+CodeRabbit's separate controller-lifecycle concern or Codacy's optional
+maintainability suggestions.
+
+### AUD48 context-independence follow-up
+
+The independent exact-candidate review of `7cf94a2` found that Decimal
+multiplication uses the caller's mutable context: at precision 9,
+`0.30000000000000004 * 1,000,000,000` rounds to an integer and evades
+`CPU_BOUND`, although Docker receives the unchanged decimal string and rejects
+it. This is within the already owner-selected Issue #15 / Decision 0092
+outcome—refuse CPU limits Docker cannot represent before dispatch—so it adds no
+new behavior, authority, dependency or Work Item. Fresh provider read-back at
+`2026-09-29T12:22:12Z` found Issue #15 open and the sole `roadmap:now`
+selection, PR #319 still at `8aae675`, and protected `main` at `638e59a`.
+
+Pre-change evidence mode for this correction: failing RED against exact source
+commit `7cf94a2a199d3542a2ebcebcc68ae5c1579ec3f9`. The Development Container
+focused run produced the expected failure: at precision 9, the invalid value
+was accepted; at precision 1 with the `Inexact` trap enabled, valid `2.01`
+raised `decimal.Inexact`. The two-test log SHA-256 is
+`bbdd96e9731f7d81aa39310de6b2ae66b0a03f03bcbcc29cc87da6fa4b75a94c` and the
+test-only file SHA-256 is
+`8b3b8e5fd97efd7ea14952a99e9413bcd51ac1e56e55d153009518d920afa279`.
+Production `tools/vf0_execution.py` remained at exact parent blob
+`bcec97b35a21749673706e05d699d7463b5598cf` until this RED was recorded. The
+fix uses `Decimal.as_integer_ratio()` and integer modulo, so no arithmetic
+rounding or signal trap from caller context can alter representability. The
+focused Green passed both regressions; final production file SHA-256 is
+`f687e0270d6a60785cac4d5fa1abdf48b00e7cb26d5633d0cc20c6ea5361797f`.

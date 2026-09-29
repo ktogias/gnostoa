@@ -23,6 +23,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Protocol, cast
 
@@ -255,6 +256,12 @@ class ExecutionLimits:
         )
         _need(type(self.cpus) in {int, float}, "CPU_BOUND")
         _need(0.1 <= self.cpus <= 8.0, "CPU_BOUND")
+        # Match Docker's exact decimal parser without the caller's Decimal context.
+        cpu_numerator, cpu_denominator = Decimal(str(self.cpus)).as_integer_ratio()
+        _need(
+            (cpu_numerator * 1_000_000_000) % cpu_denominator == 0,
+            "CPU_BOUND",
+        )
         _need(type(self.pids) is int, "PIDS_BOUND")
         _need(8 <= self.pids <= 4096, "PIDS_BOUND")
         _need(type(self.tmpfs_bytes) is int, "TMPFS_BOUND")
