@@ -1915,7 +1915,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         decision = (
             ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
         ).read_text(encoding="utf-8")
-        rule_eight = decision.split("8. The checkout must bind", 1)[1].split("\n9.", 1)[0]
+        rule_eight = decision.split("8. The checkout must bind", 1)[1].split("\n9.", 1)[
+            0
+        ]
         self.assertIn("github.workflow_sha", rule_eight)
         self.assertIn("not** the Pull Request's base", rule_eight)
         self.assertNotIn("Read or Grep the checkout for the pre-change", prompt)
