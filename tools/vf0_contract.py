@@ -341,6 +341,7 @@ def _evidence(
             "artifact",
             "source_sha256",
             "archive_sha256",
+            "candidate_sha256",
             "status",
             "coverage",
             "started_at",
@@ -375,6 +376,8 @@ def _evidence(
     )
     for name in ("source_sha256", "archive_sha256"):
         _sha(evidence[name])
+    if evidence["candidate_sha256"] is not None:
+        _sha(evidence["candidate_sha256"])
     _need(
         evidence["status"] == "COMPLETED" and evidence["coverage"] == "COMPLETE",
         "INCOMPLETE_EVIDENCE",
@@ -565,6 +568,15 @@ def evaluate(document: object) -> dict[str, Any]:
         evidence = _evidence(data["evidence"], request, admission, required)
         candidate = _candidate(data["candidate"], request)
         _mode_relation(request, evidence)
+        # Post-event evidence names an already observed exact candidate. Normal
+        # pre-change evidence cannot bind a future compatible implementation.
+        if request["mode"] == "EMERGENCY_POST_EVENT":
+            _need(
+                evidence["candidate_sha256"] == _digest(candidate),
+                "EVIDENCE_CANDIDATE_BINDING",
+            )
+        else:
+            _need(evidence["candidate_sha256"] is None, "EVIDENCE_CANDIDATE_UNEXPECTED")
         _time_relation(now, policy, request, admission, evidence, candidate)
         return _result("MATCH", [], _digest(request))
     except _Invalid as exc:

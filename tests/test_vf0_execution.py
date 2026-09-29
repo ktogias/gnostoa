@@ -1220,32 +1220,22 @@ class VF0SubjectTests(unittest.TestCase):
 
         evidence = _evidence("pass")
         object.__setattr__(evidence, "path", LyingPath("tests/../../outside.txt"))
-        outside_writes: list[bool] = []
-        original_overlay = module._overlay_evidence
-
-        def observe_overlay(root, baseline, admitted_evidence):
-            try:
-                return original_overlay(root, baseline, admitted_evidence)
-            finally:
-                outside_writes.append((root.parent / "outside.txt").is_file())
-
-        with tempfile.TemporaryDirectory() as td:
-            repo, subject = _repo(Path(td))
-            with mock.patch.object(
-                module, "_overlay_evidence", side_effect=observe_overlay
-            ):
-                try:
-                    execute(
-                        repo,
-                        subject,
-                        [evidence],
-                        ["/bin/true"],
-                        _DirectTestBackend(),
-                    )
-                except ExecutionRejected:
-                    pass
-
-        self.assertFalse(any(outside_writes))
+        backend = mock.Mock(spec=_DirectTestBackend)
+        with (
+            mock.patch.object(module, "_materialize_subject") as materialize,
+            mock.patch.object(module, "_overlay_evidence") as overlay,
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "^EVIDENCE_PATH$"):
+                execute(
+                    Path.cwd() / "unused-repository",
+                    GitSubject(commit="a" * 40, tree="b" * 40),
+                    [evidence],
+                    ["/bin/true"],
+                    backend,
+                )
+            materialize.assert_not_called()
+            overlay.assert_not_called()
+            backend.run.assert_not_called()
 
     def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -4342,6 +4332,14 @@ class VF0SmokeContractTests(unittest.TestCase):
                         self._run_bound_smoke(
                             module, corrupted_case=case, corruption=corruption
                         )
+
+    def test_live_smoke_rejects_timeout_observed_overcount(self) -> None:
+        with self.assertRaisesRegex(AssertionError, "SMOKE_OBSERVATION_CONTRACT"):
+            self._run_bound_smoke(
+                _load_smoke_module(),
+                corrupted_case="timeout",
+                corruption=("capture_count", 999),
+            )
 
     def test_live_smoke_cli_rejects_caller_selected_image(self) -> None:
         module = _load_smoke_module()

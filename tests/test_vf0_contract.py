@@ -114,6 +114,7 @@ def _fixture() -> dict[str, Any]:
             "artifact": _ref("artifact"),
             "source_sha256": sha,
             "archive_sha256": sha,
+            "candidate_sha256": None,
             "status": "COMPLETED",
             "coverage": "COMPLETE",
             "started_at": 300,
@@ -642,6 +643,7 @@ class VF0RelationTests(unittest.TestCase):
             completed_at=700,
         )
         doc["candidate"]["observed_at"] = 500
+        doc["evidence"]["candidate_sha256"] = _digest(doc["candidate"])
         _rebind(doc)
         self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
         doc["request"]["follow_up"] = None
@@ -662,12 +664,88 @@ class VF0RelationTests(unittest.TestCase):
             completed_at=700,
         )
         doc["candidate"]["observed_at"] = 800
+        doc["evidence"]["candidate_sha256"] = _digest(doc["candidate"])
         _rebind(doc)
         self.assertRejected(doc)
 
         doc["candidate"]["observed_at"] = 500
+        doc["evidence"]["candidate_sha256"] = _digest(doc["candidate"])
         _rebind(doc)
         self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
+
+    def test_emergency_candidate_binding_matches_exact_observed_subject(self) -> None:
+        doc = self.document
+        doc["request"].update(
+            change_class="emergency",
+            mode="EMERGENCY_POST_EVENT",
+            follow_up=_ref("required-followup"),
+        )
+        doc["evidence"].update(
+            mode="EMERGENCY_POST_EVENT",
+            chronology="EMERGENCY_POST_EVENT",
+            started_at=600,
+            completed_at=700,
+            candidate_sha256=_digest(doc["candidate"]),
+        )
+        _rebind(doc)
+        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
+
+    def test_emergency_candidate_binding_rejects_different_subject(self) -> None:
+        doc = self.document
+        doc["request"].update(
+            change_class="emergency",
+            mode="EMERGENCY_POST_EVENT",
+            follow_up=_ref("required-followup"),
+        )
+        doc["evidence"].update(
+            mode="EMERGENCY_POST_EVENT",
+            chronology="EMERGENCY_POST_EVENT",
+            started_at=600,
+            completed_at=700,
+            candidate_sha256=_digest(doc["candidate"]),
+        )
+        _rebind(doc)
+        retained = copy.deepcopy(doc["evidence"])
+        for field, changed in (
+            ("tree", "git-sha1:different-final-candidate-tree"),
+            ("production_sha256", "sha256:" + "b" * 64),
+            ("observed_at", 501),
+        ):
+            with self.subTest(field=field):
+                alternative = copy.deepcopy(doc)
+                alternative["candidate"][field] = changed
+                self.assertEqual(retained, alternative["evidence"])
+                result = self.core.evaluate(alternative)
+                self.assertEqual("REJECTED", result["status"])
+                self.assertEqual(["EVIDENCE_CANDIDATE_BINDING"], result["reasons"])
+
+    def test_emergency_candidate_binding_requires_nonnull_exact_digest(self) -> None:
+        doc = self.document
+        doc["request"].update(
+            change_class="emergency",
+            mode="EMERGENCY_POST_EVENT",
+            follow_up=_ref("required-followup"),
+        )
+        doc["evidence"].update(
+            mode="EMERGENCY_POST_EVENT",
+            chronology="EMERGENCY_POST_EVENT",
+            started_at=600,
+            completed_at=700,
+        )
+        _rebind(doc)
+        for digest in (None, "sha256:" + "b" * 64, "invalid"):
+            with self.subTest(digest=digest):
+                doc["evidence"]["candidate_sha256"] = digest
+                self.assertRejected(doc)
+        del doc["evidence"]["candidate_sha256"]
+        self.assertRejected(doc)
+
+    def test_prechange_candidate_binding_is_null(self) -> None:
+        doc = self.document
+        doc["evidence"]["candidate_sha256"] = None
+        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
+        doc["evidence"]["candidate_sha256"] = _digest(doc["candidate"])
+        self.assertRejected(doc)
 
     def test_json_duplicate_nonfinite_invalid_utf8_and_nonobject_reject(self) -> None:
         for raw in [

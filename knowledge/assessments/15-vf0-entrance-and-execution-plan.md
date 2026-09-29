@@ -1526,3 +1526,42 @@ controller host. Producer/threat-model qualification in original #15 retains thi
 trusted-host limitation and must choose the actual controller isolation boundary
 before activation. Neither this documentation nor inactive integration waives any
 original VF0 acceptance criterion or admits host hardening/production execution.
+
+### AUD44 — timeout observation count consistency
+
+The common fixed-smoke oracle now requires exact observed/retained byte equality
+for every non-output-limit state, including timeout, matching the executor's
+existing capture contract. A genuine runner-level timeout observation retaining
+one byte but claiming 999 was accepted on exact `871137587ed7c8b61fa2f66aa2910d171bc4ddd2`;
+the added negative regression failed before oracle editing. The overflow
+lower-bound rule and all existing binding checks remain unchanged. This is a
+private verification correction within the inactive component slice, not a new
+producer receipt, workflow enforcement, activation or whole-Issue-6 dependency.
+
+The current CodeAnt emergency relation finding is also corrected within this
+inactive scope. The closed private input requires `evidence.candidate_sha256`: it
+is null for pre-change modes and the existing canonical JSON digest of the entire
+validated candidate block for `EMERGENCY_POST_EVENT`. Array order is retained as
+exact representation. This binds its tree, production digest, parent, retained
+evidence bytes/modes, paths and observation time without asking ordinary RED to
+name future implementation bytes. The existing candidate-before-evidence
+chronology remains required. Positive emergency and unchanged-evidence
+tree/digest/time substitution controls distinguish a true binding from blanket
+schema rejection; missing/null emergency and nonnull pre-change bindings refuse.
+Caller-supplied candidate and digest remain unauthenticated assertions. No
+producer, public schema, preparer, workflow or independent consumer is activated.
+
+The path-subclass regression now requires the exact `EVIDENCE_PATH` refusal
+before materialization, overlay or backend dispatch. An unrelated early Git
+refusal no longer passes it; malicious paths need not reach overlay. This is
+test-strengthening over already correct input refusal, not host-race hardening.
+
+Native Claude's current review additionally retains nonblocking qualifications in
+the owning PR and original #15. In particular the untampered trusted controller
+host premise lasts throughout materialization, execution and final snapshot and
+across earlier local evidence runs, not merely until overlay. The local backend
+does not isolate host filesystem/IPC; untrusted local execution cannot establish
+that trusted-host premise. Built-in OCI read-only mounts and equal snapshots do
+not exclude hostile-host transient changes. Live token-secrecy and forged-trailer
+controls, input-shape/error projection, executable-format parity and display
+escaping remain explicit producer/runtime qualifications before activation.

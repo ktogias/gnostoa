@@ -296,12 +296,10 @@ def _expect_observation_contract(
         or retained > limits.output_bytes
         or type(capture.termination) is not str
         or capture.termination not in {"completed", "timeout", "output_limit"}
+        or (capture.termination == "completed" and type(capture.exit_code) is not int)
         or (
-            capture.termination == "completed"
-            and (
-                type(capture.exit_code) is not int
-                or capture.observed_bytes_at_least != retained
-            )
+            capture.termination != "output_limit"
+            and capture.observed_bytes_at_least != retained
         )
         or (capture.termination != "completed" and capture.exit_code is not None)
         or (
