@@ -1389,13 +1389,30 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("unavailable", publisher.render(pathlib.Path("/nonexistent/x")))
         with tempfile.TemporaryDirectory() as scratch:
             summary = pathlib.Path(scratch) / "summary.md"
-            for missing in ("", "   ", str(pathlib.Path(scratch) / "absent.json")):
-                with self.subTest(execution=repr(missing)):
-                    summary.write_text("", encoding="utf-8")
-                    self.assertEqual(
-                        0, publisher.main(["publish_report.py", missing, str(summary)])
-                    )
-                    self.assertIn("unavailable", summary.read_text(encoding="utf-8"))
+            # RUNNER_TEMP has to name the scratch directory, because the confinement
+            # only engages when it is set. Leaving it to the environment made this pass
+            # locally, where it is unset, and fail in CI, where it points elsewhere --
+            # the same way a path-confinement test in this file failed once before.
+            previous = os.environ.get("RUNNER_TEMP")
+            os.environ["RUNNER_TEMP"] = scratch
+            try:
+                for missing in ("", "   ", str(pathlib.Path(scratch) / "absent.json")):
+                    with self.subTest(execution=repr(missing)):
+                        summary.write_text("", encoding="utf-8")
+                        self.assertEqual(
+                            0,
+                            publisher.main(
+                                ["publish_report.py", missing, str(summary)]
+                            ),
+                        )
+                        self.assertIn(
+                            "unavailable", summary.read_text(encoding="utf-8")
+                        )
+            finally:
+                if previous is None:
+                    del os.environ["RUNNER_TEMP"]
+                else:
+                    os.environ["RUNNER_TEMP"] = previous
 
     def test_every_provider_request_in_the_job_is_retried(self) -> None:
         # Each unguarded `gh api` under `set -eu` is one transient failure away from
