@@ -1623,3 +1623,44 @@ cleanup/availability boundary before activation. It does not block the selected
 inactive source integration and supplies no assertion of cleanup under daemon
 unavailability. The review's representation-order, trusted requested OCI pin,
 identity-display and caller-type limitations remain individual PR dispositions.
+
+### AUD47 — proven overflow despite incomplete framing and bounded link syntax
+
+Native Claude's exact `94e724ccc68e83694842a0b12e317d15d508a0d8` N1 and Gitar's
+matching finding exposed an overly conservative R3 refusal. Independent real
+bounded transport captures reproduce child66/budget64: stdout-first retains66
+child bytes and88bytes of the89-byte trailer, then refuses; stderr-first reports
+overflow. Exact-parent RED precedes this correction. Docker configuration and
+cleanup are doubles; this does not claim live OCI timing frequency. The earlier
+unproved/malformed overflow controls remain distinct and correctly scoped.
+
+For a noncompleted attachment only, the copied caller budget may now establish
+independent overflow from child bytes strictly before a unique plausible
+incomplete expected-frame suffix. Its over-budget suffix is elided without
+authentication or exit adoption; the lower bound is the larger of that known
+child prefix and raw observed bytes minus maximum possible transport overhead.
+The normal caller-budget step then returns `output_limit`/null. This also applies
+when actual EOF/wait deadline yields timeout after66+88=154bytes. It supersedes
+AUD46's blanket partial-framing refusal only when that independent child proof
+exists. Full foreign/duplicate/malformed frames, completed spoof controls and
+all partial captures without child-overflow proof still refuse. Matching-token
+complete trailers keep exact subtraction and engine-state checks. Leading-zero
+exit representation remains accepted under the trusted-wrapper/token premise;
+no new canonicalization or authority claim follows.
+
+Codex's C6 finding was independently reproduced: the private link helper retained
+structured and encoded token-style URL fragments. Exact-parent fragment RED
+precedes a bounded plain-anchor syntax check; ordinary report, issue, review and
+step anchors remain, while structured/encoded fragment payloads refuse
+`LINK_URL` independently of relation evaluation. This is syntax hygiene, not a
+complete credential classifier: opaque paths/anchors can still carry credentials.
+An authoritative provider adapter/owner must verify the actual public,
+non-bearer target before handoff. No provider adapter is activated here.
+
+The current duplicate-image-Env suggestion is not adopted: both identical and
+conflicting duplicates deliberately refuse inspected-image ambiguity before
+container creation under R2. This is a supported-image restriction, not a claim
+that duplicate Env is invalid OCI or that every pinned image is compatible.
+Whole-call host trust, local non-isolation, slow owned-inspect and late-create
+remain separately unfixed qualifications under original #15. VF0 and #318 stay
+gated; no whole-Issue-6 implementation or authenticated producer is introduced.

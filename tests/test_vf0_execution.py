@@ -3808,6 +3808,175 @@ class VF0DockerBackendTests(unittest.TestCase):
                             )
                     self.assertTrue(backend.removed)
 
+    def test_actual_stdout_first_near_budget_overflow_retains_child_observation(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        for exit_code in (0, 17, 255):
+            marker = self._completed_capture(exit_code, stdout=b"").stderr
+            for excess in (2, 3, 10, 64, 88):
+                if 64 + excess + len(marker) <= 154:
+                    continue
+                with self.subTest(exit_code=exit_code, excess=excess):
+                    child_bytes = 64 + excess
+                    script = f"import os,time;os.write(1,b'x'*{child_bytes});time.sleep(0.05);os.write(2,{marker!r})"
+                    capture = module._capture_process(
+                        [sys.executable, "-I", "-c", script],
+                        cwd=None,
+                        limits=ExecutionLimits(timeout_seconds=3.0, output_bytes=64),
+                        output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
+                    )
+                    self.assertEqual("output_limit", capture.termination)
+                    self.assertEqual(b"x" * child_bytes, capture.stdout)
+                    self.assertEqual(marker[: 154 - child_bytes], capture.stderr)
+                    with tempfile.TemporaryDirectory() as td:
+                        root = Path(td).resolve()
+                        backend = FakeDockerBackend(self.image, root)
+                        with mock.patch(
+                            "tools.vf0_execution._capture_process", return_value=capture
+                        ):
+                            try:
+                                result = backend.run(
+                                    root,
+                                    ["/bin/false"],
+                                    ExecutionLimits(output_bytes=64),
+                                    subject=self.subject,
+                                )
+                            except ExecutionRejected as exc:
+                                self.fail(f"proven child overflow was refused: {exc}")
+                        self.assertEqual(
+                            ("output_limit", None, b"x" * 64, b"", child_bytes),
+                            (
+                                result.termination,
+                                result.exit_code,
+                                result.stdout,
+                                result.stderr,
+                                result.observed_bytes_at_least,
+                            ),
+                        )
+                        self.assertTrue(backend.removed)
+
+    def test_capacity_consistent_incomplete_frames_elide_only_proven_overflow(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        marker = self._completed_capture(17, stdout=b"").stderr
+        for size in range(1, len(marker)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as td:
+                fragment = marker[:size]
+                child_bytes = 64 + module._OCI_EXIT_TRAILER_MAX - size
+                root = Path(td).resolve()
+                backend = FakeDockerBackend(self.image, root)
+                capture = UntrustedCapture(
+                    "output_limit",
+                    None,
+                    b"x" * child_bytes,
+                    fragment,
+                    child_bytes + len(marker),
+                )
+                with mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ):
+                    try:
+                        result = backend.run(
+                            root,
+                            ["/bin/false"],
+                            ExecutionLimits(output_bytes=64),
+                            subject=self.subject,
+                        )
+                    except ExecutionRejected as exc:
+                        self.fail(f"proven child overflow was refused: {exc}")
+                self.assertEqual(
+                    ("output_limit", None, b"x" * 64, b"", child_bytes),
+                    (
+                        result.termination,
+                        result.exit_code,
+                        result.stdout,
+                        result.stderr,
+                        result.observed_bytes_at_least,
+                    ),
+                )
+                self.assertTrue(backend.removed)
+
+    def test_wait_timeout_with_partial_frame_still_reports_proven_child_overflow(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        marker = self._completed_capture(17, stdout=b"").stderr[:-1]
+        script = f"import os,time;os.write(1,b'x'*66);os.write(2,{marker!r});os.close(1);os.close(2);time.sleep(20)"
+        capture = module._capture_process(
+            [sys.executable, "-I", "-c", script],
+            cwd=None,
+            limits=ExecutionLimits(timeout_seconds=1.0, output_bytes=64),
+            output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
+        )
+        self.assertEqual(
+            ("timeout", None, b"x" * 66, marker, 154),
+            (
+                capture.termination,
+                capture.exit_code,
+                capture.stdout,
+                capture.stderr,
+                capture.observed_bytes_at_least,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                try:
+                    result = backend.run(
+                        root,
+                        ["/bin/false"],
+                        ExecutionLimits(output_bytes=64),
+                        subject=self.subject,
+                    )
+                except ExecutionRejected as exc:
+                    self.fail(f"proven child overflow was refused: {exc}")
+            self.assertEqual(
+                ("output_limit", None, b"x" * 64, b"", 66),
+                (
+                    result.termination,
+                    result.exit_code,
+                    result.stdout,
+                    result.stderr,
+                    result.observed_bytes_at_least,
+                ),
+            )
+            self.assertTrue(backend.removed)
+
+    def test_proven_overflow_does_not_bypass_complete_or_foreign_frame_refusal(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        marker = self._completed_capture(17, stdout=b"").stderr
+        for fragment in (
+            self._completed_capture(17, stdout=b"", completion_token="f" * 64).stderr,
+            (module._OCI_EXIT_SENTINEL_PREFIX + marker)[:89],
+            marker[:-3] + b"999",
+        ):
+            with self.subTest(fragment=fragment), tempfile.TemporaryDirectory() as td:
+                root = Path(td).resolve()
+                backend = FakeDockerBackend(self.image, root)
+                capture = UntrustedCapture(
+                    "output_limit", None, b"x" * 65, fragment, 65 + len(fragment) + 10
+                )
+                with mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ):
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^OCI_ATTACH_STATE$"
+                    ):
+                        backend.run(
+                            root,
+                            ["/bin/false"],
+                            ExecutionLimits(output_bytes=64),
+                            subject=self.subject,
+                        )
+                self.assertTrue(backend.removed)
+
     def test_spoofed_wrapper_trailer_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()

@@ -616,7 +616,7 @@ def evaluate_json(raw: bytes) -> dict[str, Any]:
 def resolve_links(
     subject: object, links: object
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Filter navigation independently; query-bearing URLs are not retained."""
+    """Filter URL syntax independently; public/non-bearer targets need provider checks."""
     retained: list[dict[str, Any]] = []
     rejected: list[str] = []
     try:
@@ -644,6 +644,11 @@ def resolve_links(
                     and not parts.username
                     and not parts.password
                     and not parts.query
+                    and (
+                        not parts.fragment
+                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", parts.fragment)
+                        is not None
+                    )
                     and parts.port in {None, 443},
                     "LINK_URL",
                 )

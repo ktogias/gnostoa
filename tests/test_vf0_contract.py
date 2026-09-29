@@ -832,19 +832,41 @@ class VF0RelationTests(unittest.TestCase):
         retained, rejected = self.core.resolve_links(subject, links)
         self.assertEqual(links, retained)
         self.assertEqual([], rejected)
+        for anchor in (
+            "discussion_r123",
+            "issuecomment-456",
+            "step:1:13",
+            "heading.with_underscore",
+        ):
+            with self.subTest(anchor=anchor):
+                plain = copy.deepcopy(links)
+                plain[0]["url"] = "https://ci.example.invalid/jobs/opaque#" + anchor
+                self.assertEqual((plain, []), self.core.resolve_links(subject, plain))
         for url in [
             "http://ci.example.invalid/jobs/opaque",
             "https://u:p@ci.example.invalid/run",
             "https://ci.example.invalid/run?token=secret",
             "https://ci.example.invalid:444/run",
             "https://ci.example.invalid/\nrun",
+            "https://ci.example.invalid/approve#access_token=public-fixture",
+            "https://ci.example.invalid/approve#token=public-fixture&scope=approve",
+            "https://ci.example.invalid/approve#access%5Ftoken%3Dpublic-fixture",
+            "https://ci.example.invalid/approve#access_token%253Dpublic-fixture",
+            "https://ci.example.invalid/approve#?access_token=public-fixture",
+            "https://ci.example.invalid/approve#/auth/token/public-fixture",
+            "https://ci.example.invalid/approve#report&token=public-fixture",
+            "https://ci.example.invalid/approve#report%0Atoken=public-fixture",
         ]:
-            invalid = copy.deepcopy(links)
-            invalid[0]["url"] = url
-            selected, reasons = self.core.resolve_links(subject, invalid)
-            self.assertEqual([], selected)
-            self.assertTrue(reasons)
-            self.assertEqual(baseline, self.core.evaluate(self.document))
+            with self.subTest(url=url):
+                invalid = copy.deepcopy(links)
+                invalid[0]["url"] = url
+                selected, reasons = self.core.resolve_links(subject, invalid)
+                self.assertEqual([], selected)
+                if "#" in url:
+                    self.assertEqual(["LINK_URL"], reasons)
+                else:
+                    self.assertTrue(reasons)
+                self.assertEqual(baseline, self.core.evaluate(self.document))
         invalid = copy.deepcopy(links)
         invalid[0]["subject"] = _ref("wrong-subject")
         self.assertEqual([], self.core.resolve_links(subject, invalid)[0])
