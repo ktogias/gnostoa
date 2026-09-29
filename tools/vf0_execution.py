@@ -936,7 +936,7 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
 def _validate_command(argv: Sequence[str]) -> None:
     _need(
         bool(argv)
-        and all(isinstance(part, str) and part and "\0" not in part for part in argv),
+        and all(type(part) is str and part and "\0" not in part for part in argv),
         "COMMAND",
     )
     executable = argv[0]

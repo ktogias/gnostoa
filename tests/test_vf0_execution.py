@@ -2334,6 +2334,58 @@ class VF0CaptureTests(unittest.TestCase):
             self.assertEqual(1, capture.call_count)
             self.assertEqual("/bin/true", capture.call_args.args[0][-1])
 
+    def test_direct_builtin_backends_reject_polymorphic_command_before_dispatch(
+        self,
+    ) -> None:
+        class RelativeExecutableString(str):
+            def startswith(self, prefix: str, *args: object) -> bool:
+                return True
+
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        backends = (
+            SubprocessBackend(),
+            DockerBackend(image="ghcr.io/example/runtime@sha256:" + "a" * 64),
+        )
+        with tempfile.TemporaryDirectory() as td:
+            for backend in backends:
+                with (
+                    self.subTest(backend=type(backend).__name__),
+                    mock.patch(
+                        "tools.vf0_execution._probe_local_containment",
+                        side_effect=ExecutionRejected("UNEXPECTED_CONTAINMENT_PROBE"),
+                    ) as containment,
+                    mock.patch.object(
+                        DockerBackend,
+                        "_inspect_image",
+                        side_effect=ExecutionRejected("UNEXPECTED_IMAGE_LOOKUP"),
+                    ) as image,
+                ):
+                    with self.assertRaisesRegex(ExecutionRejected, "^COMMAND$"):
+                        backend.run(
+                            Path(td),
+                            [RelativeExecutableString("true")],
+                            ExecutionLimits(),
+                            subject=subject,
+                        )
+                    containment.assert_not_called()
+                    image.assert_not_called()
+
+    def test_direct_local_backend_preserves_explicit_relative_executable(self) -> None:
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        completed = UntrustedCapture("completed", 0, b"", b"", 0)
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch(
+                "tools.vf0_execution._capture_process", return_value=completed
+            ) as capture,
+        ):
+            result = SubprocessBackend().run(
+                Path(td), ["./true"], ExecutionLimits(), subject=subject
+            )
+        self.assertEqual(("completed", 0), (result.termination, result.exit_code))
+        self.assertEqual(2, capture.call_count)
+        self.assertEqual("./true", capture.call_args_list[1].args[0][-1])
+
     def test_subprocess_backend_preserves_command_nonzero_after_probe(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

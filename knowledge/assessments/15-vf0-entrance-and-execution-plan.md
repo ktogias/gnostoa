@@ -1445,3 +1445,24 @@ runtime identity while preserving the pinned OCI identity distinction. Final
 verification and reviewer dispositions belong in the external exact-candidate
 record. This correction does not qualify the local backend for untrusted evidence
 or alter the original VF0 activation obligations.
+
+### AUD41 refuse polymorphic strings at direct backend command validation
+
+The [current-head CodeAnt finding](https://github.com/ktogias/gnostoa/pull/319#discussion_r4128349146)
+identified that direct backend callers could override a string's `startswith`
+predicate and pass a bare executable to PATH lookup. The main `execute` entry
+already canonicalizes string values and refuses the same input. The
+[pre-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881308308)
+and [contemporaneous RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881320068)
+bind this correction to exact parent `0491ea88c8553d77258557f46f3d6ddfb01390b0`.
+Both direct built-in backend regressions failed before the production edit,
+reaching containment or image dispatch instead of command refusal; an independent
+real-local reproduction separately demonstrated PATH execution. The shared
+validator now requires exact strings before any caller-overridable predicate.
+Direct local and OCI callers reject the subclass before dispatch, while the
+existing canonicalizing entry and legitimate absolute or explicit relative
+executables retain their behavior. The relative-executable control uses a fixed
+capture double to check command routing, not to claim isolation. Final trusted
+preparation, exact-candidate verification and reviews remain external records.
+This private correctness repair changes no producer admission, production
+enforcement, authority or original VF0 acceptance obligation.
