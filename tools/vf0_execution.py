@@ -41,6 +41,10 @@ _MAX_EVIDENCE_PATH_BYTES = 4 * 1024
 _MAX_EVIDENCE_PATH_COMPONENTS = 256
 _MAX_COMMAND_ARGS = 256
 _MAX_COMMAND_BYTES = 64 * 1024
+# Capture also carries fixed local/OCI wrappers and Docker control arguments.
+# Its finite transport envelope is separate from the caller command envelope.
+_MAX_CAPTURE_ARGS = 512
+_MAX_CAPTURE_BYTES = 128 * 1024
 _MAX_DOCKER_CONTROL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
 _MAX_SNAPSHOT_DEPTH = 256
@@ -933,18 +937,20 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
             process.kill()
 
 
-def _validate_command(argv: Sequence[str]) -> None:
-    _need(
-        bool(argv)
-        and all(type(part) is str and part and "\0" not in part for part in argv),
-        "COMMAND",
-    )
-    executable = argv[0]
+def _validate_command(
+    argv: Sequence[str],
+    *,
+    max_args: int = _MAX_COMMAND_ARGS,
+    max_bytes: int = _MAX_COMMAND_BYTES,
+) -> tuple[str, ...]:
+    snapshot = _snapshot_command(argv, max_args=max_args, max_bytes=max_bytes)
+    executable = snapshot[0]
     path = PurePosixPath(executable)
     _need(
         path.is_absolute() or (executable.startswith("./") and ".." not in path.parts),
         "COMMAND_EXECUTABLE",
     )
+    return snapshot
 
 
 def _wait_for_exit_without_reap(
@@ -979,7 +985,9 @@ def _capture_process(
     startup_sentinel: bytes | None = None,
     environment_overrides: dict[str, str] | None = None,
 ) -> UntrustedCapture:
-    _validate_command(argv)
+    argv = _validate_command(
+        argv, max_args=_MAX_CAPTURE_ARGS, max_bytes=_MAX_CAPTURE_BYTES
+    )
     _need(
         0 <= output_headroom_bytes <= _OCI_EXIT_TRAILER_MAX,
         "OUTPUT_HEADROOM_BOUND",
@@ -1162,7 +1170,7 @@ class SubprocessBackend:
         subject: GitSubject,
     ) -> UntrustedCapture:
         del subject
-        _validate_command(command)
+        command = _validate_command(command)
         _probe_local_containment(root)
         try:
             return _capture_process(
@@ -1487,7 +1495,7 @@ class DockerBackend:
         *,
         subject: GitSubject,
     ) -> UntrustedCapture:
-        _validate_command(command)
+        command = _validate_command(command)
         image_id, image_environment = self._inspect_image()
         cleanup_nonce = uuid.uuid4().hex
         completion_token = self._new_completion_token()
@@ -1792,19 +1800,24 @@ def _bounded_utf8_length(text: str, maximum_bytes: int) -> int:
     return encoded_bytes
 
 
-def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
+def _snapshot_command(
+    command: Sequence[str],
+    *,
+    max_args: int = _MAX_COMMAND_ARGS,
+    max_bytes: int = _MAX_COMMAND_BYTES,
+) -> tuple[str, ...]:
     snapshot: list[str] = []
     total_bytes = 0
     try:
         iterator = iter(command)
     except TypeError as exc:
         raise ExecutionRejected("COMMAND") from exc
-    for index in range(_MAX_COMMAND_ARGS + 1):
+    for index in range(max_args + 1):
         try:
             part = next(iterator)
         except StopIteration:
             break
-        if index >= _MAX_COMMAND_ARGS:
+        if index >= max_args:
             raise ExecutionRejected("COMMAND_COUNT_BOUND")
         _need(isinstance(part, str), "COMMAND")
         try:
@@ -1812,7 +1825,7 @@ def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
         except TypeError as exc:
             raise ExecutionRejected("COMMAND") from exc
         _need(character_count > 0, "COMMAND")
-        remaining_bytes = _MAX_COMMAND_BYTES - total_bytes
+        remaining_bytes = max_bytes - total_bytes
         _need(character_count <= remaining_bytes, "COMMAND_BYTES_BOUND")
         try:
             part = str.__str__(part)
@@ -1821,7 +1834,7 @@ def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
         _need("\0" not in part, "COMMAND")
         encoded_bytes = _bounded_utf8_length(part, remaining_bytes)
         total_bytes += encoded_bytes
-        _need(total_bytes <= _MAX_COMMAND_BYTES, "COMMAND_BYTES_BOUND")
+        _need(total_bytes <= max_bytes, "COMMAND_BYTES_BOUND")
         snapshot.append(part)
     _need(bool(snapshot), "COMMAND")
     return tuple(snapshot)

@@ -16,6 +16,7 @@ import subprocess  # nosec B404 -- fixed live-smoke Git helper and fixture paylo
 import sys
 import tempfile
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from tools.vf0_execution import (
     ExecutionObservation,
     ExecutionRejected,
     GitSubject,
+    UntrustedCapture,
     execute,
 )
 
@@ -233,10 +235,90 @@ def _expect_completed_success(observation: ExecutionObservation, stdout: bytes) 
         raise AssertionError("SMOKE_SUCCESS_CONTRACT")
 
 
+def _expect_observation_contract(
+    observation: ExecutionObservation,
+    subject: GitSubject,
+    evidence: EvidenceFile,
+    command: list[str],
+    limits: ExecutionLimits,
+    fixture_value: str,
+) -> None:
+    """Check live observations against independent fixed-fixture expectations."""
+
+    def digest(value: object, *, newline: bool = False) -> str:
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256((raw + ("\n" if newline else "")).encode()).hexdigest()
+
+    contents = {
+        "subject.txt": (fixture_value + "\n").encode(),
+        "tools/__init__.py": b"",
+        "tools/vf0_execution.py": f"SUBJECT_MARKER = {fixture_value!r}\n".encode(),
+        evidence.path: evidence.content,
+    }
+    manifest = digest(
+        {
+            "directories": {".": "0755", "tools": "0755", "tests": "0755"},
+            "files": {
+                path: {
+                    "mode": evidence.mode if path == evidence.path else "100644",
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "size": len(content),
+                }
+                for path, content in contents.items()
+            },
+        },
+        newline=True,
+    )
+    if type(observation) is not ExecutionObservation:
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    if (
+        type(observation.subject) is not GitSubject
+        or observation.subject != subject
+        or observation.evidence_sha256
+        != ((evidence.path, hashlib.sha256(evidence.content).hexdigest()),)
+        or observation.command_sha256 != "sha256:" + digest(command)
+        or observation.limits_sha256 != "sha256:" + digest(asdict(limits))
+        or observation.backend_identity != "gnostoa-docker-oci-v1"
+        or observation.runtime_identity != FIXED_IMAGE
+        or observation.before_manifest_sha256 != manifest
+        or observation.after_manifest_sha256 != manifest
+        or observation.subject_unchanged is not True
+        or type(observation.capture) is not UntrustedCapture
+    ):
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    capture = observation.capture
+    if type(capture.stdout) is not bytes or type(capture.stderr) is not bytes:
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    retained = len(capture.stdout) + len(capture.stderr)
+    if (
+        type(capture.observed_bytes_at_least) is not int
+        or capture.observed_bytes_at_least < retained
+        or retained > limits.output_bytes
+        or type(capture.termination) is not str
+        or capture.termination not in {"completed", "timeout", "output_limit"}
+        or (
+            capture.termination == "completed"
+            and (
+                type(capture.exit_code) is not int
+                or capture.observed_bytes_at_least != retained
+            )
+        )
+        or (capture.termination != "completed" and capture.exit_code is not None)
+        or (
+            capture.termination == "output_limit"
+            and capture.observed_bytes_at_least <= limits.output_bytes
+        )
+    ):
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+
+
 def _summary(observation: ExecutionObservation) -> dict[str, Any]:
     return {
         "subject_commit": observation.subject.commit,
         "subject_tree": observation.subject.tree,
+        "evidence_sha256": observation.evidence_sha256,
+        "before_manifest_sha256": observation.before_manifest_sha256,
+        "after_manifest_sha256": observation.after_manifest_sha256,
         "command_sha256": observation.command_sha256,
         "limits_sha256": observation.limits_sha256,
         "backend_identity": observation.backend_identity,
@@ -284,6 +366,14 @@ def run_smoke() -> dict[str, Any]:
         first = _commit(repo, "one")
         second = _commit(repo, "two")
 
+        def observe(subject: GitSubject, case: str, value: str) -> ExecutionObservation:
+            argv = [*command, case]
+            observation = execute(repo, subject, [evidence], argv, backend, limits)
+            _expect_observation_contract(
+                observation, subject, evidence, argv, limits, value
+            )
+            return observation
+
         cases: dict[str, dict[str, Any]] = {}
         for name, expected in (
             ("isolation", ("completed", 0)),
@@ -292,14 +382,7 @@ def run_smoke() -> dict[str, Any]:
             ("timeout", ("timeout", None)),
             ("overflow", ("output_limit", None)),
         ):
-            observation = execute(
-                repo,
-                second,
-                [evidence],
-                [*command, name],
-                backend,
-                limits,
-            )
+            observation = observe(second, name, "two")
             if (
                 observation.capture.termination,
                 observation.capture.exit_code,
@@ -307,29 +390,16 @@ def run_smoke() -> dict[str, Any]:
                 raise AssertionError("UNEXPECTED_" + name.upper() + "_OUTCOME")
             cases[name] = _summary(observation)
 
-        if (
-            b"approved"
-            not in execute(
-                repo, second, [evidence], [*command, "spoof"], backend, limits
-            ).capture.stdout
-        ):
+        if b"approved" not in observe(second, "spoof", "two").capture.stdout:
             raise AssertionError("SPOOF_NOT_EXERCISED")
 
-        first_observation = execute(
-            repo, first, [evidence], [*command, "subject"], backend, limits
-        )
+        first_observation = observe(first, "subject", "one")
         _expect_completed_success(first_observation, b"one\n")
-        second_observation = execute(
-            repo, second, [evidence], [*command, "subject"], backend, limits
-        )
+        second_observation = observe(second, "subject", "two")
         _expect_completed_success(second_observation, b"two\n")
-        first_import = execute(
-            repo, first, [evidence], [*command, "subject_import"], backend, limits
-        )
+        first_import = observe(first, "subject_import", "one")
         _expect_completed_success(first_import, b"one\n")
-        second_import = execute(
-            repo, second, [evidence], [*command, "subject_import"], backend, limits
-        )
+        second_import = observe(second, "subject_import", "two")
         _expect_completed_success(second_import, b"two\n")
         cases["subject_one"] = _summary(first_observation)
         cases["subject_two"] = _summary(second_observation)

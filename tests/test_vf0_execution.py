@@ -18,7 +18,7 @@ import time
 import tracemalloc
 import unittest
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -35,6 +35,18 @@ from tools.vf0_execution import (
     UntrustedCapture,
     execute,
 )
+
+
+class _ChangingCommand(list[str]):
+    def __init__(self, first: Sequence[str], later: Sequence[str]) -> None:
+        super().__init__(first)
+        self.first = tuple(first)
+        self.later = tuple(later)
+        self.iterations = 0
+
+    def __iter__(self) -> Iterator[str]:
+        self.iterations += 1
+        return iter(self.first if self.iterations == 1 else self.later)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -2159,6 +2171,80 @@ class VF0SubjectTests(unittest.TestCase):
 
 
 class VF0CaptureTests(unittest.TestCase):
+    def test_capture_command_transport_is_bounded_before_dispatch(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        cases = (
+            (["/bin/true", *(["x"] * 512)], "COMMAND_COUNT_BOUND"),
+            (["/bin/true", "x" * (128 * 1024)], "COMMAND_BYTES_BOUND"),
+        )
+        for command, reason in cases:
+            with (
+                self.subTest(reason=reason),
+                mock.patch(
+                    "tools.vf0_execution.subprocess.Popen",
+                    side_effect=OSError("fixed test dispatch stop"),
+                ) as process,
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, f"^{reason}$"):
+                    module._capture_process(command, cwd=None, limits=ExecutionLimits())
+                process.assert_not_called()
+
+    def test_capture_keeps_first_command_snapshot(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        command = _ChangingCommand(["/bin/false"], ["true"])
+        result = module._capture_process(
+            command, cwd=None, limits=ExecutionLimits(timeout_seconds=2)
+        )
+        self.assertEqual(("completed", 1), (result.termination, result.exit_code))
+        self.assertEqual(1, command.iterations)
+
+    def test_direct_local_backend_keeps_first_command_snapshot(self) -> None:
+        command = _ChangingCommand(["/bin/false"], ["true"])
+        completed = UntrustedCapture("completed", 0, b"", b"", 0)
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch("tools.vf0_execution._probe_local_containment"),
+            mock.patch(
+                "tools.vf0_execution._capture_process", return_value=completed
+            ) as capture,
+        ):
+            SubprocessBackend().run(
+                Path(td),
+                command,
+                ExecutionLimits(),
+                subject=GitSubject(commit="a" * 40, tree="b" * 40),
+            )
+        self.assertEqual("/bin/false", capture.call_args.args[0][-1])
+        self.assertEqual(1, command.iterations)
+
+    def test_local_wrapping_preserves_controller_command_bounds(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        commands = (
+            ["/bin/true", *(["x"] * (module._MAX_COMMAND_ARGS - 1))],
+            ["/bin/true", "x" * (module._MAX_COMMAND_BYTES - len("/bin/true"))],
+        )
+        for command in commands:
+            with (
+                self.subTest(arguments=len(command)),
+                tempfile.TemporaryDirectory() as td,
+                mock.patch("tools.vf0_execution._probe_local_containment"),
+                mock.patch(
+                    "tools.vf0_execution.subprocess.Popen",
+                    side_effect=OSError("fixed test dispatch stop"),
+                ) as process,
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "^LOCAL_CONTAINMENT_UNAVAILABLE$"
+                ):
+                    SubprocessBackend().run(
+                        Path(td),
+                        command,
+                        ExecutionLimits(),
+                        subject=GitSubject(commit="a" * 40, tree="b" * 40),
+                    )
+                process.assert_called_once()
+                self.assertEqual(command, process.call_args.args[0][-len(command) :])
+
     def _run(
         self, source: str, limits: ExecutionLimits | None = None
     ) -> UntrustedCapture:
@@ -2360,7 +2446,9 @@ class VF0CaptureTests(unittest.TestCase):
                         side_effect=ExecutionRejected("UNEXPECTED_IMAGE_LOOKUP"),
                     ) as image,
                 ):
-                    with self.assertRaisesRegex(ExecutionRejected, "^COMMAND$"):
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^COMMAND_EXECUTABLE$"
+                    ):
                         backend.run(
                             Path(td),
                             [RelativeExecutableString("true")],
@@ -2645,6 +2733,54 @@ class FakeDockerBackend(DockerBackend):
 
 
 class VF0DockerBackendTests(unittest.TestCase):
+    def test_direct_oci_backend_keeps_first_command_snapshot(self) -> None:
+        command = _ChangingCommand(["/bin/false"], ["true"])
+        with tempfile.TemporaryDirectory() as td:
+            backend = FakeDockerBackend(self.image, Path(td).resolve())
+            with mock.patch(
+                "tools.vf0_execution._capture_process",
+                return_value=self._completed_capture(),
+            ):
+                backend.run(
+                    backend.root, command, ExecutionLimits(), subject=self.subject
+                )
+            self.assertEqual("/bin/false", backend.created_command[-1])
+        self.assertEqual(1, command.iterations)
+
+    def test_oci_wrapping_preserves_controller_command_bounds(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        commands = (
+            ["/bin/true", *(["x"] * (module._MAX_COMMAND_ARGS - 1))],
+            ["/bin/true", "x" * (module._MAX_COMMAND_BYTES - len("/bin/true"))],
+        )
+        for command in commands:
+            with (
+                self.subTest(arguments=len(command)),
+                tempfile.TemporaryDirectory() as td,
+            ):
+                backend = FakeDockerBackend(self.image, Path(td).resolve())
+                with mock.patch(
+                    "tools.vf0_execution._capture_process",
+                    return_value=self._completed_capture(),
+                ):
+                    backend.run(
+                        backend.root, command, ExecutionLimits(), subject=self.subject
+                    )
+                create = next(call for call in backend.calls if call[0] == "create")
+                argv = ["/usr/bin/docker", *create]
+                with mock.patch(
+                    "tools.vf0_execution.subprocess.Popen",
+                    side_effect=OSError("fixed test dispatch stop"),
+                ) as process:
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^BACKEND_START_FAILED$"
+                    ):
+                        module._capture_process(
+                            argv, cwd=None, limits=ExecutionLimits()
+                        )
+                    process.assert_called_once()
+                    self.assertEqual(argv, process.call_args.args[0])
+
     image = "ghcr.io/ktogias/gnostoa@sha256:" + "c" * 64
     subject = GitSubject(commit="d" * 40, tree="e" * 40)
 
@@ -4064,6 +4200,149 @@ class _ReadOnlyProbeTransport:
 
 
 class VF0SmokeContractTests(unittest.TestCase):
+    def _run_bound_smoke(
+        self,
+        module: ModuleType,
+        *,
+        corrupted_case: str | None = None,
+        corruption: tuple[str, object] | None = None,
+    ) -> dict[str, object]:
+        first = GitSubject(commit="a" * 40, tree="b" * 40)
+        second = GitSubject(commit="c" * 40, tree="d" * 40)
+
+        def digest(value: object, *, newline: bool = False) -> str:
+            raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha256(
+                (raw + ("\n" if newline else "")).encode()
+            ).hexdigest()
+
+        def fake_execute(
+            _repo: Path,
+            subject: GitSubject,
+            evidence: list[EvidenceFile],
+            command: Sequence[str],
+            _backend: object,
+            limits: ExecutionLimits,
+        ) -> ExecutionObservation:
+            if subject == GitSubject(commit=second.commit, tree=first.tree):
+                raise ExecutionRejected("SUBJECT_TREE")
+            value = "one" if subject == first else "two"
+            contents = {
+                "subject.txt": (value + "\n").encode(),
+                "tools/__init__.py": b"",
+                "tools/vf0_execution.py": f"SUBJECT_MARKER = {value!r}\n".encode(),
+                module.EVIDENCE_PATH: module.EVIDENCE,
+            }
+            manifest = digest(
+                {
+                    "directories": {".": "0755", "tools": "0755", "tests": "0755"},
+                    "files": {
+                        path: {
+                            "mode": "100644",
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                            "size": len(content),
+                        }
+                        for path, content in contents.items()
+                    },
+                },
+                newline=True,
+            )
+            case = command[-1]
+            termination, exit_code, stdout = {
+                "isolation": ("completed", 0, b"{}"),
+                "spoof": ("completed", 0, b"approved"),
+                "nonzero": ("completed", 17, b"nonzero"),
+                "timeout": ("timeout", None, b"T"),
+                "overflow": ("output_limit", None, b"x" * limits.output_bytes),
+            }.get(case, ("completed", 0, (value + "\n").encode()))
+            observed = len(stdout) + (1 if case == "overflow" else 0)
+            observation = ExecutionObservation(
+                subject=subject,
+                evidence_sha256=tuple(
+                    (item.path, hashlib.sha256(item.content).hexdigest())
+                    for item in evidence
+                ),
+                command_sha256="sha256:" + digest(list(command)),
+                limits_sha256="sha256:"
+                + digest(
+                    {
+                        field.name: getattr(limits, field.name)
+                        for field in fields(limits)
+                    }
+                ),
+                backend_identity="gnostoa-docker-oci-v1",
+                runtime_identity=module.FIXED_IMAGE,
+                before_manifest_sha256=manifest,
+                after_manifest_sha256=manifest,
+                capture=UntrustedCapture(termination, exit_code, stdout, b"", observed),
+                subject_unchanged=True,
+            )
+            if case == corrupted_case and corruption is not None:
+                name, changed = corruption
+                if name == "capture_count":
+                    capture = replace(observation.capture)
+                    object.__setattr__(capture, "observed_bytes_at_least", changed)
+                    observation = replace(observation, capture=capture)
+                elif name == "capture_stdout":
+                    capture = replace(observation.capture)
+                    object.__setattr__(capture, "stdout", changed)
+                    observation = replace(observation, capture=capture)
+                elif name == "manifests":
+                    observation = replace(
+                        observation,
+                        before_manifest_sha256=cast(str, changed),
+                        after_manifest_sha256=cast(str, changed),
+                    )
+                else:
+                    observation = replace(observation, **{name: changed})
+            return observation
+
+        with (
+            mock.patch.object(module, "_git"),
+            mock.patch.object(module, "_commit", side_effect=[first, second]),
+            mock.patch.object(module, "execute", side_effect=fake_execute),
+            mock.patch.object(
+                module,
+                "_probe_read_only_behavior",
+                return_value={
+                    "rootfs_read_only": True,
+                    "workspace_bind_read_only": True,
+                },
+            ),
+        ):
+            return cast(dict[str, object], module.run_smoke())
+
+    def test_live_smoke_accepts_fully_bound_observations(self) -> None:
+        result = self._run_bound_smoke(_load_smoke_module())
+        self.assertEqual("PASS", result["status"])
+
+    def test_live_smoke_rejects_inconsistent_observation_bindings(self) -> None:
+        module = _load_smoke_module()
+        corruptions = (
+            ("subject", GitSubject(commit="e" * 40, tree="f" * 40)),
+            ("evidence_sha256", ((module.EVIDENCE_PATH, "0" * 64),)),
+            ("command_sha256", "sha256:" + "0" * 64),
+            ("limits_sha256", "sha256:" + "0" * 64),
+            ("backend_identity", None),
+            ("runtime_identity", None),
+            ("before_manifest_sha256", "0" * 64),
+            ("after_manifest_sha256", "0" * 64),
+            ("manifests", "0" * 64),
+            ("subject_unchanged", False),
+            ("capture_count", 0),
+            ("capture_count", True),
+            ("capture_stdout", b"x" * 65_537),
+        )
+        for case in ("isolation", "spoof", "nonzero", "timeout", "overflow"):
+            for corruption in corruptions:
+                with self.subTest(case=case, field=corruption[0]):
+                    with self.assertRaisesRegex(
+                        AssertionError, "SMOKE_OBSERVATION_CONTRACT"
+                    ):
+                        self._run_bound_smoke(
+                            module, corrupted_case=case, corruption=corruption
+                        )
+
     def test_live_smoke_cli_rejects_caller_selected_image(self) -> None:
         module = _load_smoke_module()
         alternate_image = "ghcr.io/example/unapproved@sha256:" + "a" * 64
@@ -4120,12 +4399,15 @@ class VF0SmokeContractTests(unittest.TestCase):
             mock.patch.object(module, "_commit", side_effect=[first, second]),
             mock.patch.object(module, "execute", side_effect=fake_execute),
             mock.patch.object(module, "_summary", return_value={"case": "checked"}),
-            mock.patch.object(module, "_expect_completed_success"),
+            mock.patch.object(module, "_expect_completed_success") as success_oracle,
+            mock.patch.object(module, "_expect_observation_contract") as binding_oracle,
         ):
             result = module.run_smoke()
 
         docker_backend.assert_called_once_with(module.FIXED_IMAGE)
         read_only_probe.assert_called_once_with(module.FIXED_IMAGE)
+        self.assertEqual(4, success_oracle.call_count)
+        self.assertEqual(10, binding_oracle.call_count)
         self.assertEqual(module.FIXED_IMAGE, result["image"])
 
     def test_read_only_probe_cleans_after_timeout_and_interruption(self) -> None:

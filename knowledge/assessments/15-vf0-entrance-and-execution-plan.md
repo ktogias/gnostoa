@@ -961,7 +961,7 @@ admitted oracle.
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` plus empty `GIT_ALLOW_PROTOCOL` allowlist for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without supplied-input symlink, metadata, path or count escape; successive calls share no hidden subject; pre-execution writes assume an untampered trusted controller host | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` snapshot traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` plus empty `GIT_ALLOW_PROTOCOL` allowlist for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial snapshot swap/bound regressions; controller-host write limitation below | Local fixture PASS / bounded SUPPORTS on the prepared component tree; no hostile same-UID controller-host confinement claim | Exact-head independent review pending |
 | R2 | Only the fixed digest-pinned image is accepted by the live OCI smoke; runtime, entrypoint, resource, mount and environment contract is checked before launch, and identity binds the actually used runtime | The smoke CLI has no image override; `run_smoke()` binds both Docker probes and its reported identity to `FIXED_IMAGE`. Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; alternate-image negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |
@@ -1466,3 +1466,63 @@ capture double to check command routing, not to claim isolation. Final trusted
 preparation, exact-candidate verification and reviews remain external records.
 This private correctness repair changes no producer admission, production
 enforcement, authority or original VF0 acceptance obligation.
+
+### AUD42 retain the validated command snapshot at every built-in entry
+
+Fresh independent execution and architecture review of exact
+`ddae2fdf5adeca0f6626658db3be9a990be7cc23` found that AUD41's exact-string
+predicate did not own the surrounding command sequence. A direct caller could
+yield one explicit command during validation and a different bare executable
+during launch. The existing `execute` entry's snapshot already prevented this;
+the direct local/OCI and capture entries still re-read caller state. The
+[pre-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881434120)
+and [contemporaneous RED and green characterization](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881482047)
+retain three failing command-snapshot regressions, including real capture exit
+substitution, before production editing. Both reviewer recommendations were
+superseded pending this correction rather than counted as convergence.
+
+Shared validation now returns the existing bounded canonical tuple; each direct
+built-in entry retains that same tuple for dispatch. String subclasses are
+canonicalized safely before explicit-path validation, as at `execute`. Caller
+commands retain their 256-argument/64-KiB envelope. The capture primitive uses a
+separate finite 512-argument/128-KiB transport envelope for fixed wrappers and
+Docker control flags. This allowance does not raise caller limits. Pre-edit
+maximum-count/byte characterization and post-edit controls require valid maximum
+caller commands to survive local and OCI wrapping; oversized transport is refused
+before process dispatch. Unit doubles certify routing/validation only, not actual
+OCI isolation. Final trusted preparation, full/live verification and current-head
+reviews remain external records. No producer or original VF0 gate is activated.
+
+### AUD43 bind every live smoke observation before declaring conformance
+
+The [CodeAnt live-oracle finding](https://github.com/ktogias/gnostoa/pull/319#discussion_r4128455136)
+was independently reproduced on exact `ddae2fdf5adeca0f6626658db3be9a990be7cc23`:
+an adversarial observation with wrong subject/runtime/backend, unequal manifests,
+false immutability and invalid byte counts still allowed overall smoke PASS.
+The [pre-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881565891)
+and [corrected contemporaneous RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5881605144)
+retain 65 failing runner-level forged-observation subcases and a green fully bound
+control before smoke production editing. The first evidence record's fixture
+errors were explicitly corrected before editing, not relabeled as oracle failures.
+
+The fixed live runner now independently derives the requested subject, evidence,
+command and limits identities and the known fixture's exact mode/content/directory
+manifest. Every returned observation must match these, the fixed OCI backend/image,
+true immutability and the bounded output/count/state relations before serialization.
+The report retains evidence and before/after manifest identities. The image-routing
+unit test also checks that both success and binding oracles are called; the separate
+negative matrix keeps the real oracles active. These doubles qualify the runner's
+refusal behavior, not actual OCI isolation. Exact-candidate live execution remains
+required and its retained report remains component conformance only.
+
+The [conditional controller-host race](https://github.com/ktogias/gnostoa/pull/319#discussion_r4128455141)
+is **not fixed** by this oracle. A concurrently tampering same-UID host actor can
+replace a pre-execution overlay path between inspection and pathname-based write.
+The private temporary parent excludes other users; no untrusted evidence/backend
+has started at that point, and admitted Git/evidence inputs cannot introduce the
+symlink. R1's supplied-input confinement and descriptor-relative snapshot checks
+must not be read as descriptor-relative write protection or isolation from a hostile
+controller host. Producer/threat-model qualification in original #15 retains this
+trusted-host limitation and must choose the actual controller isolation boundary
+before activation. Neither this documentation nor inactive integration waives any
+original VF0 acceptance criterion or admits host hardening/production execution.
