@@ -1651,16 +1651,20 @@ no new canonicalization or authority claim follows.
 Codex's C6 finding was independently reproduced: the private link helper retained
 structured and encoded token-style URL fragments. Exact-parent fragment RED
 precedes a bounded plain-anchor syntax check; ordinary report, issue, review and
-step anchors remain, while structured/encoded fragment payloads refuse
-`LINK_URL` independently of relation evaluation. This is syntax hygiene, not a
-complete credential classifier: opaque paths/anchors can still carry credentials.
-An authoritative provider adapter/owner must verify the actual public,
-non-bearer target before handoff. No provider adapter is activated here.
+step anchors remain, while key/value forms and percent-encoded fragments fail
+`LINK_URL` independently of relation evaluation. The grammar also rejects other
+characters outside its plain-anchor set. It is narrow syntax hygiene, not a
+complete credential classifier: some bearer-shaped plain fragments and opaque
+paths/anchors can still carry credentials. An authoritative provider adapter or
+owner must verify the actual public, non-bearer target before handoff. No
+provider adapter is activated here.
 
 The current duplicate-image-Env suggestion is not adopted: both identical and
 conflicting duplicates deliberately refuse inspected-image ambiguity before
-container creation under R2. This is a supported-image restriction, not a claim
-that duplicate Env is invalid OCI or that every pinned image is compatible.
+container creation under R2. An exact regression now covers both forms and
+asserts refusal before create or attachment. This is a supported-image
+restriction, not a claim that duplicate Env is invalid OCI or that every pinned
+image is compatible.
 Whole-call host trust, local non-isolation, slow owned-inspect and late-create
 remain separately unfixed qualifications under original #15. VF0 and #318 stay
 gated; no whole-Issue-6 implementation or authenticated producer is introduced.

@@ -3299,6 +3299,38 @@ class VF0DockerBackendTests(unittest.TestCase):
                     )
             attached.assert_not_called()
 
+    def test_duplicate_image_environment_rejects_before_create(self) -> None:
+        class DuplicateImageEnvironment(FakeDockerBackend):
+            duplicate: str
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                result = super()._command(*args, timeout=timeout)
+                if args[:2] == ("image", "inspect"):
+                    spec = json.loads(result.stdout)
+                    spec[0]["Config"]["Env"].append(self.duplicate)
+                    result.stdout = json.dumps(spec).encode()
+                return result
+
+        for duplicate in ("PATH=/usr/bin", "PATH=/different"):
+            with self.subTest(duplicate=duplicate), tempfile.TemporaryDirectory() as td:
+                root = Path(td).resolve()
+                backend = DuplicateImageEnvironment(self.image, root)
+                backend.duplicate = duplicate
+                with mock.patch("tools.vf0_execution._capture_process") as attached:
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^OCI_IMAGE_INSPECT$"
+                    ):
+                        backend.run(
+                            root,
+                            ["/bin/true"],
+                            ExecutionLimits(),
+                            subject=self.subject,
+                        )
+                attached.assert_not_called()
+                self.assertEqual([("image", "inspect", self.image)], backend.calls)
+
     def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
