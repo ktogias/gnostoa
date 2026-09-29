@@ -191,6 +191,34 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(runner.RunnerError):
                 handler.redirect_request(request, None, 302, "Found", {}, target)
 
+    def test_github_client_rejects_oversized_response_after_bounded_read(self) -> None:
+        response_limit = 32
+
+        class _OversizedResponse(io.BytesIO):
+            def __init__(self) -> None:
+                super().__init__(b"x" * (response_limit + 1))
+                self.headers: dict[str, str] = {}
+                self.requested_read_size: int | None = None
+
+            def read(self, size: int = -1) -> bytes:
+                self.requested_read_size = size
+                return super().read(size)
+
+        client = runner.GitHubReadClient("test-token")
+        response = _OversizedResponse()
+        with (
+            patch.object(runner, "_MAX_RESPONSE_BYTES", response_limit),
+            patch.object(client._opener, "open", return_value=response) as open_request,
+            self.assertRaisesRegex(
+                runner.RunnerError,
+                "GitHub API response exceeds bounded size",
+            ),
+        ):
+            client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
+
+        self.assertEqual(response_limit + 1, response.requested_read_size)
+        open_request.assert_called_once()
+
     def test_malformed_credentials_do_not_echo_through_real_http_headers(self) -> None:
         cases = (
             (
@@ -462,7 +490,13 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 page = int(query.get("page", ["1"])[0])
                 start = (page - 1) * page_size
                 stop = min(start + page_size, total_comments)
-                comments = [{"id": comment_id} for comment_id in range(start, stop)]
+                comments = [
+                    {"body": "x" * 45_000, "id": comment_id}
+                    for comment_id in range(start, stop)
+                ]
+                response_size = len(runner.json.dumps(comments).encode("utf-8"))
+                if response_size > runner._MAX_RESPONSE_BYTES:
+                    raise runner.RunnerError("GitHub API response exceeds bounded size")
                 headers: dict[str, str] = {}
                 if stop < total_comments:
                     headers["link"] = (
