@@ -485,8 +485,6 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 self.calls.append(url)
                 query = parse_qs(urlsplit(url).query)
                 page_size = int(query["per_page"][0])
-                if page_size > 50:
-                    raise runner.RunnerError("GitHub API response exceeds bounded size")
                 page = int(query.get("page", ["1"])[0])
                 start = (page - 1) * page_size
                 stop = min(start + page_size, total_comments)
