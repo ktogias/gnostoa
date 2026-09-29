@@ -686,6 +686,55 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(owned=owned):
                 self.assertIn(owned, entry["implementation"])
 
+    def test_the_artefact_makes_the_same_claim_as_the_prompt(self) -> None:
+        # The prompt was corrected to stop asking which case a no-hunk entry is; the
+        # generated header still told the reviewer that the status distinguishes them.
+        # An artefact contradicting the instruction is worse than either alone, because
+        # the reviewer has no third source to break the tie.
+        builder = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "filename": "b.bin",
+                                "status": "modified",
+                                "additions": 0,
+                                "deletions": 0,
+                                "patch": None,
+                                "sha": "a" * 40,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            builder.build(context)
+            header = (context / "no-patch.txt").read_text(encoding="utf-8")
+        self.assertNotIn("status below distinguishes", header)
+        self.assertIn("patches-source", header)
+        self.assertIn("not examined", header)
+
+    def test_an_oversized_execution_file_is_refused_before_it_is_parsed(self) -> None:
+        # The report is bounded at 64 KiB, but the whole execution file was parsed
+        # first, so an oversized one consumed runner memory before any bound applied.
+        publisher = _load_script(PUBLISHER)
+        with tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(scratch) / "execution.json"
+            path.write_text(
+                json.dumps([{"type": "result", "result": "x" * 200}]), encoding="utf-8"
+            )
+            previous = publisher._MAX_EXECUTION_BYTES
+            publisher._MAX_EXECUTION_BYTES = 10
+            try:
+                rendered = publisher.render(path)
+            finally:
+                publisher._MAX_EXECUTION_BYTES = previous
+        self.assertIn("unavailable", rendered)
+        self.assertIn("too large", rendered)
+
     def test_the_prompt_does_not_ask_for_a_verdict_it_cannot_support(self) -> None:
         # Blob status alone cannot separate a binary content change from a mode-only
         # one: both arrive as `modified` with no hunks. The real unified diff does, by
@@ -849,6 +898,69 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertTrue((stub_dir / "failed-once").exists(), "no failure injected")
             self.assertTrue((context / "diff.stat").is_file(), result.stderr)
+
+    def test_only_a_refusal_reaches_the_lossy_fallback(self) -> None:
+        # After the retry, every persistent failure still entered the fallback, so an
+        # authentication error, a permission error or an outage was published as
+        # "the provider refused the diff" -- an incomplete review presented as a
+        # complete one, which is the claim class this Decision keeps closing.
+        if _SH is None:  # pragma: no cover - toolchain guard
+            self.skipTest("sh is required to execute the collection step")
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+
+        def run_with(diff_error: str) -> subprocess.CompletedProcess[str]:
+            with tempfile.TemporaryDirectory() as scratch:
+                work = pathlib.Path(scratch)
+                stub_dir = work / "bin"
+                stub_dir.mkdir()
+                (stub_dir / "comparison").write_text(
+                    json.dumps({"files": []}), encoding="utf-8"
+                )
+                (stub_dir / "gh").write_text(
+                    "#!/bin/sh\n"
+                    'for a in "$@"; do\n'
+                    '  case "$a" in *v3.diff*)\n'
+                    f'    echo "{diff_error}" >&2\n'
+                    "    exit 1 ;;\n"
+                    "  esac\n"
+                    "done\n"
+                    'case "$*" in\n'
+                    "  *total_commits*) echo 0 ;;\n"
+                    '  *compare*) cat "${STUB_DIR}/comparison" ;;\n'
+                    "esac\n",
+                    encoding="utf-8",
+                )
+                (stub_dir / "gh").chmod(0o755)
+                return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                    [str(_SH), "-s"],
+                    input=script,
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "HOME": scratch,
+                        "GITHUB_WORKSPACE": scratch,
+                        "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                        "GH_TOKEN": "stub",  # nosec B105
+                        "REPOSITORY": "owner/repo",
+                        "PULL_NUMBER": "329",
+                        "BASE_SHA": "a" * 40,
+                        "HEAD_SHA": "b" * 40,
+                        "CONTEXT_DIR": str(work / "context"),
+                        "MAX_BYTES": "2048",
+                        "STUB_DIR": str(stub_dir),
+                        "RETRY_SLEEP": "0",
+                    },
+                )
+
+        # A refusal is what the fallback exists for: the step completes.
+        self.assertEqual(0, run_with("gh: HTTP 406: diff too large").returncode)
+        # Anything else must stop, rather than publish an incomplete review as though
+        # the provider had declined.
+        for other in ("gh: HTTP 401: Bad credentials", "gh: HTTP 500: server error"):
+            with self.subTest(failure=other):
+                self.assertNotEqual(0, run_with(other).returncode)
 
     def test_a_refused_diff_does_not_fail_the_step(self) -> None:
         # The step runs under `set -eu`, and the provider can refuse the diff of a very

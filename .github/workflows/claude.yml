@@ -267,8 +267,22 @@ jobs:
           # Retried before the fallback is accepted. A transient 5xx here is not a
           # refusal, and treating it as one silently downgrades the review to hunks
           # with no surrounding context.
+          # Only an actual refusal may reach the fallback. After the retry, every
+          # persistent failure used to enter it, so an authentication error, a
+          # permission error or an outage was published as "the provider refused the
+          # diff" -- an incomplete review presented as a complete one. The provider
+          # answers 406 when a comparison's diff is too large to generate, so that is
+          # the one status the fallback accepts; anything else stops the step. This
+          # fails closed: an unrecognised message is an error, not a refusal.
           if ! api_to_file "${CONTEXT_DIR}/diff.full" "${comparison}" \
-            -H "Accept: application/vnd.github.v3.diff"; then
+            -H "Accept: application/vnd.github.v3.diff" \
+            2> "${CONTEXT_DIR}/diff.err"; then
+            if ! grep -qi 'http 406' "${CONTEXT_DIR}/diff.err"; then
+              echo "ERROR: the unified diff request failed and was not a refusal:" >&2
+              cat "${CONTEXT_DIR}/diff.err" >&2
+              exit 1
+            fi
+            rm -f "${CONTEXT_DIR}/diff.err"
             mv "${CONTEXT_DIR}/assembled.diff" "${CONTEXT_DIR}/diff.full"
             printf 'NOTE: the provider refused the unified diff for this comparison.\n' \
               > "${CONTEXT_DIR}/patches-source"
@@ -277,6 +291,7 @@ jobs:
             printf 'outside each hunk is absent and capped files may be missing.\n' \
               >> "${CONTEXT_DIR}/patches-source"
           fi
+          rm -f "${CONTEXT_DIR}/diff.err"
           rm -f "${CONTEXT_DIR}/assembled.diff"
           full_bytes="$(wc -c < "${CONTEXT_DIR}/diff.full")"
           if [ "${full_bytes}" -eq 0 ]; then

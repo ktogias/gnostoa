@@ -50,6 +50,8 @@ from typing import Any
 from review_context_paths import within
 
 _MAX_BYTES = 65536
+# The execution file holds every turn, not just the report, so its bound is larger.
+_MAX_EXECUTION_BYTES = 8 * 1024 * 1024
 _MIN_FENCE = 3
 _BACKTICK_RUN = re.compile(r"`+")
 
@@ -105,6 +107,17 @@ def neutralise(text: str) -> str:
 def render(execution_file: pathlib.Path) -> str:
     """Return the publishable report for ``execution_file``."""
     try:
+        # Checked before the parse. The report is bounded at _MAX_BYTES, but the whole
+        # execution file was materialised first, so an oversized one consumed runner
+        # memory before any bound applied -- a bound that arrives after the cost is not
+        # a bound.
+        if execution_file.stat().st_size > _MAX_EXECUTION_BYTES:
+            return (
+                "## Review report unavailable\n\n"
+                f"The execution output is too large to publish safely "
+                f"({execution_file.stat().st_size} bytes, limit "
+                f"{_MAX_EXECUTION_BYTES}). The job's logs hold it.\n"
+            )
         turns = json.loads(execution_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         return f"## Review report unavailable\n\nCould not read the execution output: {error}\n"

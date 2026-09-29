@@ -532,6 +532,24 @@ No new dependency, service or runtime is introduced.
    claimed to prevent. The script reports an unreadable or absent file rather than the
    step hiding it.
 
+   **Only a refusal reaches the lossy fallback.** After the retry, every persistent
+   failure still entered it, so an authentication error, a permission error or an
+   outage was published as "the provider refused the diff" -- an incomplete review
+   presented as a complete one, which is the claim class this Decision exists to close.
+   The provider answers 406 when a comparison's diff is too large to generate, and that
+   is the one status the fallback accepts. It fails closed: an unrecognised failure is
+   an error, not a refusal.
+
+   **The artefact says what the prompt says.** Correcting the prompt to stop asking
+   which case a no-hunk entry is left `no-patch.txt` still telling the reviewer that
+   the status distinguishes them. An artefact contradicting the instruction is worse
+   than either being wrong alone, because the reviewer has no third source with which
+   to break the tie. The header now carries the same rule, in the same words.
+
+   **The execution file is bounded before it is parsed.** The report is capped at 64
+   KiB, but the whole file was materialised first, so an oversized one consumed runner
+   memory before any cap applied. A bound that arrives after the cost is not a bound.
+
    **Every provider request in the job is retried**, not only the comparison. The Pull
    Request lookup on an `issue_comment` event and the unified-diff request were both
    unguarded under `set -eu`; the second is worse than a failure, because treating a

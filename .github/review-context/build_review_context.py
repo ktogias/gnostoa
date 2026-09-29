@@ -141,8 +141,11 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
                 "Changed files for which the comparison carried no hunks. This means\n",
                 "either a binary or oversized blob, whose bytes are not in the diff, or\n",
                 "a metadata-only change such as a mode bit, an empty file or a pure\n",
-                "rename. The status below distinguishes them; the unified diff may\n",
-                "still describe the change.\n",
+                "rename. The status below does NOT distinguish them: a binary content\n",
+                "change and a mode-only change both arrive as 'modified' with no hunks.\n",
+                "A real unified diff does, by its mode lines and its binary notice. If\n",
+                "patches-source is present the diff was assembled per file and carries\n",
+                "neither, so report such an entry as not examined rather than guessing.\n",
                 "\n",
             ]
             + [
