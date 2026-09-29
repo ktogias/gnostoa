@@ -1270,8 +1270,20 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("always()", condition)
         self.assertNotIn("execution_file != ''", condition)
         # And the script has to handle the empty case rather than the step hiding it.
+        # Dropping the gate is not enough on its own: `main` confines its argument
+        # before rendering anything, so an empty EXECUTION_FILE made the step crash
+        # instead of publishing -- the same silent outcome by a different route.
         publisher = _load_script(PUBLISHER)
         self.assertIn("unavailable", publisher.render(pathlib.Path("/nonexistent/x")))
+        with tempfile.TemporaryDirectory() as scratch:
+            summary = pathlib.Path(scratch) / "summary.md"
+            for missing in ("", "   ", str(pathlib.Path(scratch) / "absent.json")):
+                with self.subTest(execution=repr(missing)):
+                    summary.write_text("", encoding="utf-8")
+                    self.assertEqual(
+                        0, publisher.main(["publish_report.py", missing, str(summary)])
+                    )
+                    self.assertIn("unavailable", summary.read_text(encoding="utf-8"))
 
     def test_every_provider_request_in_the_job_is_retried(self) -> None:
         # Each unguarded `gh api` under `set -eu` is one transient failure away from

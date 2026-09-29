@@ -132,7 +132,23 @@ def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(f"usage: {argv[0]} <execution-file> <summary-file>", file=sys.stderr)
         return 2
-    execution = within(argv[1], "RUNNER_TEMP", must_exist=True)
+    # The step no longer gates on the action having produced an execution file, so this
+    # has to handle its absence. Confining a path that does not exist, or refusing an
+    # empty one, would crash here and publish nothing -- the same silent failure the
+    # gate removal was meant to end, one layer down. `render` already reports an
+    # unreadable file, so the path is confined without requiring it to exist.
+    raw = argv[1]
+    if not raw.strip():
+        summary_only = within(argv[2], "", must_exist=False)
+        with summary_only.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "## Claude review report\n\n"
+                "The reviewer produced no execution output: it failed before writing\n"
+                "one, so there is nothing to publish. The job's logs hold the reason.\n"
+                "Report unavailable.\n"
+            )
+        return 0
+    execution = within(raw, "RUNNER_TEMP", must_exist=False)
     # The summary path is not held to a root. GITHUB_STEP_SUMMARY happens to live under
     # RUNNER_TEMP on today's hosted runners, but that is an implementation detail, and
     # refusing the report because the runner moved a file would lose the review over an
