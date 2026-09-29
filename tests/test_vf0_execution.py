@@ -4568,10 +4568,12 @@ class _ReadOnlyProbeTransport:
         inspection: str = "owned",
         *,
         auto_remove: bool = False,
+        run_exit_code: int = 0,
     ) -> None:
         self.failure = failure
         self.inspection = inspection
         self.auto_remove = auto_remove
+        self.run_exit_code = run_exit_code
         self.calls: list[list[str]] = []
         self.present = False
         self.name = ""
@@ -4605,7 +4607,7 @@ class _ReadOnlyProbeTransport:
                 self.present = False
             return subprocess.CompletedProcess(
                 list(argv),
-                0,
+                self.run_exit_code,
                 stdout=b'{"rootfs_read_only":true,"workspace_bind_read_only":true}',
                 stderr=b"",
             )
@@ -4960,6 +4962,69 @@ class VF0SmokeContractTests(unittest.TestCase):
         for call in transport.calls[1:]:
             self.assertEqual(transport.name, call[-1])
         sleep.assert_not_called()
+
+    def test_read_only_probe_reports_completed_nonzero_behavior_after_cleanup(
+        self,
+    ) -> None:
+        module = _load_smoke_module()
+        transport = _ReadOnlyProbeTransport(auto_remove=True, run_exit_code=17)
+        with (
+            mock.patch(
+                "tools.vf0_execution._capture_process", side_effect=transport.capture
+            ),
+            mock.patch(
+                "tools.vf0_execution.time.monotonic",
+                side_effect=[0.0, 0.0, 2.0],
+            ),
+            mock.patch("tools.vf0_execution.time.sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(
+                AssertionError, "READONLY_BEHAVIOR_PROBE_FAILED"
+            ):
+                module._probe_read_only_behavior(module.FIXED_IMAGE)
+
+        run = transport.calls[0]
+        self.assertIn("--rm", run)
+        self.assertFalse(transport.present)
+        self.assertEqual(["run", "inspect"], [call[1] for call in transport.calls])
+        sleep.assert_not_called()
+
+    def test_read_only_probe_keeps_unobserved_create_unverified_after_timeout(
+        self,
+    ) -> None:
+        module = _load_smoke_module()
+
+        class AbsentAfterTimeout(_ReadOnlyProbeTransport):
+            def run(
+                self, argv: Sequence[str], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                try:
+                    return super().run(argv, **kwargs)
+                except subprocess.TimeoutExpired:
+                    self.present = False
+                    raise
+
+        transport = AbsentAfterTimeout(
+            failure=subprocess.TimeoutExpired("/usr/bin/docker run", 30),
+            auto_remove=True,
+        )
+        with (
+            mock.patch(
+                "tools.vf0_execution._capture_process", side_effect=transport.capture
+            ),
+            mock.patch(
+                "tools.vf0_execution.time.monotonic",
+                side_effect=[0.0, 0.0, 2.0],
+            ),
+            mock.patch("tools.vf0_execution.time.sleep"),
+        ):
+            with self.assertRaisesRegex(
+                ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
+            ) as caught:
+                module._probe_read_only_behavior(module.FIXED_IMAGE)
+
+        self.assertIsInstance(caught.exception.__context__, ExecutionRejected)
+        self.assertEqual("DOCKER_COMMAND_FAILED", str(caught.exception.__context__))
 
     def test_read_only_probe_does_not_ignore_unverified_cleanup(self) -> None:
         module = _load_smoke_module()

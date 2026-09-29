@@ -217,6 +217,7 @@ def _outcome(value: Any) -> tuple[int, dict[str, tuple[str, str]]]:
 
 def _guarantees(value: Any, required: set[str]) -> None:
     _need(type(value) is dict and len(value) <= 32, "GUARANTEE_SET")
+    _need(set(value) <= _GUARANTEES, "GUARANTEE_SET")
     _need(required <= set(value), "MISSING_GUARANTEE")
     for name in sorted(value):
         _text(name, 80)
@@ -251,7 +252,7 @@ def _policy(value: Any) -> tuple[dict[str, Any], set[str]]:
     for name in required:
         _text(name, 80)
     _need(
-        len(set(required)) == len(required) and _GUARANTEES <= set(required),
+        len(set(required)) == len(required) and set(required) == _GUARANTEES,
         "POLICY_GUARANTEES",
     )
     age = policy["max_age_seconds"]

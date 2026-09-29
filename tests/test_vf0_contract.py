@@ -400,6 +400,30 @@ class VF0RelationTests(unittest.TestCase):
                         _rebind(doc)
                         self.assertRejected(doc)
 
+    def test_unregistered_guarantee_names_reject(self) -> None:
+        unknown = "unregistered_required_guarantee"
+        doc = copy.deepcopy(self.document)
+        doc["policy"]["required_guarantees"].append(unknown)
+        for block in ("admission", "evidence"):
+            doc[block]["guarantees"][unknown] = {
+                "state": "VERIFIED",
+                "records": ["sha256:" + "b" * 64],
+            }
+        _rebind(doc)
+        result = self.assertRejected(doc)
+        self.assertIn("POLICY_GUARANTEES", result["reasons"])
+
+        for block in ("admission", "evidence"):
+            with self.subTest(block=block):
+                doc = copy.deepcopy(self.document)
+                doc[block]["guarantees"][unknown] = {
+                    "state": "VERIFIED",
+                    "records": ["sha256:" + "b" * 64],
+                }
+                _rebind(doc)
+                result = self.assertRejected(doc)
+                self.assertIn("GUARANTEE_SET", result["reasons"])
+
     def test_verified_guarantee_requires_retained_record(self) -> None:
         self.document["evidence"]["guarantees"]["source_revalidation"]["records"] = []
         self.assertRejected(self.document)
