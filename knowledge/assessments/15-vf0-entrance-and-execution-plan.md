@@ -1767,3 +1767,73 @@ fix uses `Decimal.as_integer_ratio()` and integer modulo, so no arithmetic
 rounding or signal trap from caller context can alter representability. The
 focused Green passed both regressions; final production file SHA-256 is
 `f687e0270d6a60785cac4d5fa1abdf48b00e7cb26d5633d0cc20c6ea5361797f`.
+
+### AUD49 pre-edit checkpoint — discard unbounded trusted-Git diagnostics
+
+Fresh provider read-back at `2026-09-29T13:27:31Z`: Issue #15 remains OPEN and
+the sole `roadmap:now` selection; protected `main` is
+`638e59a30d9b55dda6d2834f34dd6a472d06eef1`; PR #319 is OPEN at exact candidate
+`9e3e453245c6d454c8a0055199994c35737c1774` / tree
+`3596d20249ff05c2822b37119e207502192af325`. The selected objective remains
+Issue #15. The unresolved integrated invariant remains prior-evidence refusal
+plus an authenticated producer-to-independent-consumer round trip. VF0 remains
+critical, inactive and incomplete.
+
+Codex's exact-head P2 at
+[discussion](https://github.com/ktogias/gnostoa/pull/319#discussion_r4133736755)
+identified unbounded diagnostic capture in `_trusted_git()`. The owner-selected
+Issue #15 / Decision 0092 outcome already requires bounded controller-owned
+execution output and exact Git-subject materialization; the existing owner
+direction admits candidate-local corrections to in-scope exact-head findings.
+This correction stays within that outcome and does not add a public interface,
+change authority, producer admission, activation, readiness or merge state.
+
+Before source edits, an exact-candidate Development Container reproducer used
+16,000 missing paths in repository-local `.git/objects/info/alternates`. It
+observed 2,224,000 stderr bytes through `_trusted_git()` and `_write_git_blob()`
+and another 2,224,000 bytes written to a temporary file by
+`_trusted_git_tree_entries()`, against the existing 1 MiB bounded-output
+reference. The script SHA-256 is
+`dda6dcffb592ad61f3c805b10c9974c3a88274ad935cc3fd6db714ecc7f526ad`; its log
+SHA-256 is
+`b12a789a7ad9185dbcec19979476fa6a2b916c9d97bd89a0506fa16f85d99391`.
+Production source remained unchanged at
+`f687e0270d6a60785cac4d5fa1abdf48b00e7cb26d5633d0cc20c6ea5361797f`.
+
+Expected behavior: these private trusted-Git reads preserve their current
+stdout, object bytes, tree entries, ordering, exit handling and stable refusal
+codes, while discarding unused stderr directly to `DEVNULL`; repository-controlled
+diagnostics must never be accumulated in memory or temporary storage. Add an
+exact adversarial regression that verifies this sink for `_trusted_git()`,
+`_write_git_blob()` and `_trusted_git_tree_entries()`.
+
+Pre-change evidence mode: `failing RED/reproducer` against exact parent
+`9e3e453245c6d454c8a0055199994c35737c1774`. The test-only Development
+Container run failed exactly because `_trusted_git()` passed
+`capture_output=True` instead of a discarded-stderr sink. It ran one test with
+one intended failure and did not edit production source. RED-only test file
+SHA-256 is `06613d0662ee3df75c46ca89b2c1545d30105a6426f041cb53fc8d188956b633`;
+log SHA-256 is
+`6842bc7a81625adf530115a0bb30695c42fce570917bf0117c61b6c77aebf857`.
+Pre-edit production source remained SHA-256
+`f687e0270d6a60785cac4d5fa1abdf48b00e7cb26d5633d0cc20c6ea5361797f`.
+No emergency or reconstructed chronology is used.
+
+The production correction sets `stderr=DEVNULL` for all three trusted Git helper
+paths. `_trusted_git()` now captures only the fixed command's bounded identity
+stdout; `_write_git_blob()` retains its direct bounded blob destination; and the
+tree-listing reader retains its existing bounded streaming stdout parser without
+creating a diagnostics tempfile. The first focused Green passed one test; after
+the compact tree-reader adjustment, the final normalized candidate passed all
+177 tests in `tests.test_vf0_execution` with two environment-limited skips in
+36 seconds. The final focused log SHA-256 is
+`c41829e17f433fcaa0905cfa3995150a02bce75c52a2e77e93593fd3a91ed695`.
+Final production source SHA-256 is
+`9106a5b2762bbe2b765dc94b94176f2e212e1cd1ac7d2ee0f5172cf47e8fb794`; final
+regression file SHA-256 is
+`e8b75b67ed08c512f6b27406f8475d3059ef00ee98513bb11964d210f2296435`. The
+focused run used prepared tree `e5bb3436736e97de83196958704affbcd017a3a4`
+with parent-bound fast-preparation receipt digest
+`sha256:11fbbe2e64a25826219c3d4947f20681b5a2ad8236f0a9f2e986b37fac6af6eb`;
+the final exact-candidate seal will bind the superseding receipt and full-suite
+results.

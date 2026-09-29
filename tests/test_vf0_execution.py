@@ -666,6 +666,76 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_TREE_BOUND"):
                     module._trusted_git_tree_entries(repo, subject.commit)
 
+    def test_trusted_git_reads_discard_repository_controlled_stderr(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo, subject = _repo(root)
+            blob = _git(repo, "rev-parse", f"{subject.commit}:subject.txt")
+            payload = (repo / "subject.txt").read_bytes()
+            alternates = repo / ".git" / "objects" / "info" / "alternates"
+            alternates.parent.mkdir(parents=True, exist_ok=True)
+            alternates.write_text(
+                "\n".join(
+                    str(root / f"missing-alternate-{index:06d}")
+                    for index in range(10_000)
+                )
+                + "\n"
+            )
+
+            real_run = module.subprocess.run
+            real_popen = module.subprocess.Popen
+            run_stderr_targets: list[object] = []
+            popen_stderr_targets: list[object] = []
+
+            def stderr_is_discarded(target: object) -> bool:
+                return (
+                    target is subprocess.DEVNULL
+                    or getattr(target, "name", None) == os.devnull
+                )
+
+            def bounded_run(
+                *args: object, **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                self.assertNotIn("capture_output", kwargs)
+                self.assertIs(kwargs.get("stderr"), subprocess.DEVNULL)
+                run_stderr_targets.append(kwargs["stderr"])
+                return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+            def bounded_popen(
+                *args: object, **kwargs: object
+            ) -> subprocess.Popen[bytes]:
+                self.assertTrue(stderr_is_discarded(kwargs.get("stderr")))
+                popen_stderr_targets.append(kwargs["stderr"])
+                return real_popen(*args, **kwargs)  # type: ignore[arg-type]
+
+            with (
+                mock.patch.object(module.subprocess, "run", side_effect=bounded_run),
+                mock.patch.object(
+                    module.subprocess, "Popen", side_effect=bounded_popen
+                ),
+            ):
+                tree = module._trusted_git(
+                    repo, "rev-parse", "--verify", f"{subject.commit}^{{tree}}"
+                )
+                self.assertEqual(subject.tree.encode("ascii"), tree.strip())
+                materialized = root / "materialized-blob"
+                self.assertEqual(
+                    payload,
+                    module._write_git_blob(repo, blob, materialized, len(payload)),
+                )
+                entries = module._trusted_git_tree_entries(repo, subject.commit)
+                self.assertTrue(any(b"\tsubject.txt" in entry for entry in entries))
+
+            self.assertTrue(run_stderr_targets)
+            self.assertTrue(popen_stderr_targets)
+            self.assertTrue(
+                all(target is subprocess.DEVNULL for target in run_stderr_targets)
+            )
+            self.assertTrue(
+                all(stderr_is_discarded(target) for target in popen_stderr_targets)
+            )
+
     def test_missing_promised_blob_never_invokes_configured_ssh_command(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:

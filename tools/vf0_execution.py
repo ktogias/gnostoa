@@ -426,7 +426,8 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
             _trusted_git_argv(repo, *args),
             check=False,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             env=_GIT_ENV,
             timeout=30,
         )
@@ -437,10 +438,10 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
 
 
 def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
-    """Read a bounded Git tree listing without buffering unbounded provider output."""
+    """Read a bounded Git tree listing and discard repository diagnostics."""
 
     try:
-        with tempfile.TemporaryFile() as stderr:
+        with open(os.devnull, "wb") as stderr:
             # Fixed /usr/bin/git, list argv, scrubbed env, no shell: intentional audit boundary.
             process = subprocess.Popen(  # nosec B603  # nosemgrep
                 _trusted_git_argv(repo, "ls-tree", "-rzl", "--full-tree", commit),
@@ -536,7 +537,7 @@ def _write_git_blob(
                     check=False,
                     stdin=subprocess.DEVNULL,
                     stdout=output,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     env=_GIT_ENV,
                     timeout=30,
                 )
