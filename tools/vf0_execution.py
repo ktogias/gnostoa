@@ -66,7 +66,7 @@ _LOCAL_CONTAINMENT_WRAPPER_ARG0 = "gnostoa-local-ready"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _OCI_WRAPPER_EXECUTABLE = "/usr/local/bin/python3"
-_OCI_COMPLETION_TOKEN_ENV = "GNOSTOA_VF0_COMPLETION_TOKEN"
+_OCI_COMPLETION_TOKEN_ENV = "GNOSTOA_VF0_COMPLETION_TOKEN"  # nosec B105 -- environment variable name, not a credential
 _OCI_EXIT_SENTINEL_PREFIX = b"\x1eGNOSTOA_VF0_EXIT_V1:"
 _OCI_EXIT_SENTINEL_SUFFIX = b"\x1f"
 _OCI_EXIT_TRAILER_MAX = (
@@ -1017,7 +1017,7 @@ def _capture_process(
         )
         process_environment = {
             **_CLEAN_ENV,
-            _OCI_COMPLETION_TOKEN_ENV: completion_token,
+            _OCI_COMPLETION_TOKEN_ENV: completion_token,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- generated per-run nonce, not a literal
         }
     capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
@@ -1315,7 +1315,7 @@ class DockerBackend:
         subject: GitSubject,
         image_id: str,
         image_environment: dict[str, str],
-        completion_token: str,
+        completion_token: str,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- runtime parameter, not a literal
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
