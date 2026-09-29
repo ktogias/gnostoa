@@ -387,8 +387,12 @@ jobs:
               ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.issue.author_association)
                       && github.event.issue.title)
-                  || (github.event.issue.title
-                      && '(withheld: untrusted issue author)')
+                  || (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                        github.event.pull_request.author_association)
+                      && github.event.pull_request.title)
+                  || ((github.event.issue.title
+                        || github.event.pull_request.title)
+                      && '(withheld: untrusted author)')
                   || '' }}
             Base: ${{ steps.review_head.outputs.base_sha }}
             Head: ${{ steps.review_head.outputs.head_sha }}

@@ -100,10 +100,13 @@ def quote_path(name: str) -> str:
 
 def base_path_of(entry: dict[str, Any]) -> str:
     """Return the path the base revision holds this entry under."""
-    if entry.get("status") == "renamed":
+    if entry.get("status") in ("renamed", "copied"):
+        # A copy carries previous_filename exactly as a rename does, and the source is
+        # the one thing a copy is about: without it the fallback claims the destination
+        # existed on the base side and no summary says where the content came from.
         previous = entry.get("previous_filename")
         if not previous:
-            raise ValueError("a renamed entry carries no previous_filename")
+            raise ValueError(f"a {entry['status']} entry carries no previous_filename")
         return str(previous)
     return str(entry["filename"])
 
@@ -119,7 +122,8 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
         + (
             f"{quote_path(str(entry['previous_filename']))} -> "
             f"{quote_path(str(entry['filename']))}"
-            if entry.get("status") == "renamed" and entry.get("previous_filename")
+            if entry.get("status") in ("renamed", "copied")
+            and entry.get("previous_filename")
             else quote_path(str(entry["filename"]))
         )
         for entry in files
@@ -153,7 +157,7 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
                 + (
                     f"{quote_path(str(entry['previous_filename']))} -> "
                     f"{quote_path(str(entry['filename']))}\n"
-                    if entry.get("status") == "renamed"
+                    if entry.get("status") in ("renamed", "copied")
                     and entry.get("previous_filename")
                     else f"{quote_path(str(entry['filename']))}\n"
                 )

@@ -53,6 +53,10 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.issue.author_association",
         "github.event.pull_request.author_association",
         "github.event.issue.title",
+        # The review triggers carry no github.event.issue, so the title has to be
+        # reachable from the Pull Request payload as well or two of the four admitted
+        # paths render an empty one.
+        "github.event.pull_request.title",
     }
 )
 # Expressions may be compound (a trust check guarding a field), so the contract
@@ -493,6 +497,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             "github.event.issue.body",
             "github.event.pull_request.body",
             "github.event.issue.title",
+            "github.event.pull_request.title",
         ):
             with self.subTest(expression=expression):
                 self.assertIn(expression, prompt)
@@ -819,6 +824,50 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for octal in ("013", "014", "034", "035", "036", "015"):
             with self.subTest(octal=octal):
                 self.assertIn(octal, readme)
+
+    def test_a_copied_entry_keeps_the_path_it_was_copied_from(self) -> None:
+        # GitHub reports `copied` with a previous_filename just as it reports `renamed`.
+        # Treating only renames that way made the fallback claim the destination
+        # existed on the base side, and dropped the source from every summary -- the
+        # reviewer cannot tell what a copy came from, which is the one thing a copy is.
+        builder = _load_script(BASE_COLLECTOR)
+        entry = {
+            "filename": "dst.py",
+            "previous_filename": "src.py",
+            "status": "copied",
+            "additions": 1,
+            "deletions": 0,
+            "patch": "@@ -0,0 +1 @@\n+a",
+            "sha": "a" * 40,
+        }
+        self.assertEqual("src.py", builder.base_path_of(entry))
+        with tempfile.TemporaryDirectory() as d:
+            context = pathlib.Path(d)
+            (context / "comparison.json").write_text(
+                json.dumps({"files": [entry]}), encoding="utf-8"
+            )
+            builder.build(context)
+            stat = (context / "diff.stat").read_text(encoding="utf-8")
+            assembled = (context / "assembled.diff").read_text(encoding="utf-8")
+        self.assertIn("src.py -> dst.py", stat)
+        self.assertIn("--- a/src.py\n+++ b/dst.py\n", assembled)
+
+    def test_the_title_reaches_the_prompt_on_every_admitted_trigger(self) -> None:
+        # Two of the four admitted paths -- pull_request_review and
+        # pull_request_review_comment -- carry github.event.pull_request and no
+        # github.event.issue, so a title expression reading only the issue rendered
+        # empty there. The title is the change's stated purpose in one line, and the
+        # reviewer has no discussion to recover it from.
+        prompt = " ".join(
+            _claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"].split()
+        )
+        title = prompt.split("Title:", 1)
+        self.assertEqual(2, len(title), prompt)
+        clause = title[1].split("Base:", 1)[0]
+        self.assertIn("github.event.issue.title", clause)
+        self.assertIn("github.event.pull_request.title", clause)
+        # And the trust gate applies to whichever one supplies it.
+        self.assertEqual(2, clause.count("author_association"), clause)
 
     def test_a_one_sided_change_uses_the_null_side_header(self) -> None:
         # Unified diff names the nonexistent side /dev/null. Writing `--- a/<name>` for

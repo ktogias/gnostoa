@@ -106,7 +106,7 @@ No new dependency, service or runtime is introduced.
 2. Every interpolated source in that prompt must be independent of discussion
    length. The admitted set is the repository identity, the issue or Pull Request
    number, head and base SHAs, the issue or Pull Request body, the triggering
-   comment body, the triggering review body, the issue title, the issue and Pull Request author associations, the reviewed head repository name, the
+   comment body, the triggering review body, the issue title and the Pull Request title, the issue and Pull Request author associations, the reviewed head repository name, the
    Pull-Request-backed presence flag on an issue payload and the triggering review
    comment's path, line, diff hunk, original commit id and original line, and
    the resolved pull number the guard step reports. Item type is keyed on that
@@ -157,6 +157,13 @@ No new dependency, service or runtime is introduced.
 10. The reviewer diffs against the **resolved base**, not a fixed branch, and the
    prompt names the repository's declared entry route -- `README.md` first, as
    `AGENTS.md` itself states.
+   The **title** is read from whichever payload carries it. `pull_request_review` and
+   `pull_request_review_comment` carry `github.event.pull_request` and no
+   `github.event.issue`, so a title expression reading only the issue rendered empty on
+   two of the four admitted paths -- and the title is the change's stated purpose in one
+   line, which a reviewer with no discussion cannot recover elsewhere. The trust gate of
+   rule 15 applies to whichever payload supplies it.
+
 11. The prompt must cover every admitted trigger payload. `issue_comment` carries
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
@@ -223,6 +230,11 @@ No new dependency, service or runtime is introduced.
    directly. There is no network access in that script and no subprocess at all: the
    step fetches the comparison and the script turns it into files, so no provider
    value reaches a process argument and no other origin is representable.
+
+   A **copied** entry is treated exactly as a renamed one. GitHub reports `copied`
+   with a `previous_filename` too, and the source is the one thing a copy is about:
+   without it the fallback claims the destination existed on the base side and no
+   summary says where the content came from.
 
    A **renamed** entry keeps its old path in every retained artefact, because bytes and
    hunks presented under a new name with no record of where they came from leave the
