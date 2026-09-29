@@ -39,6 +39,38 @@ def _wrap_point(record: bytes, room: int) -> int:
     return end or room
 
 
+_EMBEDDED_BREAKS = {
+    b"\r": b"\\015",
+    "\u0085".encode(): b"\\302\\205",
+    "\u2028".encode(): b"\\342\\200\\250",
+    "\u2029".encode(): b"\\342\\200\\251",
+}
+
+
+def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
+    """Return ``data`` with non-LF line separators escaped, and how many were found.
+
+    A diff record may legally contain a byte sequence a Unicode-aware reader treats as a
+    line break -- a lone CR, or U+0085/U+2028/U+2029 -- while this splitter, and Git
+    itself, orient on LF. Left raw, a changed line carrying `+++ b/forged.py` after one
+    of them appears to the reviewer as a standalone file header, and the reviewer has no
+    git with which to check. They are escaped to their octal UTF-8 bytes, the form
+    `git -c core.quotePath=true` uses and the form pathnames already get here.
+
+    A CR immediately before an LF is a Windows line ending rather than a separator of
+    its own, and is left alone: rewriting it would alter every record of a CRLF-authored
+    file for no gain.
+    """
+    out = data.replace(b"\r\n", b"\x00CRLF\x00")
+    found = 0
+    for raw, escaped in _EMBEDDED_BREAKS.items():
+        count = out.count(raw)
+        if count:
+            found += count
+            out = out.replace(raw, escaped)
+    return out.replace(b"\x00CRLF\x00", b"\r\n"), found
+
+
 def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
     """Hard-wrap records longer than the readable cap.
 
@@ -106,13 +138,21 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     """Write ``diff.full`` as bounded parts and return how many were written."""
     if limit < 1:
         raise ValueError("the byte bound must be positive")
-    data, wrapped, continuations = wrap_long_records(
-        (context / "diff.full").read_bytes()
-    )
+    data, escaped = escape_embedded_breaks((context / "diff.full").read_bytes())
+    data, wrapped, continuations = wrap_long_records(data)
     parts = context / "patches"
     parts.mkdir(exist_ok=True)
+    notes = ""
+    if escaped:
+        notes += (
+            f"{escaped} non-LF line separator(s) -- a lone CR, or U+0085, U+2028 or\n"
+            "U+2029 -- were escaped to their octal UTF-8 bytes. A reader that treats\n"
+            "those as line breaks would otherwise see the text after one of them as a\n"
+            "record of its own, so candidate content could pose as a file header.\n"
+            "\n"
+        )
     if wrapped:
-        (parts / "README").write_text(
+        notes += (
             f"{wrapped} diff record(s) exceeded {_LINE_CAP} bytes on one line and were\n"
             f"hard-wrapped over {continuations} continuation line(s) so a line-oriented\n"
             "reader can reach all of them. No byte of the diff was removed or\n"
@@ -123,9 +163,10 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             "A wrapped record occupies several displayed lines, so counting lines\n"
             "within its hunk no longer matches the file's own numbering. For a\n"
             "finding inside a wrapped record, cite the hunk header and say the line\n"
-            "number is approximate rather than computing one from this text.\n",
-            encoding="utf-8",
+            "number is approximate rather than computing one from this text.\n"
         )
+    if notes:
+        (parts / "README").write_text(notes, encoding="utf-8")
     offset = 0
     index = 0
     while offset < len(data):

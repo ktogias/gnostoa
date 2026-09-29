@@ -96,14 +96,42 @@ jobs:
             printf 'base_sha=%s\n' "${EVENT_BASE_SHA}" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          head_repo="$(gh api "repos/${REPOSITORY}/pulls/${PULL_NUMBER}" \
-            --jq '.head.repo.full_name')"
+          # Every provider request in this job runs under `set -eu`, so one transient
+          # failure ends the job before the reviewer starts. Each attempt writes to its
+          # own file and is moved into place only on success, so a partial body is never
+          # left behind nor appended to by the next attempt.
+          api_to_file() {
+            api_target=$1
+            shift
+            api_attempt=1
+            while :; do
+              if gh api "$@" > "${api_target}.attempt" 2>"${api_target}.err"; then
+                mv "${api_target}.attempt" "${api_target}"
+                rm -f "${api_target}.err"
+                return 0
+              fi
+              rm -f "${api_target}.attempt"
+              if [ "${api_attempt}" -ge 3 ]; then
+                cat "${api_target}.err" >&2
+                rm -f "${api_target}.err"
+                return 1
+              fi
+              sleep "$(( api_attempt * ${RETRY_SLEEP:-5} ))"
+              api_attempt=$(( api_attempt + 1 ))
+            done
+          }
+          # One retried request, and both fields come from that one retained response:
+          # asking twice let the head change between the fork check and the SHA read.
+          pull_json="${RUNNER_TEMP}/pull.json"
+          api_to_file "${pull_json}" "repos/${REPOSITORY}/pulls/${PULL_NUMBER}"
+          head_repo="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["repo"]["full_name"])' "${pull_json}")"
           if [ "${head_repo}" != "${REPOSITORY}" ]; then
             echo "ERROR: refusing to check out a fork-controlled head (${head_repo})" >&2
             exit 1
           fi
-          gh api "repos/${REPOSITORY}/pulls/${PULL_NUMBER}" \
-            --jq '"head_sha=\(.head.sha)\nbase_sha=\(.base.sha)"' >> "${GITHUB_OUTPUT}"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(f"head_sha={p[\"head\"][\"sha\"]}"); print(f"base_sha={p[\"base\"][\"sha\"]}")' \
+            "${pull_json}" >> "${GITHUB_OUTPUT}"
+          rm -f "${pull_json}"
 
       # The reviewed candidate is never materialised as a working tree in this job.
       # docs/security.md of the pinned action warns against checking out an untrusted
@@ -174,14 +202,8 @@ jobs:
           # candidate's files, modes or symlinks ever existing on this runner. The
           # two revisions come from the trusted resolver, never from the payload.
           comparison="repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
-          # These requests ran unguarded under `set -eu`, so a single transient
-          # provider error ended the step, Claude never started, and the Pull Request
-          # got no review -- the failure this workflow exists to remove, reached by a
-          # 5xx rather than by size. Each attempt writes to its own file and is moved
-          # into place only on success, so a partial body can never be left behind or
-          # appended to by the next attempt. A persistent failure still stops: there
-          # is nothing to review without the comparison, and a silent partial context
-          # would be worse than a visible red check.
+          # A persistent failure still stops: there is nothing to review without the
+          # comparison, and a silent partial context would be worse than a red check.
           api_to_file() {
             api_target=$1
             shift
@@ -211,7 +233,12 @@ jobs:
           # the committed script, which escapes it the same way it escapes a pathname.
           # Splitting only on "\n" left a Unicode line separator intact, and a subject
           # could then add a standalone fake commit or a fake provider-cap notice.
-          api_to_file "${CONTEXT_DIR}/commits.b64" --paginate "${comparison}" \
+          # `--paginate` follows pagination links but does not itself page this
+          # endpoint: the compare API returns its default 250 commits unless per_page
+          # is given, so a larger comparison silently lost every later subject while
+          # the cap notice said only that some were missing.
+          api_to_file "${CONTEXT_DIR}/commits.b64" --paginate \
+            -X GET -F per_page=100 "${comparison}" \
             --jq '.commits[]? | "\(.sha[0:9]) \(.commit.message | split("\n")[0] | @base64)"'
           # The provider caps the commits it returns. Say so rather than letting the
           # reviewer read a short list as a complete one.
@@ -237,8 +264,11 @@ jobs:
           # remove -- but continuing with no changed content at all would let a review
           # complete without seeing the change. So the per-file patches the builder
           # assembled from the comparison are used instead, and the reviewer is told.
-          if ! gh api "${comparison}" -H "Accept: application/vnd.github.v3.diff" \
-            > "${CONTEXT_DIR}/diff.full"; then
+          # Retried before the fallback is accepted. A transient 5xx here is not a
+          # refusal, and treating it as one silently downgrades the review to hunks
+          # with no surrounding context.
+          if ! api_to_file "${CONTEXT_DIR}/diff.full" "${comparison}" \
+            -H "Accept: application/vnd.github.v3.diff"; then
             mv "${CONTEXT_DIR}/assembled.diff" "${CONTEXT_DIR}/diff.full"
             printf 'NOTE: the provider refused the unified diff for this comparison.\n' \
               > "${CONTEXT_DIR}/patches-source"
@@ -416,7 +446,7 @@ jobs:
       # through a sanitiser first. Runs even when the reviewer failed, so a failure is
       # visible rather than silent.
       - name: Publish the review report
-        if: always() && steps.claude.outputs.execution_file != ''
+        if: always()
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |

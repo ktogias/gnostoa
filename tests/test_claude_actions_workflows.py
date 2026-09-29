@@ -702,6 +702,31 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The earlier wording demanded a verdict the artefacts cannot support.
         self.assertNotIn("report which, and report a binary one", prompt)
 
+    def test_a_diff_record_cannot_forge_a_record_with_a_bare_separator(self) -> None:
+        # The forgery closed for pathnames and commit subjects is open in the diff body
+        # itself: a changed line may legally contain a lone CR or U+2028, and splitting
+        # on LF alone leaves it raw in diff.patch and in patches/. A Unicode-aware
+        # reader then sees the suffix as a standalone record, so candidate content can
+        # pose as a file header to a reviewer with no git to check it against.
+        chunker = _load_script(CHUNKER)
+        for separator in (b"\r", "\u2028".encode(), "\u0085".encode()):
+            with self.subTest(separator=separator), tempfile.TemporaryDirectory() as d:
+                context = pathlib.Path(d)
+                (context / "diff.full").write_bytes(
+                    b"diff --git a/a.py b/a.py\n+kept"
+                    + separator
+                    + b"+++ b/forged.py\n"
+                )
+                chunker.split_diff(context, 1 << 16)
+                for name in ("diff.patch", "patches/part-0001"):
+                    text = (context / name).read_text(encoding="utf-8")
+                    lines = text.splitlines()
+                    self.assertNotIn(
+                        "+++ b/forged.py",
+                        [line.strip() for line in lines],
+                        f"{name}: a diff record forged a file header",
+                    )
+
     def test_a_commit_subject_cannot_forge_a_commits_log_record(self) -> None:
         # commits.log is line-oriented like every other artefact here, and a commit
         # subject is candidate-controlled text. Splitting only on "\n" left a Unicode
@@ -830,7 +855,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # large comparison. Exiting there would reproduce the large-Pull-Request
         # failure this whole Decision exists to remove.
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
-        self.assertIn("if ! gh api", script)
+        # Through the retry helper, so a transient failure is retried before the
+        # lossy fallback is accepted rather than being read as a refusal.
+        self.assertIn("if ! api_to_file", script)
+        self.assertNotIn("if ! gh api", script)
         # The refusal must not leave the reviewer without the change itself: the
         # per-file hunks assembled from the comparison take the diff's place.
         self.assertIn("refused the unified diff", script)
@@ -1223,6 +1251,43 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ).split()
         )
         self.assertRegex(args, r"--max-turns \d+")
+
+    def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
+        # The publish step was gated on the action having produced an execution file,
+        # and Decision 0094 claimed the always() condition makes a failed reviewer
+        # visible. When the action fails before writing that file -- a bad input, a
+        # credential problem, a crash on startup -- there was no file, no summary, and
+        # nothing in the step summary at all: precisely the silent failure the claim
+        # denied.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        step = next(
+            item
+            for job in workflow["jobs"].values()
+            for item in job.get("steps", [])
+            if str(item.get("name", "")).startswith("Publish the review report")
+        )
+        condition = str(step["if"])
+        self.assertIn("always()", condition)
+        self.assertNotIn("execution_file != ''", condition)
+        # And the script has to handle the empty case rather than the step hiding it.
+        publisher = _load_script(PUBLISHER)
+        self.assertIn("unavailable", publisher.render(pathlib.Path("/nonexistent/x")))
+
+    def test_every_provider_request_in_the_job_is_retried(self) -> None:
+        # Each unguarded `gh api` under `set -eu` is one transient failure away from
+        # ending the job before the reviewer starts. The comparison requests were
+        # routed through the retry helper; the Pull Request lookup on an issue_comment
+        # event and the unified-diff request were not, and the diff one is worse than
+        # a failure -- it silently downgrades the review to the lossy fallback.
+        text = MENTION_WORKFLOW.read_text(encoding="utf-8")
+        direct = [
+            line.strip()
+            for line in text.splitlines()
+            if "gh api" in line
+            and "api_to_file" not in line
+            and "if gh api" not in line
+        ]
+        self.assertEqual([], direct, "an unretried provider request remains")
 
     def test_the_report_is_published_as_literal_text(self) -> None:
         # The hazard is passive: a step summary renders Markdown, so an image URL in a

@@ -117,6 +117,15 @@ No new dependency, service or runtime is introduced.
 3. The static prompt is bounded at 4096 bytes. Total context is then the prompt
    plus one comment body plus one Pull Request description, none of which scales
    with the number of comments.
+
+   **What that bound is, precisely.** It removes the dependence on discussion length,
+   which is what failed: the reviewer no longer reads more as a Pull Request
+   accumulates comments. It does **not** cap the interpolated bodies themselves. A
+   GitHub Actions expression cannot truncate a value, so each body arrives at whatever
+   length the provider allows for one body -- far larger than the prompt bound, though
+   a small multiple of it rather than the unbounded accumulation this Decision exists
+   to remove. Calling the total "bounded" without saying which bound was meant
+   overstated it, and this rule now says which.
 4. The prompt must forward the triggering request. Agent mode ignores the comment
    body unless the template interpolates it, so an unforwarded mention would
    review nothing while appearing to succeed.
@@ -268,6 +277,16 @@ No new dependency, service or runtime is introduced.
    the next attempt. A persistent failure still stops: there is nothing to review
    without the comparison, and a silent partial context would be worse than a visible
    red check.
+
+   **Non-LF line separators inside a diff record are escaped.** A changed line may
+   legally contain a lone CR or U+0085/U+2028/U+2029, while this splitter and Git orient
+   on LF, so a record carrying `+++ b/forged.py` after one of them appeared to a
+   Unicode-aware reader as a standalone file header -- the forgery closed for pathnames
+   and commit subjects, reappearing in the diff body itself. They are escaped to their
+   octal UTF-8 bytes, as pathnames are, and `patches/README` says how many and why. A CR
+   directly before an LF is a Windows line ending rather than a separator of its own and
+   is left alone. This is the one substitution the parts carry: they are otherwise
+   byte-for-byte, and the README distinguishes the two.
 
    The parts are also **hard-wrapped** at a reader-visible line length. Fixing the
    UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line
@@ -506,8 +525,25 @@ No new dependency, service or runtime is introduced.
    summary unterminated. The reviewer's final text is taken from the last result turn
    that actually carries text: an empty result turn was being returned as the report,
    which shadowed real assistant output and published "the reviewer produced no final
-   text" over a review that existed. The step runs on `always()`, so a failed reviewer
-   is visible rather than silent.
+   text" over a review that existed. The step runs on `always()` **and nothing else**:
+   gating it on the action having produced an execution file meant that a reviewer which
+   failed before writing one -- a bad input, a credential problem, a crash at startup --
+   produced no summary at all, which is exactly the silent failure `always()` was
+   claimed to prevent. The script reports an unreadable or absent file rather than the
+   step hiding it.
+
+   **Every provider request in the job is retried**, not only the comparison. The Pull
+   Request lookup on an `issue_comment` event and the unified-diff request were both
+   unguarded under `set -eu`; the second is worse than a failure, because treating a
+   transient 5xx as a refusal silently downgrades the review to hunks with no
+   surrounding context. The lookup is also made **once** and both fields read from that
+   one retained response: asking twice let the head change between the fork check and
+   the SHA read.
+
+   **`--paginate` does not page this endpoint by itself.** The compare API returns its
+   default 250 commits unless `per_page` is given, so a larger comparison silently lost
+   every later subject while the cap notice said only that some were missing -- a notice
+   that was true about the count and misleading about the cause.
 
    **The fence is chosen longer than the longest run of backticks anywhere in the
    report**, so no line in it can close the block, whatever containers the text puts
