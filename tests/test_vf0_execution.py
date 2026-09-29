@@ -3644,6 +3644,170 @@ class VF0DockerBackendTests(unittest.TestCase):
             self.assertGreater(result.observed_bytes_at_least, limit)
             self.assertTrue(backend.removed)
 
+    def test_noncompleted_full_trailer_is_child_only_without_exit_promotion(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        for state, child_bytes, budget, expected_state in (
+            ("timeout", 63, 64, "timeout"),
+            ("timeout", 64, 64, "timeout"),
+            ("timeout", 63, 256, "timeout"),
+            ("timeout", 65, 64, "output_limit"),
+            ("output_limit", 75, 64, "output_limit"),
+        ):
+            with self.subTest(state=state, child_bytes=child_bytes, budget=budget):
+                complete = self._completed_capture(17, stdout=b"x" * child_bytes)
+                capture = UntrustedCapture(
+                    state,
+                    None,
+                    complete.stdout[:65]
+                    if state == "output_limit"
+                    else complete.stdout,
+                    complete.stderr,
+                    complete.observed_bytes_at_least,
+                )
+                with tempfile.TemporaryDirectory() as td:
+                    root = Path(td).resolve()
+                    backend = FakeDockerBackend(self.image, root)
+                    with mock.patch(
+                        "tools.vf0_execution._capture_process", return_value=capture
+                    ):
+                        result = backend.run(
+                            root,
+                            ["/bin/false"],
+                            ExecutionLimits(output_bytes=budget),
+                            subject=self.subject,
+                        )
+                    self.assertEqual(
+                        (expected_state, None), (result.termination, result.exit_code)
+                    )
+                    self.assertEqual(b"x" * min(child_bytes, budget), result.stdout)
+                    self.assertEqual(b"", result.stderr)
+                    self.assertEqual(child_bytes, result.observed_bytes_at_least)
+                    module._validate_backend_capture(
+                        result, ExecutionLimits(output_bytes=budget)
+                    )
+                    self.assertNotIn(
+                        (
+                            "inspect",
+                            "--format",
+                            "{{json .State}}",
+                            backend.container_id,
+                        ),
+                        backend.calls,
+                    )
+                    self.assertTrue(backend.removed)
+
+    def test_noncompleted_transport_overflow_without_child_overflow_refuses(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        for stderr, observed in (
+            (b"", 64 + module._OCI_EXIT_TRAILER_MAX),
+            (
+                self._completed_capture(17, stdout=b"").stderr,
+                64 + len(self._completed_capture(17, stdout=b"").stderr),
+            ),
+        ):
+            with self.subTest(stderr=stderr), tempfile.TemporaryDirectory() as td:
+                root = Path(td).resolve()
+                backend = FakeDockerBackend(self.image, root)
+                capture = UntrustedCapture(
+                    "output_limit", None, b"x" * 64, stderr, observed
+                )
+                with mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ):
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^OCI_ATTACH_STATE$"
+                    ):
+                        backend.run(
+                            root,
+                            ["/bin/cat"],
+                            ExecutionLimits(output_bytes=64),
+                            subject=self.subject,
+                        )
+                self.assertTrue(backend.removed)
+
+    def test_actual_eof_wait_timeout_strips_full_trailer_without_false_overflow(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        marker = self._completed_capture(17, stdout=b"").stderr
+        script = f"import os,time;os.write(1,b'x'*63);os.write(2,{marker!r});os.close(1);os.close(2);time.sleep(20)"
+        capture = module._capture_process(
+            [sys.executable, "-I", "-c", script],
+            cwd=None,
+            limits=ExecutionLimits(timeout_seconds=1.0, output_bytes=64),
+            output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
+        )
+        self.assertEqual(
+            ("timeout", None, b"x" * 63, marker),
+            (capture.termination, capture.exit_code, capture.stdout, capture.stderr),
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                result = backend.run(
+                    root,
+                    ["/bin/false"],
+                    ExecutionLimits(output_bytes=64),
+                    subject=self.subject,
+                )
+            self.assertEqual(
+                ("timeout", None, b"x" * 63, b"", 63),
+                (
+                    result.termination,
+                    result.exit_code,
+                    result.stdout,
+                    result.stderr,
+                    result.observed_bytes_at_least,
+                ),
+            )
+            self.assertTrue(backend.removed)
+
+    def test_noncompleted_ambiguous_or_foreign_trailer_refuses(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        marker = self._completed_capture(17, stdout=b"").stderr
+        fragments = [
+            marker[:-1],
+            marker + marker,
+            self._completed_capture(17, stdout=b"", completion_token="f" * 64).stderr,
+            marker[:-3] + b"999\x1f",
+            marker + b"extra",
+            *(
+                module._OCI_EXIT_SENTINEL_PREFIX[:n]
+                for n in range(1, len(module._OCI_EXIT_SENTINEL_PREFIX))
+            ),
+        ]
+        for state in ("timeout", "output_limit"):
+            for fragment in fragments:
+                with (
+                    self.subTest(state=state, fragment=fragment),
+                    tempfile.TemporaryDirectory() as td,
+                ):
+                    root = Path(td).resolve()
+                    backend = FakeDockerBackend(self.image, root)
+                    capture = UntrustedCapture(
+                        state, None, b"x" * 63, fragment, 63 + len(fragment)
+                    )
+                    with mock.patch(
+                        "tools.vf0_execution._capture_process", return_value=capture
+                    ):
+                        with self.assertRaisesRegex(
+                            ExecutionRejected, "^OCI_ATTACH_STATE$"
+                        ):
+                            backend.run(
+                                root,
+                                ["/bin/false"],
+                                ExecutionLimits(output_bytes=64),
+                                subject=self.subject,
+                            )
+                    self.assertTrue(backend.removed)
+
     def test_spoofed_wrapper_trailer_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
@@ -3896,12 +4060,15 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = FakeDockerBackend(self.image, root)
-            capture = UntrustedCapture("output_limit", None, b"x" * 8, b"", 9)
+            capture = UntrustedCapture("output_limit", None, b"x" * 98, b"", 99)
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
                 result = backend.run(
-                    root, ["/bin/cat"], ExecutionLimits(), subject=self.subject
+                    root,
+                    ["/bin/cat"],
+                    ExecutionLimits(output_bytes=8),
+                    subject=self.subject,
                 )
             self.assertTrue(result.truncated)
             self.assertIsNone(result.exit_code)

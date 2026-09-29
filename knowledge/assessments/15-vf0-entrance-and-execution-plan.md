@@ -1566,6 +1566,39 @@ not exclude hostile-host transient changes. Live token-secrecy and forged-traile
 controls, input-shape/error projection, executable-format parity and display
 escaping remain explicit producer/runtime qualifications before activation.
 
+### AUD46 — incomplete attachment framing and truthful child-byte bounds
+
+Native Claude's exact `fcf5556c9dfbeb1b415e2047bcb2cd3a988b0646` review found a
+current R3 accuracy defect, independently reproduced before production editing:
+a real transport process writes child bytes and a full completion trailer,
+closes its pipes, then misses the leader-exit deadline. The old Docker backend
+retained transport bytes in timeout and could falsely report child overflow.
+The real capture is combined with Docker configuration/cleanup doubles; it is
+not evidence of the frequency of a live OCI timing race. Exact-parent failing
+regressions precede the correction in the owning PR's AUD46 chronology record.
+
+The same strict unique, complete, matching-token final trailer parser now runs
+for every attachment state. It strips exact authenticated transport bytes and
+their count, but only a completed attachment adopts the parsed exit. Timeout
+and overflow retain their original state and null exit, subject to actual child
+overflow after normalization. Completed engine-state/spoof controls remain.
+Malformed, foreign or duplicate framing and trailing partial public-header
+prefixes conservatively refuse `OCI_ATTACH_STATE`; guessed token fragments are
+never authenticated or silently removed. This can refuse legitimate child
+stderr ending in a reserved header prefix, an explicit fail-closed framing
+collision rather than a claimed exact partial-token decoder.
+
+When no framing was retained, retained bytes are child bytes under the trusted
+wrapper-final-stderr premise; unretained counts subtract at most the finite
+maximum possible transport overhead and remain at least the retained child
+count. Overflow requires a proven child-byte lower bound above the caller
+budget. Transport-only overflow without that proof refuses instead of inventing
+a child count or completion. No producer authentication, authority enforcement,
+host isolation, cleanup-liveness fix or VF0 activation is introduced. Slow owned
+inspect, late-create and whole-call trusted-host limits remain separate original
+#15 obligations before activation; whole #6 is not a technical predecessor to
+this inactive private normalization repair.
+
 ### AUD45 exact cleanup diagnostic reference and retained liveness limit
 
 The missing-object recognizer now normalizes only the native error prefix and

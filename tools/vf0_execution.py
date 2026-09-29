@@ -1585,8 +1585,7 @@ class DockerBackend:
                 limits=limits,
                 output_headroom_bytes=_OCI_EXIT_TRAILER_MAX,
             )
-            if capture.termination == "completed":
-                capture = _unwrap_oci_completion(capture, completion_token)
+            capture = _unwrap_oci_completion(capture, completion_token)
             capture = _enforce_output_limit(capture, limits.output_bytes)
             if capture.termination == "completed":
                 try:
@@ -1636,16 +1635,35 @@ class DockerBackend:
 def _unwrap_oci_completion(
     capture: UntrustedCapture, completion_token: str
 ) -> UntrustedCapture:
-    """Require and strip the trusted wrapper's unique final completion trailer."""
-
-    if capture.termination != "completed":
-        return capture
+    """Strip authenticated framing without promoting an incomplete attachment."""
     _need(
         type(completion_token) is str
         and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
         "OCI_ATTACH_STATE",
     )
     stderr = capture.stderr
+    if capture.termination != "completed" and _OCI_EXIT_SENTINEL_PREFIX not in stderr:
+        # The trusted wrapper appends framing only after child stderr ends.
+        # A retained partial header is ambiguous child/transport data: refuse it.
+        _need(
+            not any(
+                stderr.endswith(_OCI_EXIT_SENTINEL_PREFIX[:length])
+                for length in range(1, len(_OCI_EXIT_SENTINEL_PREFIX))
+            ),
+            "OCI_ATTACH_STATE",
+        )
+        retained_bytes = len(capture.stdout) + len(stderr)
+        # Unretained bytes may include up to one complete transport trailer.
+        # Retained bytes without framing remain a proven child-byte lower bound.
+        return replace(
+            capture,
+            observed_bytes_at_least=max(
+                retained_bytes,
+                capture.observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
+            )
+            if capture.observed_bytes_at_least > retained_bytes
+            else capture.observed_bytes_at_least,
+        )
     _need(stderr.count(_OCI_EXIT_SENTINEL_PREFIX) == 1, "OCI_ATTACH_STATE")
     expected_prefix = (
         _OCI_EXIT_SENTINEL_PREFIX + completion_token.encode("ascii") + b":"
@@ -1661,12 +1679,15 @@ def _unwrap_oci_completion(
     _need(1 <= len(raw_code) <= 3 and raw_code.isdigit(), "OCI_ATTACH_STATE")
     exit_code = int(raw_code)
     _need(0 <= exit_code <= 255, "OCI_ATTACH_STATE")
-    _need(capture.exit_code in {0, exit_code}, "OCI_ATTACH_STATE")
+    if capture.termination == "completed":
+        _need(capture.exit_code in {0, exit_code}, "OCI_ATTACH_STATE")
+    else:
+        _need(capture.exit_code is None, "OCI_ATTACH_STATE")
     trailer_bytes = len(stderr) - marker_start
     _need(capture.observed_bytes_at_least >= trailer_bytes, "OCI_ATTACH_STATE")
     return replace(
         capture,
-        exit_code=exit_code,
+        exit_code=exit_code if capture.termination == "completed" else None,
         stderr=stderr[:marker_start],
         observed_bytes_at_least=capture.observed_bytes_at_least - trailer_bytes,
     )
@@ -1678,6 +1699,8 @@ def _enforce_output_limit(
     """Apply the caller evidence-byte budget after trusted transport metadata."""
 
     _need(1 <= output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
+    if capture.termination == "output_limit":
+        _need(capture.observed_bytes_at_least > output_bytes, "OCI_ATTACH_STATE")
     retained_bytes = len(capture.stdout) + len(capture.stderr)
     if retained_bytes <= output_bytes:
         return capture
@@ -1685,11 +1708,6 @@ def _enforce_output_limit(
     stderr_room = output_bytes - len(stdout)
     stderr = capture.stderr[:stderr_room] if stderr_room > 0 else b""
     observed_bytes_at_least = capture.observed_bytes_at_least
-    if capture.termination != "completed":
-        observed_bytes_at_least = max(
-            output_bytes + 1,
-            observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
-        )
     return UntrustedCapture(
         termination="output_limit",
         exit_code=None,
