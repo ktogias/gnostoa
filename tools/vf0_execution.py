@@ -92,6 +92,12 @@ _UNCERTAIN_CREATE_SETTLE_SECONDS = 2.0
 _UNCERTAIN_CREATE_POLL_SECONDS = 0.1
 _UNCERTAIN_REMOVE_SETTLE_SECONDS = 2.0
 _UNCERTAIN_REMOVE_POLL_SECONDS = 0.1
+# One deadline spans nested finally fallbacks; per-command timeouts leave room
+# for _capture_process to kill and reap its owned process group.
+_OCI_CLEANUP_TOTAL_DEADLINE_SECONDS = 60.0
+_OCI_CLEANUP_COMMAND_TIMEOUT_SECONDS = 15.0
+_OCI_CLEANUP_REAP_RESERVE_SECONDS = 5.0
+_OCI_CLEANUP_MIN_COMMAND_SECONDS = 0.05
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -143,6 +149,29 @@ def _container_environment(subject: GitSubject) -> dict[str, str]:
 
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def _new_cleanup_deadline() -> float:
+    """Start the one bounded budget shared by a top-level OCI cleanup path."""
+
+    return time.monotonic() + _OCI_CLEANUP_TOTAL_DEADLINE_SECONDS
+
+
+def _resolve_cleanup_deadline(deadline: float | None) -> float:
+    return _new_cleanup_deadline() if deadline is None else deadline
+
+
+def _cleanup_command_timeout(deadline: float) -> float:
+    """Bound a cleanup command and reserve time for its process-group reap."""
+
+    remaining = deadline - time.monotonic()
+    timeout = min(
+        _OCI_CLEANUP_COMMAND_TIMEOUT_SECONDS,
+        remaining - _OCI_CLEANUP_REAP_RESERVE_SECONDS,
+    )
+    if timeout < _OCI_CLEANUP_MIN_COMMAND_SECONDS:
+        raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
+    return timeout
 
 
 def _canonical(value: object) -> bytes:
@@ -1441,9 +1470,17 @@ class DockerBackend:
             and diagnostic[len(prefix) :] == container_ref.encode("ascii")
         )
 
-    def _cleanup_presence(self, container_id: str, cleanup_nonce: str) -> bool | None:
+    def _cleanup_presence(
+        self,
+        container_id: str,
+        cleanup_nonce: str,
+        *,
+        deadline: float | None = None,
+    ) -> bool | None:
+        deadline = _resolve_cleanup_deadline(deadline)
+        timeout = _cleanup_command_timeout(deadline)
         try:
-            inspected = self._command("inspect", container_id, timeout=15)
+            inspected = self._command("inspect", container_id, timeout=timeout)
         except ExecutionRejected:
             return None
         if inspected.returncode != 0:
@@ -1468,27 +1505,48 @@ class DockerBackend:
         return True
 
     def _reconcile_uncertain_remove(
-        self, container_id: str, cleanup_nonce: str
+        self,
+        container_id: str,
+        cleanup_nonce: str,
+        *,
+        deadline: float | None = None,
     ) -> None:
-        deadline = time.monotonic() + _UNCERTAIN_REMOVE_SETTLE_SECONDS
+        deadline = _resolve_cleanup_deadline(deadline)
+        settle_deadline: float | None = None
         while True:
-            presence = self._cleanup_presence(container_id, cleanup_nonce)
+            presence = self._cleanup_presence(
+                container_id, cleanup_nonce, deadline=deadline
+            )
             if presence is False:
                 return
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            if settle_deadline is None:
+                # Start retries after the first inspect, never before first rm.
+                settle_deadline = min(deadline, now + _UNCERTAIN_REMOVE_SETTLE_SECONDS)
+            remaining = min(deadline, settle_deadline) - now
             if remaining <= 0:
                 raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
             if presence is True:
+                timeout = _cleanup_command_timeout(deadline)
                 try:
                     self._command(
-                        "rm", "--force", "--volumes", container_id, timeout=15
+                        "rm", "--force", "--volumes", container_id, timeout=timeout
                     )
                 except ExecutionRejected:
                     pass
-            time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
+            remaining = min(deadline, settle_deadline) - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
 
-    def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
-        self._reconcile_uncertain_remove(container_id, cleanup_nonce)
+    def _remove_and_verify(
+        self,
+        container_id: str,
+        cleanup_nonce: str,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        deadline = _resolve_cleanup_deadline(deadline)
+        self._reconcile_uncertain_remove(container_id, cleanup_nonce, deadline=deadline)
 
     def _cleanup_uncertain_create(
         self,
@@ -1496,15 +1554,21 @@ class DockerBackend:
         cleanup_nonce: str,
         *,
         completion_observed: bool = False,
+        deadline: float | None = None,
     ) -> None:
-        deadline = time.monotonic() + _UNCERTAIN_CREATE_SETTLE_SECONDS
+        deadline = _resolve_cleanup_deadline(deadline)
+        # Late appearance after this separate window remains a known R4 limit.
+        settle_deadline = min(
+            deadline, time.monotonic() + _UNCERTAIN_CREATE_SETTLE_SECONDS
+        )
         while True:
+            timeout = _cleanup_command_timeout(deadline)
             try:
-                inspected = self._command("inspect", container_name, timeout=15)
+                inspected = self._command("inspect", container_name, timeout=timeout)
             except ExecutionRejected:
                 inspected = None
             if inspected is None:
-                remaining = deadline - time.monotonic()
+                remaining = settle_deadline - time.monotonic()
                 if remaining <= 0:
                     raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
                 time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
@@ -1527,7 +1591,9 @@ class DockerBackend:
                     and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
                     "OCI_CLEANUP_OWNERSHIP",
                 )
-                self._remove_and_verify(container_name, cleanup_nonce)
+                self._remove_and_verify(
+                    container_name, cleanup_nonce, deadline=deadline
+                )
                 return
             _need(
                 self._inspect_confirms_absence(inspected, container_name),
@@ -1535,7 +1601,7 @@ class DockerBackend:
             )
             if completion_observed:
                 return
-            remaining = deadline - time.monotonic()
+            remaining = settle_deadline - time.monotonic()
             if remaining <= 0:
                 raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
             time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
@@ -1666,22 +1732,32 @@ class DockerBackend:
         finally:
             # _capture_process closes/reaps the attachment group before this point.
             # Even preflight/client failures still remove and independently verify
-            # absence of the owned container.
+            # absence of the owned container. Nested cleanup shares one deadline.
+            cleanup_deadline = _new_cleanup_deadline()
             if container_id is None or not container_validated:
-                self._cleanup_uncertain_create(container_name, cleanup_nonce)
+                self._cleanup_uncertain_create(
+                    container_name, cleanup_nonce, deadline=cleanup_deadline
+                )
             else:
                 try:
-                    self._remove_and_verify(container_id, cleanup_nonce)
+                    self._remove_and_verify(
+                        container_id, cleanup_nonce, deadline=cleanup_deadline
+                    )
                 except ExecutionRejected as exc:
                     if str(exc) not in {
                         "OCI_CLEANUP_OWNERSHIP",
                         "OCI_CLEANUP_UNVERIFIED",
                     }:
                         raise
-                    self._cleanup_uncertain_create(container_name, cleanup_nonce)
+                    self._cleanup_uncertain_create(
+                        container_name, cleanup_nonce, deadline=cleanup_deadline
+                    )
                 else:
                     self._cleanup_uncertain_create(
-                        container_name, cleanup_nonce, completion_observed=True
+                        container_name,
+                        cleanup_nonce,
+                        completion_observed=True,
+                        deadline=cleanup_deadline,
                     )
 
 

@@ -236,6 +236,18 @@ text never becomes RED certification, approval, compliance or a preparation
 receipt. The attachment process is closed/reaped before owned-container removal,
 and container absence is independently verified even after client failure.
 
+Every top-level OCI cleanup path uses one 60-second monotonic deadline shared by
+container-ID removal, generated-name fallback, the read-only smoke probe and the
+final absence read-back. Each cleanup command is capped at 15 seconds and leaves
+up to five seconds of that same budget for process-group kill/reap. The short
+remove-retry settlement window begins after the first owned-reference inspection,
+so a slow initial inspection does not suppress the first removal attempt. When
+the shared budget is exhausted or absence cannot be verified, cleanup refuses;
+deadline/absence uncertainty is `OCI_CLEANUP_UNVERIFIED`, while an ownership
+mismatch remains `OCI_CLEANUP_OWNERSHIP`. Uncertain creation still has a separate
+finite two-second name-observation window; this does not prove cleanup if an
+object appears later or the daemon remains unavailable, and it adds no sweeper.
+
 The Docker specialization requests and verifies `linux/amd64` and checks the
 created container against the resolved image configuration. Only that enforcing
 built-in backend may report subject immutability; a custom or local backend's

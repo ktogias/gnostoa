@@ -964,7 +964,7 @@ admitted oracle.
 | R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without supplied-input symlink, metadata, path or count escape; successive calls share no hidden subject; pre-execution writes assume an untampered trusted controller host | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` snapshot traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` plus empty `GIT_ALLOW_PROTOCOL` allowlist for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial snapshot swap/bound regressions; controller-host write limitation below | Local fixture PASS / bounded SUPPORTS on the prepared component tree; no hostile same-UID controller-host confinement claim | Exact-head independent review pending |
 | R2 | Only the fixed digest-pinned image is accepted by the live OCI smoke; runtime, entrypoint, resource, mount and environment contract is checked before launch, and identity binds the actually used runtime | The smoke CLI has no image override; `run_smoke()` binds both Docker probes and its reported identity to `FIXED_IMAGE`. Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; alternate-image negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |
+| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal share one 60-second monotonic deadline across each top-level `finally`, including name fallback and read-only smoke cleanup; commands cap at 15 seconds with a five-second process-reap reserve; the 2-second remove-retry window starts after the first owned-reference inspect; slow-inspect, nested-budget, fallback-sharing and existing create/remove/interruption controls | Local fixture PASS / partial SUPPORTS; an object appearing after the separate finite create-settlement window remains unproved | Supported for exercised cases / exact-head review pending |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
 Live OCI and independent review results must be rebound in the exact-head PR
@@ -1623,6 +1623,36 @@ cleanup/availability boundary before activation. It does not block the selected
 inactive source integration and supplies no assertion of cleanup under daemon
 unavailability. The review's representation-order, trusted requested OCI pin,
 identity-display and caller-type limitations remain individual PR dispositions.
+
+### AUD45-R1 — shared cleanup deadline correction, exact-parent RED
+
+On 2026-09-30 the owner approved this bounded R4 repair inside PR #319's existing
+review-convergence authority. Exact parent was
+`09270cd55715a65951e51798f38f79d7c17d75a2`. Before production editing, a
+clock-controlled test advanced the first owned-container inspection by three
+seconds and reproduced `OCI_CLEANUP_UNVERIFIED` before any `rm` attempt. A second
+test recorded the missing shared-deadline contract across generated-name
+inspection, owned-reference removal and absence verification. Both RED results
+are retained in the PR record.
+
+The candidate gives each top-level OCI cleanup path one 60-second monotonic
+deadline. Every inspect/remove timeout is capped at 15 seconds and reserves five
+seconds for the controller's process-group kill/reap; DockerBackend's ID path,
+generated-name fallback and the fixed read-only smoke cleanup pass the same
+deadline through absence read-back. The 2-second retry/settlement window now
+starts after the first owned-reference inspection, so it cannot prevent the first
+removal attempt merely because that inspection was slow. If total time is
+exhausted or absence remains unknown, the component refuses; it does not claim
+physical cleanup under daemon failure.
+
+The separate two-second uncertain-create name-observation window remains finite.
+An object that becomes visible only after that window is still unproved; no
+sweeper, activation, host-isolation claim, producer admission, dependency or
+public API was added. Current Development Container evidence passes all 58
+Docker backend tests and 16 smoke-contract tests, including the slow-inspect,
+nested-deadline and top-level-fallback regressions. Parent-bound preparation also
+passes `ci/verify fast`, style and diff checks. These are unit/double results, not
+a new live OCI execution. Exact-head independent review remains pending.
 
 ### AUD47 — proven overflow despite incomplete framing and bounded link syntax
 

@@ -29,6 +29,7 @@ from tools.vf0_execution import (
     ExecutionRejected,
     GitSubject,
     UntrustedCapture,
+    _new_cleanup_deadline,
     execute,
 )
 
@@ -185,10 +186,12 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
                 127,
             }
         finally:
+            cleanup_deadline = _new_cleanup_deadline()
             backend._cleanup_uncertain_create(
                 container_name,
                 cleanup_nonce,
                 completion_observed=completion_observed,
+                deadline=cleanup_deadline,
             )
         if result.returncode != 0:
             raise AssertionError("READONLY_BEHAVIOR_PROBE_FAILED")

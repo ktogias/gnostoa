@@ -50,6 +50,17 @@ class _ChangingCommand(list[str]):
         return iter(self.first if self.iterations == 1 else self.later)
 
 
+class _TestMonotonicClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, duration: float) -> None:
+        self.now += duration
+
+
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(  # nosec B603 -- fixed /usr/bin/git test helper, no shell
         ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
@@ -3200,12 +3211,16 @@ class VF0DockerBackendTests(unittest.TestCase):
                     backend.known_present = known_present
                     backend.diagnostic = diagnostic
                     backend.cleanup_nonce = "owned"
+                    clock = _TestMonotonicClock()
                     with (
                         mock.patch(
                             "tools.vf0_execution.time.monotonic",
-                            side_effect=[0.0, 0.0, 3.0],
+                            side_effect=clock.monotonic,
                         ),
-                        mock.patch("tools.vf0_execution.time.sleep"),
+                        mock.patch(
+                            "tools.vf0_execution.time.sleep",
+                            side_effect=clock.sleep,
+                        ),
                     ):
                         if operation == "presence":
                             self.assertIsNone(
@@ -3221,6 +3236,125 @@ class VF0DockerBackendTests(unittest.TestCase):
                             ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
                         ):
                             action(backend.container_id, "owned")
+
+    def test_slow_owned_inspect_does_not_consume_removal_budget(self) -> None:
+        class Clock:
+            now = 0.0
+
+        class SlowOwnedInspect(FakeDockerBackend):
+            def __init__(self, root: Path, clock: Clock) -> None:
+                super().__init__(VF0DockerBackendTests.image, root)
+                self.clock = clock
+                self.slow_inspect_done = False
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if (
+                    args == ("inspect", self.container_id)
+                    and not self.slow_inspect_done
+                ):
+                    self.slow_inspect_done = True
+                    self.clock.now += 3.0
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            clock = Clock()
+            backend = SlowOwnedInspect(Path(td).resolve(), clock)
+            backend.cleanup_nonce = "owned"
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=lambda: clock.now,
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                backend._remove_and_verify(backend.container_id, "owned")
+
+            self.assertTrue(backend.removed)
+            self.assertIn(
+                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+            )
+
+    def test_nested_cleanup_commands_share_one_absolute_deadline(self) -> None:
+        class Clock:
+            now = 0.0
+
+        class SlowCreateInspect(FakeDockerBackend):
+            def __init__(self, root: Path, clock: Clock) -> None:
+                super().__init__(VF0DockerBackendTests.image, root)
+                self.clock = clock
+                self.timeouts: list[float] = []
+                self.container_name = "gnostoa-vf0-" + "c" * 32
+                self.cleanup_nonce = "owned"
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                self.timeouts.append(timeout)
+                if args == ("inspect", self.container_name):
+                    if not self.removed and not self.calls:
+                        self.clock.now += 10.0
+                    elif not self.removed:
+                        self.clock.now += 8.0
+                elif args[:2] == ("rm", "--force"):
+                    self.clock.now += 1.0
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            clock = Clock()
+            backend = SlowCreateInspect(Path(td).resolve(), clock)
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=lambda: clock.now,
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                backend._cleanup_uncertain_create(
+                    backend.container_name, "owned", deadline=25.0
+                )
+
+            self.assertTrue(backend.removed)
+            self.assertEqual([15.0, 10.0, 2.0, 1.0], backend.timeouts)
+
+    def test_run_shares_cleanup_deadline_with_name_fallback(self) -> None:
+        class FallbackCleanup(FakeDockerBackend):
+            def __init__(self, root: Path) -> None:
+                super().__init__(VF0DockerBackendTests.image, root)
+                self.deadlines: list[float | None] = []
+
+            def _remove_and_verify(
+                self,
+                container_id: str,
+                cleanup_nonce: str,
+                *,
+                deadline: float | None = None,
+            ) -> None:
+                self.deadlines.append(deadline)
+                if len(self.deadlines) == 1:
+                    raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
+                super()._remove_and_verify(
+                    container_id, cleanup_nonce, deadline=deadline
+                )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FallbackCleanup(root)
+            with (
+                mock.patch(
+                    "tools.vf0_execution._capture_process",
+                    return_value=self._completed_capture(stdout=b""),
+                ),
+                mock.patch("tools.vf0_execution.time.monotonic", return_value=0.0),
+            ):
+                result = backend.run(
+                    root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                )
+
+            self.assertEqual(17, result.exit_code)
+            self.assertEqual([60.0, 60.0], backend.deadlines)
+            self.assertTrue(backend.removed)
 
     def test_foreign_returned_container_id_is_never_force_removed(self) -> None:
         class ForeignReturnedId(FakeDockerBackend):
@@ -4308,7 +4442,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.1, 0.1, 0.2],
+                    return_value=0.0,
                 ),
                 mock.patch("tools.vf0_execution.time.sleep"),
             ):
@@ -4349,7 +4483,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.1, 0.1, 0.2],
+                    return_value=0.0,
                 ),
                 mock.patch("tools.vf0_execution.time.sleep"),
             ):
@@ -4378,12 +4512,13 @@ class VF0DockerBackendTests(unittest.TestCase):
             backend = NeverAppears(self.image, Path(td).resolve())
             container_name = "gnostoa-vf0-" + "c" * 32
             cleanup_nonce = "c" * 32
+            clock = _TestMonotonicClock()
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.5, 1.0, 1.5, 2.0],
+                    side_effect=clock.monotonic,
                 ),
-                mock.patch("tools.vf0_execution.time.sleep") as sleep,
+                mock.patch("tools.vf0_execution.time.sleep", side_effect=clock.sleep),
             ):
                 with self.assertRaisesRegex(
                     ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
@@ -4391,10 +4526,10 @@ class VF0DockerBackendTests(unittest.TestCase):
                     backend._cleanup_uncertain_create(container_name, cleanup_nonce)
 
             self.assertEqual(
-                [("inspect", container_name)] * 5,
+                [("inspect", container_name)] * 21,
                 backend.calls,
             )
-            sleep.assert_called()
+            self.assertAlmostEqual(2.0, clock.now)
 
     def test_create_failure_without_container_preserves_cleanup_context(self) -> None:
         class NeverAppears(FakeDockerBackend):
@@ -4417,12 +4552,13 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = NeverAppears(self.image, root, create_mode="exception")
+            clock = _TestMonotonicClock()
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.5, 1.0, 1.5, 2.0],
+                    side_effect=clock.monotonic,
                 ),
-                mock.patch("tools.vf0_execution.time.sleep"),
+                mock.patch("tools.vf0_execution.time.sleep", side_effect=clock.sleep),
             ):
                 with self.assertRaisesRegex(
                     ExecutionRejected, "^OCI_CLEANUP_UNVERIFIED$"
@@ -4434,7 +4570,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             self.assertIsInstance(caught.exception.__context__, ExecutionRejected)
             self.assertEqual("DOCKER_COMMAND_FAILED", str(caught.exception.__context__))
             self.assertEqual(
-                [("inspect", backend.container_name)] * 5,
+                [("inspect", backend.container_name)] * 21,
                 [
                     call
                     for call in backend.calls
@@ -5052,9 +5188,7 @@ class VF0SmokeContractTests(unittest.TestCase):
             mock.patch(
                 "tools.vf0_execution._capture_process", side_effect=transport.capture
             ),
-            mock.patch(
-                "tools.vf0_execution.time.monotonic", side_effect=[0.0, 0.0, 2.0]
-            ),
+            mock.patch("tools.vf0_execution.time.monotonic", return_value=0.0),
             mock.patch("tools.vf0_execution.time.sleep") as sleep,
         ):
             result = module._probe_read_only_behavior(module.FIXED_IMAGE)
@@ -5086,7 +5220,7 @@ class VF0SmokeContractTests(unittest.TestCase):
             ),
             mock.patch(
                 "tools.vf0_execution.time.monotonic",
-                side_effect=[0.0, 0.0, 2.0],
+                return_value=0.0,
             ),
             mock.patch("tools.vf0_execution.time.sleep") as sleep,
         ):
@@ -5120,15 +5254,22 @@ class VF0SmokeContractTests(unittest.TestCase):
                         probe_transport.present = True
                         late_create_pending = False
 
+                clock = _TestMonotonicClock()
                 with (
                     mock.patch(
                         "tools.vf0_execution._capture_process",
                         side_effect=transport.capture,
                     ),
-                    mock.patch("tools.vf0_execution.time.monotonic", return_value=0.0),
+                    mock.patch(
+                        "tools.vf0_execution.time.monotonic",
+                        side_effect=clock.monotonic,
+                    ),
                     mock.patch(
                         "tools.vf0_execution.time.sleep",
-                        side_effect=expose_late_create,
+                        side_effect=lambda duration, *, test_clock=clock: (
+                            test_clock.sleep(duration),
+                            expose_late_create(duration),
+                        ),
                     ) as sleep,
                 ):
                     with self.assertRaisesRegex(
@@ -5151,6 +5292,7 @@ class VF0SmokeContractTests(unittest.TestCase):
                 transport = _ReadOnlyProbeTransport(
                     auto_remove=True, run_exit_code=exit_code
                 )
+                clock = _TestMonotonicClock()
                 with (
                     mock.patch(
                         "tools.vf0_execution._capture_process",
@@ -5158,19 +5300,21 @@ class VF0SmokeContractTests(unittest.TestCase):
                     ),
                     mock.patch(
                         "tools.vf0_execution.time.monotonic",
-                        side_effect=[0.0, 0.0, 2.0],
+                        side_effect=clock.monotonic,
                     ),
-                    mock.patch("tools.vf0_execution.time.sleep") as sleep,
+                    mock.patch(
+                        "tools.vf0_execution.time.sleep", side_effect=clock.sleep
+                    ) as sleep,
                 ):
                     with self.assertRaisesRegex(
                         ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
                     ):
                         module._probe_read_only_behavior(module.FIXED_IMAGE)
 
-                sleep.assert_called_once()
+                self.assertEqual(20, sleep.call_count)
                 self.assertFalse(transport.present)
                 self.assertEqual(
-                    ["run", "inspect", "inspect"],
+                    ["run", *("inspect" for _ in range(21))],
                     [call[1] for call in transport.calls],
                 )
 
@@ -5193,15 +5337,16 @@ class VF0SmokeContractTests(unittest.TestCase):
             failure=subprocess.TimeoutExpired("/usr/bin/docker run", 30),
             auto_remove=True,
         )
+        clock = _TestMonotonicClock()
         with (
             mock.patch(
                 "tools.vf0_execution._capture_process", side_effect=transport.capture
             ),
             mock.patch(
                 "tools.vf0_execution.time.monotonic",
-                side_effect=[0.0, 0.0, 2.0],
+                side_effect=clock.monotonic,
             ),
-            mock.patch("tools.vf0_execution.time.sleep"),
+            mock.patch("tools.vf0_execution.time.sleep", side_effect=clock.sleep),
         ):
             with self.assertRaisesRegex(
                 ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
@@ -5219,9 +5364,19 @@ class VF0SmokeContractTests(unittest.TestCase):
         ):
             with self.subTest(inspection=inspection):
                 transport = _ReadOnlyProbeTransport(inspection=inspection)
-                with mock.patch(
-                    "tools.vf0_execution._capture_process",
-                    side_effect=transport.capture,
+                clock = _TestMonotonicClock()
+                with (
+                    mock.patch(
+                        "tools.vf0_execution._capture_process",
+                        side_effect=transport.capture,
+                    ),
+                    mock.patch(
+                        "tools.vf0_execution.time.monotonic",
+                        side_effect=clock.monotonic,
+                    ),
+                    mock.patch(
+                        "tools.vf0_execution.time.sleep", side_effect=clock.sleep
+                    ),
                 ):
                     with self.assertRaisesRegex(ExecutionRejected, reason):
                         module._probe_read_only_behavior(module.FIXED_IMAGE)
