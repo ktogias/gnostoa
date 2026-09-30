@@ -79,20 +79,51 @@ disproportionate to a development-only dependency.
    indistinguishable from a digest that matches the wrong thing unless the size and the
    package metadata are checked too, so all three are recorded here.
 
-3. **The advisory evidence is recorded before and after.** `pip_audit` reported three
-   vulnerabilities in one package before the change and none after, against the same
-   lock file and the same command.
+3. **The advisory evidence is recorded before and after, and bound to the exact lock.**
+   A claim a reader cannot reproduce is the same defect this repository fixes in its
+   review artefacts: it asserts a result without the condition that makes it checkable.
+   So the command, the subject's content identity and the environment are recorded, not
+   only the outcome.
 
-4. **The resolution is proved, not assumed.** `pip install --dry-run` against the whole
-   lock resolves with hashes enforced, and reports `urllib3 2.8.0` as the only package
-   that needed to change -- so nothing else in the lock was disturbed.
+   | | |
+   |---|---|
+   | command | `python -m pip_audit --no-deps --strict --progress-spinner off --requirement requirements/development.lock` |
+   | environment | Python 3.12.14, `pip-audit` 2.10.1, in the repository's `development` image |
+   | lock before | sha256 `e3c2f4f5b429fadf903ac9981ebcc8f5d303497dc06468413bcb6373624cba5b` (at `ff9915e`) |
+   | lock after | sha256 `e4fbace14e5c7fb2734e240625df7a8433daccad25c499c85a46c13f1c664fba` |
+   | report before | `Found 3 known vulnerabilities in 1 package` -- urllib3 2.7.0, CVE-2026-97687/97688/97689, each `Fix Versions: 2.8.0` |
+   | report after | `No known vulnerabilities found` |
 
-5. **Nothing else moves.** `requirements/runtime.lock` is untouched, and no other pin in
+4. **The resolution is proved, not assumed** -- and the proof names its environment,
+   because this observation has no meaning without one.
+
+   ```
+   python -m pip install --dry-run --quiet --report <path> \
+     --requirement requirements/development.lock
+   ```
+
+   Run in an image built from the **previous** lock, the report's `install` list holds
+   exactly one entry, `urllib3 2.8.0`: the resolver, with `--require-hashes` in force,
+   finds every other pin already satisfied at its locked version. Run in an image built
+   from **this** lock, the list is empty, because nothing is left to change.
+
+   Both readings say the same thing -- urllib3 is the only pin that moves -- and
+   neither is the whole claim on its own. An earlier draft of this Decision recorded
+   only the first as though it were absolute, which would have failed for the next
+   reader who ran it in the obvious place.
+
+5. **The evidence is produced in an image built from the lock under test.** The suites
+   were first run in a container built from the *previous* lock, and the repository's
+   own gate refused it: `installed distribution version mismatch for urllib3: expected
+   2.8.0, found 2.7.0`. A lock verified against an environment that does not use it is
+   not verified. The green run is on an image rebuilt from this branch.
+
+6. **Nothing else moves.** `requirements/runtime.lock` is untouched, and no other pin in
    the development lock is refreshed in this change. A lock regeneration that wants to
    move other versions is a separate decision with separate evidence; bundling it here
    would mean a security fix that cannot be reviewed for what it actually changes.
 
-6. **It lands on `main`, not on a feature branch.** Every branch inherits the fix from
+7. **It lands on `main`, not on a feature branch.** Every branch inherits the fix from
    there. Fixing it inside an open Pull Request would leave `main` and the other
    branches red, and would create a lock conflict when the branches later merge.
 
