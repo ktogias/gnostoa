@@ -56,8 +56,34 @@ _MIN_FENCE = 3
 _BACKTICK_RUN = re.compile(r"`+")
 
 
-def final_report(turns: list[Any]) -> str:
-    """Return the reviewer's final text from the execution file's turns."""
+def run_succeeded(turns: list[Any]) -> bool:
+    """Return whether the execution stream ends in a successful result envelope.
+
+    The heading the summary publishes is a claim about the run, not only about the
+    text. A reviewer that hits the turn limit or errors after emitting text still
+    produces a result turn -- carrying ``is_error: true`` or a non-success subtype, and
+    often a diagnostic string where the report would be. Accepting it on its text alone
+    published a run that never finished under "Claude review report".
+
+    Absence of the flags is not success: a stream with no result envelope at all did
+    not reach one, so it is reported as unfinished rather than assumed complete.
+    """
+    for turn in reversed(turns):
+        if isinstance(turn, dict) and turn.get("type") == "result":
+            if turn.get("is_error"):
+                return False
+            subtype = turn.get("subtype")
+            return subtype is None or subtype == "success"
+    return False
+
+
+def final_report(turns: list[Any]) -> tuple[str, bool]:
+    """Return the reviewer's final text, and whether the run that produced it finished.
+
+    The two travel together because the caller cannot recover the second from the
+    first: a diagnostic and a report are both non-empty strings.
+    """
+    complete = run_succeeded(turns)
     for turn in reversed(turns):
         if not isinstance(turn, dict):
             continue
@@ -65,7 +91,7 @@ def final_report(turns: list[Any]) -> str:
         # A result turn carrying an empty string is not a report. Returning it shadowed
         # real assistant text and published "the reviewer produced no final text".
         if turn.get("type") == "result" and isinstance(result, str) and result.strip():
-            return result
+            return result, complete
     # Fall back to the last assistant text block.
     for turn in reversed(turns):
         if not isinstance(turn, dict):
@@ -80,8 +106,8 @@ def final_report(turns: list[Any]) -> str:
             if isinstance(block, dict) and isinstance(block.get("text"), str)
         ]
         if texts:
-            return "\n".join(texts)
-    return ""
+            return "\n".join(texts), complete
+    return "", complete
 
 
 def enclosing_fence(text: str) -> str:
@@ -123,7 +149,7 @@ def render(execution_file: pathlib.Path) -> str:
         return f"## Review report unavailable\n\nCould not read the execution output: {error}\n"
     if not isinstance(turns, list):
         return "## Review report unavailable\n\nThe execution output was not a list of turns.\n"
-    report = final_report(turns)
+    report, complete = final_report(turns)
     if not report.strip():
         return "## Review report unavailable\n\nThe reviewer produced no final text.\n"
     # Truncated *before* the block is built, so the cut can never land inside the
@@ -132,6 +158,19 @@ def render(execution_file: pathlib.Path) -> str:
     if len(encoded) > _MAX_BYTES:
         report = encoded[:_MAX_BYTES].decode("utf-8", "ignore")
         report += f"\n\n[report truncated at {_MAX_BYTES} bytes]"
+    if not complete:
+        # The text is still shown -- it is the only evidence of what the run did -- but
+        # never under a heading that calls it the review. A diagnostic and a report are
+        # both non-empty strings, so the heading is the only thing that distinguishes
+        # them for the reader.
+        return (
+            "## Review incomplete\n\n"
+            "The reviewer did not finish: its execution ended without a successful\n"
+            "result. What follows is the last text it produced, which may be a\n"
+            "diagnostic or partial narration rather than findings. Treat the change as\n"
+            "not reviewed.\n\n"
+            f"{neutralise(report)}\n"
+        )
     return (
         "## Claude review report\n\n"
         "Published by the repository, not by the action. The report is shown as literal\n"

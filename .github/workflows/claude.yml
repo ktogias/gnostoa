@@ -112,28 +112,6 @@ jobs:
               && github.event.review.commit_id || '' }}
         run: |
           set -eu
-          # The prompt keys item type on this number, never on head/base
-          # equality: a merged or empty Pull Request can report both the same.
-          if [ -z "${PULL_NUMBER}" ]; then
-            printf 'pull_number=\n' >> "${GITHUB_OUTPUT}"
-            printf 'head_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-            printf 'base_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          printf 'pull_number=%s\n' "${PULL_NUMBER}" >> "${GITHUB_OUTPUT}"
-          if [ -n "${EVENT_HEAD_SHA}" ]; then
-            if [ "${EVENT_HEAD_REPO}" != "${REPOSITORY}" ]; then
-              echo "ERROR: refusing a fork-controlled head (${EVENT_HEAD_REPO})" >&2
-              exit 1
-            fi
-            if [ -n "${REVIEWED_COMMIT}" ]; then
-              printf 'head_sha=%s\n' "${REVIEWED_COMMIT}" >> "${GITHUB_OUTPUT}"
-            else
-              printf 'head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
-            fi
-            printf 'base_sha=%s\n' "${EVENT_BASE_SHA}" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
           # Every provider request in this job runs under `set -eu`, so one transient
           # failure ends the job before the reviewer starts. Each attempt writes to its
           # own file and is moved into place only on success, so a partial body is never
@@ -158,6 +136,50 @@ jobs:
               api_attempt=$(( api_attempt + 1 ))
             done
           }
+          # The prompt keys item type on this number, never on head/base
+          # equality: a merged or empty Pull Request can report both the same.
+          if [ -z "${PULL_NUMBER}" ]; then
+            printf 'pull_number=\n' >> "${GITHUB_OUTPUT}"
+            printf 'head_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            printf 'base_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          printf 'pull_number=%s\n' "${PULL_NUMBER}" >> "${GITHUB_OUTPUT}"
+          if [ -n "${EVENT_HEAD_SHA}" ]; then
+            if [ "${EVENT_HEAD_REPO}" != "${REPOSITORY}" ]; then
+              echo "ERROR: refusing a fork-controlled head (${EVENT_HEAD_REPO})" >&2
+              exit 1
+            fi
+            if [ -n "${REVIEWED_COMMIT}" ]; then
+              # `review.commit_id` names the revision a human actually reviewed, and a
+              # force-push can leave it unreachable. Written through unchecked, that
+              # surfaced three retries later as a comparison error naming neither the
+              # commit nor the cause. Checked here instead, so the failure says which
+              # revision went missing and what to do about it.
+              #
+              # Deliberately not a fallback to the current head: answering about a
+              # different revision than the one reviewed, without saying so, is the
+              # substitution rule 21 exists to prevent. Making that fallback safe needs
+              # its own rule and a notice the reviewer can read, which is tracked
+              # separately rather than decided here.
+              # Retried like every other provider request in this job: a transient
+              # failure here would otherwise be reported as a commit that no longer
+              # exists, which is a different and much more alarming claim.
+              if ! api_to_file "${RUNNER_TEMP}/reviewed.json" \
+                "repos/${REPOSITORY}/commits/${REVIEWED_COMMIT}" --jq .sha; then
+                echo "ERROR: the reviewed commit ${REVIEWED_COMMIT} no longer resolves" >&2
+                echo "in ${REPOSITORY}; a force-push has most likely replaced it." >&2
+                echo "Re-request the review on the current head." >&2
+                exit 1
+              fi
+              rm -f "${RUNNER_TEMP}/reviewed.json"
+              printf 'head_sha=%s\n' "${REVIEWED_COMMIT}" >> "${GITHUB_OUTPUT}"
+            else
+              printf 'head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            fi
+            printf 'base_sha=%s\n' "${EVENT_BASE_SHA}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           # One retried request, and both fields come from that one retained response:
           # asking twice let the head change between the fork check and the SHA read.
           pull_json="${RUNNER_TEMP}/pull.json"

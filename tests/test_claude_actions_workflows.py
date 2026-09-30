@@ -613,6 +613,103 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertNotIn("github.event.", value)
 
+    def test_a_failed_run_is_not_published_as_the_review_report(self) -> None:
+        # A result turn was accepted on its text alone. When the reviewer hits the turn
+        # limit or errors after emitting text, its result envelope carries
+        # `is_error: true` or a non-success subtype and often a diagnostic string -- and
+        # that string was published under "## Claude review report", so a run that never
+        # finished reads as a completed review. Mid-run narration reached the same
+        # heading through the assistant-text fallback. The heading is a claim about the
+        # run, and nothing was checking it.
+        publisher = _load_script(PUBLISHER)
+        failed = [
+            {
+                "type": "assistant",
+                "message": {"content": [{"text": "partway through, looking at x"}]},
+            },
+            {
+                "type": "result",
+                "is_error": True,
+                "subtype": "error_max_turns",
+                "result": "Reached the maximum number of turns.",
+            },
+        ]
+        report, complete = publisher.final_report(failed)
+        self.assertFalse(complete, "a failed run was reported as a complete review")
+        # The text is still surfaced -- it is the only evidence of what happened -- but
+        # it is not the reviewer's verdict.
+        self.assertTrue(report.strip())
+        with tempfile.TemporaryDirectory() as scratch:
+            execution = pathlib.Path(scratch) / "execution.json"
+            execution.write_text(json.dumps(failed), encoding="utf-8")
+            summary = publisher.render(execution)
+        self.assertNotIn("## Claude review report", summary)
+        self.assertIn("did not finish", summary)
+        # Each signal is exercised on its own. The first fixture set `is_error` *and*
+        # an error subtype, so either check alone satisfied it and a mutation removing
+        # one stayed green -- a real gap, not an equivalent mutant.
+        for label, envelope in (
+            ("is_error alone", {"is_error": True, "subtype": "success"}),
+            ("subtype alone", {"subtype": "error_during_execution"}),
+        ):
+            with self.subTest(signal=label):
+                turns = [
+                    {"type": "result", "result": "diagnostic text", **envelope},
+                ]
+                _, complete = publisher.final_report(turns)
+                self.assertFalse(complete, f"{label} did not mark the run incomplete")
+        # And a stream that never reached a result envelope did not finish either.
+        # Absence of the failure flags is not evidence of success.
+        narration = [
+            {"type": "assistant", "message": {"content": [{"text": "still working"}]}}
+        ]
+        _, complete = publisher.final_report(narration)
+        self.assertFalse(complete, "a run with no result envelope was called complete")
+        # A clean run is unaffected.
+        good = [{"type": "result", "subtype": "success", "result": "real findings"}]
+        report, complete = publisher.final_report(good)
+        self.assertEqual(("real findings", True), (report, complete))
+
+    def test_an_unresolvable_reviewed_commit_fails_legibly(self) -> None:
+        # `review.commit_id` names the revision a human actually reviewed (rule 18),
+        # and a force-push can leave it unreachable. The step wrote it straight into
+        # `head_sha`, so the failure surfaced three retries later as an opaque
+        # comparison error, with nothing naming the commit or the cause. The reviewer
+        # is not started either way -- this is about whether the operator can tell
+        # why. Reviewing a *different* revision instead would need its own rule,
+        # because presenting one revision as another is what rule 21 exists to stop.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        resolve = next(
+            step
+            for step in workflow["jobs"]["claude"]["steps"]
+            if step.get("id") == "review_head"
+        )
+        script = str(resolve["run"])
+        # Read as the branch that uses it, not as a window of characters, and aimed
+        # at the property rather than at a command name: an earlier version of this
+        # assertion looked for the literal `gh api`, so routing the check through the
+        # job's retry helper read as a regression.
+        lines = script.splitlines()
+        start = next(
+            i
+            for i, line in enumerate(lines)
+            if 'if [ -n "${REVIEWED_COMMIT}" ]' in line
+        )
+        writes_head = next(
+            i
+            for i in range(start, len(lines))
+            if "head_sha=%s" in lines[i] and "REVIEWED_COMMIT" in lines[i]
+        )
+        branch = "\n".join(lines[start:writes_head])
+        # The commit reaches a provider request before it is trusted as the head, and
+        # that request is the retried one -- an unretried check would report a
+        # transient failure as a commit that no longer exists.
+        self.assertIn("api_to_file", branch, "the reviewed commit is used unverified")
+        self.assertIn("${REVIEWED_COMMIT}", branch)
+        # And a failure names the commit and the cause, rather than surfacing later as
+        # a comparison error with no subject.
+        self.assertIn("no longer resolves", branch)
+
     def test_reviewed_commit_is_gated_on_the_submitted_review_event(self) -> None:
         # A pull_request_review_comment payload can also carry a review object, and
         # selecting it there would drop the later commits of a multi-commit Pull
@@ -1663,7 +1760,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             {"type": "assistant", "message": {"content": [{"text": "real findings"}]}},
             {"type": "result", "result": "   "},
         ]
-        self.assertEqual("real findings", publisher.final_report(turns))
+        # The run status travels with the text, because a diagnostic and a report are
+        # both non-empty strings and the caller cannot tell them apart otherwise.
+        self.assertEqual(("real findings", True), publisher.final_report(turns))
 
     def test_paths_are_quoted_the_way_git_quotes_them(self) -> None:
         # `git -c core.quotePath=false ls-files` was run against a repository holding
