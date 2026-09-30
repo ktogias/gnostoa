@@ -98,7 +98,7 @@ disproportionate to a development-only dependency.
    because this observation has no meaning without one.
 
    ```
-   python -m pip install --dry-run --quiet --report <path> \
+   python -m pip install --dry-run --quiet --report /tmp/pip-resolution.json \
      --requirement requirements/development.lock
    ```
 
@@ -111,6 +111,12 @@ disproportionate to a development-only dependency.
    neither is the whole claim on its own. An earlier draft of this Decision recorded
    only the first as though it were absolute, which would have failed for the next
    reader who ran it in the obvious place.
+
+   The report path is a literal, not a `<placeholder>`: a shell reads `<path>` as input
+   redirection, so the command as first written could not run at all. A documented
+   command is evidence only if it is the command that was run -- an earlier draft had
+   been tested in one form and written down in another, which is the same defect as
+   recording a result without its condition.
 
 5. **The evidence is produced in an image built from the lock under test.** The suites
    were first run in a container built from the *previous* lock, and the repository's
