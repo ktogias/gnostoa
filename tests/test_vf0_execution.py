@@ -4989,6 +4989,79 @@ class VF0SmokeContractTests(unittest.TestCase):
         self.assertEqual(["run", "inspect"], [call[1] for call in transport.calls])
         sleep.assert_not_called()
 
+    def test_read_only_probe_reconciles_after_uncertain_docker_exit(self) -> None:
+        module = _load_smoke_module()
+        for exit_code in (-15, 125, 126, 127):
+            with self.subTest(exit_code=exit_code):
+                transport = _ReadOnlyProbeTransport(
+                    auto_remove=True, run_exit_code=exit_code
+                )
+                late_create_pending = True
+
+                def expose_late_create(
+                    _duration: float,
+                    *,
+                    probe_transport: _ReadOnlyProbeTransport = transport,
+                ) -> None:
+                    nonlocal late_create_pending
+                    if late_create_pending:
+                        probe_transport.present = True
+                        late_create_pending = False
+
+                with (
+                    mock.patch(
+                        "tools.vf0_execution._capture_process",
+                        side_effect=transport.capture,
+                    ),
+                    mock.patch("tools.vf0_execution.time.monotonic", return_value=0.0),
+                    mock.patch(
+                        "tools.vf0_execution.time.sleep",
+                        side_effect=expose_late_create,
+                    ) as sleep,
+                ):
+                    with self.assertRaisesRegex(
+                        AssertionError, "READONLY_BEHAVIOR_PROBE_FAILED"
+                    ):
+                        module._probe_read_only_behavior(module.FIXED_IMAGE)
+
+                self.assertFalse(late_create_pending)
+                self.assertEqual(2, sleep.call_count)
+                self.assertFalse(transport.present)
+                self.assertEqual(
+                    ["run", "inspect", "inspect", "inspect", "rm", "inspect"],
+                    [call[1] for call in transport.calls],
+                )
+
+    def test_read_only_probe_fails_closed_after_unsettled_docker_exit(self) -> None:
+        module = _load_smoke_module()
+        for exit_code in (-15, 125, 126, 127):
+            with self.subTest(exit_code=exit_code):
+                transport = _ReadOnlyProbeTransport(
+                    auto_remove=True, run_exit_code=exit_code
+                )
+                with (
+                    mock.patch(
+                        "tools.vf0_execution._capture_process",
+                        side_effect=transport.capture,
+                    ),
+                    mock.patch(
+                        "tools.vf0_execution.time.monotonic",
+                        side_effect=[0.0, 0.0, 2.0],
+                    ),
+                    mock.patch("tools.vf0_execution.time.sleep") as sleep,
+                ):
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
+                    ):
+                        module._probe_read_only_behavior(module.FIXED_IMAGE)
+
+                sleep.assert_called_once()
+                self.assertFalse(transport.present)
+                self.assertEqual(
+                    ["run", "inspect", "inspect"],
+                    [call[1] for call in transport.calls],
+                )
+
     def test_read_only_probe_keeps_unobserved_create_unverified_after_timeout(
         self,
     ) -> None:

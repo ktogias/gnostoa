@@ -178,8 +178,12 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
                 payload,
                 timeout=30,
             )
-            # A returned docker run has completed even when the probe failed.
-            completion_observed = True
+            # Docker CLI errors and signal termination do not prove completion.
+            completion_observed = result.returncode >= 0 and result.returncode not in {
+                125,
+                126,
+                127,
+            }
         finally:
             backend._cleanup_uncertain_create(
                 container_name,
