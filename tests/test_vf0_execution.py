@@ -736,6 +736,114 @@ class VF0SubjectTests(unittest.TestCase):
                 all(stderr_is_discarded(target) for target in popen_stderr_targets)
             )
 
+    def test_git_blob_stream_is_bounded_by_its_tree_declared_size(self) -> None:
+        import zlib
+
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo"
+            repo.mkdir()
+            _git(repo, "init", "--quiet")
+
+            # `ls-tree -l` and `cat-file -s` trust the loose object's header,
+            # while `cat-file blob` can emit the full inflated payload.
+            raw_object = b"blob 1\0" + b"X" * (1024 * 1024)
+            blob_oid = hashlib.sha1(raw_object).hexdigest()
+            loose_object = repo / ".git" / "objects" / blob_oid[:2] / blob_oid[2:]
+            loose_object.parent.mkdir(exist_ok=True)
+            loose_object.write_bytes(zlib.compress(raw_object))
+
+            tree_input = b"100644 suspicious.bin\0" + bytes.fromhex(blob_oid)
+            tree = (
+                subprocess.run(  # nosec B603 -- fixed Git plumbing fixture, no shell
+                    [
+                        "/usr/bin/git",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "-C",
+                        str(repo),
+                        "hash-object",
+                        "-t",
+                        "tree",
+                        "-w",
+                        "--stdin",
+                    ],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    input=tree_input,
+                    env=module._GIT_ENV,
+                )
+                .stdout.decode("ascii")
+                .strip()
+            )
+            commit = _git(
+                repo,
+                "-c",
+                "user.name=VF0 Test",
+                "-c",
+                "user.email=vf0@example.invalid",
+                "commit-tree",
+                tree,
+                "-m",
+                "malformed blob size",
+            )
+            subject = GitSubject(commit=commit, tree=tree)
+            target = root / "materialized"
+            destination = target / "suspicious.bin"
+            observed_sizes: list[int] = []
+            real_stat = type(destination).stat
+
+            def observe_destination_size(
+                path: Path, *, follow_symlinks: bool = True
+            ) -> os.stat_result:
+                result = real_stat(path, follow_symlinks=follow_symlinks)
+                if path == destination:
+                    observed_sizes.append(result.st_size)
+                return result
+
+            with mock.patch.object(type(destination), "stat", observe_destination_size):
+                with self.assertRaisesRegex(ExecutionRejected, "^SUBJECT_BLOB_BOUND$"):
+                    module._materialize_subject(repo, subject, target)
+
+            self.assertTrue(all(size <= 1 for size in observed_sizes), observed_sizes)
+            self.assertFalse(destination.exists())
+
+    def test_git_blob_selector_setup_failure_reaps_child(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class ExplodingSelector:
+            def register(self, fileobj: object, events: int) -> None:
+                del fileobj, events
+                raise OSError("selector setup failed")
+
+            def close(self) -> None:
+                pass
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            oid = _git(repo, "rev-parse", f"{subject.commit}:subject.txt")
+            process = mock.Mock()
+            process.stdout = mock.Mock()
+            process.poll.return_value = None
+            destination = Path(td) / "materialized"
+            with (
+                mock.patch.object(module.subprocess, "Popen", return_value=process),
+                mock.patch.object(
+                    module.selectors,
+                    "DefaultSelector",
+                    return_value=ExplodingSelector(),
+                ),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "^GIT_COMMAND_FAILED$"):
+                    module._write_git_blob(repo, oid, destination, 4)
+
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with()
+            process.stdout.close.assert_called_once_with()
+            self.assertFalse(destination.exists())
+
     def test_missing_promised_blob_never_invokes_configured_ssh_command(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:

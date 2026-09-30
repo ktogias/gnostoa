@@ -520,7 +520,8 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
 def _write_git_blob(
     repo: Path, oid: str, destination: Path, expected_size: int
 ) -> bytes:
-    """Materialize one Git blob directly, then independently verify its object id."""
+    """Materialize one bounded Git blob, then independently verify its object id."""
+    _need(0 <= expected_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -530,21 +531,63 @@ def _write_git_blob(
         raise ExecutionRejected("SUBJECT_DESTINATION") from exc
     try:
         with os.fdopen(descriptor, "wb") as output:
+            process: subprocess.Popen[bytes] | None = None
+            selector: selectors.BaseSelector | None = None
             try:
                 # Fixed /usr/bin/git object read, list argv, scrubbed env, no shell.
-                result = subprocess.run(  # nosec B603  # nosemgrep
+                process = subprocess.Popen(  # nosec B603  # nosemgrep
                     _trusted_git_argv(repo, "cat-file", "blob", oid),
-                    check=False,
                     stdin=subprocess.DEVNULL,
-                    stdout=output,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     env=_GIT_ENV,
-                    timeout=30,
                 )
+                try:
+                    if process.stdout is None:
+                        raise ExecutionRejected("GIT_COMMAND_FAILED")
+                    deadline = time.monotonic() + 30.0
+                    observed_bytes = 0
+                    selector = selectors.DefaultSelector()
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while selector.get_map():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired("/usr/bin/git cat-file", 30)
+                        events = selector.select(remaining)
+                        if not events:
+                            raise subprocess.TimeoutExpired("/usr/bin/git cat-file", 30)
+                        for key, _ in events:
+                            chunk = os.read(
+                                key.fd,
+                                min(65_536, expected_size - observed_bytes + 1),
+                            )
+                            if not chunk:
+                                selector.unregister(key.fileobj)
+                                continue
+                            observed_bytes += len(chunk)
+                            _need(observed_bytes <= expected_size, "SUBJECT_BLOB_BOUND")
+                            output.write(chunk)
+
+                    process.wait(timeout=max(0.0, deadline - time.monotonic()))
+                except BaseException:
+                    if process.poll() is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                    process.wait()
+                    raise
+                finally:
+                    if selector is not None:
+                        selector.close()
+                    if process.stdout is not None:
+                        process.stdout.close()
+
+                _need(process.returncode == 0, "GIT_COMMAND_FAILED")
+                _need(observed_bytes == expected_size, "SUBJECT_BLOB_MISMATCH")
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ExecutionRejected("GIT_COMMAND_FAILED") from exc
-        _need(result.returncode == 0, "GIT_COMMAND_FAILED")
-        _need(destination.stat().st_size == expected_size, "SUBJECT_BLOB_MISMATCH")
+
         observed_oid = (
             _trusted_git(repo, "hash-object", "--no-filters", "--", str(destination))
             .decode("ascii")
