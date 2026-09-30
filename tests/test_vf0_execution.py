@@ -793,20 +793,24 @@ class VF0SubjectTests(unittest.TestCase):
             target = root / "materialized"
             destination = target / "suspicious.bin"
             observed_sizes: list[int] = []
-            real_stat = type(destination).stat
+            real_unlink = type(destination).unlink
 
-            def observe_destination_size(
-                path: Path, *, follow_symlinks: bool = True
-            ) -> os.stat_result:
-                result = real_stat(path, follow_symlinks=follow_symlinks)
+            def observe_destination_size_at_unlink(
+                path: Path, *, missing_ok: bool = False
+            ) -> None:
                 if path == destination:
-                    observed_sizes.append(result.st_size)
-                return result
+                    observed_sizes.append(path.stat().st_size)
+                real_unlink(path, missing_ok=missing_ok)
 
-            with mock.patch.object(type(destination), "stat", observe_destination_size):
+            with mock.patch.object(
+                type(destination), "unlink", observe_destination_size_at_unlink
+            ):
                 with self.assertRaisesRegex(ExecutionRejected, "^SUBJECT_BLOB_BOUND$"):
                     module._materialize_subject(repo, subject, target)
 
+            self.assertTrue(
+                observed_sizes, "destination size was not observed at cleanup"
+            )
             self.assertTrue(all(size <= 1 for size in observed_sizes), observed_sizes)
             self.assertFalse(destination.exists())
 
