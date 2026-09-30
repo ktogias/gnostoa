@@ -19,6 +19,9 @@ sources:
   - id: claude-code-marketplace
     resource: https://github.com/anthropics/claude-code/tree/c94815511c7fb7a33900fe094bbc0dbee4a3b8ee
     title: anthropics/claude-code plugin marketplace
+  - id: claude-code-marketplace-name-rules
+    resource: https://code.claude.com/docs/en/plugins/marketplace-reference#reserved-names
+    title: Claude Code marketplace reserved names
 x-project-knowledge:
   id: kit.decision.0093.harden-claude-code-github-actions-workflows
   owners:
@@ -72,7 +75,13 @@ Terms. It is only executed in CI and is neither copied nor redistributed.
 1. Pin every workflow `uses:` to a full commit SHA, with the resolved tag as a
    comment. Reuse the repository's existing `actions/checkout` v6.0.2 pin.
 2. Materialize the plugin marketplace with a SHA-pinned checkout and install it
-   from that local path.
+   from that local path. Before installation, change only the top-level
+   `marketplace.json` name in the temporary checkout from Anthropic's reserved
+   `claude-code-plugins` identifier to the non-reserved local alias
+   `gnostoa-claude-review`. Keep all plugin entries and their files at the
+   pinned commit unchanged. Fail closed if the expected name does not occur
+   exactly once. This compatibility edit exists only in the CI checkout; the
+   proprietary marketplace remains neither copied nor redistributed.
 3. Set `persist-credentials: false` on every checkout.
 4. Keep the workflow token read-only plus `id-token: write` and `actions: read`
    where CI results are read. Adding write scopes would widen `GITHUB_TOKEN`
@@ -101,6 +110,10 @@ that test.
 - The automatic review workflow cannot pass on PR #320 itself. The action
   validates that the workflow matches the default branch before exchanging
   tokens, so the first effective run follows integration.
+- The upstream marketplace is consumed from a local checkout, so its reserved
+  official name cannot be used with Claude Code's local marketplace source.
+  The temporary alias preserves the exact pinned plugin source while making
+  the workflow's installation identifier valid.
 - Automatic Claude reviews are advisory agent reviews. They are captured under
   [supplied-agent review dispositions](../runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews)
   and never supply human approval, qualification or merge authority.
