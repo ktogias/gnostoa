@@ -65,15 +65,23 @@ def run_succeeded(turns: list[Any]) -> bool:
     often a diagnostic string where the report would be. Accepting it on its text alone
     published a run that never finished under "Claude review report".
 
-    Absence of the flags is not success: a stream with no result envelope at all did
-    not reach one, so it is reported as unfinished rather than assumed complete.
+    Success must be stated, never inferred from the absence of a failure signal. The
+    native envelope carries `subtype: "success"` with `is_error: false` on a run that
+    finished -- this repository established that in
+    `knowledge/assessments/native-structured-review-handoff.md`, whose declared
+    `claude-structured` adapter requires exactly that pair, and which retains a mutant
+    (`M1-ignore-success-subtype-isolated`) showing that ignoring the success subtype
+    produces three assertion failures against its oracle.
+
+    So an envelope without a subtype is *unknown*, not successful, and an earlier
+    version of this function admitting `subtype is None` was the same defect that
+    mutant demonstrates. It was also inconsistent with the line below it: a stream with
+    no result envelope at all was already reported as unfinished, and an envelope that
+    declares nothing says no more than no envelope does.
     """
     for turn in reversed(turns):
         if isinstance(turn, dict) and turn.get("type") == "result":
-            if turn.get("is_error"):
-                return False
-            subtype = turn.get("subtype")
-            return subtype is None or subtype == "success"
+            return not turn.get("is_error") and turn.get("subtype") == "success"
     return False
 
 

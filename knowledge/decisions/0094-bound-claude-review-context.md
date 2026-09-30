@@ -446,8 +446,15 @@ No new dependency, service or runtime is introduced.
    its diff hunk can originate from an older commit, so without
    `original_commit_id` and `original_line` the reviewer cannot detect that it is
    interpreting the request against different code.
-18. **The checkout follows a submitted review's commit, but not an inline
-   comment's.** A push landing while an older *submitted review* is open leaves
+18. **The comparison follows a submitted review's commit, but not an inline
+   comment's.** The wording matters: **nothing** makes the checkout follow a
+   candidate commit. The checkout is bound to the workflow revision and to the
+   protected branch (rules 21 and 25a), and the reviewed commit is used only as the
+   *comparison head* from which the context artefacts are built. An earlier version
+   of this rule said "the checkout follows", which contradicted rule 21's
+   no-candidate-tree boundary outright and would have invited a maintainer to
+   reintroduce the candidate checkout the rest of this Decision exists to remove.
+   A push landing while an older *submitted review* is open leaves
    `pull_request.head.sha` ahead of the commit that review describes, so checking
    out the head reviews different code from the one the forwarded body refers to.
    `ci/review_github_current_state.py` already treats `review.commit_id` as a
@@ -677,6 +684,31 @@ No new dependency, service or runtime is introduced.
 24. **The session is bounded in turns.** `--max-turns` caps how long the reviewer may
    iterate. The prompt bound of rule 3 limits what the session starts with; this limits
    what it can accumulate while running.
+
+25a. **The job refuses a workflow revision that is not on the protected branch.**
+   Rule 21 keeps the candidate tree away from the credential-bearing job by binding
+   the checkout to `github.workflow_sha`. That premise holds only where GitHub
+   resolves the workflow from the default branch, and it does not hold for every
+   admitted trigger. Measured on this repository's own run history: an
+   `issue_comment` run reports `branch=main`, while `pull_request_review` and
+   `pull_request_review_comment` runs reported `branch=<candidate>` -- so for those
+   two events `github.workflow_sha` is candidate-controlled, and the checkout would
+   supply candidate `build_review_context.py` and `chunk_diff.py` to a job holding
+   `GH_TOKEN` and `id-token: write`. The author-association gate does not help,
+   because it is in the same candidate-controlled file.
+
+   A step before the checkout therefore compares the workflow revision against the
+   default branch and refuses unless it is contained in it. It reads no candidate
+   bytes, is retried so a transient provider failure cannot become a false refusal,
+   and fails closed when the answer is unavailable.
+
+   **What this does not achieve.** Nothing inside a candidate-controlled workflow
+   can defend against a candidate that edits that workflow. This blocks an
+   accidental candidate revision and forces a deliberate one to edit a
+   guardrail-owned file visibly in the Pull Request diff; it is not a substitute for
+   not admitting the trigger at all. Removing those two triggers is the stronger
+   remedy, and is a trust-boundary change for the owner rather than a review-round
+   fix.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 

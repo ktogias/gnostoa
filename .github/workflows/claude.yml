@@ -49,6 +49,61 @@ jobs:
       # the opposite. Everything about the change arrives as trusted artefacts built
       # from the provider's compare API, so no candidate file, symlink or mode ever
       # reaches this runner's filesystem.
+      # Measured on this repository's own runs: `issue_comment` resolves this
+      # workflow from the default branch, but `pull_request_review` and
+      # `pull_request_review_comment` resolved it from the *candidate* branch. For
+      # those events `github.workflow_sha` is candidate-controlled, and the checkout
+      # below binds exactly that -- so without this the job would execute candidate
+      # review-context scripts with GH_TOKEN and `id-token: write`. The
+      # author-association gate does not help: it lives in the same file.
+      #
+      # This runs before the checkout, uses no candidate bytes, and fails closed: an
+      # unresolvable ancestry answer is a refusal. It cannot defend against a
+      # candidate that edits this file -- nothing inside a candidate-controlled
+      # workflow can -- but such an edit is visible in the Pull Request diff and the
+      # file is guardrail-owned. Removing the trigger entirely is the stronger
+      # remedy and is a trust-boundary decision for the owner, tracked separately.
+      - name: Refuse a workflow revision that is not on the protected branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -eu
+          if [ -z "${WORKFLOW_SHA}" ] || [ -z "${DEFAULT_BRANCH}" ]; then
+            echo "ERROR: cannot establish the workflow revision or default branch" >&2
+            exit 1
+          fi
+          # `compare` reports how the workflow revision stands to the protected tip.
+          # "identical" or "behind" means the revision is contained in the protected
+          # branch; "ahead"/"diverged" means it carries commits the branch does not.
+          # Retried like every other provider request in this job: a transient
+          # failure must not become a false security refusal, and the loop still
+          # fails closed once its attempts are spent.
+          status=""
+          attempt=1
+          while [ "${attempt}" -le 3 ]; do
+            if gh api "repos/${REPOSITORY}/compare/${DEFAULT_BRANCH}...${WORKFLOW_SHA}" --jq .status > "${RUNNER_TEMP}/compare.txt" 2>/dev/null; then
+              status="$(cat "${RUNNER_TEMP}/compare.txt")"
+              break
+            fi
+            status=""
+            sleep "$(( attempt * 5 ))"
+            attempt=$(( attempt + 1 ))
+          done
+          case "${status}" in
+            identical|behind) ;;
+            *)
+              echo "ERROR: this workflow revision (${WORKFLOW_SHA}) is not contained" >&2
+              echo "in ${DEFAULT_BRANCH} (compare status: ${status:-unavailable})." >&2
+              echo "A credential-bearing review will not run candidate-supplied" >&2
+              echo "workflow or script bytes. Comment from the Pull Request" >&2
+              echo "conversation instead, which resolves from the protected branch." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Checkout the base for the entry route
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -189,7 +244,12 @@ jobs:
             echo "ERROR: refusing to check out a fork-controlled head (${head_repo})" >&2
             exit 1
           fi
-          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(f"head_sha={p[\"head\"][\"sha\"]}"); print(f"base_sha={p[\"base\"][\"sha\"]}")' \
+          # No f-string, and no backslashes: the shell argument is single-quoted, so
+          # double quotes inside it need no escaping -- and a backslash inside an
+          # f-string expression is a SyntaxError on 3.11 and 3.12 alike, which made
+          # every issue_comment invocation on a Pull Request die here before Claude
+          # ran. Concatenation needs no quoting cleverness at all.
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print("head_sha=" + p["head"]["sha"]); print("base_sha=" + p["base"]["sha"])' \
             "${pull_json}" >> "${GITHUB_OUTPUT}"
           rm -f "${pull_json}"
 

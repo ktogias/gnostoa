@@ -253,6 +253,17 @@ def _named_step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"no step named {name!r}")
 
 
+def _inline_python(script: str) -> list[str]:
+    """Return every `python3 -c '<program>'` body in a workflow `run:` block.
+
+    Single-quoted only, which is what these steps use: the argument is single-quoted
+    precisely so the program can hold double quotes without escaping. Line
+    continuations are folded first, so a wrapped command is still recovered whole.
+    """
+    folded = script.replace("\\\n", " ")
+    return re.findall(r"python3?\s+-c\s+'([^']*)'", folded)
+
+
 def _context_step(workflow: dict[str, Any]) -> dict[str, Any]:
     """Return the step that retrieves review context on the reviewer's behalf."""
     for job in workflow["jobs"].values():
@@ -778,6 +789,15 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 ]
                 _, complete = publisher.final_report(turns)
                 self.assertFalse(complete, f"{label} did not mark the run incomplete")
+        # An envelope that declares nothing is unknown, not successful. This repository
+        # established the native shape in
+        # knowledge/assessments/native-structured-review-handoff.md -- a finished run
+        # carries subtype "success" with is_error false -- and retains a mutant showing
+        # that ignoring the success subtype fails its oracle.
+        _, complete = publisher.final_report(
+            [{"type": "result", "result": "looks like a report"}]
+        )
+        self.assertFalse(complete, "an envelope with no subtype was called successful")
         # And a stream that never reached a result envelope did not finish either.
         # Absence of the failure flags is not evidence of success.
         narration = [
@@ -789,6 +809,75 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         good = [{"type": "result", "subtype": "success", "result": "real findings"}]
         report, complete = publisher.final_report(good)
         self.assertEqual(("real findings", True), (report, complete))
+
+    def test_the_credential_job_refuses_an_unprotected_workflow_revision(self) -> None:
+        # Measured on this repository's own run history: `issue_comment` resolves the
+        # workflow from the default branch (`branch=main`), but
+        # `pull_request_review` and `pull_request_review_comment` resolved it from the
+        # *candidate* branch. `github.workflow_sha` is therefore candidate-controlled
+        # for those two events, and the checkout binds exactly that -- so the job would
+        # execute candidate `build_review_context.py` and `chunk_diff.py` with GH_TOKEN
+        # and `id-token: write`. Rule 21's protected-revision premise does not hold for
+        # them, and the author-association gate does not help: it is in the same
+        # candidate-controlled file.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        steps = workflow["jobs"]["claude"]["steps"]
+        checkout_at = next(
+            i for i, s in enumerate(steps) if "checkout" in str(s.get("uses", ""))
+        )
+        guard_at = next(
+            (
+                i
+                for i, s in enumerate(steps)
+                # The invariant, not one implementation of it: a step that reads the
+                # workflow revision and the protected branch together, before the
+                # checkout binds that revision. An earlier version of this assertion
+                # named `merge-base` and so described a particular command rather
+                # than the property.
+                if "WORKFLOW_SHA" in str(s.get("env", {}))
+                or (
+                    "workflow_sha" in str(s.get("env", {}))
+                    and "default_branch" in str(s.get("env", {}))
+                )
+            ),
+            None,
+        )
+        self.assertIsNotNone(
+            guard_at,
+            "nothing checks that the workflow revision is on the protected branch",
+        )
+        # Before anything candidate-supplied is executed. The checkout itself is bound
+        # to workflow_sha, so the guard has to come first to mean anything.
+        self.assertLess(
+            guard_at,
+            checkout_at,
+            "the guard runs after the candidate revision is already checked out",
+        )
+        guard = str(steps[guard_at]["run"])
+        # Fails closed: an unresolvable ancestry answer is a refusal, not a pass.
+        self.assertIn("exit 1", guard)
+
+    def test_every_inline_python_in_the_workflows_compiles(self) -> None:
+        # The resolver's `python3 -c` used backslash-escaped quotes inside an f-string
+        # expression, which is a SyntaxError on 3.11 and 3.12 alike -- so every
+        # `issue_comment` invocation on a Pull Request died before Claude ran. The
+        # suite asserted the step's *structure* and never executed the command, so a
+        # dead code path stayed green. Compiling every inline program closes that
+        # whole class, not this one instance.
+        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+            parsed = load_yaml(workflow)
+            for job_name, job in (parsed.get("jobs") or {}).items():
+                for step in job.get("steps") or []:
+                    script = str(step.get("run") or "")
+                    for program in _inline_python(script):
+                        label = f"{workflow.name}:{job_name}:{step.get('id') or step.get('name')}"
+                        with self.subTest(step=label):
+                            try:
+                                compile(program, f"<{label}>", "exec")
+                            except SyntaxError as error:
+                                self.fail(
+                                    f"inline python does not compile: {error}\n{program}"
+                                )
 
     def test_an_unresolvable_reviewed_commit_fails_legibly(self) -> None:
         # `review.commit_id` names the revision a human actually reviewed (rule 18),
@@ -1876,9 +1965,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # turn carried an empty string, so real assistant output was dropped and the
         # summary said the reviewer produced nothing.
         publisher = _load_script(PUBLISHER)
+        # The envelope declares success, because that is what this case is about: a run
+        # that *finished* and whose result string happened to be blank. The fixture
+        # predates the subtype rule and carried no subtype, which now means "unknown"
+        # rather than "succeeded" -- so leaving it would have quietly turned this into
+        # a test about an unfinished run instead.
         turns = [
             {"type": "assistant", "message": {"content": [{"text": "real findings"}]}},
-            {"type": "result", "result": "   "},
+            {"type": "result", "subtype": "success", "result": "   "},
         ]
         # The run status travels with the text, because a diagnostic and a report are
         # both non-empty strings and the caller cannot tell them apart otherwise.
