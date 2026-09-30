@@ -46,7 +46,7 @@ jobs:
       - name: Set a local name for the pinned plugin marketplace
         id: normalize-marketplace-name
         run: |
-          python - <<'PY'
+          python -I - <<'PY'
           from pathlib import Path
 
           manifest = Path(".claude-code-marketplace/.claude-plugin/marketplace.json")

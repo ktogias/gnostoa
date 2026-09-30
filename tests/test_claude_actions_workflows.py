@@ -184,7 +184,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
 
         script_match = re.search(
-            r"^python - <<'PY'\n(?P<script>.*?)^PY$",
+            r"^python -I - <<'PY'\n(?P<script>.*?)^PY$",
             alias_step["run"],
             flags=re.MULTILINE | re.DOTALL,
         )
@@ -216,9 +216,43 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             'Path(".claude-code-marketplace/.claude-plugin/marketplace.json")',
             normalized_script,
         )
-        self.assertIn("if text.count(original) != 1:", normalized_script)
-        self.assertIn("manifest.write_text(", normalized_script)
         self.assertIn("text.replace(original, replacement, 1)", normalized_script)
+
+        guards = [
+            (index, node)
+            for index, node in enumerate(parsed_script.body)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "text.count(original) != 1"
+        ]
+        self.assertEqual(1, len(guards))
+        guard_index, guard = guards[0]
+        self.assertTrue(
+            any(isinstance(node, ast.Raise) for node in ast.walk(guard)),
+            "manifest drift must raise before the checkout is modified",
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "SystemExit"
+                for node in ast.walk(guard)
+            ),
+            "manifest drift must stop the workflow",
+        )
+        write_indices = [
+            index
+            for index, statement in enumerate(parsed_script.body)
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "manifest"
+                and node.func.attr == "write_text"
+                for node in ast.walk(statement)
+            )
+        ]
+        self.assertEqual(1, len(write_indices))
+        self.assertLess(guard_index, write_indices[0])
 
         fixture = (
             "{\n"
