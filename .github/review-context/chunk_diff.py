@@ -178,7 +178,8 @@ def next_cut(buffer: bytes, limit: int) -> int:
     """Return how many bytes of ``buffer`` the next part may hold.
 
     A non-positive limit means there is no room at all, which the overview asks for
-    when its notices already fill the bound. That is an empty answer, not an error.
+    when its notices already fill the bound. That is an empty answer, not an error;
+    the overview itself then refuses if the notices alone exceed the bound.
     """
     if limit <= 0:
         return 0
@@ -304,6 +305,14 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
         overview = body + bound_notice + trailer
     else:
         overview = body + trailer
+    if len(overview) > limit:
+        # Only a bound smaller than the notices themselves reaches this: the body is
+        # already empty. Cutting the notices would drop the disclosures the reviewer
+        # needs, and writing them would let the file exceed the number it prints.
+        raise ValueError(
+            f"a {limit}-byte bound cannot hold the overview's own notices"
+            f" ({len(overview)} bytes)"
+        )
     (context / "diff.patch").write_bytes(overview)
     return index
 

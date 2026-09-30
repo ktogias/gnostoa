@@ -344,7 +344,13 @@ No new dependency, service or runtime is introduced.
    class this rule keeps closing. The overview is therefore a line-boundary prefix
    sized with its notices rather than part one verbatim; it is still whole lines, so it
    still decodes as text, and if reserving that room is what makes it short, it says it
-   is bounded and points at `patches/` like any other truncation.
+   is bounded and points at `patches/` like any other truncation. A bound too small
+   for the notices themselves is **refused**, like a bound too small for one
+   character: the body was cut to nothing and the notices appended anyway, so the
+   file still exceeded its number, and cutting the notices instead would drop the
+   disclosures. The workflow's 512 KiB cannot reach it; the contract is the
+   chunker's, and a suite that tested parts at 64 bytes had been exercising the
+   over-bound overview without looking at it.
 
    **Wrapping is disclosed on its own**, whenever a record was wrapped, and not only
    when the size bound was also crossed. A diff holding one very long record can fit in

@@ -979,9 +979,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_chunker_never_splits_a_character_or_loses_a_byte(self) -> None:
         # The oversized-line case is the one `split -C` gets wrong, so it is the one
         # exercised: a run of ASCII that ends one byte before the bound, followed by a
-        # two-byte character straddling it.
+        # two-byte character straddling it. The bound is small, to force many parts,
+        # but not smaller than the overview's own notices: at 64 bytes the overview was
+        # silently over its bound here, which this test never looked at.
         chunker = _load_script(CHUNKER)
-        limit = 64
+        limit = 256
         oversized = b"a" * (limit - 1) + "é".encode() + b"b" * limit + b"\n"
         cases = {
             "oversized single line": oversized,
@@ -1002,6 +1004,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     self.assertLessEqual(len(part.read_bytes()), limit)
                     # Every part must stand alone as text.
                     part.read_bytes().decode("utf-8")
+                # And the overview is held to the same bound as the parts.
+                overview = (context / "diff.patch").read_bytes()
+                self.assertLessEqual(len(overview), limit, "overview over its bound")
 
     def test_the_guardrail_owns_every_review_context_script(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
@@ -1844,6 +1849,33 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 if patch.rstrip() != whole.rstrip():
                     self.assertIn(b"bounded at", patch, name)
                     self.assertIn(b"patches/", patch, name)
+
+    def test_a_bound_smaller_than_the_notices_is_refused(self) -> None:
+        # The test above sizes the overview with its notices, but only when the bound
+        # can hold them. Below that, the body was cut to nothing and the notices were
+        # appended anyway, so diff.patch still exceeded the number it prints. Cutting
+        # the notices instead would drop the disclosures the reviewer needs, so a bound
+        # that cannot hold them is refused, legibly -- as a bound too small for one
+        # character already is. Unreachable at the workflow's 512 KiB, but the contract
+        # is split_diff's, not the workflow's.
+        chunker = _load_script(CHUNKER)
+        payload = b"".join(b"+" + b"w" * 30 + b"\n" for _ in range(40))
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(payload)
+            with self.assertRaisesRegex(ValueError, "cannot hold"):
+                chunker.split_diff(context, 64)
+            patch = context / "diff.patch"
+            if patch.exists():
+                self.assertLessEqual(
+                    len(patch.read_bytes()), 64, "wrote over its bound"
+                )
+        # A bound that holds the notices is unaffected.
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(payload)
+            chunker.split_diff(context, 512)
+            self.assertLessEqual(len((context / "diff.patch").read_bytes()), 512)
 
     def test_wrapping_is_disclosed_even_when_the_diff_fits_one_part(self) -> None:
         # The bound notice is what sends the reviewer to patches/README, where the
