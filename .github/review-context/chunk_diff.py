@@ -71,8 +71,8 @@ _ESCAPED_LABELS = (
 )
 
 
-def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
-    """Return ``data`` with non-LF line separators escaped, and how many were found.
+def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int]:
+    """Return ``data`` with non-LF line separators escaped, and two counts.
 
     A diff record may legally contain a byte sequence a Unicode-aware reader treats as a
     line break -- a lone CR, or U+0085/U+2028/U+2029 -- while this splitter, and Git
@@ -84,35 +84,40 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
     A CR immediately before an LF is a Windows line ending rather than a separator of
     its own, and is left alone: rewriting it would alter every record of a CRLF-authored
     file for no gain.
+
+    The escape output is ordinary ASCII, so the encoding has to say which backslashes
+    it introduced. Two attempts failed before this one, and both failures are the same
+    mistake -- an encoding that is *nearly* unambiguous:
+
+    * escaping separators alone made a literal `\\342\\200\\250` in the source produce
+      bytes identical to an escaped U+2028;
+    * pre-escaping the literal *body* fixed that case and left a worse one, because a
+      candidate backslash sitting immediately before a **raw** separator still produced
+      those same bytes -- so a real separator read as ordinary text, on purpose if the
+      candidate chose, while the notice claimed the transformation was reversible.
+
+    So the encoding is the one Git already uses for pathnames: **every** backslash is
+    doubled first, and only then are separators escaped. A single backslash in the
+    output can therefore only be one this function introduced, and `\\\\` is one literal
+    backslash from the source. There is no clever case left to get wrong.
+
+    Doubling is skipped entirely when there is nothing to escape, so an ordinary diff
+    is passed through byte for byte and the reviewer sees the source as written. The
+    second count reports how many backslashes were doubled, because a rewrite nobody
+    counts is a rewrite nobody discloses -- the notices key on these counts, and the
+    previous version rewrote literals without incrementing either.
     """
-    # No sentinel: a placeholder swapped in and out can be supplied by the input
-    # itself, and the swap back then turns the candidate's own bytes into a CRLF the
-    # diff never had. A lone CR is matched directly instead, by asking for a CR that is
-    # not followed by LF.
+    separators = [raw for raw in _EMBEDDED_BREAKS if raw != b"\r"]
+    # A lone CR only: a CR before an LF is a Windows line ending, not a separator.
+    lone_cr = re.compile(rb"\r(?!\n)")
+    if not lone_cr.search(data) and not any(raw in data for raw in separators):
+        # Nothing to escape, so nothing is rewritten and nothing has to be explained.
+        return data, 0, 0
+    doubled = data.count(b"\\")
+    out = data.replace(b"\\", b"\\\\")
     # A function, not a replacement string: `re` reads `\015` in a replacement as an
     # octal escape and would turn it straight back into the CR being escaped.
-    # The escape output is ordinary ASCII, so source that already contains that text
-    # -- a regex, a fixture, a docstring about this very escaping -- produced bytes
-    # identical to an escaped separator, and the notice carries only a global count.
-    # The reviewer has no candidate tree by design (Decision 0094 rule 21), so it could
-    # not recover which occurrence was rewritten, and a literal string read as a
-    # semantic line separator.
-    #
-    # Each literal occurrence therefore gains one backslash *before* any separator is
-    # escaped. Afterwards the rule is exact and reversible: one backslash before an
-    # octal body is a separator this collection escaped, and N > 1 is the candidate's
-    # own text carrying N - 1 backslashes.
-    #
-    # Longest first is defensive, not load-bearing: no value in the table is a
-    # substring of another today, so the order changes nothing -- a mutation to
-    # shortest-first leaves every test green, and that mutant is equivalent rather
-    # than untested. The sort is what keeps that true if a value is ever added whose
-    # body contains a shorter one.
-    out = data
-    for literal in sorted(set(_EMBEDDED_BREAKS.values()), key=len, reverse=True):
-        out = out.replace(literal, b"\\" + literal)
-    # Counted from here, so pre-escaped literals are not reported as separators found.
-    out, found = re.subn(rb"\r(?!\n)", lambda _match: _EMBEDDED_BREAKS[b"\r"], out)
+    out, found = lone_cr.subn(lambda _match: _EMBEDDED_BREAKS[b"\r"], out)
     for raw, escaped in _EMBEDDED_BREAKS.items():
         if raw == b"\r":
             continue
@@ -120,7 +125,7 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
         if count:
             found += count
             out = out.replace(raw, escaped)
-    return out, found
+    return out, found, doubled
 
 
 def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
@@ -199,19 +204,27 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     """Write ``diff.full`` as bounded parts and return how many were written."""
     if limit < 1:
         raise ValueError("the byte bound must be positive")
-    data, escaped = escape_embedded_breaks((context / "diff.full").read_bytes())
+    data, escaped, doubled = escape_embedded_breaks(
+        (context / "diff.full").read_bytes()
+    )
     data, wrapped, continuations = wrap_long_records(data)
     parts = context / "patches"
     parts.mkdir(exist_ok=True)
     notes = ""
-    if escaped:
+    # Keyed on either count, never on the separators alone. The doubling rewrites bytes
+    # too, and a diff holding a literal `\\015` with no real separator was rewritten
+    # with nothing saying so -- the reviewer then reads the extra backslash as the
+    # candidate's own source and may report it as a defect. A rewrite nobody counts is
+    # a rewrite nobody discloses.
+    if escaped or doubled:
         notes += (
             f"{escaped} non-LF line separator(s) were escaped to their octal UTF-8\n"
-            "bytes. A reader that treats them as line breaks would otherwise see the\n"
-            "text after one as a record of its own, so candidate content could pose as\n"
-            "a file header. One backslash before an octal body is a separator escaped\n"
-            "here; two or more mean the candidate's own text, carrying one fewer.\n"
-            "The escaped forms, and what each stands for:\n"
+            f"bytes, and {doubled} backslash(es) were doubled to make that reversible.\n"
+            "A reader that treats those separators as line breaks would otherwise see\n"
+            "the text after one as a record of its own, so candidate content could pose\n"
+            "as a file header. Every backslash in this diff is doubled, so a single\n"
+            "backslash is one this collection introduced and \\\\ is one literal\n"
+            "backslash from the source. The escaped forms, and what each stands for:\n"
             + "".join(
                 f"  {escape.decode()} for {label}\n"
                 for escape, label in _ESCAPED_LABELS
@@ -250,14 +263,16 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # would miss a diff that fits the bound until wrapping pushes it past: the
     # reviewer would then read part one with nothing saying a tail exists.
     escape_notice = b""
-    if escaped:
+    if escaped or doubled:
         # Disclosed in the overview too, not only in patches/README. The README is
         # reached through a notice, and tying that notice to wrapping meant a small
         # single-part diff was rewritten with nothing saying so -- the octal text then
-        # reads as the candidate's own source.
+        # reads as the candidate's own source. The same reasoning covers the doubling,
+        # which rewrites bytes whether or not a separator was present.
         escape_notice = (
             f"\n[{escaped} non-LF line separator(s) in the diff were escaped to octal"
-            " UTF-8 bytes so they cannot start a record; see patches/README]\n"
+            f" UTF-8 bytes so they cannot start a record, and {doubled} backslash(es)"
+            " were doubled so the escaping is reversible; see patches/README]\n"
         ).encode()
     wrap_notice = b""
     if wrapped:

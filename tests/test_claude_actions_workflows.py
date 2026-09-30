@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import itertools
 import json
 import os
 import pathlib
@@ -801,7 +802,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # whose marker the input can contain is not a substitution scheme.
         chunker = _load_script(CHUNKER)
         payload = b"+keep\x00CRLF\x00tail\r\nnext\r alone\n"
-        escaped, count = chunker.escape_embedded_breaks(payload)
+        escaped, count, _ = chunker.escape_embedded_breaks(payload)
         # The sentinel bytes survive untouched ...
         self.assertIn(b"\x00CRLF\x00", escaped)
         # ... a real CRLF is left alone, being a line ending rather than a separator ...
@@ -1303,33 +1304,74 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("maximum", below)
         self.assertNotIn("may be incomplete", below)
 
-    def test_escaping_a_separator_cannot_collide_with_literal_escape_text(self) -> None:
-        # The escape turns U+2028 into the ASCII text `\342\200\250`. Source that
-        # already contains that literal text -- a regex, a test fixture, a docstring
-        # about this very escaping -- produced byte-identical output, and the notice
-        # only carries a global count. The reviewer has no candidate tree by design, so
-        # it cannot recover which occurrence was rewritten: a literal string reads as a
-        # semantic line separator and vice versa.
+    def test_one_diff_renders_literals_and_separators_distinguishably(self) -> None:
+        # The question is not whether two different diffs can produce the same bytes --
+        # they carry different notices, so the reviewer reads each with its own key.
+        # It is whether, *inside one artefact*, a literal escape body can be told from
+        # a separator this collection escaped. Two encodings failed that: escaping
+        # separators alone, and pre-escaping only the literal body, which left a
+        # candidate backslash before a raw separator producing the literal's bytes.
         chunker = _load_script(CHUNKER)
         separator = "\u2028".encode()
         literal = rb"\342\200\250"
-        from_real, real_count = chunker.escape_embedded_breaks(b"a" + separator + b"b")
-        from_literal, literal_count = chunker.escape_embedded_breaks(
-            b"a" + literal + b"b"
+        # One input carrying, in order: literal text, a bare separator, and a
+        # separator a candidate has tried to disguise with a leading backslash.
+        payload = b"A" + literal + b"B" + separator + b"C" + b"\\" + separator + b"D"
+        out, escaped, doubled = chunker.escape_embedded_breaks(payload)
+        self.assertEqual(2, escaped)
+        self.assertTrue(doubled)
+        between = out.split(b"A")[1].split(b"B")[0]
+        bare = out.split(b"B")[1].split(b"C")[0]
+        disguised = out.split(b"C")[1].split(b"D")[0]
+        # Each of the three renders differently from the others.
+        self.assertEqual(
+            3,
+            len({between, bare, disguised}),
+            f"two of these are indistinguishable: {between!r} {bare!r} {disguised!r}",
         )
-        self.assertNotEqual(
-            from_real,
-            from_literal,
-            "a literal escape sequence is indistinguishable from a real separator",
-        )
-        # Only the genuine separator is counted as one that was escaped.
-        self.assertEqual(1, real_count)
-        self.assertEqual(0, literal_count)
-        # And the transformation stays reversible however many backslashes precede the
-        # body: one means a separator this collection introduced, more means the
-        # candidate's own text.
-        deeper, _ = chunker.escape_embedded_breaks(b"a" + b"\\" + literal + b"b")
-        self.assertNotIn(from_literal, deeper.replace(b"a", b"", 1))
+        # And the rule the README states actually holds: a separator this collection
+        # escaped carries exactly one backslash; a literal backslash is doubled.
+        self.assertEqual(rb"\342\200\250", bare)
+        self.assertNotEqual(bare, between)
+        self.assertTrue(disguised.endswith(bare))
+        self.assertTrue(disguised.startswith(b"\\\\"))
+
+    def test_the_separator_encoding_is_injective(self) -> None:
+        # The property the reviewer actually depends on, stated directly: two different
+        # diffs never produce the same artefact. Three encodings were tried here and
+        # the first two each failed this while passing a hand-written example --
+        # escaping separators alone collided with literal escape text, and pre-escaping
+        # the literal body collided with a backslash placed before a real separator, so
+        # swapping which of two occurrences was real gave identical bytes and an
+        # identical count. Enumerating a corpus tests the property rather than the
+        # cases someone thought of.
+        chunker = _load_script(CHUNKER)
+        separator = "\u2028".encode()
+        pieces = [b"", b"\\", b"\\\\", rb"\342\200\250", separator, b"\r", b"q"]
+        seen: dict[tuple[bytes, int, int], bytes] = {}
+        for combo in itertools.product(pieces, repeat=4):
+            source = b"".join(combo)
+            encoded = chunker.escape_embedded_breaks(source)
+            previous = seen.setdefault(encoded, source)
+            self.assertEqual(
+                previous,
+                source,
+                f"{previous!r} and {source!r} both encode to {encoded!r}",
+            )
+        # The corpus has to be big enough for the assertion to mean something.
+        self.assertGreater(len(seen), 1000)
+
+    def test_a_diff_with_nothing_to_escape_is_untouched(self) -> None:
+        # The doubling is not applied for its own sake. A diff holding a literal
+        # `\015` and no real separator is passed through byte for byte, so the
+        # reviewer sees the source as written and no notice claims otherwise. This is
+        # what removes the silent rewrite outright rather than disclosing it: the
+        # earlier pre-escape pass rewrote such a diff and counted nothing, so the
+        # notices -- which key on the counts -- said nothing either.
+        chunker = _load_script(CHUNKER)
+        payload = rb'printf("\015");' + b"\n" + rb"re.compile(r'\342\200\250')" + b"\n"
+        out, escaped, doubled = chunker.escape_embedded_breaks(payload)
+        self.assertEqual((payload, 0, 0), (out, escaped, doubled))
 
     def test_wrapping_preserves_the_input_s_trailing_newline_exactly(self) -> None:
         # Characterization, recorded before touching the two trailing-byte branches at
