@@ -25,7 +25,6 @@ the repository's default branch, so this file is not candidate-supplied.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import pathlib
 import sys
@@ -129,11 +128,20 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
         for entry in files
     ]
     if len(files) >= _FILE_CAP:
-        # The provider caps this list and does not paginate it, so a capped summary
-        # must not be allowed to read as the whole change.
+        # The provider caps this list and does not paginate it, so a list that reached
+        # the cap must not be allowed to read as the whole change.
+        #
+        # What is established is that the list *reached* the maximum -- not that
+        # anything was dropped. A change with exactly `_FILE_CAP` files is complete and
+        # indistinguishable from a truncated one, because the payload carries no total.
+        # Saying "is incomplete" turned that into a certainty and the prompt makes the
+        # reviewer repeat it, so an exactly-at-cap change was reported as truncated: a
+        # false limitation in the review's own output. The condition observed is
+        # stated, not the conclusion it merely permits.
         lines.append(
-            f"[provider caps the changed-file list at {_FILE_CAP}; "
-            "this summary is incomplete]"
+            f"[the changed-file list reached the provider's maximum of {_FILE_CAP} "
+            "and is not paginated, so this summary may be incomplete; nothing here "
+            "says whether a further file exists]"
         )
     (context / "diff.stat").write_text(
         "".join(f"{line}\n" for line in lines), encoding="utf-8"
@@ -225,7 +233,13 @@ def write_commits(context: pathlib.Path) -> None:
         sha, _, encoded = line.partition(" ")
         try:
             raw = base64.b64decode(encoded, validate=True) if encoded else b""
-        except (ValueError, binascii.Error):
+        except ValueError:
+            # `binascii.Error` *is* a `ValueError`, so naming both said there were two
+            # branches here when there is one. This file names base classes rather
+            # than members on purpose -- enumerating them missed a member four times
+            # -- and listing a base class beside one of its own members is the same
+            # mistake wearing the fix's clothes: it reads as coverage the base already
+            # gave.
             # One unreadable subject is that commit's gap, not the step's. Saying so
             # keeps the record count honest, which is what the cap notice counts.
             records.append(f"{sha} [subject unavailable]\n")

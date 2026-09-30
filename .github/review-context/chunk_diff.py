@@ -91,7 +91,28 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int]:
     # not followed by LF.
     # A function, not a replacement string: `re` reads `\015` in a replacement as an
     # octal escape and would turn it straight back into the CR being escaped.
-    out, found = re.subn(rb"\r(?!\n)", lambda _match: _EMBEDDED_BREAKS[b"\r"], data)
+    # The escape output is ordinary ASCII, so source that already contains that text
+    # -- a regex, a fixture, a docstring about this very escaping -- produced bytes
+    # identical to an escaped separator, and the notice carries only a global count.
+    # The reviewer has no candidate tree by design (Decision 0094 rule 21), so it could
+    # not recover which occurrence was rewritten, and a literal string read as a
+    # semantic line separator.
+    #
+    # Each literal occurrence therefore gains one backslash *before* any separator is
+    # escaped. Afterwards the rule is exact and reversible: one backslash before an
+    # octal body is a separator this collection escaped, and N > 1 is the candidate's
+    # own text carrying N - 1 backslashes.
+    #
+    # Longest first is defensive, not load-bearing: no value in the table is a
+    # substring of another today, so the order changes nothing -- a mutation to
+    # shortest-first leaves every test green, and that mutant is equivalent rather
+    # than untested. The sort is what keeps that true if a value is ever added whose
+    # body contains a shorter one.
+    out = data
+    for literal in sorted(set(_EMBEDDED_BREAKS.values()), key=len, reverse=True):
+        out = out.replace(literal, b"\\" + literal)
+    # Counted from here, so pre-escaped literals are not reported as separators found.
+    out, found = re.subn(rb"\r(?!\n)", lambda _match: _EMBEDDED_BREAKS[b"\r"], out)
     for raw, escaped in _EMBEDDED_BREAKS.items():
         if raw == b"\r":
             continue
@@ -131,10 +152,19 @@ def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
             out += record[offset : offset + take] + b"\n"
             offset += take
             first = False
-    if data.endswith(b"\n"):
-        # split() produced a trailing empty record, which added one newline too many.
-        del out[-1:]
-    elif out.endswith(b"\n"):
+    # One trailing newline too many, always. Every path through the loop above ends by
+    # appending a newline -- the short-record branch directly, the wrapping branch on
+    # its last segment -- and `split()` yields at least one record, so `out` is
+    # non-empty and newline-terminated here whatever the input was.
+    #
+    # This used to be two branches with identical bodies, keyed on whether `data` ended
+    # with a newline. That implied the two cases did different things; they did not,
+    # and the second condition was true in every case the first was false, so the pair
+    # was a vacuous dressing on an unconditional delete. Keeping the `out` test rather
+    # than deleting outright is deliberate: it is the actual precondition, so if a
+    # later change stops the loop terminating records with a newline this removes
+    # nothing instead of silently eating a byte of content.
+    if out.endswith(b"\n"):
         del out[-1:]
     return bytes(out), wrapped, continuations
 
@@ -179,7 +209,9 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             f"{escaped} non-LF line separator(s) were escaped to their octal UTF-8\n"
             "bytes. A reader that treats them as line breaks would otherwise see the\n"
             "text after one as a record of its own, so candidate content could pose as\n"
-            "a file header. The escaped forms, and what each stands for:\n"
+            "a file header. One backslash before an octal body is a separator escaped\n"
+            "here; two or more mean the candidate's own text, carrying one fewer.\n"
+            "The escaped forms, and what each stands for:\n"
             + "".join(
                 f"  {escape.decode()} for {label}\n"
                 for escape, label in _ESCAPED_LABELS

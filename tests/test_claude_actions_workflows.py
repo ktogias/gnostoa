@@ -1246,6 +1246,122 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(count > 0, continuations > 0)
 
+    def test_the_cap_notice_does_not_assert_a_truncation_it_cannot_know(self) -> None:
+        # Exactly `_FILE_CAP` files means the list *reached* the provider's maximum.
+        # It does not establish that a 301st file exists -- the payload carries no
+        # total -- yet the notice said the summary "is incomplete", and the prompt
+        # makes the reviewer repeat that. A change with exactly 300 files was reported
+        # as truncated, which is a false limitation in the review's own output. The
+        # same over-claim as the manifest's inventory: state the condition observed,
+        # not the conclusion it merely allows.
+        collector = _load_script(BASE_COLLECTOR)
+        collector._FILE_CAP = 3
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            comparison = {
+                "files": [
+                    {
+                        "filename": f"f{n}.py",
+                        "status": "modified",
+                        "additions": 1,
+                        "deletions": 0,
+                        "patch": "@@",
+                        "sha": "a" * 40,
+                    }
+                    for n in range(3)
+                ]
+            }
+            collector.write_summaries(context, comparison)
+            at_cap = (context / "diff.stat").read_text(encoding="utf-8")
+        self.assertIn("maximum", at_cap)
+        self.assertNotIn(
+            "is incomplete",
+            at_cap,
+            "reaching the cap was reported as established truncation:\n" + at_cap,
+        )
+        # The uncertainty is stated, not the conclusion.
+        self.assertIn("may be incomplete", at_cap)
+        # Below the cap, nothing is said at all.
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            collector.write_summaries(
+                context,
+                {
+                    "files": [
+                        {
+                            "filename": "a.py",
+                            "status": "modified",
+                            "additions": 1,
+                            "deletions": 0,
+                            "patch": "@@",
+                            "sha": "a" * 40,
+                        }
+                    ]
+                },
+            )
+            below = (context / "diff.stat").read_text(encoding="utf-8")
+        self.assertNotIn("maximum", below)
+        self.assertNotIn("may be incomplete", below)
+
+    def test_escaping_a_separator_cannot_collide_with_literal_escape_text(self) -> None:
+        # The escape turns U+2028 into the ASCII text `\342\200\250`. Source that
+        # already contains that literal text -- a regex, a test fixture, a docstring
+        # about this very escaping -- produced byte-identical output, and the notice
+        # only carries a global count. The reviewer has no candidate tree by design, so
+        # it cannot recover which occurrence was rewritten: a literal string reads as a
+        # semantic line separator and vice versa.
+        chunker = _load_script(CHUNKER)
+        separator = "\u2028".encode()
+        literal = rb"\342\200\250"
+        from_real, real_count = chunker.escape_embedded_breaks(b"a" + separator + b"b")
+        from_literal, literal_count = chunker.escape_embedded_breaks(
+            b"a" + literal + b"b"
+        )
+        self.assertNotEqual(
+            from_real,
+            from_literal,
+            "a literal escape sequence is indistinguishable from a real separator",
+        )
+        # Only the genuine separator is counted as one that was escaped.
+        self.assertEqual(1, real_count)
+        self.assertEqual(0, literal_count)
+        # And the transformation stays reversible however many backslashes precede the
+        # body: one means a separator this collection introduced, more means the
+        # candidate's own text.
+        deeper, _ = chunker.escape_embedded_breaks(b"a" + b"\\" + literal + b"b")
+        self.assertNotIn(from_literal, deeper.replace(b"a", b"", 1))
+
+    def test_wrapping_preserves_the_input_s_trailing_newline_exactly(self) -> None:
+        # Characterization, recorded before touching the two trailing-byte branches at
+        # the end of `wrap_long_records`. The existing round-trip assertion strips
+        # every newline from both sides, so it cannot see a trailing byte deleted or
+        # kept wrongly -- which is precisely what those branches decide. These are the
+        # observed bytes of the current implementation, not a restatement of it.
+        chunker = _load_script(CHUNKER)
+        cap = chunker._LINE_CAP
+        cases = {
+            "empty": (b"", b""),
+            "lone newline": (b"\n", b"\n"),
+            "one line with newline": (b"a\n", b"a\n"),
+            "one line no newline": (b"a", b"a"),
+            "two lines with newline": (b"a\nb\n", b"a\nb\n"),
+            "two lines no newline": (b"a\nb", b"a\nb"),
+            "blank then line": (b"\na\n", b"\na\n"),
+            "trailing blank line": (b"a\n\n", b"a\n\n"),
+        }
+        for name, (payload, expected) in cases.items():
+            with self.subTest(case=name):
+                out, _, _ = chunker.wrap_long_records(payload)
+                self.assertEqual(expected, out)
+        # And with wrapping in play, where the second branch is the one that fires:
+        # the input's own trailing newline survives, and its absence survives too.
+        with_newline, _, _ = chunker.wrap_long_records(b"x" * (cap + 5) + b"\n")
+        self.assertTrue(with_newline.endswith(b"\n"))
+        without, _, _ = chunker.wrap_long_records(b"x" * (cap + 5))
+        self.assertFalse(without.endswith(b"\n"))
+        # Lengths differ by exactly that one byte, so neither branch eats content.
+        self.assertEqual(len(with_newline), len(without) + 1)
+
     def test_wrapped_continuations_cannot_read_as_diff_lines(self) -> None:
         # A continuation carries no diff prefix, so a segment beginning with "-" or
         # "+" would be attributed to the wrong side of the change, or a "+++ b/"
@@ -1393,14 +1509,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
             collector.write_summaries(context, {"files": [dict(entry)] * 300})
-            self.assertIn(
-                "caps the changed-file list at 300",
-                (context / "diff.stat").read_text(encoding="utf-8"),
-            )
+            # The claim, not the wording. This asserted the exact sentence, so
+            # correcting the notice to stop over-claiming truncation read as a
+            # regression -- a guard aimed at spelling rather than at what the artefact
+            # tells the reviewer.
+            at_cap = (context / "diff.stat").read_text(encoding="utf-8")
+            self.assertIn("300", at_cap)
+            self.assertIn("may be incomplete", at_cap)
             collector.write_summaries(context, {"files": [dict(entry)]})
-            self.assertNotIn(
-                "caps", (context / "diff.stat").read_text(encoding="utf-8")
-            )
+            below = (context / "diff.stat").read_text(encoding="utf-8")
+            self.assertNotIn("may be incomplete", below)
+            self.assertNotIn("maximum", below)
 
     def test_a_path_cannot_forge_a_record_in_a_line_oriented_artefact(self) -> None:
         # Git permits a newline in a pathname, and the comparison carries it through as
