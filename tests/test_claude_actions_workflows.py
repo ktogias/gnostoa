@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import importlib.util
 import itertools
@@ -384,6 +385,125 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertEqual(
             "${{ github.workspace }}/" + checkout["path"], marketplace.strip()
         )
+
+    def test_review_marketplace_uses_a_fail_closed_local_name_alias(self) -> None:
+        steps = _steps(load_yaml(REVIEW_WORKFLOW))
+        alias_steps = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if step.get("id") == "normalize-marketplace-name"
+        ]
+        self.assertEqual(1, len(alias_steps))
+        alias_index, alias_step = alias_steps[0]
+        checkout_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses", "").startswith("actions/checkout@")
+            and step.get("with", {}).get("repository") == "anthropics/claude-code"
+        )
+        claude_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses", "").startswith("anthropics/claude-code-action@")
+        )
+        self.assertLess(checkout_index, alias_index)
+        self.assertEqual(alias_index + 1, claude_index)
+        self.assertIn(
+            "code-review@gnostoa-claude-review",
+            steps[claude_index]["with"]["plugins"],
+        )
+
+        script_match = re.search(
+            r"^python -I - <<'PY'\n(?P<script>.*?)^PY$",
+            alias_step["run"],
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(
+            script_match, "marketplace alias must use a bounded Python script"
+        )
+        if script_match is None:
+            self.fail("marketplace alias script was not found")
+
+        script = script_match.group("script")
+        parsed_script = ast.parse(script)
+        assignments = {
+            target.id: ast.literal_eval(statement.value)
+            for statement in parsed_script.body
+            if isinstance(statement, ast.Assign)
+            for target in statement.targets
+            if isinstance(target, ast.Name) and target.id in {"original", "replacement"}
+        }
+        self.assertEqual({"original", "replacement"}, set(assignments))
+        original = assignments["original"]
+        replacement = assignments["replacement"]
+        self.assertEqual('\n  "name": "claude-code-plugins",\n  "version":', original)
+        self.assertEqual(
+            '\n  "name": "gnostoa-claude-review",\n  "version":', replacement
+        )
+
+        normalized_script = " ".join(script.split())
+        self.assertIn(
+            'Path(".claude-code-marketplace/.claude-plugin/marketplace.json")',
+            normalized_script,
+        )
+        self.assertIn("text.replace(original, replacement, 1)", normalized_script)
+
+        guards = [
+            (index, node)
+            for index, node in enumerate(parsed_script.body)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "text.count(original) != 1"
+        ]
+        self.assertEqual(1, len(guards))
+        guard_index, guard = guards[0]
+        self.assertTrue(
+            any(isinstance(node, ast.Raise) for node in ast.walk(guard)),
+            "manifest drift must raise before the checkout is modified",
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "SystemExit"
+                for node in ast.walk(guard)
+            ),
+            "manifest drift must stop the workflow",
+        )
+        write_indices = [
+            index
+            for index, statement in enumerate(parsed_script.body)
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "manifest"
+                and node.func.attr == "write_text"
+                for node in ast.walk(statement)
+            )
+        ]
+        self.assertEqual(1, len(write_indices))
+        self.assertLess(guard_index, write_indices[0])
+
+        fixture = (
+            "{\n"
+            '  "name": "claude-code-plugins",\n'
+            '  "version": "1.0.0",\n'
+            '  "plugins": [{"name": "claude-code-plugins"}]\n'
+            "}\n"
+        )
+        self.assertEqual(1, fixture.count(original))
+        normalized = fixture.replace(original, replacement, 1)
+        self.assertEqual(
+            fixture.replace(
+                '\n  "name": "claude-code-plugins",\n  "version":',
+                '\n  "name": "gnostoa-claude-review",\n  "version":',
+                1,
+            ),
+            normalized,
+        )
+        self.assertIn('"plugins": [{"name": "claude-code-plugins"}]', normalized)
+        drifted_manifest = fixture.replace("claude-code-plugins", "unexpected")
+        self.assertEqual(0, drifted_manifest.count(original))
 
     def test_mention_job_requires_trusted_author_association(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
