@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import ast
 import re
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -192,56 +191,55 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(
             script_match, "marketplace alias must use a bounded Python script"
         )
-        assert script_match is not None
+        if script_match is None:
+            self.fail("marketplace alias script was not found")
 
-        original = (
+        script = script_match.group("script")
+        parsed_script = ast.parse(script)
+        assignments = {
+            target.id: ast.literal_eval(statement.value)
+            for statement in parsed_script.body
+            if isinstance(statement, ast.Assign)
+            for target in statement.targets
+            if isinstance(target, ast.Name) and target.id in {"original", "replacement"}
+        }
+        self.assertEqual({"original", "replacement"}, set(assignments))
+        original = assignments["original"]
+        replacement = assignments["replacement"]
+        self.assertEqual('\n  "name": "claude-code-plugins",\n  "version":', original)
+        self.assertEqual(
+            '\n  "name": "gnostoa-claude-review",\n  "version":', replacement
+        )
+
+        normalized_script = " ".join(script.split())
+        self.assertIn(
+            'Path(".claude-code-marketplace/.claude-plugin/marketplace.json")',
+            normalized_script,
+        )
+        self.assertIn("if text.count(original) != 1:", normalized_script)
+        self.assertIn("manifest.write_text(", normalized_script)
+        self.assertIn("text.replace(original, replacement, 1)", normalized_script)
+
+        fixture = (
             "{\n"
             '  "name": "claude-code-plugins",\n'
             '  "version": "1.0.0",\n'
             '  "plugins": [{"name": "claude-code-plugins"}]\n'
             "}\n"
         )
-        expected = original.replace(
-            '\n  "name": "claude-code-plugins",\n  "version":',
-            '\n  "name": "gnostoa-claude-review",\n  "version":',
-            1,
+        self.assertEqual(1, fixture.count(original))
+        normalized = fixture.replace(original, replacement, 1)
+        self.assertEqual(
+            fixture.replace(
+                '\n  "name": "claude-code-plugins",\n  "version":',
+                '\n  "name": "gnostoa-claude-review",\n  "version":',
+                1,
+            ),
+            normalized,
         )
-        with tempfile.TemporaryDirectory() as directory:
-            manifest = (
-                Path(directory)
-                / ".claude-code-marketplace"
-                / ".claude-plugin"
-                / "marketplace.json"
-            )
-            manifest.parent.mkdir(parents=True)
-            manifest.write_text(original, encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, "-c", script_match.group("script")],
-                cwd=directory,
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(expected, manifest.read_text(encoding="utf-8"))
-
-            manifest.write_text(
-                original.replace("claude-code-plugins", "unexpected"),
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                [sys.executable, "-c", script_match.group("script")],
-                cwd=directory,
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            self.assertNotEqual(0, result.returncode)
-            self.assertIn("marketplace manifest", result.stderr)
-            self.assertEqual(
-                original.replace("claude-code-plugins", "unexpected"),
-                manifest.read_text(encoding="utf-8"),
-            )
+        self.assertIn('"plugins": [{"name": "claude-code-plugins"}]', normalized)
+        drifted_manifest = fixture.replace("claude-code-plugins", "unexpected")
+        self.assertEqual(0, drifted_manifest.count(original))
 
     def test_mention_job_requires_trusted_author_association(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
