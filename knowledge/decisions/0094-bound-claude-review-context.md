@@ -654,6 +654,17 @@ No new dependency, service or runtime is introduced.
    how the second defect was confirmed rather than argued. That check needs the network
    and so cannot run in the suite, which is why it is recorded here.
 
+   The heading is a claim about the run, so success is **stated, never inferred**: the
+   report is published as a review only under a result envelope carrying `subtype:
+   "success"` *and* `is_error` exactly `false`. A missing, null or zero flag is the
+   absence of a failure signal, not the presence of success -- and both measured runs
+   in the table above carried the flag, on success and on failure alike, so requiring
+   it refuses nothing a real run produces. And the publisher always says something: a
+   step can fail before the checkout -- rule 25a's guard does, by design -- leaving no
+   publisher on disk, so the step then writes a fixed notice and runs nothing from the
+   workspace. Checking out anyway to get the publisher back would execute the revision
+   the guard had just refused.
+
 23. **Every review-context script confines its paths, through one check.** The
    committed scripts
    take their directories and files from the workflow, which is trusted -- but a value

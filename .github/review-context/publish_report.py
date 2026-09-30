@@ -81,7 +81,9 @@ def run_succeeded(turns: list[Any]) -> bool:
     """
     for turn in reversed(turns):
         if isinstance(turn, dict) and turn.get("type") == "result":
-            return not turn.get("is_error") and turn.get("subtype") == "success"
+            # `is False`, not falsiness: a missing, null or zero flag is the absence
+            # of a failure signal, which is exactly what the rule above refuses.
+            return turn.get("is_error") is False and turn.get("subtype") == "success"
     return False
 
 

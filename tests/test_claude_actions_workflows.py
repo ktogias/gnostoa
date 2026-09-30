@@ -805,8 +805,30 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         ]
         _, complete = publisher.final_report(narration)
         self.assertFalse(complete, "a run with no result envelope was called complete")
+        # Nor is an envelope that states the success subtype but not `is_error`. The
+        # rule is that success is *stated*: a missing flag is the absence of a failure
+        # signal, which this function's own contract refuses to read as success, and
+        # the native envelope always carries it. The clean fixture below used to omit
+        # it, so the test itself encoded the inference it was meant to forbid.
+        _, complete = publisher.final_report(
+            [{"type": "result", "subtype": "success", "result": "partial"}]
+        )
+        self.assertFalse(complete, "a missing is_error was read as success")
+        for flag in (None, 0, "", "false"):
+            with self.subTest(is_error=flag):
+                _, complete = publisher.final_report(
+                    [{"type": "result", "subtype": "success", "is_error": flag}]
+                )
+                self.assertFalse(complete, f"is_error={flag!r} was read as false")
         # A clean run is unaffected.
-        good = [{"type": "result", "subtype": "success", "result": "real findings"}]
+        good = [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "real findings",
+            }
+        ]
         report, complete = publisher.final_report(good)
         self.assertEqual(("real findings", True), (report, complete))
 
@@ -1277,6 +1299,42 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         checkout = next(i for i, n in enumerate(names) if n.startswith("Checkout"))
         resolver = next(i for i, s in enumerate(steps) if s.get("id") == "review_head")
         self.assertLess(checkout, resolver, names)
+
+    def test_the_publisher_reports_a_run_that_stopped_before_the_checkout(self) -> None:
+        # The ordering test above keeps the checkout ahead of the resolver, but a step
+        # can still fail before the checkout -- the protected-revision guard does, by
+        # design, and the checkout itself can fail. The always() publisher then runs
+        # in an empty workspace, its script is not on disk, and it died with
+        # file-not-found and wrote nothing. Checking out anyway is not a fix: the
+        # refused revision is candidate-controlled. So the step is executed here, as
+        # committed, in a workspace with no checkout, and must still say something --
+        # a fixed notice, running nothing from the workspace.
+        step = next(
+            step
+            for step in _steps(load_yaml(MENTION_WORKFLOW))
+            if "publish_report.py" in str(step.get("run", ""))
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            summary = pathlib.Path(scratch) / "summary.md"
+            workspace = pathlib.Path(scratch) / "workspace"
+            workspace.mkdir()
+            result = subprocess.run(
+                ["bash", "-c", step["run"]],
+                cwd=workspace,
+                env={
+                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                    "GITHUB_STEP_SUMMARY": str(summary),
+                    "EXECUTION_FILE": "",
+                },
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            written = summary.read_text(encoding="utf-8") if summary.exists() else ""
+            self.assertIn("## Claude review unavailable", written)
+            self.assertIn("before the protected checkout", written)
+            # It is not a report, so it must not claim to be one.
+            self.assertNotIn("Claude review report", written)
 
     def test_a_diff_record_cannot_forge_a_record_with_a_bare_separator(self) -> None:
         # The forgery closed for pathnames and commit subjects is open in the diff body
@@ -1969,10 +2027,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # that *finished* and whose result string happened to be blank. The fixture
         # predates the subtype rule and carried no subtype, which now means "unknown"
         # rather than "succeeded" -- so leaving it would have quietly turned this into
-        # a test about an unfinished run instead.
+        # a test about an unfinished run instead. The same holds for `is_error`: a
+        # finished run states it false, and the fixture now does too.
         turns = [
             {"type": "assistant", "message": {"content": [{"text": "real findings"}]}},
-            {"type": "result", "subtype": "success", "result": "   "},
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "   ",
+            },
         ]
         # The run status travels with the text, because a diagnostic and a report are
         # both non-empty strings and the caller cannot tell them apart otherwise.

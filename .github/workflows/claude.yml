@@ -554,7 +554,17 @@ jobs:
         if: always()
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        # A step can fail before the checkout -- the protected-revision guard does by
+        # design -- leaving no publisher on disk. Checking out anyway would run the
+        # candidate revision that was just refused, so the fallback is a fixed notice
+        # that executes nothing from the workspace.
         run: |
           set -eu
+          if [ ! -f .github/review-context/publish_report.py ]; then
+            printf '%s\n\n%s\n' '## Claude review unavailable' \
+              'The run stopped before the protected checkout; see the job log.' \
+              >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           python3 .github/review-context/publish_report.py \
             "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}"
