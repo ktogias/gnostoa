@@ -398,7 +398,10 @@ def _validate_backend_capture(
         "BACKEND_CAPTURE_STATE",
     )
     if termination == "completed":
-        _need(type(exit_code) is int, "BACKEND_CAPTURE_STATE")
+        _need(
+            type(exit_code) is int and -255 <= exit_code <= 255,
+            "BACKEND_CAPTURE_STATE",
+        )
     else:
         _need(exit_code is None, "BACKEND_CAPTURE_STATE")
     _need(
@@ -1470,6 +1473,24 @@ class DockerBackend:
             and diagnostic[len(prefix) :] == container_ref.encode("ascii")
         )
 
+    @staticmethod
+    def _require_cleanup_ownership(stdout: bytes, cleanup_nonce: str) -> None:
+        try:
+            raw = json.loads(stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
+        _need(
+            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
+            "OCI_CLEANUP_UNVERIFIED",
+        )
+        config = raw[0].get("Config", {})
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        _need(
+            isinstance(labels, dict)
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
+            "OCI_CLEANUP_OWNERSHIP",
+        )
+
     def _cleanup_presence(
         self,
         container_id: str,
@@ -1487,21 +1508,7 @@ class DockerBackend:
             if self._inspect_confirms_absence(inspected, container_id):
                 return False
             return None
-        try:
-            raw = json.loads(inspected.stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
-        _need(
-            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
-            "OCI_CLEANUP_UNVERIFIED",
-        )
-        config = raw[0].get("Config", {})
-        labels = config.get("Labels") if isinstance(config, dict) else None
-        _need(
-            isinstance(labels, dict)
-            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
-            "OCI_CLEANUP_OWNERSHIP",
-        )
+        self._require_cleanup_ownership(inspected.stdout, cleanup_nonce)
         return True
 
     def _reconcile_uncertain_remove(
@@ -1574,23 +1581,7 @@ class DockerBackend:
                 time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
                 continue
             if inspected.returncode == 0:
-                try:
-                    raw = json.loads(inspected.stdout)
-                except (json.JSONDecodeError, TypeError) as exc:
-                    raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
-                _need(
-                    isinstance(raw, list)
-                    and len(raw) == 1
-                    and isinstance(raw[0], dict),
-                    "OCI_CLEANUP_UNVERIFIED",
-                )
-                config = raw[0].get("Config", {})
-                labels = config.get("Labels") if isinstance(config, dict) else None
-                _need(
-                    isinstance(labels, dict)
-                    and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
-                    "OCI_CLEANUP_OWNERSHIP",
-                )
+                self._require_cleanup_ownership(inspected.stdout, cleanup_nonce)
                 self._remove_and_verify(
                     container_name, cleanup_nonce, deadline=deadline
                 )

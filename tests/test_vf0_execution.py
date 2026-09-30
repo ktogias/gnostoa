@@ -418,6 +418,52 @@ class VF0SubjectTests(unittest.TestCase):
             ):
                 execute(repo, subject, evidence, command, backend, limits)
 
+    def test_custom_backend_completed_exit_code_is_in_process_status_range(
+        self,
+    ) -> None:
+        class CapturingBackend:
+            def __init__(self, exit_code: int) -> None:
+                self.exit_code = exit_code
+
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                return UntrustedCapture("completed", self.exit_code, b"", b"", 0)
+
+        for exit_code in (-255, 255):
+            with self.subTest(exit_code=exit_code):
+                with tempfile.TemporaryDirectory() as td:
+                    repo, subject = _repo(Path(td))
+                    observation = execute(
+                        repo,
+                        subject,
+                        [_evidence("pass")],
+                        ["/bin/true"],
+                        CapturingBackend(exit_code),
+                    )
+                self.assertEqual(exit_code, observation.capture.exit_code)
+
+        for exit_code in (-256, 256, 1 << 256):
+            with self.subTest(exit_code=exit_code):
+                with tempfile.TemporaryDirectory() as td:
+                    repo, subject = _repo(Path(td))
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^BACKEND_CAPTURE_STATE$"
+                    ):
+                        execute(
+                            repo,
+                            subject,
+                            [_evidence("pass")],
+                            ["/bin/true"],
+                            CapturingBackend(exit_code),
+                        )
+
     def test_backend_retained_capture_cannot_change_returned_observation(self) -> None:
         class RetainingBackend:
             def __init__(self, capture: UntrustedCapture) -> None:
