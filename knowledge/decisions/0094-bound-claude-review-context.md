@@ -358,10 +358,22 @@ No new dependency, service or runtime is introduced.
    A refused diff does not fail the step, and does not leave the reviewer without the
    change either. The provider can decline the diff of a very
    large comparison, and exiting there would reproduce the large-Pull-Request failure
-   this Decision exists to remove, The per-file patches assembled from the same comparison payload take
-   the unified diff's place, so the changed content is still reachable; `patches-source`
-   says so, and that context outside each hunk is absent. Writing only a notice would
-   have let a review complete without ever seeing the change.
+   this Decision exists to remove. The per-file patches assembled from the same comparison
+   payload take the unified diff's place, so **the hunks the comparison carried** remain
+   reachable; `patches-source` says so, and says that context outside each hunk is
+   absent. Writing only a notice would have let a review complete without ever seeing
+   the change.
+
+   The fallback is deliberately lossy, and this Decision may not describe it as
+   complete. The per-file patches hold what the comparison payload actually carried and
+   nothing else, so two classes are absent from `assembled.diff` by construction: files
+   beyond the provider's changed-file cap, which are never sent at all, and entries with
+   `patch: null` -- a binary or oversized blob -- whose bytes are in neither the payload
+   nor the checkout. The artefacts already say so per case (`diff.stat`'s cap notice,
+   `no-patch.txt`, and the reviewer's instruction to report such an entry as not
+   examined), and stating a stronger guarantee here would invite a maintainer to treat
+   a knowingly partial review as a complete one -- which is the failure this whole
+   Decision is written against.
 
    The parts are cut by a second committed script,
    `.github/review-context/chunk_diff.py`,
