@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -154,6 +156,92 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertEqual(
             "${{ github.workspace }}/" + checkout["path"], marketplace.strip()
         )
+
+    def test_review_marketplace_uses_a_fail_closed_local_name_alias(self) -> None:
+        steps = _steps(load_yaml(REVIEW_WORKFLOW))
+        alias_steps = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if step.get("id") == "normalize-marketplace-name"
+        ]
+        self.assertEqual(1, len(alias_steps))
+        alias_index, alias_step = alias_steps[0]
+        checkout_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses", "").startswith("actions/checkout@")
+            and step.get("with", {}).get("repository") == "anthropics/claude-code"
+        )
+        claude_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses", "").startswith("anthropics/claude-code-action@")
+        )
+        self.assertLess(checkout_index, alias_index)
+        self.assertEqual(alias_index + 1, claude_index)
+        self.assertIn(
+            "code-review@gnostoa-claude-review",
+            steps[claude_index]["with"]["plugins"],
+        )
+
+        script_match = re.search(
+            r"^python - <<'PY'\n(?P<script>.*?)^PY$",
+            alias_step["run"],
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(
+            script_match, "marketplace alias must use a bounded Python script"
+        )
+        assert script_match is not None
+
+        original = (
+            "{\n"
+            '  "name": "claude-code-plugins",\n'
+            '  "version": "1.0.0",\n'
+            '  "plugins": [{"name": "claude-code-plugins"}]\n'
+            "}\n"
+        )
+        expected = original.replace(
+            '\n  "name": "claude-code-plugins",\n  "version":',
+            '\n  "name": "gnostoa-claude-review",\n  "version":',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = (
+                Path(directory)
+                / ".claude-code-marketplace"
+                / ".claude-plugin"
+                / "marketplace.json"
+            )
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(original, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-c", script_match.group("script")],
+                cwd=directory,
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(expected, manifest.read_text(encoding="utf-8"))
+
+            manifest.write_text(
+                original.replace("claude-code-plugins", "unexpected"),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", script_match.group("script")],
+                cwd=directory,
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("marketplace manifest", result.stderr)
+            self.assertEqual(
+                original.replace("claude-code-plugins", "unexpected"),
+                manifest.read_text(encoding="utf-8"),
+            )
 
     def test_mention_job_requires_trusted_author_association(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)

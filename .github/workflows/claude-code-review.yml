@@ -41,12 +41,34 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Claude Code reserves this upstream marketplace name for an official
+      # GitHub source; this workflow consumes the exact pin from a local path.
+      - name: Set a local name for the pinned plugin marketplace
+        id: normalize-marketplace-name
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          manifest = Path(".claude-code-marketplace/.claude-plugin/marketplace.json")
+          text = manifest.read_text(encoding="utf-8")
+          original = '\n  "name": "claude-code-plugins",\n  "version":'
+          replacement = '\n  "name": "gnostoa-claude-review",\n  "version":'
+          if text.count(original) != 1:
+              raise SystemExit(
+                  "Expected the pinned marketplace manifest to contain its reserved "
+                  "name exactly once"
+              )
+          manifest.write_text(
+              text.replace(original, replacement, 1), encoding="utf-8"
+          )
+          PY
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: ${{ github.workspace }}/.claude-code-marketplace
-          plugins: 'code-review@claude-code-plugins'
+          plugins: 'code-review@gnostoa-claude-review'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
           claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
