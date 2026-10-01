@@ -976,12 +976,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     for program in _inline_python(script):
                         label = f"{workflow.name}:{job_name}:{step.get('id') or step.get('name')}"
                         with self.subTest(step=label):
-                            try:
-                                compile(program, f"<{label}>", "exec")
-                            except SyntaxError as error:
-                                self.fail(
-                                    f"inline python does not compile: {error}\n{program}"
-                                )
+                            # Left to raise: a SyntaxError names the step, as the
+                            # filename it was compiled under, and quotes the line.
+                            compile(program, f"<{label}>", "exec")
 
     def test_an_unresolvable_reviewed_commit_fails_legibly(self) -> None:
         """`review.commit_id` names the revision a human actually reviewed (rule 18),
