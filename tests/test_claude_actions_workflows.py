@@ -236,7 +236,7 @@ def _checkouts(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _base_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
+def _protected_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
     """Return the single checkout the mention job performs."""
     checkouts = _checkouts(workflow)
     if len(checkouts) != 1:
@@ -597,7 +597,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # default checkout lands on the default branch, so an unbound ref would
         # make the reviewer diff main against itself and report nothing.
         workflow = load_yaml(MENTION_WORKFLOW)
-        checkout = _base_checkout(workflow)
+        checkout = _protected_checkout(workflow)
         ref = " ".join(str(checkout["with"]["ref"]).split())
         # Superseded three times. The head is resolved with the read-only token
         # rather than taken from the event payload; the head is no longer checked out
@@ -652,7 +652,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertTrue(
             guard, "mention job needs an explicit same-repository head guard"
         )
-        ref = str(_base_checkout(workflow)["with"]["ref"]).strip()
+        ref = str(_protected_checkout(workflow)["with"]["ref"]).strip()
         # Nothing contributor-controlled may reach the checkout. The only tree
         # materialised is the protected default branch, so no fork head, merge ref or
         # payload-supplied SHA can be it; the guard still governs which head the
@@ -712,7 +712,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # out, and the change arrives as artefacts built from the provider's
         # comparison. No candidate file, mode or symlink reaches this filesystem.
         workflow = load_yaml(MENTION_WORKFLOW)
-        base = _base_checkout(workflow)
+        base = _protected_checkout(workflow)
         # Bound to the protected default branch, by a repository property rather
         # than by a step output or anything a trigger carries.
         self.assertEqual("${{ github.workflow_sha }}", str(base["with"]["ref"]).strip())
@@ -1937,10 +1937,30 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for claim in (
             "Nothing is lost",
             "the whole diff is also written",
-            "base checkout shows",
         ):
             with self.subTest(claim=claim):
                 self.assertNotIn(claim, raw.replace("# ", ""))
+
+    def test_nothing_calls_the_workflow_revision_checkout_the_base(self) -> None:
+        # The checkout is pinned to `github.workflow_sha`, which can postdate or
+        # differ from the resolved base, so its bytes are not pre-change state. One
+        # instance of calling it "the base" was fixed, and the next round found three
+        # more -- the step's own name, a comment and a Decision rule. So this is aimed
+        # at the shape, across the workflow and its governing Decision, not at the
+        # instance a reviewer happened to quote. (Codex)
+        shape = re.compile(
+            r"base checkout|checkout (?:of )?the base|the base for the entry"
+            r"|entry route is the base",
+            re.IGNORECASE,
+        )
+        for path in (
+            MENTION_WORKFLOW,
+            ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md",
+        ):
+            with self.subTest(path=path.name):
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                found = shape.findall(text.replace(" # ", " "))
+                self.assertEqual([], found)
         chunker = _load_script(CHUNKER)
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
@@ -2294,7 +2314,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
     def test_a_missing_patch_is_recorded_without_inferring_the_file_type(self) -> None:
         # A binary or oversized file has no patch, and its bytes are in neither the
-        # diff nor the base checkout, so it cannot be reviewed from this context.
+        # diff nor the protected checkout, so it cannot be reviewed from this context.
         workflow = load_yaml(MENTION_WORKFLOW)
         collector = _load_script(BASE_COLLECTOR)
         with tempfile.TemporaryDirectory() as scratch:

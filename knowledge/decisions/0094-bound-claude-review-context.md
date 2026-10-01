@@ -505,7 +505,8 @@ No new dependency, service or runtime is introduced.
    revision of this Decision answered it with a guard step that refused a candidate
    containing symlinks, mirroring `tools/candidate_prepare.py`. Rule 21 supersedes
    that: no candidate tree is materialised at all, so there is no candidate symlink,
-   mode or file to guard, and the entry route is the base commit's. A guard is
+   mode or file to guard, and the entry route is the protected workflow revision's -- not the
+   base's, which that revision can postdate or differ from. A guard is
    retained in `tools/candidate_prepare.py` for preparation, where a tree genuinely
    must exist; this job needs none.
 21. **No candidate tree is materialised in the credential-bearing job.**
