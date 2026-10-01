@@ -409,7 +409,10 @@ No new dependency, service or runtime is introduced.
    remove. Bounded must not mean unreachable, though. With no git, a reviewer
    cannot recover a deletion that falls past the cutoff and the checkout no longer
    holds the removed content, so the whole diff is also written as fixed-size parts
-   under `patches/`, read in name order. Those parts are split on line boundaries
+   under `patches/`, read in name order. "Whole" means all of what was collected:
+   when the provider refuses the unified diff, that is per-file hunks assembled from
+   the comparison, which can omit files past its cap and entries with no patch, so
+   neither the prompt nor the overview calls `patches/` the whole change. Those parts are split on line boundaries
    under the byte bound rather than at exact byte counts, because the reviewer reads
    them as text and a byte cut can leave a multibyte character split across two
    files; the overview is cut on the same line boundaries for the same reason. The reviewer therefore pages the diff by

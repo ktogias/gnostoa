@@ -492,11 +492,10 @@ jobs:
               diff.stat        changed files and counts
               commits.log      one line per commit
               diff.patch       the diff, bounded in size
-              patches/         the whole diff, in parts, read in name order
+              patches/         all of this diff, in parts, read in name order
               no-patch.txt     changed files the comparison gave no hunks for
-              patches-source   present only when the diff came from per-file hunks
-            Paths are quoted as git does when they hold control characters, so a name
-            can never start a line of its own.
+              patches-source   if present, this diff is per-file hunks that can omit files
+            Paths holding control characters are quoted as git quotes them.
             A file's state before the change is only what the diff shows: the checkout
             is not it. A file in no-patch.txt carried no hunks: a binary or
             oversized blob, or a metadata-only change such as a mode bit. A real

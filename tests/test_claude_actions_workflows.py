@@ -1913,6 +1913,33 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     self.assertIn(b"bounded at", patch, name)
                     self.assertIn(b"patches/", patch, name)
 
+    def test_no_artefact_calls_the_fallback_diff_the_whole_change(self) -> None:
+        # When the provider refuses the unified diff, patches/ holds per-file hunks
+        # assembled from the comparison instead, and those can omit files past the
+        # provider's 300-file cap and entries with no patch. The prompt still called
+        # patches/ "the whole diff", and so did the overview's bound notice -- an
+        # inventory claim the fallback falsifies, with no tree for the reviewer to
+        # check it against. Both now say "all of this diff", and the prompt says when
+        # this diff is not the whole change. (Codex)
+        step = next(
+            step
+            for step in _steps(load_yaml(MENTION_WORKFLOW))
+            if str(step.get("uses", "")).startswith("anthropics/claude-code-action@")
+        )
+        prompt = " ".join(str(step["with"]["prompt"]).split())
+        self.assertNotIn("the whole diff", prompt)
+        self.assertIn("can omit files", prompt)
+        chunker = _load_script(CHUNKER)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(
+                b"".join(b"+" + b"v" * 60 + b"\n" for _ in range(64))
+            )
+            chunker.split_diff(context, 1024)
+            overview = (context / "diff.patch").read_bytes()
+        self.assertIn(b"bounded at", overview)
+        self.assertNotIn(b"whole diff", overview)
+
     def test_a_bound_smaller_than_the_notices_is_refused(self) -> None:
         # The test above sizes the overview with its notices, but only when the bound
         # can hold them. Below that, the body was cut to nothing and the notices were

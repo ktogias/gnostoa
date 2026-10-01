@@ -337,7 +337,10 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             "approximate -- see patches/README]\n"
         ).encode()
     bound_notice = (
-        f"\n[bounded at {limit} bytes of {len(data)}; the whole diff is in "
+        # "All of this diff", never "the whole diff": on the provider's refusal this
+        # diff is assembled per-file hunks, which can omit files, and the prompt says
+        # when that is so.
+        f"\n[bounded at {limit} bytes of {len(data)}; all of this diff is in "
         "patches/, read in name order]\n"
     ).encode()
     # The notices are part of diff.patch, so their room comes out of the same bound.
