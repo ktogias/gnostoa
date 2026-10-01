@@ -49,9 +49,9 @@ from typing import Any
 
 from review_context_paths import within
 
-_MAX_BYTES = 65536
+MAX_BYTES = 65536
 # The execution file holds every turn, not just the report, so its bound is larger.
-_MAX_EXECUTION_BYTES = 8 * 1024 * 1024
+MAX_EXECUTION_BYTES = 8 * 1024 * 1024
 _MIN_FENCE = 3
 _BACKTICK_RUN = re.compile(r"`+")
 
@@ -105,33 +105,46 @@ def final_report(turns: list[Any]) -> tuple[str, bool]:
     """
     complete = run_succeeded(turns)
     for turn in reversed(turns):
-        if not isinstance(turn, dict):
-            continue
-        result = turn.get("result")
-        # A result turn carrying an empty string is not a report. Returning it shadowed
-        # real assistant text and published "the reviewer produced no final text".
-        if turn.get("type") == "result" and isinstance(result, str) and result.strip():
+        result = _result_text(turn)
+        if result:
             return result, complete
     # Fall back to the last assistant text block -- the assistant's, and only its
     # text blocks. Any turn with message text used to qualify, so a user or tool
     # turn's text, which is the reviewer's *input*, could be published as its report.
     for turn in reversed(turns):
-        if not isinstance(turn, dict) or turn.get("type") != "assistant":
-            continue
-        message = turn.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            continue
-        texts = [
-            block["text"]
-            for block in content
-            if isinstance(block, dict)
-            and block.get("type") == "text"
-            and isinstance(block.get("text"), str)
-        ]
+        texts = _assistant_texts(turn)
         if texts:
             return "\n".join(texts), complete
     return "", complete
+
+
+def _result_text(turn: Any) -> str:
+    """The non-blank result string of a result turn, or "" for anything else.
+
+    A result turn carrying an empty string is not a report. Returning it shadowed real
+    assistant text and published "the reviewer produced no final text".
+    """
+    if not isinstance(turn, dict) or turn.get("type") != "result":
+        return ""
+    result = turn.get("result")
+    return result if isinstance(result, str) and result.strip() else ""
+
+
+def _assistant_texts(turn: Any) -> list[str]:
+    """The text blocks of an assistant turn, and nothing from any other turn."""
+    if not isinstance(turn, dict) or turn.get("type") != "assistant":
+        return []
+    message = turn.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        block["text"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+    ]
 
 
 def enclosing_fence(text: str) -> str:
@@ -157,16 +170,16 @@ def neutralise(text: str) -> str:
 def render(execution_file: pathlib.Path) -> str:
     """Return the publishable report for ``execution_file``."""
     try:
-        # Checked before the parse. The report is bounded at _MAX_BYTES, but the whole
+        # Checked before the parse. The report is bounded at MAX_BYTES, but the whole
         # execution file was materialised first, so an oversized one consumed runner
         # memory before any bound applied -- a bound that arrives after the cost is not
         # a bound.
-        if execution_file.stat().st_size > _MAX_EXECUTION_BYTES:
+        if execution_file.stat().st_size > MAX_EXECUTION_BYTES:
             return (
                 "## Review report unavailable\n\n"
                 f"The execution output is too large to publish safely "
                 f"({execution_file.stat().st_size} bytes, limit "
-                f"{_MAX_EXECUTION_BYTES}). The job's logs hold it.\n"
+                f"{MAX_EXECUTION_BYTES}). The job's logs hold it.\n"
             )
         turns = json.loads(execution_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -179,9 +192,9 @@ def render(execution_file: pathlib.Path) -> str:
     # Truncated *before* the block is built, so the cut can never land inside the
     # closing fence and leave the rest of the summary inside an unterminated block.
     encoded = report.encode("utf-8")
-    if len(encoded) > _MAX_BYTES:
-        report = encoded[:_MAX_BYTES].decode("utf-8", "ignore")
-        report += f"\n\n[report truncated at {_MAX_BYTES} bytes]"
+    if len(encoded) > MAX_BYTES:
+        report = encoded[:MAX_BYTES].decode("utf-8", "ignore")
+        report += f"\n\n[report truncated at {MAX_BYTES} bytes]"
     if not complete:
         # The text is still shown -- it is the only evidence of what the run did -- but
         # never under a heading that calls it the review. A diagnostic and a report are
@@ -205,6 +218,7 @@ def render(execution_file: pathlib.Path) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Publish the reviewer's report from the execution file named by ``argv``."""
     if len(argv) != 3:
         print(f"usage: {argv[0]} <execution-file> <summary-file>", file=sys.stderr)
         return 2

@@ -32,7 +32,7 @@ from typing import Any
 
 from review_context_paths import within
 
-_FILE_CAP = 300
+FILE_CAP = 300
 
 
 _C_ESCAPES = {
@@ -127,19 +127,19 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
         )
         for entry in files
     ]
-    if len(files) >= _FILE_CAP:
+    if len(files) >= FILE_CAP:
         # The provider caps this list and does not paginate it, so a list that reached
         # the cap must not be allowed to read as the whole change.
         #
         # What is established is that the list *reached* the maximum -- not that
-        # anything was dropped. A change with exactly `_FILE_CAP` files is complete and
+        # anything was dropped. A change with exactly `FILE_CAP` files is complete and
         # indistinguishable from a truncated one, because the payload carries no total.
         # Saying "is incomplete" turned that into a certainty and the prompt makes the
         # reviewer repeat it, so an exactly-at-cap change was reported as truncated: a
         # false limitation in the review's own output. The condition observed is
         # stated, not the conclusion it merely permits.
         lines.append(
-            f"[the changed-file list reached the provider's maximum of {_FILE_CAP} "
+            f"[the changed-file list reached the provider's maximum of {FILE_CAP} "
             "and is not paginated, so this summary may be incomplete; nothing here "
             "says whether a further file exists]"
         )
@@ -258,6 +258,7 @@ def build(context: pathlib.Path) -> None:
 
 
 def main(argv: list[str]) -> int:
+    """Collect the base context named by ``argv``, confined to GITHUB_WORKSPACE."""
     if len(argv) != 2:
         print(f"usage: {argv[0]} <context-dir>", file=sys.stderr)
         return 2

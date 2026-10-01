@@ -26,12 +26,12 @@ _INVALID_OCTET = re.compile("[\udc80-\udcff]")
 # generated lockfile -- would leave its tail unreachable even though the bytes are
 # present. Such records are therefore hard-wrapped at a reader-visible boundary. Only
 # newlines are inserted: no byte of the diff is removed or reordered.
-_LINE_CAP = 1900
+LINE_CAP = 1900
 # A wrapped continuation carries no diff prefix, so a segment beginning with "-", "+",
 # "@@" or "+++ b/" would read as a deletion, an addition or a new hunk or file header
 # and be attributed to the wrong side of the change. Continuations are therefore marked
 # with a byte that never begins a line of unified diff output.
-_CONTINUATION = b">"
+CONTINUATION = b">"
 
 
 def _wrap_point(record: bytes, room: int) -> int:
@@ -175,20 +175,20 @@ def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
     wrapped = 0
     continuations = 0
     for record in data.split(b"\n"):
-        if len(record) <= _LINE_CAP:
+        if len(record) <= LINE_CAP:
             out += record + b"\n"
             continue
         wrapped += 1
         offset = 0
         first = True
         while offset < len(record):
-            room = _LINE_CAP if first else _LINE_CAP - len(_CONTINUATION)
+            room = LINE_CAP if first else LINE_CAP - len(CONTINUATION)
             remaining = len(record) - offset
             take = (
                 remaining if remaining <= room else _wrap_point(record[offset:], room)
             )
             if not first:
-                out += _CONTINUATION
+                out += CONTINUATION
                 continuations += 1
             out += record[offset : offset + take] + b"\n"
             offset += take
@@ -237,16 +237,10 @@ def next_cut(buffer: bytes, limit: int) -> int:
     return end
 
 
-def split_diff(context: pathlib.Path, limit: int) -> int:
-    """Write ``diff.full`` as bounded parts and return how many were written."""
-    if limit < 1:
-        raise ValueError("the byte bound must be positive")
-    data, escaped, doubled, octets = escape_embedded_breaks(
-        (context / "diff.full").read_bytes()
-    )
-    data, wrapped, continuations = wrap_long_records(data)
-    parts = context / "patches"
-    parts.mkdir(exist_ok=True)
+def _readme_notes(
+    escaped: int, doubled: int, octets: int, wrapped: int, continuations: int
+) -> str:
+    """Explain, for patches/README, every rewrite the parts carry."""
     notes = ""
     # Keyed on either count, never on the separators alone. The doubling rewrites bytes
     # too, and a diff holding a literal `\\015` with no real separator was rewritten
@@ -281,10 +275,10 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
         )
     if wrapped:
         notes += (
-            f"{wrapped} diff record(s) exceeded {_LINE_CAP} bytes on one line and were\n"
+            f"{wrapped} diff record(s) exceeded {LINE_CAP} bytes on one line and were\n"
             f"hard-wrapped over {continuations} continuation line(s) so a line-oriented\n"
             "reader can reach all of them. No byte of the diff was removed or\n"
-            f"reordered. Each continuation begins with {_CONTINUATION.decode()!r},\n"
+            f"reordered. Each continuation begins with {CONTINUATION.decode()!r},\n"
             "which never begins a line of unified diff output: without it a segment\n"
             "starting with '-' or '+' would read as a deletion or an addition.\n"
             "\n"
@@ -293,8 +287,11 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             "finding inside a wrapped record, cite the hunk header and say the line\n"
             "number is approximate rather than computing one from this text.\n"
         )
-    if notes:
-        (parts / "README").write_text(notes, encoding="utf-8")
+    return notes
+
+
+def _write_parts(parts: pathlib.Path, data: bytes, limit: int) -> int:
+    """Write ``data`` as bounded parts in name order, and return how many."""
     offset = 0
     index = 0
     while offset < len(data):
@@ -304,10 +301,13 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             raise ValueError("diff needs more parts than the naming allows")
         (parts / f"part-{index:04d}").write_bytes(data[offset : offset + take])
         offset += take
-    # The overview and its notice are written here rather than by the caller, because
-    # only this function knows how many parts exist. Deciding from the *input* size
-    # would miss a diff that fits the bound until wrapping pushes it past: the
-    # reviewer would then read part one with nothing saying a tail exists.
+    return index
+
+
+def _overview_notices(
+    escaped: int, doubled: int, octets: int, wrapped: int, continuations: int
+) -> bytes:
+    """The wrap and escape notices diff.patch carries, in the order it shows them."""
     escape_notice = b""
     if escaped or doubled or octets:
         # Disclosed in the overview too, not only in patches/README. The README is
@@ -332,10 +332,31 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
         # sends it to patches/README, so without this it never learns the rule.
         wrap_notice = (
             f"\n[{wrapped} long record(s) hard-wrapped over {continuations} "
-            f"continuation line(s) beginning {_CONTINUATION.decode()!r}; no byte was "
+            f"continuation line(s) beginning {CONTINUATION.decode()!r}; no byte was "
             "removed or reordered, but a line number inside a wrapped record is "
             "approximate -- see patches/README]\n"
         ).encode()
+    return wrap_notice + escape_notice
+
+
+def split_diff(context: pathlib.Path, limit: int) -> int:
+    """Write ``diff.full`` as bounded parts and return how many were written."""
+    if limit < 1:
+        raise ValueError("the byte bound must be positive")
+    data, escaped, doubled, octets = escape_embedded_breaks(
+        (context / "diff.full").read_bytes()
+    )
+    data, wrapped, continuations = wrap_long_records(data)
+    parts = context / "patches"
+    parts.mkdir(exist_ok=True)
+    notes = _readme_notes(escaped, doubled, octets, wrapped, continuations)
+    if notes:
+        (parts / "README").write_text(notes, encoding="utf-8")
+    index = _write_parts(parts, data, limit)
+    # The overview and its notice are written here rather than by the caller, because
+    # only this function knows how many parts exist. Deciding from the *input* size
+    # would miss a diff that fits the bound until wrapping pushes it past: the
+    # reviewer would then read part one with nothing saying a tail exists.
     bound_notice = (
         # "All of this diff", never "the whole diff": on the provider's refusal this
         # diff is assembled per-file hunks, which can omit files, and the prompt says
@@ -348,7 +369,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # it prints -- an artefact asserting something false about itself. The overview is
     # therefore a line-boundary prefix sized with the notices, rather than part one
     # verbatim; it is still whole lines, so it still decodes as text.
-    trailer = wrap_notice + escape_notice
+    trailer = _overview_notices(escaped, doubled, octets, wrapped, continuations)
     body = data[: next_cut(data, max(0, limit - len(trailer)))]
     if index > 1 or len(body) < len(data):
         body = data[: next_cut(data, max(0, limit - len(trailer) - len(bound_notice)))]
@@ -368,6 +389,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Split the diff in the context directory named by ``argv`` into bounded parts."""
     if len(argv) != 3:
         print(f"usage: {argv[0]} <context-dir> <max-bytes>", file=sys.stderr)
         return 2
