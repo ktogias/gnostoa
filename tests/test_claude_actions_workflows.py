@@ -1577,6 +1577,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("refused the unified diff", script)
         self.assertIn("assembled.diff", script)
         self.assertIn("patches-source", script)
+        # And it says what per-file hunks cannot carry. The comparison's entries have
+        # no mode fields, so a file whose content *and* executable bit both changed
+        # showed only its content hunks; no-patch.txt covers only entries with no
+        # patch at all, so the mode change vanished from every artefact. (Codex)
+        notice = " ".join(
+            line
+            for line in script.splitlines()
+            if "printf" in line or line.strip().startswith(("'", '"'))
+        )
+        self.assertIn("file modes", notice)
 
     def test_the_runner_event_payload_is_denied_to_every_tool(self) -> None:
         # The withheld issue and Pull Request bodies are still present in the raw event

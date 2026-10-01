@@ -376,6 +376,12 @@ jobs:
               >> "${CONTEXT_DIR}/patches-source"
             printf 'outside each hunk is absent and capped files may be missing.\n' \
               >> "${CONTEXT_DIR}/patches-source"
+            # The comparison's entries carry no mode fields, so a file whose content
+            # and executable bit both changed shows only its content hunks here.
+            printf 'Per-file hunks carry no file modes: a mode change, such as a script\n' \
+              >> "${CONTEXT_DIR}/patches-source"
+            printf 'losing its executable bit, cannot be seen; report modes as not examined.\n' \
+              >> "${CONTEXT_DIR}/patches-source"
           fi
           rm -f "${CONTEXT_DIR}/diff.err"
           rm -f "${CONTEXT_DIR}/assembled.diff"
