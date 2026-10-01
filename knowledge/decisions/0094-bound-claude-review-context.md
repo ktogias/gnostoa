@@ -313,6 +313,16 @@ No new dependency, service or runtime is introduced.
    This is the one substitution the parts carry: they are otherwise byte-for-byte, and
    the README distinguishes the two.
 
+   **Bytes that are not valid UTF-8 are escaped by the same rule.** A Latin-1 source
+   file without NUL bytes is a text diff to the provider, and its octets passed raw
+   into every part that held them, which the reviewer's text reader cannot decode --
+   so with no candidate tree the hunk was unreviewable while the prompt said the
+   whole diff was reachable. Each such byte is written as its octal value, after every
+   literal backslash is doubled, so one reversal undoes separators and octets alike
+   and a corpus over both stays injective. The README and the overview count them,
+   and the README says the file's real encoding is not known here, so the escapes are
+   bytes, not characters to be read. Valid UTF-8 is untouched.
+
    **A one-sided change names the nonexistent side `/dev/null`**, as unified diff does.
    Writing `--- a/<name>` for an added file tells a reviewer with no tree and no base
    that the file existed before the change, and on the assembled fallback that header

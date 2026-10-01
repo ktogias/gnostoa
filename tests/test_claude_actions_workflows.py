@@ -1142,7 +1142,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # whose marker the input can contain is not a substitution scheme.
         chunker = _load_script(CHUNKER)
         payload = b"+keep\x00CRLF\x00tail\r\nnext\r alone\n"
-        escaped, count, _ = chunker.escape_embedded_breaks(payload)
+        escaped, count, _, _ = chunker.escape_embedded_breaks(payload)
         # The sentinel bytes survive untouched ...
         self.assertIn(b"\x00CRLF\x00", escaped)
         # ... a real CRLF is left alone, being a line ending rather than a separator ...
@@ -1697,7 +1697,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # One input carrying, in order: literal text, a bare separator, and a
         # separator a candidate has tried to disguise with a leading backslash.
         payload = b"A" + literal + b"B" + separator + b"C" + b"\\" + separator + b"D"
-        out, escaped, doubled = chunker.escape_embedded_breaks(payload)
+        out, escaped, doubled, _ = chunker.escape_embedded_breaks(payload)
         self.assertEqual(2, escaped)
         self.assertTrue(doubled)
         between = out.split(b"A")[1].split(b"B")[0]
@@ -1727,8 +1727,22 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # cases someone thought of.
         chunker = _load_script(CHUNKER)
         separator = "\u2028".encode()
-        pieces = [b"", b"\\", b"\\\\", rb"\342\200\250", separator, b"\r", b"q"]
-        seen: dict[tuple[bytes, int, int], bytes] = {}
+        # Bytes that are not valid UTF-8 are escaped by the same scheme, so the corpus
+        # holds a lone Latin-1 octet, its literal octal spelling, and a truncated
+        # sequence whose escape shares a prefix with an escaped separator.
+        pieces = [
+            b"",
+            b"\\",
+            b"\\\\",
+            rb"\342\200\250",
+            separator,
+            b"\r",
+            b"q",
+            b"\xe9",
+            rb"\351",
+            b"\xe2\x80",
+        ]
+        seen: dict[tuple[bytes, int, int, int], bytes] = {}
         for combo in itertools.product(pieces, repeat=4):
             source = b"".join(combo)
             encoded = chunker.escape_embedded_breaks(source)
@@ -1739,7 +1753,46 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 f"{previous!r} and {source!r} both encode to {encoded!r}",
             )
         # The corpus has to be big enough for the assertion to mean something.
-        self.assertGreater(len(seen), 1000)
+        self.assertGreater(len(seen), 5000)
+
+    def test_a_diff_that_is_not_utf8_still_reaches_the_reviewer_as_text(self) -> None:
+        # A Latin-1 source file without NUL bytes is a text diff to the provider, but
+        # its octets are not UTF-8, and they passed straight into diff.patch and every
+        # part. The reviewer's text reader cannot decode such a part, and with no
+        # candidate tree the hunk was unreviewable while the prompt said the whole
+        # diff was reachable. Invalid octets are now escaped by the scheme separators
+        # already use -- octal, with every literal backslash doubled first -- so the
+        # parts decode, the bytes are recoverable exactly, and the rewrite is said.
+        # (Codex)
+        chunker = _load_script(CHUNKER)
+        payload = (
+            b"+caf\xe9 au lait\n"
+            b"+r\xc3\xa9sum\xc3\xa9 stays UTF-8\n"
+            b"+a literal \\351 and a truncated \xe2\x80 sequence\n"
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(payload)
+            chunker.split_diff(context, 4096)
+            parts = sorted((context / "patches").glob("part-*"))
+            for part in parts:
+                part.read_bytes().decode("utf-8")
+            overview = (context / "diff.patch").read_bytes()
+            overview.decode("utf-8")
+            whole = b"".join(part.read_bytes() for part in parts)
+            readme = (context / "patches" / "README").read_text(encoding="utf-8")
+        # Exactly reversible: undo the doubling and the octal escapes.
+        restored = re.sub(
+            rb"\\\\|\\([0-7]{3})",
+            lambda m: b"\\" if m.group(1) is None else bytes([int(m.group(1), 8)]),
+            whole,
+        )
+        self.assertEqual(payload, restored)
+        # Valid UTF-8 is left as it was; only the invalid octets were rewritten.
+        self.assertIn("résumé".encode(), whole)
+        # And it is disclosed where the reviewer looks.
+        self.assertIn(b"not valid UTF-8", overview)
+        self.assertIn("not valid UTF-8", readme)
 
     def test_a_diff_with_nothing_to_escape_is_untouched(self) -> None:
         # The doubling is not applied for its own sake. A diff holding a literal
@@ -1750,8 +1803,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # notices -- which key on the counts -- said nothing either.
         chunker = _load_script(CHUNKER)
         payload = rb'printf("\015");' + b"\n" + rb"re.compile(r'\342\200\250')" + b"\n"
-        out, escaped, doubled = chunker.escape_embedded_breaks(payload)
-        self.assertEqual((payload, 0, 0), (out, escaped, doubled))
+        self.assertEqual((payload, 0, 0, 0), chunker.escape_embedded_breaks(payload))
 
     def test_wrapping_preserves_the_input_s_trailing_newline_exactly(self) -> None:
         # Characterization, recorded before touching the two trailing-byte branches at
@@ -2091,6 +2143,20 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertEqual(
             ("findings", True), publisher.final_report([{**ok, "result": "findings"}])
         )
+
+    def test_no_execution_output_is_not_published_as_a_report(self) -> None:
+        # When the action wrote no execution file at all, the publisher said so under
+        # "## Claude review report" -- the heading every other path reserves for a
+        # finished review. A reader scanning headings saw a report where there was
+        # none. It now uses the same heading as every other unavailable case.
+        publisher = _load_script(PUBLISHER)
+        with tempfile.TemporaryDirectory() as scratch:
+            summary = pathlib.Path(scratch) / "summary.md"
+            self.assertEqual(0, publisher.main(["publish", "", str(summary)]))
+            written = summary.read_text(encoding="utf-8")
+        self.assertNotIn("## Claude review report", written)
+        self.assertIn("## Review report unavailable", written)
+        self.assertIn("no execution output", written)
 
     def test_the_fallback_text_is_the_assistant_s_own(self) -> None:
         # When the result string is empty the report falls back to the last text

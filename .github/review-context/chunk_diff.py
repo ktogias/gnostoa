@@ -19,6 +19,8 @@ import sys
 from review_context_paths import within
 
 _MAX_PARTS = 9999
+# A byte that is not valid UTF-8, as `surrogateescape` decodes it.
+_INVALID_OCTET = re.compile("[\udc80-\udcff]")
 # The reviewer's Read tool truncates a physical line beyond roughly this length and
 # offsets into a file by line, so a single very long record -- a minified bundle, a
 # generated lockfile -- would leave its tail unreachable even though the bytes are
@@ -71,8 +73,29 @@ _ESCAPED_LABELS = (
 )
 
 
-def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int]:
-    """Return ``data`` with non-LF line separators escaped, and two counts.
+def _escape_invalid_utf8(data: bytes) -> tuple[bytes, int]:
+    """Return ``data`` with every byte that is not valid UTF-8 escaped, and a count.
+
+    One pass: `surrogateescape` turns each such byte into a lone surrogate, which no
+    valid UTF-8 can decode to, so every surrogate found is exactly one invalid byte.
+    """
+    text = data.decode("utf-8", "surrogateescape")
+    text, count = _INVALID_OCTET.subn(
+        lambda match: "\\%03o" % (ord(match.group()) - 0xDC00), text
+    )
+    return text.encode("utf-8"), count
+
+
+def _is_utf8(data: bytes) -> bool:
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int, int]:
+    """Return ``data`` with non-LF line separators escaped, and three counts.
 
     A diff record may legally contain a byte sequence a Unicode-aware reader treats as a
     line break -- a lone CR, or U+0085/U+2028/U+2029 -- while this splitter, and Git
@@ -101,6 +124,12 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int]:
     output can therefore only be one this function introduced, and `\\\\` is one literal
     backslash from the source. There is no clever case left to get wrong.
 
+    Bytes that are not valid UTF-8 -- a Latin-1 source file, say -- are escaped the same
+    way, to their octal value. Left raw they made every part holding them undecodable,
+    so with no candidate tree the hunk could not be read at all, while the prompt said
+    the whole diff was reachable. Because every escape here is one byte as `\\ooo` and
+    every literal backslash is doubled, one reversal undoes all of them.
+
     Doubling is skipped entirely when there is nothing to escape, so an ordinary diff
     is passed through byte for byte and the reviewer sees the source as written. The
     second count reports how many backslashes were doubled, because a rewrite nobody
@@ -110,9 +139,13 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int]:
     separators = [raw for raw in _EMBEDDED_BREAKS if raw != b"\r"]
     # A lone CR only: a CR before an LF is a Windows line ending, not a separator.
     lone_cr = re.compile(rb"\r(?!\n)")
-    if not lone_cr.search(data) and not any(raw in data for raw in separators):
+    if (
+        not lone_cr.search(data)
+        and not any(raw in data for raw in separators)
+        and _is_utf8(data)
+    ):
         # Nothing to escape, so nothing is rewritten and nothing has to be explained.
-        return data, 0, 0
+        return data, 0, 0, 0
     doubled = data.count(b"\\")
     out = data.replace(b"\\", b"\\\\")
     # A function, not a replacement string: `re` reads `\015` in a replacement as an
@@ -125,7 +158,10 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int]:
         if count:
             found += count
             out = out.replace(raw, escaped)
-    return out, found, doubled
+    # After the separators: those are valid UTF-8 and become ASCII, and ASCII never
+    # completes a broken sequence, so what is invalid here was invalid in the input.
+    out, octets = _escape_invalid_utf8(out)
+    return out, found, doubled, octets
 
 
 def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
@@ -205,7 +241,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     """Write ``diff.full`` as bounded parts and return how many were written."""
     if limit < 1:
         raise ValueError("the byte bound must be positive")
-    data, escaped, doubled = escape_embedded_breaks(
+    data, escaped, doubled, octets = escape_embedded_breaks(
         (context / "diff.full").read_bytes()
     )
     data, wrapped, continuations = wrap_long_records(data)
@@ -217,7 +253,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # with nothing saying so -- the reviewer then reads the extra backslash as the
     # candidate's own source and may report it as a defect. A rewrite nobody counts is
     # a rewrite nobody discloses.
-    if escaped or doubled:
+    if escaped or doubled or octets:
         notes += (
             f"{escaped} non-LF line separator(s) were escaped to their octal UTF-8\n"
             f"bytes, and {doubled} backslash(es) were doubled to make that reversible.\n"
@@ -232,6 +268,15 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             )
             + "A CR directly before an LF is a line ending, not a separator, and is\n"
             "left as it is.\n"
+            "\n"
+        )
+    if octets:
+        notes += (
+            f"{octets} byte(s) in this diff were not valid UTF-8 -- a source file in\n"
+            "another encoding, for example -- and were escaped to their octal value,\n"
+            "\\ooo, so that every part decodes as text. They are recoverable exactly by\n"
+            "the same rule as the separators above; the file's real encoding is not\n"
+            "known here, so do not read the escapes as characters.\n"
             "\n"
         )
     if wrapped:
@@ -264,7 +309,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # would miss a diff that fits the bound until wrapping pushes it past: the
     # reviewer would then read part one with nothing saying a tail exists.
     escape_notice = b""
-    if escaped or doubled:
+    if escaped or doubled or octets:
         # Disclosed in the overview too, not only in patches/README. The README is
         # reached through a notice, and tying that notice to wrapping meant a small
         # single-part diff was rewritten with nothing saying so -- the octal text then
@@ -272,8 +317,10 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
         # which rewrites bytes whether or not a separator was present.
         escape_notice = (
             f"\n[{escaped} non-LF line separator(s) in the diff were escaped to octal"
-            f" UTF-8 bytes so they cannot start a record, and {doubled} backslash(es)"
-            " were doubled so the escaping is reversible; see patches/README]\n"
+            f" UTF-8 bytes so they cannot start a record, {octets} byte(s) that were"
+            f" not valid UTF-8 were escaped to octal so every part decodes, and"
+            f" {doubled} backslash(es) were doubled so the escaping is reversible;"
+            " see patches/README]\n"
         ).encode()
     wrap_notice = b""
     if wrapped:

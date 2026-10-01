@@ -212,11 +212,12 @@ def main(argv: list[str]) -> int:
     if not raw.strip():
         summary_only = within(argv[2], "", must_exist=False)
         with summary_only.open("a", encoding="utf-8") as handle:
+            # The heading every other unavailable case uses. "Claude review report"
+            # is reserved for a finished review, and a reader scans headings.
             handle.write(
-                "## Claude review report\n\n"
+                "## Review report unavailable\n\n"
                 "The reviewer produced no execution output: it failed before writing\n"
                 "one, so there is nothing to publish. The job's logs hold the reason.\n"
-                "Report unavailable.\n"
             )
         return 0
     execution = within(raw, "RUNNER_TEMP", must_exist=False)
