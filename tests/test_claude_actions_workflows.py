@@ -756,7 +756,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         failed = [
             {
                 "type": "assistant",
-                "message": {"content": [{"text": "partway through, looking at x"}]},
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "partway through, looking at x"}
+                    ]
+                },
             },
             {
                 "type": "result",
@@ -801,7 +805,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # And a stream that never reached a result envelope did not finish either.
         # Absence of the failure flags is not evidence of success.
         narration = [
-            {"type": "assistant", "message": {"content": [{"text": "still working"}]}}
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "still working"}]},
+            }
         ]
         _, complete = publisher.final_report(narration)
         self.assertFalse(complete, "a run with no result envelope was called complete")
@@ -1323,8 +1330,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             summary = pathlib.Path(scratch) / "summary.md"
             workspace = pathlib.Path(scratch) / "workspace"
             workspace.mkdir()
-            result = subprocess.run(
-                ["bash", "-c", step["run"]],
+            # The script travels on stdin to an absolute shell, as this file's other
+            # step harnesses do, so the argv is static: the step under test is the
+            # repository's own committed text, not an input.
+            result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [str(_SH), "-s"],
+                input=step["run"],
                 cwd=workspace,
                 env={
                     "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -2050,6 +2061,64 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # A bound that can hold the character is unaffected.
         self.assertEqual(2, chunker.next_cut(payload, 2))
 
+    def test_status_and_report_come_from_one_unique_result_envelope(self) -> None:
+        # Status was read from the last result envelope while the text could come
+        # from another, so an error diagnostic followed by an empty successful result
+        # was published as a completed review -- the diagnostic under the report
+        # heading. This repository's native adapter already refuses the shape
+        # (tests/fixtures/review_exchange/storage.py: "No unique successful Claude
+        # result"), and the publisher now holds the same contract: exactly one result
+        # envelope, and both halves of the answer bound to it.
+        publisher = _load_script(PUBLISHER)
+        ok = {"type": "result", "subtype": "success", "is_error": False}
+        cases = {
+            "error diagnostic, then an empty success": [
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "failure diagnostic",
+                },
+                {**ok, "result": ""},
+            ],
+            "two successes": [{**ok, "result": "first"}, {**ok, "result": "second"}],
+        }
+        for label, turns in cases.items():
+            with self.subTest(case=label):
+                _, complete = publisher.final_report(turns)
+                self.assertFalse(complete, f"{label} was called a finished review")
+        # One successful envelope is still a finished run.
+        self.assertEqual(
+            ("findings", True), publisher.final_report([{**ok, "result": "findings"}])
+        )
+
+    def test_the_fallback_text_is_the_assistant_s_own(self) -> None:
+        # When the result string is empty the report falls back to the last text
+        # block, which accepted any turn with message text. A user or tool turn's
+        # text -- the reviewer's *input* -- was then published under "Claude review
+        # report". Only an assistant turn's text blocks are the reviewer's output.
+        publisher = _load_script(PUBLISHER)
+        ok = {"type": "result", "subtype": "success", "is_error": False, "result": ""}
+        injected = {
+            "type": "user",
+            "message": {"content": [{"type": "text", "text": "injected input"}]},
+        }
+        report, _ = publisher.final_report([injected, ok])
+        self.assertNotIn("injected input", report)
+        # A non-text block inside an assistant turn is not report text either.
+        tool = {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "text": "not prose"}]},
+        }
+        report, _ = publisher.final_report([tool, ok])
+        self.assertNotIn("not prose", report)
+        # The assistant's own text is still found.
+        said = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "real findings"}]},
+        }
+        self.assertEqual(("real findings", True), publisher.final_report([said, ok]))
+
     def test_an_empty_result_turn_does_not_hide_the_report(self) -> None:
         # The reviewer's final text was taken from the last result turn even when that
         # turn carried an empty string, so real assistant output was dropped and the
@@ -2062,7 +2131,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # a test about an unfinished run instead. The same holds for `is_error`: a
         # finished run states it false, and the fixture now does too.
         turns = [
-            {"type": "assistant", "message": {"content": [{"text": "real findings"}]}},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "real findings"}]},
+            },
             {
                 "type": "result",
                 "subtype": "success",
@@ -2308,7 +2380,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     [
                         {
                             "type": "assistant",
-                            "message": {"content": [{"text": "early"}]},
+                            "message": {"content": [{"type": "text", "text": "early"}]},
                         },
                         {
                             "type": "result",
@@ -2328,7 +2400,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     [
                         {
                             "type": "assistant",
-                            "message": {"content": [{"text": "only this"}]},
+                            "message": {
+                                "content": [{"type": "text", "text": "only this"}]
+                            },
                         }
                     ]
                 ),

@@ -79,12 +79,17 @@ def run_succeeded(turns: list[Any]) -> bool:
     no result envelope at all was already reported as unfinished, and an envelope that
     declares nothing says no more than no envelope does.
     """
-    for turn in reversed(turns):
-        if isinstance(turn, dict) and turn.get("type") == "result":
-            # `is False`, not falsiness: a missing, null or zero flag is the absence
-            # of a failure signal, which is exactly what the rule above refuses.
-            return turn.get("is_error") is False and turn.get("subtype") == "success"
-    return False
+    # Exactly one envelope, as this repository's native adapter requires ("No unique
+    # successful Claude result"). With two, the status came from one and the text
+    # could come from another, so an error diagnostic followed by an empty success
+    # was published as a finished review.
+    results = [t for t in turns if isinstance(t, dict) and t.get("type") == "result"]
+    if len(results) != 1:
+        return False
+    (only,) = results
+    # `is False`, not falsiness: a missing, null or zero flag is the absence of a
+    # failure signal, which is exactly what the rule above refuses.
+    return only.get("is_error") is False and only.get("subtype") == "success"
 
 
 def final_report(turns: list[Any]) -> tuple[str, bool]:
@@ -102,9 +107,11 @@ def final_report(turns: list[Any]) -> tuple[str, bool]:
         # real assistant text and published "the reviewer produced no final text".
         if turn.get("type") == "result" and isinstance(result, str) and result.strip():
             return result, complete
-    # Fall back to the last assistant text block.
+    # Fall back to the last assistant text block -- the assistant's, and only its
+    # text blocks. Any turn with message text used to qualify, so a user or tool
+    # turn's text, which is the reviewer's *input*, could be published as its report.
     for turn in reversed(turns):
-        if not isinstance(turn, dict):
+        if not isinstance(turn, dict) or turn.get("type") != "assistant":
             continue
         message = turn.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -113,7 +120,9 @@ def final_report(turns: list[Any]) -> tuple[str, bool]:
         texts = [
             block["text"]
             for block in content
-            if isinstance(block, dict) and isinstance(block.get("text"), str)
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
         ]
         if texts:
             return "\n".join(texts), complete

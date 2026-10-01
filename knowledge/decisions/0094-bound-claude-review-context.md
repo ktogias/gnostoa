@@ -665,7 +665,14 @@ No new dependency, service or runtime is introduced.
    "success"` *and* `is_error` exactly `false`. A missing, null or zero flag is the
    absence of a failure signal, not the presence of success -- and both measured runs
    in the table above carried the flag, on success and on failure alike, so requiring
-   it refuses nothing a real run produces. And the publisher always says something: a
+   it refuses nothing a real run produces. There must also be exactly **one** result
+   envelope, as this repository's native adapter already requires: with two, the
+   status came from one and the text could come from the other, so an error
+   diagnostic followed by an empty success was published as a finished review. When
+   the result string is empty, the fallback text is taken only from an `assistant`
+   turn's `text` blocks, since any turn with message text used to qualify and a user
+   or tool turn's text is the reviewer's input, not its report. And the publisher
+   always says something: a
    step can fail before the checkout -- rule 25a's guard does, by design -- leaving no
    publisher on disk, so the step then writes a fixed notice and runs nothing from the
    workspace. Checking out anyway to get the publisher back would execute the revision
@@ -726,6 +733,16 @@ No new dependency, service or runtime is introduced.
    not admitting the trigger at all. Removing those two triggers is the stronger
    remedy, and is a trust-boundary change for the owner rather than a review-round
    fix.
+
+   **What this costs, stated plainly.** On an ordinary Pull Request the review
+   events' workflow revision *is* the candidate head, which is ahead of the default
+   branch, so the guard refuses every mention made in an inline review comment or a
+   submitted review. Those two triggers are therefore disabled in practice -- failing
+   closed, before Claude runs, with the publisher's fixed notice in the summary --
+   until #339 is settled. A mention in the Pull Request conversation (`issue_comment`)
+   resolves from the default branch and is unaffected. This is the intended
+   behaviour, not a defect in the condition: admitting those runs would hand the
+   credentials to a revision the candidate wrote.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 
