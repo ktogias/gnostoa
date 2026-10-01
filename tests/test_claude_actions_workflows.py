@@ -2158,6 +2158,28 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("## Review report unavailable", written)
         self.assertIn("no execution output", written)
 
+    def test_the_result_envelope_must_end_the_stream(self) -> None:
+        # The pinned action collects SDK messages and breaks on the first result
+        # ("by SDK contract no further messages follow a result":
+        # base-action/src/run-claude-sdk.ts at 9171db3e), so in a real execution file
+        # the one result envelope is always the last turn. Anything after it means the
+        # file is not what the action writes, and its status cannot be trusted. That
+        # evidence is what makes this safe to require: it cannot refuse a real run.
+        # (Codex)
+        publisher = _load_script(PUBLISHER)
+        ok = {"type": "result", "subtype": "success", "is_error": False, "result": "x"}
+        after = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "kept going"}]},
+        }
+        _, complete = publisher.final_report([ok, after])
+        self.assertFalse(
+            complete, "a result followed by more turns was called finished"
+        )
+        # The shape the action actually writes is still a finished run.
+        _, complete = publisher.final_report([after, ok])
+        self.assertTrue(complete)
+
     def test_the_fallback_text_is_the_assistant_s_own(self) -> None:
         # When the result string is empty the report falls back to the last text
         # block, which accepted any turn with message text. A user or tool turn's

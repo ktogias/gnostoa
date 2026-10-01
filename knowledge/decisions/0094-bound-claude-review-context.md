@@ -678,7 +678,11 @@ No new dependency, service or runtime is introduced.
    it refuses nothing a real run produces. There must also be exactly **one** result
    envelope, as this repository's native adapter already requires: with two, the
    status came from one and the text could come from the other, so an error
-   diagnostic followed by an empty success was published as a finished review. When
+   diagnostic followed by an empty success was published as a finished review. It
+   must also **end the stream**. The pinned action collects SDK messages and breaks on
+   the first result ("by SDK contract no further messages follow a result"), so a
+   real execution file never has a turn after it; that evidence, read from the
+   action's source, is what makes requiring it safe. When
    the result string is empty, the fallback text is taken only from an `assistant`
    turn's `text` blocks, since any turn with message text used to qualify and a user
    or tool turn's text is the reviewer's input, not its report. And the publisher

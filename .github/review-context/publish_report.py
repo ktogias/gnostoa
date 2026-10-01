@@ -87,6 +87,11 @@ def run_succeeded(turns: list[Any]) -> bool:
     if len(results) != 1:
         return False
     (only,) = results
+    # And it ends the stream. The pinned action breaks on the first result, so a real
+    # execution file never has a turn after it; one that does is not what the action
+    # writes, and its status cannot be trusted.
+    if turns[-1] is not only:
+        return False
     # `is False`, not falsiness: a missing, null or zero flag is the absence of a
     # failure signal, which is exactly what the rule above refuses.
     return only.get("is_error") is False and only.get("subtype") == "success"
