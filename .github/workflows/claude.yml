@@ -387,11 +387,12 @@ jobs:
               > "${CONTEXT_DIR}/diff.patch"
           else
             # diff.patch is bounded on purpose: an unbounded diff would reintroduce
-            # the context exhaustion this Decision exists to remove. Nothing is
-            # lost, though -- the whole diff is also written as fixed-size parts,
-            # because the reviewer has no git with which to recover a deletion that
-            # falls past the cutoff, and the base checkout shows a removed file's old
-            # content but never a newly added one.
+            # the context exhaustion this Decision exists to remove. Every hunk this
+            # collection retained is also written as fixed-size parts, because the
+            # reviewer has no git with which to recover a deletion that falls past the
+            # cutoff, and the checkout -- the workflow revision, not the base -- holds
+            # no reliable pre-change bytes. On the provider's 406 the retained hunks
+            # are per-file ones, which can omit files; patches-source says so.
             # Line boundaries are preferred, but a single line longer than the bound
             # must still be cut, and GNU coreutils' record mode cuts such a record by
             # bytes -- halving a multibyte character and leaving two parts a text

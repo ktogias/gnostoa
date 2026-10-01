@@ -1929,6 +1929,18 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         prompt = " ".join(str(step["with"]["prompt"]).split())
         self.assertNotIn("the whole diff", prompt)
         self.assertIn("can omit files", prompt)
+        # Nor the workflow's own comments: a stale guarantee beside the code is the
+        # one a later maintainer preserves or tests against. The checkout is the
+        # workflow revision, not the base, so it holds no reliable pre-change bytes
+        # either. (Codex)
+        raw = " ".join(MENTION_WORKFLOW.read_text(encoding="utf-8").split())
+        for claim in (
+            "Nothing is lost",
+            "the whole diff is also written",
+            "base checkout shows",
+        ):
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, raw.replace("# ", ""))
         chunker = _load_script(CHUNKER)
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
