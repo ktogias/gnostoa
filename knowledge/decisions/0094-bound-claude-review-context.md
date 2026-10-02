@@ -209,49 +209,823 @@ No new dependency, service or runtime is introduced.
    change. A missing per-file patch is a **neutral fact, not a file type**. It occurs for a
    binary or oversized blob, whose bytes are in neither the diff nor the checkout, and
    equally for a metadata-only change -- a mode bit, an empty file, a pure rename --
-   which is perfectly reviewable from its status. Calling every such entry binary made
-   the prompt require a real change to be reported as not examined, and dropped it from
-   the assembled fallback entirely. The artefact is therefore `no-patch.txt`, and the fallback
+   which is a different thing entirely. Calling every such entry binary made the
+   prompt require a real change to be reported as not examined, and dropped it from
+   the assembled fallback entirely. The first correction said such a change is
+   reviewable from its *status*, and the paragraph below retires that: status cannot
+   distinguish a mode-only change from a binary content change. What can be reviewed
+   is *which* metadata changed, and that is carried by a real unified diff's mode
+   lines and by nothing else here -- so when `patches-source` is present the diff was
+   assembled per file, those lines are absent, and such an entry is not examined
+   either. The condition travels with the claim wherever it is made. The artefact is therefore `no-patch.txt`, and the fallback
    keeps a header for every changed file whether or not it carried hunks.
 
-   `status` cannot distinguish the two further -- a mode-only change and a binary
-   content change both arrive as `modified` with no hunks -- so `no-patch.txt` carries
-   each entry's blob identity beside its status. It does **not** require the reviewer
-   to say which case it is: on the assembled fallback there is no old mode and no old
-   blob, so that judgement has nothing to rest on, and asking for it contradicted the
-   same paragraph's own admission that status cannot distinguish them. The reviewer
-   reports such an entry as not examined. The reviewer
-   is told plainly that a file's pre-change state is **only what the diff shows**: this
-   slice collects no base bytes, so nothing may present the checkout, which is the
-   default branch (rule 21), as the pre-change revision. Supplying the exact pre-change
-   revision of each changed file is a real gap and is deliberately deferred to a
-   follow-on slice rather than approximated here; approximating it is how a reviewer
-   comes to report interaction findings that are not real.
+   `status` cannot distinguish the two cases -- a mode-only change and a binary content
+   change both arrive as `modified` with no hunks -- so leaving the reviewer to infer it
+   from the status was itself a false claim. The **blob identity** does distinguish
+   them, and the directory listing already carries it: an identical blob means a
+   metadata-only change, while a differing blob means content changed that no artefact
+   here can show. `base.manifest` records which, and the prompt requires the reviewer to
+   report a `content-changed-without-hunks` entry as not examined.
+
+   **No redirect is followed.** `urlopen` follows redirects, and the stdlib's handler
+   drops only `content-length` and `content-type` when it builds the next request -- so
+   the `Authorization` header travels to wherever the redirect points, including
+   another origin or plain HTTP. Validating the endpoint at the point of use never saw
+   that target. Every request goes through a handler that refuses the redirect instead,
+   so the pinned-origin contract covers the whole exchange rather than only its first
+   hop. This rule first re-checked the target against the pinned *pattern*, which was
+   not enough and is recorded with its replacement further down; the pattern admits
+   another owner, repository, revision and file.
+
+   **The budget reaches the request path.** Checking the clock only between files
+   bounds nothing: three attempts, each with its own timeout and a rate-limit sleep,
+   can run well past the deadline while collecting a single file. The deadline is
+   carried into every request, checked before each attempt, and no sleep is allowed to
+   overshoot it -- a number the collection states is only a number it keeps if it
+   reaches where the time is actually spent.
+
+   **The collection holds a wall-clock budget.** Up to 300 changed files, each with a
+   listing and a contents request, each retried: the worst case ran past the job's own
+   timeout, and a job the runner kills produces no review at all -- so the retry added
+   above could, on a large Pull Request, cause exactly the outcome it prevents on a
+   small one. Entries not reached before the deadline are named `deadline-reached`. The
+   staging name is a short digest rather than the file's own basename for a related
+   reason: copying a basename near Linux's 255-byte `NAME_MAX` and adding punctuation,
+   randomness and `.partial` overflows it, and the file would be lost to the mechanism
+   meant to protect it.
+
+   **A malformed body is not a path problem.** `json.loads` raises `JSONDecodeError`,
+   which is a `ValueError`, and the per-file handler records an unusable *pathname* by
+   catching `ValueError` -- so a truncated response was filed as though the candidate
+   had an unusable filename. Reporting a wrong cause is worse than reporting a missing
+   file, which is the principle the whole manifest rests on. Such a body is retried and,
+   if it persists, recorded as `provider-error`, raised as a type the pathname handler
+   cannot absorb. A **rate limit** is likewise retried rather than refused: GitHub
+   reports an exhausted primary limit as 403, so treating every 403 as permanent aborted
+   the review on the failure most likely to occur when a Pull Request is large, while a
+   genuine authorisation failure still stops at once.
+
+   **A rate limit is waited out on the provider's terms, not ours.** A fixed backoff
+   can spend every attempt inside the window GitHub explicitly told us to wait out,
+   after which the error escapes and the whole review is lost -- a retry that is
+   indistinguishable from not retrying. `Retry-After` and `X-RateLimit-Reset` say when
+   the next request is permitted and are honoured, bounded by what a job with its own
+   deadline can afford to sit through. `Retry-After` is read in both forms HTTP allows,
+   delay-seconds and an HTTP-date; reading only the first sent a date to the fallback
+   wait (CodeAnt, #330). A number in either header is read only as bounded ASCII
+   digits. `isdigit()` alone accepted a latin-1 `\xb2`, and an over-long reset
+   exceeded Python's integer-string limit. Both raised a `ValueError` that was recorded
+   as `unsupported-path`, a provider header misfiled as a path problem; a malformed
+   hint is now no hint (CodeRabbit, #330). The contract test checks the pause the headers
+   imply **and** that the retry actually sleeps for it: an earlier version computed the
+   right pause and ignored it, which the function's own test could not see.
+
+   Only a rate limit consults those headers. GitHub sends `X-RateLimit-*` on ordinary
+   responses as well, and the reset is usually minutes away, so reading them for a
+   plain 5xx made a transient blip wait the cap -- roughly two minutes per request
+   against a ten-minute budget, turning the retry into the thing that reaches the
+   deadline. And a refused redirect is **not retried at all**: it cannot become allowed
+   by trying again, it is not a malformed body, and sharing a branch with the decode
+   errors spent two sleeps on it before recording `malformed provider body` -- the
+   wrong cause, which this collection treats as worse than a gap. It carries its own
+   type and its own manifest label.
+
+   **A failure that already named its cause keeps it.** The refused redirect was
+   removed from the decode branch, but the branch still overwrote the message of every
+   `ProviderError` it caught on the last attempt. A read that outlasts the whole-request
+   bound is raised as a `ProviderError` too, and it is genuinely transient, so it is
+   right for that branch to retry it -- but on exhaustion a slow provider was recorded
+   as `malformed provider body`, telling the reviewer that bytes were corrupt when the
+   collection knew only that they were late. The branch now re-raises a `ProviderError`
+   unchanged and wraps only a raw decode error, so the two failures the collection can
+   tell apart stay apart in the manifest. Both halves are tested, and the wrapping half
+   is exercised through a raw `JSONDecodeError` and `UnicodeDecodeError` because
+   `fetch_json` converts them at the read: without that the line has no coverage, and
+   a test driving only the transport would pass whether the branch labelled anything or
+   simply re-raised.
+
+   **The stated request bound is one the request cannot exceed.** The socket timeout
+   bounds one receive and the check between chunks bounds their sum, and neither bounds
+   the request: the timeout is set once, at `open()`, so a chunk arriving just before
+   the absolute stop is followed by a receive given a *fresh* full socket timeout. A
+   nominal 30-second request could run for nearly 60 and overrun a collection deadline
+   computed from the number it states. Half the budget goes to the stop and half to the
+   single receive that may straddle it, and the stop is checked before each receive as
+   well as after it, so a request whose budget is already spent is not granted one
+   more. `read1` bounded each receive; it did not bound their sum, and the comment
+   claiming an absolute bound was ahead of the code.
+
+   That arithmetic bounds the body read and nothing else, and the first version of this
+   rule claimed more than that. Connecting, the handshake and the status line and
+   headers all happen inside `open()`, where no check of this collection's can reach.
+   CPython reads headers as up to `_MAXHEADERS + 1` lines of `_MAXLINE` bytes, each
+   byte able to arrive in its own receive bounded only by the socket timeout -- roughly
+   six million receives before the limit is structural. A provider dripping header
+   bytes therefore keeps `open()` alive past every deadline stated here, the
+   between-files deadline check is never reached, and the step hits its job timeout
+   having written no manifest at all -- the exact outcome this Decision exists to
+   remove. **So the request runs on a daemon thread the caller stops waiting for.**
+   The abandoned thread keeps its socket until its receive ends or the process does.
+   The deadline bounded how many could accumulate only through the time each cost:
+   about 20 request workers, and up to about 120 if every error body stalled its
+   5-second read. A first estimate here said "tens" and missed the second kind
+   (CodeAnt, #330). So the cap is explicit: at most `MAX_ABANDONED` (16) may be running,
+   and past that a request fails at once as a provider error. Whoever revisits this
+   should note that no arithmetic inside
+   the read loop can bound the phase before it: the caller has to be the one that
+   stops.
+
+   **An identity is a well-formed identity, not a non-empty string.** Hunkless changes
+   are classified by comparing the comparison's blob id with the listing's, which
+   accepted any truthy value. Two equal *malformed* ids -- a truncated pair is the
+   obvious way to get them -- therefore read as `metadata-only`, while the `base/`
+   guard, which computes the real blob id, recorded `blob-mismatch` for the same path:
+   a manifest saying both that the content was unchanged and that its identity did not
+   check out. `SHA_PATTERN` is this module's own definition of a blob identity and is applied
+   to both classification fields and to the `base/` guard. An entry without two
+   well-formed ids is listed as `unclassified-without-blob-identity` rather than
+   classified, and the prompt says so, because the manifest may not assert a
+   classification it did not establish. A malformed id is also recorded as
+   `blob-unverifiable` rather than `blob-mismatch`: there was no identity for the bytes
+   to disagree with, and naming the wrong cause is the thing the rule above forbids.
+
+   **A failure to look is not absence.** A directory listing that is syntactically
+   valid JSON of the wrong shape -- `{}` -- made `listing_entry` return None, and the
+   fallback recorded `absent-at-merge-base`. That attributed a provider failure to the
+   repository and skipped bytes that were there to be fetched, which is the false
+   base-state claim this collector exists to avoid. A non-list listing is a
+   `provider-error`. This rule first kept absence for a 404; that exception did not
+   survive either, for reasons recorded with the rest of the absence contract further
+   down, and the label no longer exists.
+
+   That check tests `listing is not None` first, and the first version of it left the
+   hole it was written to close. `json.loads` returns the same `None` for a body of
+   `null` as this path uses for a 404, so a 200 carrying `null` reached the caller
+   indistinguishable from absence and the shape check never saw it. `None` now means a
+   404 and nothing else: a null body is a `provider-error` raised at the decode. The
+   general rule is that a sentinel a caller reads as *absence* must not be a value the
+   wire can produce.
+
+   The same rule reaches one place further. A 404 on the *contents* request is not
+   absence either, once the directory listing at the same merge base has already said
+   the file is there. The merge base is an immutable revision, so the two requests are
+   about the same tree, and a 404 across them is the provider contradicting itself.
+   Recording it as `absent-at-merge-base` turned an inconsistency into repository-state
+   provenance the reviewer has no way to question, while skipping bytes that exist. It
+   is a `provider-error` naming both halves of the contradiction.
+
+   Following that argument back one step removes the label entirely. Every entry that
+   reaches the listing lookup is non-added -- `added` returns earlier with
+   `added-by-candidate` -- so the **comparison** has already placed that source at this
+   same merge base. A directory 404, or a listing that does not hold the name,
+   contradicts the comparison exactly as a post-listing contents 404 contradicts the
+   listing. `absent-at-merge-base` therefore had no true use left and no longer appears
+   in the collector. `listing-at-cap` stays, renamed from `listing-truncated`: a listing
+   that *reached* the provider's maximum establishes neither truncation nor a
+   contradiction -- the name may lie beyond it, or the listing may be complete -- so
+   the label records only what was observed, as the changed-file cap now does too.
+
+   Two tests asserted the removed label, one of them written in this Decision's own
+   work as a *control* for the rule above it: it took a directory-listing 404 as
+   evidence about the repository rather than about the request. It is not, and the
+   control passed. The claim is paraphrased rather than quoted here, because a
+   contract test now refuses that conjunction anywhere in this document -- a rule
+   written out still reads as a rule to someone scanning for one. Absence from the base
+   is **established** only by the comparison itself -- an `added` status -- and is never
+   inferred from a failure to look: a listing or contents failure is a
+   `provider-error`, a statement about the request (CodeRabbit, #330).
+
+   **No redirect is followed.** The guard matched the pinned endpoint *shape*: scheme,
+   host, and a `/repos/<owner>/<repo>/contents/...?ref=<40 hex>` path. Another owner,
+   another repository, another revision and another file all satisfy that, and the
+   `Authorization` header travels with the request while the bytes are written into
+   `base/` as this repository's pre-change state. The blob-identity check does not
+   close it, because a *listing* request can be redirected the same way and then both
+   halves come from the wrong place and agree with each other. A redirect that is safe
+   here would have to be the same repository, the same revision and the same path --
+   with scheme and host already pinned, that is the same URL -- so there is nothing a
+   redirect can legitimately change and no way to verify one that does. A renamed or
+   transferred repository is refused too, and recorded as `unsafe-redirect`: a gap the
+   reviewer can see, which this collector prefers to bytes whose origin it cannot
+   state. The test that asserted "a redirect that stays within the pinned shape is
+   still followed" made the weakness look intended; it now asserts the refusal.
+
+   **A retired contract stops reading as a live one.** Both rules above were fixed by
+   appending the new contract and leaving the old one in place, several hundred lines
+   earlier: this Decision then stated, in the present tense, both that redirects are
+   re-checked against the pinned pattern and that only non-matching ones are refused,
+   and that a directory-listing 404 still established absence. The document is
+   normative and is
+   read top-down, so the superseded rule is the one a maintainer meets first, and
+   restoring either reintroduces exactly what the later paragraph removed -- one of
+   them the credential-leaking redirect. Each earlier paragraph now states the current
+   invariant and points forward for the reasoning. A contract test refuses the two
+   retired phrasings and requires the two current ones, and a second pins the manifest
+   label vocabulary the collector emits, because `absent-at-merge-base` outlived its
+   removal here by one commit.
+
+   **A copy is counted as a copy.** The mapping list holds renames and copies
+   together, and the summary reported its length as `Renamed:`. A comparison with one
+   copy and no rename announced `Renamed: 1` in the line the reviewer is told to
+   trust, while the mapping underneath said `copied` -- a file duplicated, reported as
+   a file moved, with the original still in place. The counts are separate and the
+   preamble names both.
+
+   **A response is bounded in size as well as in time.** The read loop bounded how
+   long a response may take and not how large it may be, so a provider answering with
+   an endless body filled the runner's memory while every deadline was still in the
+   future; the collection's own byte budget -- 512 KiB for all of `base/` -- is
+   checked after the decode, far too late. A body over `MAX_RESPONSE_BYTES` is
+   refused, checked on every chunk, so what is held is bounded by the cap plus one
+   chunk rather than by the provider's willingness to stop. The cap sits an order of
+   magnitude above both legitimate shapes: a listing of at most `LISTING_CAP`
+   entries, and a contents response carrying base64 of a file whose payload cannot
+   usefully exceed that whole budget. A bound that refuses a legitimate answer is a
+   gap generator, so the test asserts the headroom as well as the refusal.
+
+   Bounding each response does not bound their sum, which is the same mistake the read
+   loop made with time. Directory listings were cached whole until the collection
+   finished, so a change touching one file in each of many crowded directories retained
+   every full response -- up to `FILE_CAP` of them, each able to approach the cap, and
+   the per-response bound says nothing about that. A directory is consulted for two
+   things: the records of the names the comparison places in it, and whether the
+   provider capped the list. Only those are kept, and the original length is carried
+   separately because the truncation notice depends on it and a reduced list can no
+   longer report it -- without that, a capped directory would read as complete and "the
+   name may be in the part we did not get" would become a false absence claim.
+   Retention is bounded by the number of changed files rather than by the size of the
+   directories they happen to live in -- and that has to cover **every** shape the cache
+   holds, not the convenient one. The first version reduced only array-shaped responses,
+   so a provider returning a large syntactically valid object for each directory filled
+   the runner by the other route while each individual response respected the size cap.
+   A response that is not an array is replaced by a payload-free stand-in that still
+   classifies as a shape error. `None` passes through unchanged, because that is the
+   not-found transport sentinel the rest of the collection reads.
+
+   And a *record* is reduced to the fields it is read for -- `name`, `type`, `size`,
+   `sha`. The contents API sends `_links`, `download_url`, `git_url`, `html_url` and
+   `url` beside them, so keeping matched records whole retained all of that for every
+   changed file. Three rounds of the same finding narrowed this from *which responses*
+   to *which records* to *which fields* to *which values*, each one closing a route the
+   previous fix left open. Selecting four fields still retained whatever the provider
+   put in them, so a matching record carrying a megabyte-long `type` or `sha` reopened
+   the same exhaustion a fourth time. Each field is normalised to the representation the
+   code downstream uses: a type it can compare, a size it can subtract, an identity that
+   matches `SHA_PATTERN`. Retention is worth stating as a property of its own, since stating it
+   once would have replaced four rounds: **what is kept is the bounded set a later step
+   consumes, never the provider's answer** -- and that applies to values, not only to
+   which keys are copied.
+
+   Testing that bound surfaced a separate wrong-cause defect. CPython refuses `int()`
+   beyond `sys.get_int_max_str_digits()`, so `json.loads` raises a **plain ValueError**
+   -- not a `JSONDecodeError` -- for a long enough integer literal. The decode guard
+   named `JSONDecodeError` and `UnicodeDecodeError`, both members of `ValueError`, so
+   that body escaped to the per-file handler and was filed as an unusable *pathname*: a
+   malformed provider response reported as a problem with the candidate's filename. The
+   guard names its base class now, and the reason is the count rather than the case.
+   Naming `JSONDecodeError` missed a body that is not UTF-8; naming that pair missed the
+   plain `ValueError`; naming `ValueError` missed `RecursionError`, which is a
+   `RuntimeError` and arrives from input as ordinary as `[` repeated a hundred thousand
+   times -- well under the size cap, and enough to end the collection with no manifest
+   written. Four enumerations, four escapes.
+
+   The only statement inside that guard is the decode, and every way it can fail means
+   the same thing: the provider's answer is not usable. So it catches `Exception` and
+   converts.
+
+   **A test cannot argue for that.** The contract test carries five hostile bodies, and
+   the narrower clause `(ValueError, RecursionError)` passes all five -- a mutation table
+   confirms it. It could not be otherwise: a test can only contain the members someone
+   already thought of, which is the same limit that produced the four escapes. The
+   argument for the base class is the history, not the evidence, and the evidence is
+   recorded here as not settling it.
+
+   **The fallback diff is written per entry.** Every patch string was concatenated into
+   one value before being written, which held the whole assembled diff a second time --
+   the patches are already resident from parsing `comparison.json`, so the join
+   duplicated the largest thing in memory. The test asserts the number of writes rather
+   than a peak-memory figure, because the claim is about the shape of the work and a
+   memory probe would be flaky.
+
+   **What this does not bound.** `comparison.json` is read whole and parsed whole, so
+   the patches are resident once however large the comparison is. That is the ceiling
+   these three fixes sit under, it predates them, and no bound here changes it. Bounding
+   it would mean either a streaming parse or refusing a comparison above some size --
+   the second would turn a large Pull Request into a refused review, which is the
+   failure this Decision exists to remove, so it is recorded rather than decided.
+
+   That pre-pass then broke the guarantee the whole collection rests on. It resolves
+   each entry's base-side path to learn which listing records to keep, and
+   `base_path_of` refuses a renamed or copied entry that carries no `previous_filename`
+   -- outside the per-file handler, so the `ValueError` escaped `collect` before any
+   manifest was written and one malformed comparison entry cost the entire review. The
+   pre-pass skips what it cannot resolve and leaves it to the handler, which records
+   `unsupported-path` for that one file.
+
+   Testing that guarantee found a **second** escape, older than the pre-pass: the
+   assembled fallback diff resolves the same path for its header, also before the
+   handler. Its header now says the base side is unresolved. `/dev/null` would assert
+   the candidate added the file and an invented name would assert a base-side path the
+   comparison never gave, so it says neither. The guarantee was already not held for
+   this input; the new code made it reachable twice over, and one reviewer finding
+   surfaced both.
+
+   **And it did not cover the comparison at all.** Per-file isolation is about what
+   happens inside the loop. A valid JSON document that is not an object, a file list
+   that is not an array, an entry that is not an object, or an entry without a filename
+   each reached an unguarded index or attribute and ended `collect` before any manifest
+   existed -- measured, not inferred: `AttributeError`, `TypeError`, `KeyError`, and no
+   `base.manifest` in any of the three. A review is lost either way; a manifest naming
+   what could not be read is the difference between a reported gap and silence.
+
+   The comparison is reduced once, at the top, to the entries the collection can act on,
+   with a `provider-error comparison.json` notice for each it cannot -- so no later step
+   guards the shape again. *Superseded by rule 35:* an entry was first admitted on its
+   filename alone, with a missing status written as `unstated`. Every later step
+   decides from the status, so an entry now needs a documented one; without it, the
+   entry is named as a `provider-error` for its path and counted in `Unavailable:`.
+   What the earlier choice guarded still holds: two sites in the summary writer
+   indexed `status` and raised `KeyError` on a bare entry before any manifest existed,
+   and every reader still reads with a default.
+
+   The *parse* was still unguarded, which is the outermost escape and the last one:
+   malformed JSON, a body that is not UTF-8, or a file that cannot be read at all raised
+   out of `collect` before any manifest existed, so the step failed and the reviewer got
+   nothing -- not even a statement of why. It is recorded and never raised, and the
+   clause names the base class for the same reason the provider decode does: four
+   enumerations in this file have each missed a member, and a mutation confirms that
+   `json.JSONDecodeError` alone -- the plausible narrow choice -- still loses the
+   non-UTF-8 case.
+
+   **What `base/` holds was overstated in both records.** The module docstring and this
+   Decision each stated it universally. It does not hold them all, and the collector's own vocabulary says so: `added-by-candidate`,
+   `over-budget`, `not-a-plain-file`, `blob-unverifiable` and `blob-mismatch` each name
+   a changed file whose bytes are not there. A reader who believes the universal takes
+   an absent file for an absent *change*, which is the false provenance this collection
+   exists to prevent -- asserted, as it happens, in the two places a maintainer checks
+   first.
+
+   The guard for it is deliberately a tripwire rather than a proof. It catches the
+   universal quantifier, which is the form the claim took in both records and has few
+   spellings; it cannot catch an over-claim phrased some other way. A broader rule was
+   tried first -- every paragraph saying what `base/` holds must name an exception --
+   and it was both too lenient, passing the offending paragraph because a marker
+   appeared elsewhere in it, and too strict, flagging two paragraphs that were already
+   correct. A guard that reports false findings is worse than none, so this one claims
+   less and says so.
+
+   And it was pointed at the wrong surface, which is how the same claim survived a
+   third time. Correcting the module docstring and this Decision left the universal
+   standing in `base.manifest`'s own preamble -- a string literal, so neither a comment
+   nor a docstring, and invisible to a guard that reads prose. That artefact is the one
+   the reviewer is handed, so the claim was fixed where it was least consequential and
+   left where it was most: a manifest opening "the bytes of each changed file" above a
+   body reporting `Written: 0` and `added-by-candidate`. The guard now renders a
+   manifest and reads that too. Wherever a record and an artefact say the same thing,
+   the artefact is the one worth checking first.
+
+   Reducing the comparison then broke the cap notice, and broke it the same way the
+   directory listing's truncation notice had been broken earlier in this same work.
+   `diff.stat` warns when the provider's changed-file list hit its cap, and that count
+   was taken from the list `write_summaries` receives -- which is now the *reduced* one.
+   One unusable entry among a capped 300 left 299, the notice disappeared, and a
+   truncated change read as complete. The delivered count travels with the reduced list,
+   exactly as the listing's does.
+
+   Worth stating as a rule rather than as two incidents: **a reduced collection cannot
+   report what it was reduced from.** Every count taken from one has to be taken before
+   the reduction or carried alongside it. This work has now got that wrong twice, in two
+   functions, with the second introduced days after the first was fixed.
+
+   **A secondary rate limit is recognised by its message too.** GitHub documents a
+   secondary limit arriving as a 403 with neither `retry-after` nor
+   `x-ratelimit-remaining: 0`, identified by its message alone. Classifying on headers
+   only sent that response down the permanent-refusal path, and on a large Pull
+   Request -- which is when secondary limits happen -- every later base lookup became
+   a gap. A bounded prefix of the error body is read as well, following
+   `ci/review_github_current_state.py`, which already classifies GitHub errors this
+   way in this repository, rather than inventing a second convention. The prefix is
+   bounded for the same reason the response is, and an unreadable body leaves the
+   header answer standing rather than a guess.
+
+   Recognising those responses then exposed the pause. A secondary limit can arrive with
+   no timing header at all, and the no-hint path fell back to the ordinary transient
+   backoff -- five seconds, then ten -- so all three attempts stayed inside the window
+   the provider had just announced, and files that were retrievable were recorded as
+   `provider-error`. GitHub documents waiting at least a minute in that case and warns
+   that requests made during a secondary limit can extend it, which makes the short
+   backoff worse than not retrying at all. A recognised limit with nothing to say when
+   it lifts now waits `UNHINTED_RATE_LIMIT_WAIT`, still bounded by
+   `MAX_RATE_LIMIT_WAIT` and by the collection deadline. The transient backoff belongs
+   to the *unrecognised* case and stays there.
+
+   Introducing that pause also broke a test that had neutralised timing by zeroing the
+   transient constant alone: the suite went from six seconds to sixty-six, because one
+   case then slept a real minute. Worth stating as a hazard rather than a one-off --
+   every timing-neutralising test is stale the moment a new pause source is added, and
+   the suite's own duration was the only thing that reported it.
+
+   That read then needed three corrections of its own, each an invariant already
+   stated elsewhere in this Decision that the new code did not inherit.
+
+   It ran on the caller's thread, so it was bounded in size and not in time.
+   `error.read(n)` keeps receiving until it has `n` bytes -- which is why the response
+   loop uses `read1` -- so a body arriving one byte before each socket timeout held the
+   collection for up to `ERROR_DETAIL_BYTES` receives, past the request bound and the
+   deadline alike. It runs through the abandoning helper, with **whatever is left of
+   the deadline** and never more than `ERROR_DETAIL_SECONDS`, and not at all when the
+   budget is gone: a per-error cap alone bounds the read without honouring the number
+   this Decision claims reaches the request path.
+
+   The read is destructive, and classification runs **twice** for one error -- once in
+   the retry condition and again inside `rate_limit_pause`. The first call consumed the
+   body and the second answered "not a rate limit", so the retry used the fixed backoff
+   and ignored `X-RateLimit-Reset`, landing both attempts back inside the window, which
+   GitHub warns can escalate a secondary limit. The comment introducing the read
+   claimed to be the body's only consumer; it was not. The prefix is cached on the
+   error so the two calls cannot disagree.
+
+   And it named exception *members* rather than base classes, which this Decision
+   already records as a mistake made four times on the request path.
+   `http.client.IncompleteRead` is an `HTTPException` and neither an `OSError` nor a
+   `ValueError`, so a truncated error body escaped the classification, the retry and
+   the per-file recovery and ended the collection. Deciding what an error was may never
+   be the thing that fails.
+
+   Three reviewers found these independently, and all three are the same shape: new
+   code on an old path does not inherit the path's invariants by being near them.
+
+   **The revision identity is checked once, before any request.** `base_endpoint`
+   refuses a base that is not an exact 40-character revision, and the per-file handler
+   catches `ValueError` as an unusable *pathname* -- so a comparison that omitted
+   `merge_base_commit.sha` produced a manifest blaming every ordinary filename in the
+   change for a gap that was the provider's, while the preamble introduced the source as
+   merge base "(unknown)". It is now a single `provider-error` against
+   `comparison.json`, every hunkless entry is `unclassified-no-base-record`, and **no
+   request is made at all**: without the revision there is no endpoint to ask, so the
+   alternative was 300 identical refusals. The preamble prints `unknown` for any
+   identity that is not exact rather than echoing a malformed one.
+
+   Two verdicts survive that failure because they never needed the revision: an `added`
+   entry is settled by the comparison alone, so it keeps `added-by-candidate` and, when
+   hunkless, `added-without-hunks`. The first version of this branch discarded the whole
+   list and hid them behind the generic error. And every other path is named
+   individually -- `base.manifest` promises provenance per path, and a single summary
+   record reported `Unavailable: 1` for a change where nothing at all was fetched,
+   naming none of the files it happened to.
+
+   Adding those per-path records then made the summary lie the other way. The
+   comparison-level diagnostic shared the list `Unavailable:` counts, so four files
+   without bytes were reported as five. A notice about the **collection** is not a
+   path, belongs in the manifest and not in a count of paths, and is kept in its own
+   list. That is the same defect as counting a copy as a rename: a number in the line
+   the reviewer is told to trust, describing something it does not measure.
+
+   **The root listing URL carries a trailing slash, and that is now load-bearing.**
+   `listing_endpoint` builds `/contents/?ref=...` for the repository root. Since no
+   redirect is followed any longer, a provider answering that form with a 3xx would make
+   every root-level path unavailable, and silently: `base/` would simply lose those
+   files. Measured against the live API rather than assumed -- both `/contents/?ref=`
+   and `/contents?ref=` return 200 with the same listing and no `Location` header -- so
+   the form is served directly and a reported mismatch there does not hold. The
+   end-to-end test over real HTTP now collects a root-level file as well as one in a
+   directory, because the risk is real even where the mechanism is not: the consequence
+   of that behaviour changing is severe and produces no error.
+
+   **Guarding this document's own text took four attempts, and the failures are worth
+   recording.** Claims that a provider response establishes absence were found five
+   times in five different wordings. Pinning the literal phrasings missed the next one.
+   Enumerating the predicates that make the claim was the same mistake with a longer
+   list, and missed a sentence calling a not-found response "the only \"absent\"
+   answer". Requiring a negation nearby fails, because that sentence contains "never".
+   Requiring exactly one such sentence fails, because this Decision legitimately
+   narrates its own corrections and five sentences mention both terms. What holds is an
+   asymmetry: the ways to make the claim are an open set, while the markers that say
+   "this is history, or a denial" are a small set this document controls -- so every
+   sentence joining the two terms must carry one, and a fresh claim carries none. Even
+   that passed once for the wrong reason, because the marker `first` matched "on the
+   first attempt" inside the offending sentence; a marker has to be a phrase that can
+   only be retirement. A guard over prose must be shown to reject the known-bad
+   sentence, not merely to pass -- and this paragraph is written in the guard's own
+   terms for the same reason, since describing the rule in the rule's forbidden shape
+   would trip it.
+
+   The guard also covered the wrong surface. It read this record and not the collector,
+   where the same superseded claim was sitting in a docstring and three comments -- and
+   the source is what a maintainer changing that path reads first. It now reads both. A
+   `.py` file's prose is its comments and docstrings, extracted with `tokenize` and
+   `ast`: splitting the whole file into sentences ran code and comment text together and
+   reported four such fragments as claims, which is a guard generating its own false
+   findings.
+
+   **The reviewer's instructions carry no elision.** The prompt read "report
+   content-changed-without-hunks as not examined, and metadata-only when
+   patches-source is present". The verb phrase is elided in the second clause, and a
+   reader can take it as "report metadata-only entries" rather than "report them as
+   not examined" -- one reviewer did. The cost is a report claiming a mode change was
+   checked when the assembled per-file hunks carry no mode lines and the reviewer has
+   nothing to contradict it with. The clause is now written out. It fits inside rule
+   3's 4096-byte bound because "Say which" was removed as a duplicate of "State
+   plainly what you did not examine" rather than by raising the bound; a prompt
+   compressed until its grammar is ambiguous has spent the budget on nothing.
+
+   **A copy is not a metadata-only change.** A copy is fetched under its previous path,
+   so an exact copy makes the comparison's blob id equal the listing's and read as
+   `metadata-only` -- said about a path that held nothing before, where a whole file
+   appeared. It is the removal trap from the other side, and is labelled
+   `copied-without-hunks`. A rename stays `metadata-only`: the file moved rather than
+   multiplied, and the manifest lists that mapping separately.
+
+   That label was first returned for **every** copy, which denied the other case. A copy
+   can be edited: the provider reports `copied` with a destination blob differing from
+   the source, the bytes collected into `base/` are the source's, and no artefact showed
+   that the destination content had changed -- so the reviewer was not told to report it
+   as unexamined. Only an exact copy, with two well-formed and equal identities, is
+   `copied-without-hunks`; an edited one falls through to the ordinary comparison and is
+   `content-changed-without-hunks`, which the prompt already requires to be reported as
+   not examined. That reuse is deliberate: a new label would have needed new prompt
+   bytes against rule 3's bound for a case the existing instruction already covers. A
+   malformed pair remains `unclassified-without-blob-identity`, and the copy mapping is
+   listed in all three.
+
+   **An added file with no hunks is not examined either.** Its bytes are in no artefact
+   at all: `base/` holds nothing for it because the candidate added it, and the fallback
+   diff carries a `/dev/null` header and no content. The instruction named
+   `content-changed-without-hunks` and `metadata-only` only, so a reviewer could finish
+   without disclosing that newly added content was never seen.
+
+   Saying so cost prompt bytes that rule 3's bound did not have -- the prompt was at
+   4090 of 4096. It was not raised. The room came from a sentence that explained *when*
+   paths are git-quoted, where the reviewer needs only the guarantee that a name cannot
+   start a line; the condition is explanatory and the guarantee is what it acts on. The
+   compression that bought the rest also broke two existing contract tests by shortening
+   wordings they pin, and that was given back rather than absorbed by loosening them: a
+   test that pins a phrase is the record of why the phrase is there, and editing it to
+   fit a later sentence spends the guarantee to buy the space.
+
+   **Transient provider failures are retried inside the collection too.** The step
+   retries its own requests, but the collection makes one listing request per changed
+   directory plus one contents request per changed file -- up to `FILE_CAP` of them --
+   so a single 502 or timeout anywhere in that sequence ended the step and cost the
+   whole review, with the risk growing as the Pull Request grew. Server errors, rate
+   limits, transport failures and malformed bodies are retried (a malformed body that
+   persists is a `provider-error`, as above); a 404 is the internal transport sentinel
+   for "the provider answered not-found" and settles nothing about the repository, and
+   everything else still propagates on the first attempt, so a refusal can never be
+   mistaken for "the candidate added this file" -- which the comparison alone decides.
+
+   **Nothing raw leaves the request path.** The per-file handler used to name each
+   escaping exception type, so every type it did not name still cost the whole review:
+   the `HTTPError` escape was closed and a timeout, a DNS failure, a reset connection or
+   an `IncompleteRead` outlasting the retries was left to end the step with no manifest
+   written. Enumerating types in the handler is the wrong shape -- it fails open on
+   whatever is not listed. The request path converts instead: every failure that
+   survives its retries arrives as this module's own error, carrying its cause, and the
+   handler has one thing to know. The conversion names **base classes**, not members:
+   `OSError` and `http.client.HTTPException` between them are every way a request can
+   fail below the protocol -- `URLError`, `ConnectionError`, `TimeoutError` and the TLS
+   errors are all `OSError`, and `IncompleteRead` is an `HTTPException`. Listing the
+   types individually missed one four separate times, the last being a TLS failure
+   during the body read; an enumeration fails open on whatever is not in it, which is
+   the wrong direction for this surface.
+
+   **The collector never waits past the budget by more than one floor.** That bounds
+   the wait, not the network: an abandoned worker can keep its socket past the
+   deadline until its receive ends, which is why their number is capped
+   (`MAX_ABANDONED`, above; CodeRabbit, #330). One starting near
+   the deadline was still given the full per-request timeout, and the body read was not
+   deadline-aware at all, so the collection could pass the budget it states before it
+   could record what it had not reached. Each request is given whichever is smaller --
+   bounded below by `MIN_REQUEST_SECONDS`, since a timeout of zero would refuse a
+   request the loop has already decided to make. That floor is the exact amount by
+   which the deadline can be crossed, and the loop refuses to *start* a request after
+   it, so the overshoot is one floor and no more. This paragraph previously said the
+   bound held absolutely, which the floor makes false; the number is asserted in a
+   contract test so the record and the code cannot drift apart again. The contract test drives each transport shape and a
+   5xx through the real boundary rather than replacing the function that performs the
+   conversion.
+
+   **A no-hunk entry gets its verdict on every path.** The reviewer is sent to
+   `base.manifest` for one, so an entry left out of it has no answer anywhere. Three
+   paths skipped the classification -- the deadline check at the top of the loop, and a
+   deadline or provider failure while fetching the listing -- and hunkless entries are
+   ordered last, so on a large Pull Request they are precisely the ones the deadline
+   reaches first: the guarantee failed where it was most needed. Each of those paths
+   records `unclassified-no-base-record`, and the contract test also pins that exactly
+   one verdict is written, so a later failure cannot add a second for an entry the
+   listing had already classified.
+
+   **A copy is mapped like a rename.** `base/` writes a copy's bytes under the
+   destination, fetched from the source, so listing only renames in the mapping left
+   those bytes with no record of where they came from -- the precise gap the mapping
+   exists to close, opened by teaching the fetch about copies without teaching the
+   manifest.
+
+   **An unexpected response shape is that file's gap, not a crash.** A syntactically
+   valid answer of the wrong shape -- a list where an object was expected -- reached
+   `.get` and raised `AttributeError`, which no handler catches, so the collection ended
+   before the manifest was written.
+
+   **A request timeout bounds the exchange, not each receive.** A socket timeout limits
+   one read; a provider sending a byte before each expiry keeps the response alive
+   indefinitely while neither the request timeout nor the collection deadline fires.
+   The body is read in chunks against an absolute stop, taken with `read1` where the
+   response offers it: `read(n)` may perform several receives while trying to fill `n`,
+   so a drip stays inside one call past every deadline, and a check between chunks is
+   only a bound if each chunk is one receive.
+
+   **The bytes are checked against the identity the listing gives.** `validate=True`
+   only says the base64 was well formed; a truncated or corrupted payload that still
+   decodes cleanly would be written as the exact pre-change file with no gap recorded,
+   and "exact" is the whole claim `base/` makes. The parent listing already carries
+   Git's blob id, so the decoded bytes are hashed the way Git hashes a blob -- SHA-1 of
+   `blob <length>\\0` and the content, confirmed against `git hash-object` -- and a
+   mismatch is recorded as `blob-mismatch` rather than written, and a listing that
+   carries **no** blob id is `blob-unverifiable`: with nothing to check against, writing
+   the bytes would make the exactness claim on evidence this collection does not have.
+   Skipping the check when the field was missing was the same promise without the
+   check. This turns "these are
+   the exact bytes" from something the collection asserts into something it checks.
+
+   **Decoding is strict.** `base64.b64decode` discards characters outside its alphabet
+   by default, so a corrupt payload decodes to *some* bytes -- and those bytes would be
+   written into `base/`, which the prompt calls the exact pre-change revision. The
+   provider wraps its content in newlines, so whitespace is removed and everything else
+   is then validated; a payload that fails is a recorded gap. A quiet wrong answer is
+   worse than a missing one, which is the principle the whole collection is built on.
+
+   **A write that fails leaves nothing behind.** The bytes go to a temporary name in
+   `.base-staging`, beside `base/` and never inside it (rule 32), and are renamed into
+   place only once they are all there.
+   A half-written file would otherwise sit in `base/` looking exact while the manifest
+   said the file was unavailable. The staging name is **unique**, not
+   `<name>.partial`: that spelling is itself a legal pathname, so a Pull Request
+   touching both `x.partial` and `x` would have the second write overwrite the first
+   file and then rename it away -- a gap with no manifest line, still counted in
+   `Written:`, which is exactly what the manifest exists to prevent.
+
+   The retried failures include those raised **while the body is being read**.
+   `urlopen` wraps connection errors only while it is making the request; a connection
+   dropped during the read surfaces unwrapped, as `http.client.IncompleteRead` or
+   `ConnectionResetError`. Retrying only what `urlopen` wraps left the review being lost
+   to exactly the transport failure the retry was added to remove.
+
+   **`base/` holds only the files this change touches**, and the prompt says so. An
+   unchanged helper or caller is available only from the checkout, which is the default
+   branch and may have advanced since the candidate diverged, so an interaction that
+   turns on one is reported as not examined. Saying "everything about the change is
+   here" without that qualification invited exactly the interaction findings that are
+   not real. Supplying unchanged files at the merge base on demand is a capability with
+   its own budget and failure modes, not a wording fix, and is not admitted here.
+
+   A path this collection will not handle is likewise **that one file's gap, not the
+   review's**. Names are still refused rather than sanitised -- a backslash is legal in
+   a Git pathname and on the runner, and this collection still will not spell it on
+   disk -- but the refusal used to be raised out of the step, so one odd filename
+   anywhere in the Pull Request cost the entire review. Every refusal inside the
+   per-file work says "this path cannot be handled", including a provider record that
+   contradicts its own contract, and each is recorded as `unsupported-path` with its
+   reason.
+
+   A write that cannot land is a **recorded gap rather than a failed step**. Replacing
+   a file with a directory is an ordinary change -- remove `cfg`, rename something to
+   `cfg/x.py` -- and because every entry is written under its post-change name, one of
+   those two writes meets the other as the wrong type. Letting that error escape would
+   fail the collection and leave the Pull Request with no review at all, which is the
+   failure this whole Decision exists to remove; it is recorded as `path-collision` in
+   `base.manifest` instead, and any other failed write as `write-failed` (rule 34).
+   This is the general rule for this collection: a file whose
+   bytes cannot be obtained is named with its reason, and nothing about one file's
+   absence may cost the reviewer the rest of the change.
+
+   `metadata-only` is a weaker statement than an earlier revision of this Decision made
+   it. It says the *content* is unchanged; it does not say **which** metadata changed.
+   A `100644 -> 100755` and any other type or mode transition are carried by the unified
+   diff's `old mode`/`new mode` lines and by nothing else collected here -- `diff.stat`
+   has no mode, and `base/` preserves bytes rather than metadata. So when the provider
+   refuses the unified diff and `patches-source` marks the assembled fallback, those
+   lines are absent and a `metadata-only` entry is **not examined either**. Calling it
+   reviewable on that path was the same false-claim defect this rule already records
+   twice: the reviewer would have been asked to confirm a change it had no way to see. A **removal** is excluded from that comparison: the
+   comparison's `sha` for a removed entry *is* the deleted base-side blob, so it always
+   equals the listing's, and comparing them would label a deletion `metadata-only` and
+   have the reviewer treat a deleted file as reviewable metadata. It is labelled
+   `removed-without-hunks` instead. Classification happens **before the contents fetch
+   and regardless of whether the bytes are written**, so a budget rejection or a decode
+   failure cannot leave the reviewer without a verdict on whether content changed. Not
+   before *any* fetch: it needs the directory listing, since blob identity is what
+   distinguishes the cases. A listing that fails, or a deadline reached before it, gives
+   `unclassified-no-base-record` -- and saying "before any fetch" promised a verdict in
+   exactly the cases the collector states it cannot reach.
+
+   Such an entry is also no longer skipped by the collection. A mode change or a pure
+   rename of a text file has pre-change bytes, and those bytes are exactly what the
+   prompt sends the reviewer to `base/` for; skipping them left no content and no
+   recorded gap for a change the prompt had just called reviewable. Entries carrying
+   hunks are fetched first, so a large binary cannot consume the budget ahead of the
+   textual change the review is about, and the budget is checked against the **size the
+   listing already reports** so a file the budget will reject costs no request at all.
+   Fetching first made a large Pull Request full of binaries issue an avoidable request
+   per file, and a rate-limit response there would fail the step -- leaving that Pull
+   Request without a review, which is precisely the failure this Decision exists to
+   remove.
 
    One committed script, `.github/review-context/build_review_context.py`, derives
-   `diff.stat`, `no-patch.txt` and the assembled fallback from a single comparison
-   payload. That keeps the comparison to one request, keeps the step free of an
-   external `jq`, and puts the field semantics somewhere the suite can exercise
-   directly. There is no network access in that script and no subprocess at all: the
-   step fetches the comparison and the script turns it into files, so no provider
-   value reaches a process argument and no other origin is representable.
+   `diff.stat`, `no-patch.txt` and `base/` from a single comparison payload. That
+   keeps the comparison to one request and keeps the step free of an external `jq`,
+   and it puts the field semantics somewhere the suite can exercise directly.
 
    A **copied** entry is treated exactly as a renamed one. GitHub reports `copied`
    with a `previous_filename` too, and the source is the one thing a copy is about:
    without it the fallback claims the destination existed on the base side and no
    summary says where the content came from.
 
-   A **renamed** entry keeps its old path in every retained artefact, because bytes and
-   hunks presented under a new name with no record of where they came from leave the
-   reviewer unable to reason about precisely the swap and overwrite cases a rename
-   raises: `diff.stat` shows `old -> new` and the assembled fallback uses `--- a/<old>`
-   against `+++ b/<new>`.
+   `base/` holds the **exact pre-change bytes of the changed files it could fetch**,
+   as the provider supplied them; the rest are named in `base.manifest` with
+   their reason. It is not every changed file, and the collector's own vocabulary says
+   so -- `added-by-candidate`, `over-budget`, `not-a-plain-file`, `blob-unverifiable`
+   and `blob-mismatch` each name a changed file whose bytes are not there. Claiming
+   otherwise invites a reader to take an absent file for an absent *change*, which is
+   the false provenance this collection exists to prevent. Four properties of that collection are load-bearing, and
+   each exists because getting it wrong hands the reviewer something *false* rather
+   than something missing: the revision fetched is the **merge base**, since a
+   three-dot comparison is computed from there and the base branch tip would be a
+   different revision whenever the target branch has advanced; a **renamed or copied** entry is
+   fetched under `previous_filename`, because that is where the base holds it and
+   fetching the new path could return whatever unrelated file a swap or overwrite
+   rename replaced -- and the old path is kept in every retained artefact, since bytes
+   written under a new name with no record of where they came from leave the reviewer
+   unable to reason about precisely the swap and overwrite cases the rename handling
+   exists for: `diff.stat` shows `old -> new`, the assembled fallback diff uses
+   `--- a/<old>` against `+++ b/<new>`, and `base.manifest` lists the mapping; a path's real type is read from its **parent directory listing**, not
+   from the shape of the contents response, because the contents API answers a symlink
+   to a regular file with the target's bytes under an ordinary `type: file` -- so a
+   symlink, a submodule, or a large file returned with `encoding: "none"` is recorded as
+   unavailable rather than written, and resolved or empty bytes are never presented as
+   the exact base; and **no provider response establishes absence at all**. That is
+   settled by the comparison: `status == "added"` yields `added-by-candidate`, and it
+   is the collector's only statement that the base does not hold a path. A 404 is this
+   path's transport sentinel and nothing more -- every provider failure, including a
+   404 on the listing or on the contents, is a `provider-error`. So is a contents
+   response the collector cannot read -- the wrong shape, no base64 string, or base64
+   that will not decode: that says the answer was unusable, not that the base holds
+   anything other than a plain file. `not-a-plain-file` is kept for the two causes the
+   response does establish, a declared non-file type and the `encoding: "none"` an
+   oversized blob comes back with. The same holds one step earlier, for the parent
+   directory listing: only a recognised non-file type (`dir`, `symlink`, `submodule`)
+   is a repository fact; a missing, emptied or unknown type is a `provider-error`. An earlier revision
+   of this rule made a 404 the evidence; that is recorded with the absence contract
+   below.
+
+   That invariant used to be kept by letting the failure **end the step**. It is kept
+   now by naming the failure for the file it happened to -- `provider-error` with its
+   status -- because ending the step cost the whole review for one unlucky file, which
+   is the outcome this collection exists to prevent. The distinction the rule protects
+   is between "the base does not hold this" and "we could not ask", and a labelled
+   record draws it at least as sharply as an aborted job did. This is a deliberate
+   change to what an earlier revision of this rule required, not an oversight. Every
+   path **the provider listed** and this collection did not write is named with its
+   reason in `base.manifest` -- see rule 31: a capped comparison never sends the later
+   paths at all, so they cannot be named here, and the manifest says so instead of
+   implying it has them. `base.manifest` lives **outside** `base/` so it
+   cannot overwrite a repository file of the same name. It exists because the checkout is the default branch and
+   not this Pull Request's base (rule 21), so unchanged code read from disk can come
+   from a revision the candidate never saw -- which yields interaction findings that
+   are not real. Writing bytes rather than checking out a tree keeps rule 21 intact:
+   no mode, symlink or directory entry from either side reaches the runner. Names are
+   validated before use, and anything absolute, empty, traversing or containing a
+   backslash or NUL is refused rather than sanitised, because a name that should not
+   occur is a reason to stop. The endpoint each file is fetched from is **constructed**
+   from the repository, the validated path and the exact base SHA rather than taken
+   from the comparison's own `contents_url`: that field is provider-supplied data, and
+   letting it choose the URL would let it choose where the request and its
+   `Authorization` header go. (The first version passed the endpoint to a subprocess,
+   where a leading dash would have been read as a flag; the next paragraph records
+   its removal.) The repository must match `owner/name` with each
+   side starting alphanumeric, the revision must be an exact 40-character lowercase
+   hex SHA, and the path is percent-encoded. The URL is then matched, **at the point of
+   use**, against a pattern that pins scheme, host and shape together: trusting a value
+   because an earlier function was careful is how the first version of this check came
+   to accept a leading dash, and validating before any environment lookup keeps "is
+   this input acceptable" independent of "is the environment configured".
+
+   There is no subprocess in this script at all. The request is an ordinary HTTPS GET,
+   so no argument can be mistaken for a flag and no other origin is representable. That
+   replaced an earlier version that shelled out to the provider CLI; two scanners
+   flagged the argument as tainted, and although the validation was by then real, a
+   sink that cannot take a flag is better than a sink whose arguments must be policed. The collection is bounded by the same byte budget, and
+   a file that is absent -- added by the candidate, or over the budget -- is recorded
+   with its reason in `base.manifest` rather than left to look like an empty file.
 
    **Every path is quoted before it enters one of these artefacts.** Git permits a
    newline in a pathname and the comparison carries it through as JSON, while every
    artefact here is read line by line -- so a name interpolated verbatim could add a
    `+++ b/other.py` header, a diff line, or an extra `diff.stat` record, and make
-   unrelated text look like a change to a different file. The reviewer has no git and
+   unrelated text look like a change to a different file. The same applies to
+   `base.manifest`, which the prompt tells the reviewer to trust for the hunkless
+   classification: an unquoted name there could add a record reading
+   `metadata-only critical.bin` that the collector never wrote. The reviewer has no git and
    no candidate tree, so it has nothing to check that against. The quoting is the one
    `git -c core.quotePath=false` uses: control characters, a double quote and a
    backslash are C-quoted, and ordinary UTF-8 is left alone, because a legitimate
@@ -270,7 +1044,18 @@ No new dependency, service or runtime is introduced.
    recreated exactly the forged-record problem the C0 quoting closed. They are escaped
    too, as the octal of their UTF-8 bytes, which is how `git -c core.quotePath=true`
    renders a non-ASCII byte: the escape stays in Git's own vocabulary even where Git
-   itself does not apply it.
+   itself does not apply it. A record longer than the reviewer's readable line
+   (`chunk_diff.LINE_CAP`) is hard-wrapped in every summary artefact, as the diff is:
+   each record begins with a status word, so a line beginning with `>` can only
+   continue the record above it. A long path had made its record unreachable at the
+   tail (Codex, #330). A lone surrogate is escaped the same way, as the octal of
+   its `surrogatepass` bytes. Valid JSON can carry one (`"\ud800"`), and no UTF-8
+   writer can encode it, so the first summary write raised before the per-file
+   isolation existed and one such name cost the whole collection (Codex, #330). Every
+   artefact writer is also total over provider text: a surrogate in a `patch` is
+   written as its backslash escape rather than raising. And `no-patch.txt` prints a
+   short blob id only for a well-formed blob id, `?` otherwise, because a `sha`
+   carrying a newline had added a record of its own.
 
    **A commit subject is candidate-controlled text too**, and `commits.log` is read
    line by line like every other artefact here. Splitting a message on `\n` in the step
@@ -555,19 +1340,19 @@ No new dependency, service or runtime is introduced.
    than the workflow and Decision it started under, silently moving this boundary.
 
    The prompt states what the checkout actually is: the default branch, which may have
-   advanced past the Pull Request's base or belong to a different branch, and it
-   reserves that tree for the entry route and general context, **never for this
-   change's state**. Declaring the tree non-authoritative while still instructing the
-   reviewer to read it for pre-change state was the same defect in a second place, and
-   saying "the Pull Request's base" was false in both cases: it would have had the
-   reviewer read unrelated upstream state as the pre-change state. What the change did
-   lives only in the artefacts of rule 12, and the prompt says so -- including that a
-   file's state before the change is only what the diff shows. This also answers the
-   residual on trusting the entry route: the route is a **known protected revision**
-   rather than a base a contributor chose, and the resolved base is used only for the
-   comparison. The tree being non-authoritative is therefore stated to the reviewer
-   rather than only recorded here -- which is what an earlier revision of this Decision
-   got wrong by calling it a "stated caveat" while never stating it.
+   advanced past the Pull Request's base or belong to a different branch, and it directs
+   pre-change reads to `base/` **and away from the checkout**. Declaring the tree
+   non-authoritative while still instructing the reviewer to read it for pre-change
+   state was the same defect in a second place. Saying "the Pull Request's base" was false in both cases and would have had
+   the reviewer read unrelated upstream state as the pre-change state. The exact
+   before and after state lives only in the artefacts, and the prompt says so. This
+   also answers the residual on trusting the entry route: the route is a **known
+   protected revision** rather than a base a contributor chose, and the resolved base
+   is used only for the comparison and for `base/`. The prompt directs the reviewer to
+   `base/` for pre-change state and reserves the checkout for the route and general
+   context, so the tree being non-authoritative is stated to the reviewer rather than
+   only recorded here -- which is what an earlier revision of this Decision got wrong
+   by calling it a "stated caveat" while never stating it.
 22. **The report is published by this repository, with render-time fetches removed.**
    The action's `display_report` input documents itself as outputting
    "Claude-authored content in the GitHub Step Summary" and says it "should only be
@@ -727,6 +1512,42 @@ No new dependency, service or runtime is introduced.
    iterate. The prompt bound of rule 3 limits what the session starts with; this limits
    what it can accumulate while running.
 
+25. **The base-context collection may fail without taking the review with it.** It
+   runs before the unified diff is requested, so an unhandled failure inside it used to
+   end the step and leave the reviewer no context at all -- not a degraded one, an
+   absent one. Its invocation is guarded; the failure is named in `base.manifest`,
+   where the reviewer is already directed for what `base/` lacks, and the artefacts the
+   rest of the step reads are created empty so a missing one cannot end the step
+   afterwards. Every escape inside the collector has been closed one at a time, and the
+   step does not depend on having found them all.
+
+   **The guard creates only what is missing.** `collect` writes `commits.log`,
+   `diff.stat`, `no-patch.txt` and `assembled.diff` *before* its per-file fetch loop,
+   which is where a late failure is most likely -- so by then each of them is already
+   correct. A failure inside one of those writers comes earlier, and it leaves that
+   artefact and the ones after it absent rather than partial, since each is written
+   whole or not at all; the guard creates the missing ones empty and names the failure
+   (CodeAnt, #330). The `base/` bytes are written *inside* that loop, one file per iteration,
+   so a failure on a later entry leaves exactly the bytes the earlier iterations
+   fetched: a partial subset, each file whole (Codex, #330, corrected the order this
+   paragraph first stated). Creating them unconditionally destroyed exactly the
+   degraded context the guard exists to preserve: the commit log was emptied and the
+   cap notice then reported a provider truncation that never happened, and a refused
+   diff would have moved an emptied `assembled.diff` over per-file patches that
+   existed. For the same reason the notice is *appended* to `base.manifest` rather than
+   written over it -- the manifest is the last thing `collect` writes, so one that
+   exists holds real per-path accounting -- and it does not claim `base/` is empty,
+   because the bytes fetched before the failure are still there and still worth
+   reading. A count this step manufactured is reported as this step's
+   (`[commit log unavailable: ...]`), never as the provider's cap.
+
+   Keeping what exists is only sound if what exists is whole. `assembled.diff` was
+   streamed into place entry by entry, so a failure mid-loop left half a hunk that this
+   guard then kept as if it were complete (CodeAnt, #330). Every top-level artefact is
+   therefore rendered first and renamed into place whole through the same writer as
+   `base/`, staged in `.base-staging`: an interrupted one is *absent*, and the guard's
+   empty replacement is then reported for what it is.
+
 25a. **The job refuses a workflow revision that is not on the protected branch.**
    Rule 21 keeps the candidate tree away from the credential-bearing job by binding
    the checkout to `github.workflow_sha`. That premise holds only where GitHub
@@ -761,6 +1582,200 @@ No new dependency, service or runtime is introduced.
    resolves from the default branch and is unaffected. This is the intended
    behaviour, not a defect in the condition: admitting those runs would hand the
    credentials to a revision the candidate wrote.
+
+26. **A claim of no changes travels with the condition that makes it true.** Guarding
+   the collection gave the step a second way to reach a zero-byte `diff.full`: the
+   provider refuses the unified diff, the fallback moves an `assembled.diff` the failed
+   collection never filled, and an emptied comparison and an unread one become
+   indistinguishable by size. The empty-diff branch therefore tests whether the
+   collection ran, and reports a refused diff with no patches behind it as
+   `provider-error changed-content` rather than as an examined empty change.
+   *Refined by rule 38:* the refusal is now read from the 406 itself, not inferred
+   from the collection's status.
+
+27. **A request may not outlast the attempt it belongs to.** The bound on reading an
+   error body for classification is the deadline of the attempt that produced the
+   error, fixed before the request is made, never the collection's. Bounding it against
+   the collection's budget granted a request that had already spent its whole
+   per-request allowance a fresh diagnostic budget on top of it, so the exchange passed
+   the per-request bound this Decision states while the collection's budget still
+   looked healthy. The parameter is named `detail_deadline` for that reason.
+
+28. **An absent file list is unreadable, not empty.** A comparison that omits `files`,
+   or sends it as null, was passed through as a change with no files: `base.manifest`
+   published `Written: 0. Unavailable: 0` with no notice, so a Pull Request whose
+   unified diff still showed hunks had every changed path left without pre-change bytes
+   and without a line saying why. `files` must be an array; an empty comparison states
+   itself with `[]`. One event also yields one cause -- the shape check is skipped
+   after a parse failure rather than run against the empty object it leaves behind, so
+   a symptom is not published as a second, independent provider error.
+
+29. **A partial fallback diff carries its condition too.** Rule 26 covered only the
+   zero-byte case. A collection that fails *after* writing some per-file patches
+   leaves `assembled.diff` non-empty but incomplete, and a provider refusal then
+   publishes it as ordinary diff content -- a truncated change read as the whole one,
+   which is the failure this Decision exists to prevent, reached from the other side.
+   `patches-source` states when the collection did not finish, so a changed file with
+   no hunks there is not examined.
+
+   **Superseded by the atomic writer (rules 30-32).** `assembled.diff` is now written
+   whole or not at all, before the per-file loop, so the premise no longer holds: a
+   present `assembled.diff` is complete, and the notice told the reviewer that hunks it
+   had were missing (CodeAnt, #330). The step no longer adds it. An absent
+   `assembled.diff` is rule 26's zero-byte case, which states its own condition, and
+   the collection's failure is stated in `base.manifest`, where it applies.
+
+30. **The retained `base/` subset is described, and never enumerated in shell.** Rule
+   25 stopped the false emptiness claim but left an unknown subset: a path absent from
+   `base/` read as "the base had nothing" rather than "the collection never got
+   there". The manifest now says that each file present is complete -- each is staged
+   and renamed into place whole -- that the *set* is partial, and that a changed file
+   absent from `base/` is not examined. It deliberately does **not** list the subset: a
+   pathname is candidate-controlled and this artefact is read line by line, so
+   enumerating `base/` in shell, where the collector's quoting does not apply, would
+   let a newline in a name forge a manifest record. The reviewer can list `base/`
+   directly. Staging files (`.<digest>.<random>.partial`) are removed first, because a
+   file staged but never renamed is not content and the writer's own cleanup runs in a
+   `finally` that a hard stop does not honour.
+
+31. **The manifest's inventory is qualified by what the provider listed.** Its
+   preamble promised that every path this collection could not fetch is named below,
+   and the prompt presents the manifest as *the* inventory of gaps. A capped
+   changed-file list omits the later paths from `files` entirely, so they are never
+   sent, never fetched, never counted and never named -- the promise was false for
+   exactly the large Pull Requests this collection serves. The claim now covers the
+   paths the provider listed, and a capped comparison says so and states that
+   everything beyond the cap is not examined. An uncapped comparison carries no such
+   line, so the qualification keeps meaning something.
+
+32. **Staging lives outside `base/`, and the sweep removes it whole.** Rule 30 removes
+   the writer's staging files before retaining `base/`. The writer first staged beside
+   its destination, so the sweep had to recognise staging files by name inside
+   `base/` -- first only at the top level, which left the common case of a file in a
+   subdirectory behind, and then by the writer's exact name shape at any depth. Both
+   were attempts to tell a staging file from a real one by its name, and no name can
+   do that: any filename is a legal Git path, and a rename lets the candidate choose
+   the destination name, so a real file renamed into the staging shape was deleted
+   after a later failure while `Written:` still counted it (CodeAnt, #330). The writer
+   therefore stages in `.base-staging`, beside `base/` and never inside it, and
+   renames each finished file into place; the collector removes the empty staging
+   area on success, and the workflow removes it whole after a failure. Nothing inside
+   `base/` is ever deleted by the sweep. The rule that matters for the manifest is
+   still **no command output may reach `base.manifest`**: every write to it is a
+   `printf` with a literal format.
+
+33. **A provider field counts only as the type it arrived as.** The collector passed
+   provider fields through `str()` before checking them. A JSON null became "None",
+   which is a legal path name, so a listing record with no name matched a changed path
+   called `None`, and that record's type and blob id authorised the write. A number
+   became its digits, so a 40-digit number passed as a blob identity on either side,
+   and two such fields could make a change `metadata-only`. A rename source that was a
+   number named a base file, whose bytes were then written as the renamed file's
+   pre-change content, and a merge base that was a number was requested as a ref and
+   its answer published as the exact merge-base state (Codex, #330). A field is now
+   used only if it is a string;
+   anything else is absent, which every reader already handles. A record with no
+   name matches no path, a non-string blob id is
+   `unclassified-without-blob-identity`, a non-string rename source is
+   `unsupported-path`, and a non-string merge base is no exact revision, so nothing
+   is fetched.
+
+34. **Only a type collision is a `path-collision`.** The per-file isolation above
+   recorded every failed write into `base/` as `path-collision`, which is a statement
+   about the repository: one changed path in the way of another. A full disk or an
+   I/O error is no such statement, and once the disk was full every remaining file
+   received the same false explanation (Codex, #330). The collision label is kept for
+   the errors a type collision raises (`EEXIST`, `ENOTDIR`, `EISDIR`). Any other
+   failure is `write-failed <path>: <errno name>`, still a recorded gap rather than a
+   failed step.
+
+35. **A comparison entry is typed once, where it is admitted.** Rule 33 checked
+   provider fields where they were read, and the readers are an open set: after a name,
+   a blob id, a rename source and the merge base, a `patch` that was not a string was
+   still published, after a refused diff, as the file's actual hunk (Codex, #330). So
+   every field the collection reads from an entry -- `patch`, `sha`,
+   `previous_filename`, `additions`, `deletions` -- is checked once in `usable_files`.
+   One of another type is absent from then on and is named in a `provider-error`
+   notice. So is a present JSON null, except for `sha`, the one field GitHub's published
+   diff-entry schema marks nullable: a binary file *omits* `patch` (measured on
+   microsoft/vscode, where a changed PNG carries no `patch` key), so a null `patch` or
+   `previous_filename` is malformed rather than an absence (CodeAnt, #330). A
+   hunkless change is classified by blob identity only from a listing record that
+   declares a blob kind (`file` or `symlink`). Any other record, or one with no type,
+   is `unclassified-without-blob-identity`: an equal `sha` there had read as
+   `metadata-only` while the fetch refused the same record (Codex, #330). `status` is required, and must be one GitHub documents (`added`,
+   `removed`, `modified`, `renamed`, `copied`, `changed`, `unchanged`): every later
+   step decides from it, and a removed file without one read as `metadata-only`, so an
+   entry without one is dropped and named, as one without a filename is (Codex,
+   #330). Such a dropped entry is counted in `Unavailable:`, and a base-side path is
+   validated as given before any listing lookup, so `a//x` cannot borrow the record
+   of `a/x` (Codex, #330). A parent directory listing that holds two records for one
+   name establishes neither: the path is a `provider-error` and nothing is written,
+   because taking the first let record order choose its type and blob id (Codex,
+   #330). A path listed more than once is used for none of its
+   entries. The repeat is counted over every named entry before any is filtered:
+   counted after the status check, a second record dropped for its status left the
+   first admitted alone (Codex, #330). Each fetch wrote the same `base/` destination, so the second replaced
+   the first while `Written:` counted two; the path is named once as the provider's
+   error and counted as unavailable (Codex, #330). An added file is classified from the comparison alone, before the
+   collection deadline is consulted, since it costs no request (Codex, #330). An empty
+   `patch` is no hunks, as an absent one is (Codex, #330). A line
+   count the provider did not give, or gave in the wrong type, is shown in `diff.stat`
+   as `?`, not as 0 (Codex, #330). A negative integer is not a line count either:
+   `-1` rendered as `+-1` (Codex, #330). The same holds for a contents response: only the kinds the contents API
+   documents (`dir`, `symlink`, `submodule`) are `not-a-plain-file`, a statement
+   about the base revision. An unknown or non-string kind contradicts the listing,
+   which already called the path a file, and is the provider's error.
+
+36. **The fallback diff is rendered into its file.** `assembled.diff` is as large as
+   the change. Rendering it into memory and then encoding it held it three times over,
+   with the patches already resident, so a large Pull Request could exhaust the runner
+   before `base.manifest` was written (Codex, #330). It is rendered straight into its
+   staging file and renamed into place whole, as every artefact is.
+
+37. **An unread comparison is not an empty change.** When `comparison.json` names no
+   usable file -- unparseable, not an object, without a file list, or listing only
+   entries that cannot be used (gitar) -- the
+   collector still finishes, with a manifest saying why no changed file was named, and
+   an empty `assembled.diff`. It exited 0, so a refused unified diff then published
+   that empty fallback as "No changes between base and head": an unexamined change
+   presented as an empty one (Codex, #330). The collector now exits 3 in that case. The
+   step records it as its own state rather than as a failed collection: the manifest
+   is complete, so it is not marked unfinished. An empty fallback is then a
+   `provider-error changed-content` stating that no changed content is present, as
+   after a failure (rule 38). "No changes" requires a comparison that was read and
+   listed no files.
+
+38. **An empty diff says what produced it.** Only the provider's 406 establishes a
+   refusal, and the step now records whether that fallback was taken. The 406 is read
+   from gh's structured status suffix, `gh: <message> (HTTP <status>)` on stderr, as
+   measured from gh 2.82.1 (the body goes to stdout). Matching "http 406" anywhere in
+   the text let a different status whose message mentioned 406 read as a refusal, and
+   the test stubs printed a shape gh does not (CodeAnt, #330). Inferring it
+   from the collector's status published "the provider refused the unified diff" over
+   an empty diff the provider had actually returned, after a collection that failed or
+   read no comparison for its own reasons (Codex, #330). The opposite case was wrong
+   too. After a real 406, a finished collection whose every entry lacked hunks left the
+   fallback empty, and that was published as "No changes" for a comparison listing
+   changed files.
+
+   "No changes" therefore needs all three of: no refusal, a comparison that was read,
+   and an empty file list (`diff.stat`), as rule 37 already required. A first version
+   of this rule called any empty diff the provider returned "No changes", whatever the
+   base collection did. That contradicted rule 37: an unread comparison, a failed
+   collection, or a comparison that listed files beside an empty diff all leave the
+   change unestablished (Codex, #330). Every other empty case is a `provider-error
+   changed-content` that says which it is:
+   - a refusal over hunkless entries points to `no-patch.txt` and `base.manifest`;
+   - a refusal with no usable fallback says why none was usable;
+   - an empty diff beside a comparison listing files says that the two answers
+     contradict;
+   - an empty diff beside an unread or unchecked comparison says it was not checked.
+
+   The inverse contradiction is stated too. A comparison read with no files beside a
+   unified diff that is not empty still publishes the diff, since its hunks are the
+   provider's. But `base.manifest` promises to name every gap, so it now says the files
+   the diff shows have no base bytes and no entry (Codex, #330).
 
 ## Accepted trade: delivery is no longer on the Pull Request
 
@@ -808,17 +1823,6 @@ its artifact is contributor-controlled and the `upload-artifact` digest proves o
 it arrived unaltered, not that it is honest. Verifying each file against the
 comparison's blob `sha` would close that, and it is captured as a tracked Work Item
 rather than implemented under this Decision.
-
-**Collecting the base revision of every changed file.** Rule 21 removes the candidate
-tree, and the checkout that remains is the default branch, so the reviewer has no exact
-pre-change state for a file whose changed region the diff shows only in part. Fetching
-those bytes from the provider at the merge base would recover it. It is a separate
-capability with its own failure modes -- a per-file request budget, the contents API
-resolving a symlink to its target's bytes under an ordinary `type: file`, large blobs
-returned with `encoding: "none"`, submodules, and renames whose base bytes live under
-the previous path -- and it is deferred to a follow-on slice rather than carried here,
-so this Decision's boundary can be reviewed on its own. Until then the prompt states the
-gap to the reviewer instead of letting the checkout stand in for it.
 
 **Per-file review with relevance filtering.** The published pattern for large changes is
 retrieval of the relevant parts rather than the whole diff under a cap, and smaller
@@ -885,8 +1889,9 @@ snapshot, and carries no approval or merge authority.
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
-and its line-safe recoverable parts, the provider-built comparison with its cap
-notices and rename handling, the absence of any base-side collection or any
+and its line-safe recoverable parts, the provider-built comparison and its cap
+notices, the exact-base file context with its merge-base source, rename handling, non-plain-file
+refusals, named budget drops and collision-free manifest, the absence of any
 candidate checkout, the sanitised report publication and the turn bound,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
