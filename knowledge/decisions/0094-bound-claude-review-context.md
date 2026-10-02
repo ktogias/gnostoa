@@ -129,6 +129,9 @@ No new dependency, service or runtime is introduced.
 4. The prompt must forward the triggering request. Agent mode ignores the comment
    body unless the template interpolates it, so an unforwarded mention would
    review nothing while appearing to succeed.
+
+   *Since Decision 0096 this holds through the relay:* admission writes the request as `request/request`, and the prompt sends the reviewer there first.
+
 5. Context is obtained by **retrieval rather than pre-loading**. The prompt names
    what to review and where to look; the reviewer uses its own tools to read the
    diff and the files it needs. Nothing is lossily pre-summarised.
@@ -159,6 +162,9 @@ No new dependency, service or runtime is introduced.
    repository differs from this repository, before any candidate byte is checked
    out, reaching the same boundary Decision 0093 rule 5 sets for the automatic
    review.
+
+   *Since Decision 0096 this holds through the relay:* admission refuses a fork-controlled head from the provider's answer.
+
 10. The reviewer diffs against the **resolved base**, not a fixed branch, and the
    prompt names the repository's declared entry route -- `README.md` first, as
    `AGENTS.md` itself states.
@@ -173,6 +179,9 @@ No new dependency, service or runtime is introduced.
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
    reads only one shape silently loses the others.
+
+    *Since Decision 0096 this holds through the relay for the two events it still admits,* issue comments and opened issues, each re-read by admission. *The two review events are withdrawn* (Decision 0096 rule 13), so this rule no longer covers them.
+
 12. **The reviewer gets no shell, and retrieval happens in a trusted step.** The
    pinned action disables Bash by default, so a retrieval-based prompt would
    otherwise leave the reviewer with a checkout it cannot inspect. Two successive
@@ -1216,6 +1225,9 @@ No new dependency, service or runtime is introduced.
 14. Inline review location is forwarded. On `pull_request_review_comment` the
    meaning of a request often lives in the comment's path, line and hunk rather
    than its body, and agent mode fetches none of it.
+
+    *Withdrawn by Decision 0096 rule 13.* Inline review comments no longer start a review, so there is no inline location to forward, and admission writes no `request/inline`.
+
 15. **Externally authored issue text is withheld.** The job gate validates the
    replying author's association, not the issue author's. Since this job holds the
    Claude credential, grants `Read`, and publishes its answer in a public step
@@ -1239,6 +1251,8 @@ No new dependency, service or runtime is introduced.
    The diff, the files and the request itself remain fully available, so the review
    is narrower rather than impossible.
 
+    *Since Decision 0096 this holds through the relay:* admission withholds it, judging the item's author separately from the mention's.
+
 16. **The tool grant and the requested permissions must agree.** `actions: read`
    installs nothing on its own; agent mode installs the CI server only when
    `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are
@@ -1250,6 +1264,9 @@ No new dependency, service or runtime is introduced.
    its diff hunk can originate from an older commit, so without
    `original_commit_id` and `original_line` the reviewer cannot detect that it is
    interpreting the request against different code.
+
+    *Withdrawn by Decision 0096 rule 13,* with inline review comments: there is no original identity to forward.
+
 18. **The comparison follows a submitted review's commit, but not an inline
    comment's.** The wording matters: **nothing** makes the checkout follow a
    candidate commit. The checkout is bound to the workflow revision and to the
@@ -1271,6 +1288,9 @@ No new dependency, service or runtime is introduced.
    the head would silently drop the later commits while the report still reads as a
    review of the whole Pull Request. The comment's own commit identity is forwarded
    in the prompt for interpreting its hunk instead, which is what rule 17 is for.
+
+    *Withdrawn by Decision 0096 rule 13,* with submitted reviews and inline comments. The comparison is the live Pull Request (Decision 0096 rule 5).
+
 19. **Every interpolated context is classified, and unknown ones fail closed.** A
    contract test that recognises only the contexts already in use is not a
    contract: an added `secrets.*`, `env.*`, `vars.*` or `needs.*` interpolation
@@ -1280,6 +1300,8 @@ No new dependency, service or runtime is introduced.
    context, and fails on anything it cannot place. Positive controls assert that
    each of those contexts is reported as unadmitted, so the test cannot pass
    through a blind spot in its own parser.
+
+    *Since Decision 0096 this holds through the relay:* the prompt now interpolates identity values only.
 
 20. **The symlink hazard is removed rather than guarded.** `Read` follows a symlink
    to its target before a report reaches a public step summary, and the prompt sends
@@ -1353,6 +1375,9 @@ No new dependency, service or runtime is introduced.
    context, so the tree being non-authoritative is stated to the reviewer rather than
    only recorded here -- which is what an earlier revision of this Decision got wrong
    by calling it a "stated caveat" while never stating it.
+
+    *Since Decision 0096 this holds through the relay:* the job can no longer be candidate-supplied at all.
+
 22. **The report is published by this repository, with render-time fetches removed.**
    The action's `display_report` input documents itself as outputting
    "Claude-authored content in the GitHub Step Summary" and says it "should only be
@@ -1476,7 +1501,7 @@ No new dependency, service or runtime is introduced.
    turn's `text` blocks, since any turn with message text used to qualify and a user
    or tool turn's text is the reviewer's input, not its report. And the publisher
    always says something: a
-   step can fail before the checkout -- rule 25a's guard does, by design -- leaving no
+   step can fail before the checkout -- rule 25a's guard did, by design, until Decision 0096 removed it, and the checkout itself still can -- leaving no
    publisher on disk, so the step then writes a fixed notice and runs nothing from the
    workspace. Checking out anyway to get the publisher back would execute the revision
    the guard had just refused.
@@ -1582,6 +1607,8 @@ No new dependency, service or runtime is introduced.
    resolves from the default branch and is unaffected. This is the intended
    behaviour, not a defect in the condition: admitting those runs would hand the
    credentials to a revision the candidate wrote.
+
+     *Decision 0096 rule 10: superseded* -- the relay leaves nothing for this guard to protect. The two triggers it disabled were not restored: Decision 0096 rule 13 withdraws them.
 
 26. **A claim of no changes travels with the condition that makes it true.** Guarding
    the collection gave the step a second way to reach a zero-byte `diff.full`: the
@@ -1879,7 +1906,9 @@ delivery without widening `GITHUB_TOKEN` remains open.
 
 Decision 0093 rules 1 to 7; the automatic review workflow's triggers;
 `GITHUB_TOKEN` scope; `allowed_bots`, `allowed_non_write_users` or
-`assignee_trigger`, all of which stay unset. A Claude review remains advisory evidence. It is not reviewer
+`assignee_trigger`, all of which stay unset. *Since Decision 0097 the automatic review
+workflow is withdrawn,* its file removed with the relay (Decision 0096), so it has no
+triggers left to keep. A Claude review remains advisory evidence. It is not reviewer
 qualification under Decision 0089, does not populate a protected qualification
 snapshot, and carries no approval or merge authority.
 
@@ -1898,6 +1927,14 @@ externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093
 invariant. The `immutable-provider-ci-adapters` guardrail owns the workflows,
 both Decisions and that test.
+
+*Since Decision 0096 some of that coverage is withdrawn with what it covered.* The
+review events are no longer admitted (Decision 0096 rule 13), so there is no reviewed
+head to bind and no inline location to forward, and those tests were removed. The
+checkout is a ref-less checkout of the protected revision (rule 11 there); the
+comparison is the live Pull Request with admission refusing a fork-controlled head
+(rule 5 there); and "every admitted trigger payload" now means the two events the
+relay still admits, each re-read by admission.
 
 Effectiveness is not claimed by this Decision. It is established only when a
 mention on a Pull Request of #319's size completes with a non-zero

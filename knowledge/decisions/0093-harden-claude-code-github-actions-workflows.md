@@ -88,6 +88,11 @@ Terms. It is only executed in CI and is neither copied nor redistributed.
    without affecting the App token.
 5. Run the automatic review only for same-repository, non-draft PRs. Keep one
    review per PR with `cancel-in-progress`, and give the job a timeout.
+   *Withdrawn by Decision 0097*, with the automatic review it governed. Once the
+   owner scopes the Claude credential to a `main`-only environment (0097 rule 1), it
+   reaches only `workflow_run` jobs on the default branch; until then it is still a
+   repository secret.
+
 6. Run the mention job only for `OWNER`, `MEMBER` or `COLLABORATOR` author
    associations, as defence in depth before the action's own check, and give it
    a timeout. Do not add a concurrency group: GitHub keeps one pending run per
@@ -107,16 +112,20 @@ that test.
 ## Consequences
 
 - Updating the action or plugin becomes an explicit reviewed pin change.
-- The automatic review workflow cannot pass on PR #320 itself. The action
-  validates that the workflow matches the default branch before exchanging
-  tokens, so the first effective run follows integration.
+- *Historical, superseded by Decision 0097:* the automatic review workflow could
+  not pass on PR #320 itself, because the action validates that the workflow matches
+  the default branch before exchanging tokens. That workflow
+  (`claude-code-review.yml`) has since been withdrawn.
 - The upstream marketplace is consumed from a local checkout, so its reserved
   official name cannot be used with Claude Code's local marketplace source.
   The temporary alias preserves the exact pinned plugin source while making
   the workflow's installation identifier valid.
-- Automatic Claude reviews are advisory agent reviews. They are captured under
+- Claude reviews are advisory agent reviews. They are captured under
   [supplied-agent review dispositions](../runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews)
-  and never supply human approval, qualification or merge authority.
+  and never supply human approval, qualification or merge authority. Since
+  Decision 0097 they are on-demand mention reviews only; the automatic review is
+  withdrawn.
 - The App token remains write-capable by upstream design. Containment relies on
-  the actor check, the association gate and, for automatic review, the
-  single-tool `--allowedTools` restriction.
+  the actor check and the association gate. *Historical:* the single-tool
+  `--allowedTools` restriction applied to the automatic review, withdrawn by
+  Decision 0097.

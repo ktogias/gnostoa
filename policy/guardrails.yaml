@@ -670,12 +670,13 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-oci.yml
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
-      - .github/workflows/claude-code-review.yml
       - .github/workflows/claude.yml
+      - .github/workflows/claude-mention-trigger.yml
       - .github/review-context/chunk_diff.py
       - .github/review-context/build_review_context.py
       - .github/review-context/publish_report.py
       - .github/review-context/review_context_paths.py
+      - .github/review-context/admit_mention.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
@@ -686,6 +687,8 @@ guardrails:
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md
       - knowledge/decisions/0094-bound-claude-review-context.md
+      - knowledge/decisions/0096-relay-mention-reviews-through-a-protected-workflow.md
+      - knowledge/decisions/0097-scope-the-claude-credential-to-the-protected-branch.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:

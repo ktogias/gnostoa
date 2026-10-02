@@ -1,0 +1,103 @@
+# Untrusted entry point for the mention reviewer (Decision 0096).
+#
+# Both admitted events run this workflow from the default branch. The two review
+# events, which resolved it from the Pull Request branch and so let a candidate edit
+# it, were withdrawn (owner decision on #339, Decision 0096 rule 13). Nothing here is
+# relied on even so.
+#
+# As committed it references no scopes and no secrets, and records only the event's
+# identity. That describes this file, not a credential boundary: a candidate can edit
+# it to read any repository secret, as it can any workflow on any branch. The boundary
+# is the credential's own scoping (Decision 0096, "What the relay does not
+# establish"). What this design does guarantee is that nothing recorded here is
+# believed: the privileged reviewer re-reads the named object from the provider and
+# takes nothing from this file beyond an identifier.
+name: Claude mention trigger
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+
+# Empty, not omitted: an omitted block inherits the repository default, which is not
+# necessarily empty.
+permissions: {}
+
+jobs:
+  record:
+    # An efficiency filter, not a security control. It keeps ordinary comments -- the
+    # review bots alone post dozens per Pull Request -- from starting a privileged
+    # run at all: a skipped job concludes as `skipped`, and the reviewer only runs on
+    # `success`.
+    #
+    # It decides nothing that matters: the privileged workflow re-establishes the
+    # mention and the author's association from the provider and refuses when they do
+    # not hold.
+    if: >-
+      (github.event_name == 'issue_comment'
+        && contains(github.event.comment.body, '@claude')
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                    github.event.comment.author_association))
+      || (github.event_name == 'issues'
+        && (contains(github.event.issue.body, '@claude')
+            || contains(github.event.issue.title, '@claude'))
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                    github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Record the event identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # Numbers and ids only. No body, no author, no association: every one of
+          # those would be a claim, and this file is not trusted to make claims.
+          # The one addition, a digest of the request text read below, is not a
+          # claim admission acts on: it can only refuse, because one that matches
+          # admits exactly what admission re-read (Decision 0096 rule 4).
+          PULL_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          mkdir -p relay
+          # No f-string: a backslash inside an f-string expression is a
+          # SyntaxError on the supported interpreters. The body spans lines at
+          # the block's own indentation, which the block scalar keeps verbatim;
+          # the end-to-end test runs it as committed. Written with python rather
+          # than assembled by hand so the result is valid JSON whatever the inputs
+          # are, and so an absent field is null rather than an empty string the
+          # reader would have to guess about. Identifiers are written as JSON
+          # integers: the environment carries them as strings, and admission
+          # accepts only integers, so writing them as they arrive refused every
+          # real mention.
+          python3 -c '
+          import hashlib, json, os, pathlib, re
+          env = lambda name: os.environ.get(name, "")
+          payload = {"event_name": env("EVENT_NAME") or None}
+          for name in ("PULL_NUMBER", "COMMENT_ID", "ISSUE_NUMBER"):
+              value = env(name)
+              payload[name.lower()] = int(value) if re.fullmatch("[0-9]+", value) else None
+          # The request text exactly as GitHub delivered it, digested so admission can
+          # refuse a re-read that was edited in between (Decision 0096 rule 4).
+          event = json.loads(pathlib.Path(env("GITHUB_EVENT_PATH")).read_text(encoding="utf-8"))
+          if payload["event_name"] == "issue_comment":
+              text = str((event.get("comment") or {}).get("body") or "")
+          else:
+              issue = event.get("issue") or {}
+              title = str(issue.get("title") or "")
+              body = str(issue.get("body") or "")
+              text = title + "\n" + body
+          payload["request_sha256"] = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+          pathlib.Path("relay/event.json").write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(json.dumps(payload, sort_keys=True))
+          '
+
+      - name: Upload the event identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: claude-mention-event
+          path: relay/event.json
+          if-no-files-found: error
+          retention-days: 1
