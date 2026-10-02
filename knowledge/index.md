@@ -103,6 +103,8 @@ inherited, copied or loaded by adopting projects.
 - [Harden the Claude Code GitHub Actions workflows before integration](decisions/0093-harden-claude-code-github-actions-workflows.md)
 - [Bound Claude review context by selecting agent mode](decisions/0094-bound-claude-review-context.md)
 - [Refresh a vulnerable development dependency pin on protected main](decisions/0095-refresh-vulnerable-development-dependency-pins.md)
+- [Relay mention reviews through a protected workflow revision](decisions/0096-relay-mention-reviews-through-a-protected-workflow.md)
+- [Scope the Claude credential to the protected branch and withdraw the automatic review](decisions/0097-scope-the-claude-credential-to-the-protected-branch.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
