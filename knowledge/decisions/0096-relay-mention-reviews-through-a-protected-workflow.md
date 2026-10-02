@@ -125,7 +125,10 @@ events whose trigger runs from the default branch.
    under *What the relay does not establish*.
 
 3. **The relay payload is a pointer, never a decision.** The trigger records only the
-   event kind and the id of the comment or issue. The privileged job re-reads
+   event kind, the id of the comment or issue, and `request_sha256`, a digest of the
+   request text GitHub delivered (rule 4). Admission uses the digest only to refuse,
+   never to admit: one that matches admits exactly what admission re-read, so the
+   payload still decides nothing (CodeRabbit, #340). The privileged job re-reads
    that object from the provider and re-establishes, from the provider's answer alone:
    that it carries the mention, that its author's association is admitted, that the
    Pull Request head is not a fork, and the head and base revisions. This re-validation
