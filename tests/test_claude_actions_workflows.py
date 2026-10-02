@@ -1436,6 +1436,45 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(module.Refused, "triggered by 'bob'"):
             module.admit("o/r", payload, {**_TRIGGER_FACTS, "actor": "bob"})
 
+    def test_a_dripping_provider_cannot_hold_admission(self) -> None:
+        """The socket timeout bounds one receive, not the exchange, so a provider that
+        sends a byte before each expiry kept admission's read alive far past its stated
+        bound and held the credential-bearing job until its own timeout (CodeAnt). The
+        collector closed the same gap by abandoning a request that outlives its bound,
+        and admission now does the same: a request is bounded as a whole, retried, and
+        refused once its attempts are spent.
+        """
+        module = _load_script(ADMIT_MENTION)
+        setattr(module, "_TIMEOUT_SECONDS", 0.2)  # noqa: B010 -- a module seam
+        setattr(module, "_RETRY_SECONDS", 0)  # noqa: B010
+
+        class Dripping:
+            """A response whose body arrives one byte at a time, too slowly."""
+
+            def __enter__(self) -> Self:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+            @staticmethod
+            def read(_size: int = -1) -> bytes:
+                """Every receive lands just inside the socket timeout, forever."""
+                time.sleep(2)
+                return b"{}"
+
+        previous = module.urllib.request.urlopen
+        module.urllib.request.urlopen = lambda *_a, **_k: Dripping()
+        os.environ.setdefault("GH_TOKEN", "stub")  # nosec B105 -- placeholder
+        started = time.monotonic()
+        try:
+            with self.assertRaises(module.Refused):
+                module.provider_get("repos/o/r/issues/1")
+        finally:
+            module.urllib.request.urlopen = previous
+        # Three attempts of 0.2 s each, with room for scheduling -- never the drip's 2 s.
+        self.assertLess(time.monotonic() - started, 1.5)
+
     def test_admission_matches_the_mention_as_github_s_contains_does(self) -> None:
         """GitHub's expression `contains()` is case-insensitive. The gate this replaces
         and the trigger's filter both use it, so "@Claude review" started a review

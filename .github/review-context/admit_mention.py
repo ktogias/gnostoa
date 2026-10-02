@@ -36,6 +36,7 @@ import pathlib
 import re
 import stat
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -106,11 +107,37 @@ def _token() -> str:
 
 
 def _read_answer(request: urllib.request.Request, path: str) -> Any:
-    """Return one decoded provider answer for ``path``, of at most ``MAX_BYTES``."""
-    with urllib.request.urlopen(  # nosec B310 -- literal https API root
-        request, timeout=_TIMEOUT_SECONDS
-    ) as response:
-        raw = response.read(MAX_BYTES + 1)
+    """Return one decoded provider answer for ``path``, of at most ``MAX_BYTES``.
+
+    Bounded as a whole. The socket timeout bounds one receive, not the exchange, so a
+    provider sending a byte before each expiry -- in the headers or the body -- kept
+    this read alive far past ``_TIMEOUT_SECONDS`` and held the credential-bearing job
+    until its own timeout (CodeAnt). As the collector does, the read runs on a daemon
+    thread that is abandoned at the bound: admission makes a few sequential requests,
+    so at most ``_ATTEMPTS`` per request can be left running, and they end with the
+    step's process. The abandonment raises ``TimeoutError``, which is retried.
+    """
+    finished = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        """Read the answer, recording what it returned or raised."""
+        try:
+            with urllib.request.urlopen(  # nosec B310 -- literal https API root
+                request, timeout=_TIMEOUT_SECONDS
+            ) as response:
+                outcome["raw"] = response.read(MAX_BYTES + 1)
+        except Exception as error:  # re-raised below, on the caller's thread
+            outcome["error"] = error
+        finally:
+            finished.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    if not finished.wait(_TIMEOUT_SECONDS):
+        raise TimeoutError(f"the provider did not answer {path!r} within the bound")
+    if "error" in outcome:
+        raise outcome["error"]
+    raw = outcome.get("raw", b"")
     if len(raw) > MAX_BYTES:
         raise Refused(f"the provider answer for {path!r} exceeded its bound")
     return json.loads(raw.decode("utf-8"))

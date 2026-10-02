@@ -82,7 +82,7 @@ claim on #340, and on checking, the rest of the table had the same overstatement
 | artifact transfer | the vetted `upload-artifact` / `download-artifact` pins | **reused** |
 | the reviewer, collector and publisher | the mention job's existing steps, unchanged apart from reading admission's outputs | **reused** |
 | provider payload shapes | `ci/review_github_current_state.py` normalizers for issue comments, reviews and review comments | **consulted** for field names; not imported |
-| provider reads in admission | `.github/review-context/admit_mention.py`'s own small standard-library client: retried, bounded, timed out | **new** |
+| provider reads in admission | `.github/review-context/admit_mention.py`'s own small standard-library client: retried, size-bounded, and bounded as a whole by abandoning a read at its timeout, as the collector does, since a socket timeout bounds one receive and a provider dripping bytes outlasted it (CodeAnt, #340) | **new** |
 
 Two alternatives were weighed and not taken. Importing `ci/review_github_current_state.py`
 into the privileged job would pull a 61 KB module and its dependency install into a
