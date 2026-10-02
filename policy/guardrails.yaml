@@ -411,6 +411,24 @@ guardrails:
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
 
+  - id: architecture-inheritance-gate
+    title: Gnostoa-self slices dispose every material responsibility against its existing owner before production mutation
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/deliver-bounded-self-hosted-slice.md#architecture-inheritance-entrance-gate
+    implementation:
+      - AGENTS.md
+      - knowledge/index.md
+      - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
+      - knowledge/decisions/0099-route-the-architecture-inheritance-gate-from-source.md
+    tests:
+      - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_decision_records_the_routing_and_is_indexed
+      - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_guardrail_binds_the_gate
+      - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_router_routes_the_gate_before_the_first_semantic_mutation
+      - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_runbook_carries_the_gate_inside_the_prior_art_checkpoint
+      - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_runbook_names_when_the_table_is_revisited
+
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
     applies_to: [kit]

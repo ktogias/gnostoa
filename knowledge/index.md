@@ -105,6 +105,7 @@ inherited, copied or loaded by adopting projects.
 - [Refresh a vulnerable development dependency pin on protected main](decisions/0095-refresh-vulnerable-development-dependency-pins.md)
 - [Relay mention reviews through a protected workflow revision](decisions/0096-relay-mention-reviews-through-a-protected-workflow.md)
 - [Scope the Claude credential to the protected branch and withdraw the automatic review](decisions/0097-scope-the-claude-credential-to-the-protected-branch.md)
+- [Route the architecture-inheritance entrance gate from source](decisions/0099-route-the-architecture-inheritance-gate-from-source.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
