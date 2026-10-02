@@ -2,8 +2,8 @@
 
 The owner made the gate explicit and fail-closed on 2026-09-30 (#15 comment
 5919462524), but it lived only in provider comments, so it did not reach the point of
-mutation: two Pull Requests proceeded without it (RCA,
-`knowledge/assessments/15-review-pipeline-abstraction-recurrence-rca.md`). These tests
+mutation: two Pull Requests proceeded without it (incident addendum,
+https://github.com/ktogias/gnostoa/issues/14#issuecomment-5961727761). These tests
 pin the routing that makes it reachable: the router names it, the delivery runbook
 carries it as part of the existing prior-art and reuse checkpoint, and a guardrail
 binds both. They do not, and cannot, check that a given slice applied it -- that
@@ -39,11 +39,6 @@ TABLE_HEADER = (
 DISPOSITIONS = ("consume", "extend", "adapt", "factor", "supersede", "new-residual")
 
 
-def _normalized(path: pathlib.Path) -> str:
-    """Return the file's text with runs of whitespace collapsed to one space."""
-    return " ".join(path.read_text(encoding="utf-8").split())
-
-
 def _gate_section() -> str:
     """Return the runbook's gate subsection, up to the next heading of its level."""
     text = RUNBOOK.read_text(encoding="utf-8")
@@ -64,10 +59,22 @@ class ArchitectureInheritanceGateTests(unittest.TestCase):
         was missed: a route that reads only source and pointed-to comments never sees
         an owner gate posted on #14 or #15.
         """
-        agents = _normalized(AGENTS)
-        self.assertIn(ANCHOR, agents)
-        paragraph = agents[agents.index("Architecture-inheritance entrance gate") :]
-        paragraph = paragraph[:1200]
+        text = AGENTS.read_text(encoding="utf-8")
+        gate = text.index("Apply the **Architecture-inheritance entrance gate** in")
+        # An entrance gate the router reaches only after its implementation routes is
+        # not an entrance gate (Sourcery on #354).
+        for later in (
+            "Before changing normative behavior",
+            "Before implementation, follow",
+            "Before the first semantic edit",
+        ):
+            with self.subTest(precedes=later):
+                self.assertLess(gate, text.index(later))
+        # The routing paragraph itself, to its blank line, rather than a fixed window
+        # that an unrelated edit could push a phrase out of (CodeAnt, CodeRabbit).
+        end = text.find("\n\n", gate)
+        paragraph = " ".join(text[gate : len(text) if end < 0 else end].split())
+        self.assertIn(ANCHOR, paragraph)
         self.assertIn("before the first semantic production mutation", paragraph)
         self.assertIn("implementation stops", paragraph)
         self.assertIn("every #14 and #15 entry posted since", paragraph)

@@ -69,7 +69,9 @@ This slice's own lineage table:
 | decide reuse before custom work | the delivery runbook | its prior-art and reuse checkpoint | **extend**: the gate is a subsection of it, not a second lifecycle | the runbook test checks that the gate sits inside the checkpoint |
 | make a self-only obligation discoverable and owned | the `bounded-behavioral-traceability` guardrail pattern | an `AGENTS.md` route, a runbook step, a guardrail entry and route tests | **consume** the pattern: the same guardrail shape, `hybrid` enforcement and route tests | `test_guardrail_binds_the_gate` |
 | the gate's rule text | the owner's gate (5919462524) | provider comment | **consume**: carried in substance, with its source linked | the runbook test checks the table, each disposition, the fail-closed stop and the source |
-| check that a slice actually applied the gate | the reviewer, under the existing checkpoint | review enforcement | **unchanged**: no software gate | none claimed |
+| read the governing threads incrementally, before the first semantic mutation and before writing to #14 or #15 | the router's orientation route | `AGENTS.md`: the compact orientation view, plus fresh provider read-back of the `roadmap:now` selection and protected `main` | **extend**: one more read-back obligation, stated beside the gate it serves; the route's existing read-backs are unchanged | the router test checks "every #14 and #15 entry posted since" in the routing paragraph |
+| revisit the table when a slice's responsibilities drift | the owner's gate | the gate's runbook subsection | **extend**: the gate gains named revisit triggers | `test_runbook_names_when_the_table_is_revisited` |
+| check that a slice actually applied the gate | the reviewer, under the existing checkpoint | review enforcement | **consume**: existing review enforcement, unchanged; no software gate | none claimed |
 
 No external tool was adopted. The need is routing an existing rule to where agents
 act. An architecture-rule engine, a registry or a Pull Request parser would be the
