@@ -304,3 +304,5 @@ records a source-only conditional-go for Greece, the EU and Nice classes 9 and
 or commercial publication. Independent or professional clearance remains
 required before stable artifact branding, trade-mark filing or commercial
 reliance.
+
+<!-- live test of the relay PR path (2026-10-02); this branch and PR are throwaway -->
