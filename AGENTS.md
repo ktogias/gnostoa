@@ -56,6 +56,17 @@ before new code or implementation, apply **Prior-art and reuse checkpoint** in
 research; record alternatives, intended-use license compatibility and the
 remaining need before choosing custom work.
 
+Apply the **Architecture-inheritance entrance gate** in
+[the delivery runbook](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#architecture-inheritance-entrance-gate)
+before the first semantic production mutation of any Gnostoa-self implementation
+slice. The active Work Item or Change Request carries an exact-base-bound lineage
+table that disposes every material responsibility against its existing owner. The
+dispositions are consume, extend, adapt, factor, supersede and new-residual.
+Without the table, implementation stops; a passing test suite does not waive it.
+Owner gates reach #14 and #15 before they reach source. So before relying on
+orientation, and before writing to either thread, read every #14 and #15 entry
+posted since the last one you read.
+
 Before changing normative behavior, read
 `guidance/guardrails/non-negotiable.md` and update
 `policy/guardrails.yaml` when coverage changes. Generated content starts as
