@@ -359,6 +359,30 @@ class SharedGitHubClientTests(unittest.TestCase):
             with self.subTest(root=root), self.assertRaises(github_rest.GitHubError):
                 github_rest.GitHubRestClient("t", api_root=root)
 
+    def test_a_request_refused_by_the_cap_fails_at_once(self) -> None:
+        """Past the cap a request fails at once: retrying the refusal only waited out
+        pauses while the workers that filled the cap kept stalling (CodeAnt on #353)."""
+        calls: list[str] = []
+        slept: list[float] = []
+
+        def refused(url: str, _request: object, _timeout: float) -> object:
+            calls.append(url)
+            raise github_rest.NotSent("not requesting: the cap is full")
+
+        request = urllib.request.Request(f"{github_rest.API_ROOT}/x")
+        with (
+            mock.patch("time.sleep", slept.append),
+            self.assertRaises(github_rest.NotSent),
+        ):
+            github_rest.read_with_retries(
+                f"{github_rest.API_ROOT}/x",
+                request,
+                refused,
+                policy=github_rest.Policy(attempts=3),
+            )
+        self.assertEqual(1, len(calls))
+        self.assertEqual([], slept)
+
     def test_a_malformed_url_is_refused_as_a_provider_error(self) -> None:
         """`urlparse` raises ValueError for a malformed host, before any check ran, so a
         provider's `Link` header could crash a caller that handles only the client's

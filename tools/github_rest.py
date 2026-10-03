@@ -636,7 +636,10 @@ def read_with_retries(
                 )
             finally:
                 release(error)
-        except UnsafeRedirect:
+        except (UnsafeRedirect, NotSent):
+            # A refused redirect, or a request the cap refused before sending: past the
+            # cap a request fails at once, and retrying would only wait out pauses while
+            # the workers that filled it kept stalling (CodeAnt on #353).
             raise
         except (GitHubError, OSError, http.client.HTTPException, ValueError) as error:
             pause = retry_pause(error, url, attempt, attempt_deadline, deadline, policy)
