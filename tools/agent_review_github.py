@@ -150,7 +150,15 @@ class IssueCommentSink:
                         and author.get("login") == COMMENT_AUTHOR
                         and str(comment.get("body", "")).startswith(marker)
                     ):
-                        return str(comment.get("html_url", ""))
+                        location = comment.get("html_url")
+                        if not isinstance(location, str) or not location:
+                            # This delivery's comment, listed without its location:
+                            # not a confirmed delivery (CodeAnt on #353).
+                            raise DeliveryUncertain(
+                                "the provider listed this delivery's comment without "
+                                "its location"
+                            )
+                        return location
                 url = github_rest.next_url(headers, self.client.api_root)
             if url is None:
                 return None

@@ -573,7 +573,6 @@ def _write_summaries(
 ) -> None:
     """Write the summaries of a GitHub comparison's entries, at the provider's cap."""
     from tools import agent_review_base as base
-    from tools import agent_review_claude_code as claude_code
     from tools import agent_review_github as github
 
     base.write_summaries(
@@ -581,7 +580,7 @@ def _write_summaries(
         [_changed(entry) for entry in comparison.get("files") or []],
         delivered,
         file_cap=github.FILE_CAP if file_cap is None else file_cap,
-        line_cap=claude_code.READ_LINE_CAP,
+        line_cap=claude_adapter.READ_LINE_CAP,
     )
 
 
@@ -6718,8 +6717,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         previous_monotonic = time.monotonic
         previous_deadline = builder.DEADLINE_SECONDS
         builder.fetch_json = slow
-        time.sleep = lambda seconds: elapsed.__setitem__(
-            "now", elapsed["now"] + seconds
+        time.sleep = cast(
+            "Any",
+            lambda seconds: elapsed.__setitem__("now", elapsed["now"] + seconds),
         )
         time.monotonic = clock
         builder.DEADLINE_SECONDS = 90

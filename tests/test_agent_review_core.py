@@ -30,6 +30,7 @@ CORE = (
     "agent_review_admission",
     "agent_review_context",
     "agent_review_base",
+    "agent_review_diff",
     "agent_review_report",
     "agent_review_delivery",
 )
@@ -950,6 +951,85 @@ class ThinCollectorEntrypointTests(unittest.TestCase):
         self.assertEqual(set(), defined & rules)
 
 
+class SecondReaderDiffTests(unittest.TestCase):
+    """The unchanged diff core serves a reader with another line budget."""
+
+    def test_a_second_readers_budget_bounds_every_line(self) -> None:
+        """The cap is the reader's, supplied by its adapter: another agent's, here 80
+        bytes, wraps and is disclosed at 80, and no byte is lost."""
+        from tools import agent_review_diff as diff
+        from tools import agent_review_model as model
+
+        record = b"+" + b"x" * 200
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(
+                b"diff --git a/a b/a\n" + record + b"\n"
+            )
+            parts = diff.split_diff(context, 4096, line_cap=80)
+            self.assertEqual(1, parts)
+            written = (context / "patches" / "part-0001").read_bytes()
+            self.assertTrue(all(len(line) <= 80 for line in written.split(b"\n")))
+            self.assertEqual(
+                record,
+                b"".join(
+                    line.removeprefix(model.CONTINUATION) if n else line
+                    for n, line in enumerate(written.split(b"\n")[1:-1])
+                ),
+            )
+            readme = (context / "patches" / "README").read_text(encoding="utf-8")
+            self.assertIn("exceeded 80 bytes", readme)
+
+
+class DiffDisclosureTests(unittest.TestCase):
+    """Rules the stage-4c mutation pass found no test pinning, each now pinned."""
+
+    def test_doubled_backslashes_are_disclosed_without_any_separator(self) -> None:
+        """Invalid UTF-8 alone takes the escaping path, which doubles every backslash:
+        that rewrite is explained even when no separator was escaped."""
+        from tools import agent_review_diff as diff
+
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(b"+a\\b \xff\n")
+            diff.split_diff(context, 4096, line_cap=1900)
+            readme = (context / "patches" / "README").read_text(encoding="utf-8")
+        self.assertIn("1 backslash(es) were doubled", readme)
+        self.assertIn("not valid UTF-8", readme)
+
+    def test_a_diff_needing_more_parts_than_the_naming_allows_is_refused(self) -> None:
+        """Part names hold four digits; a diff needing more is refused rather than
+        written under names that would no longer sort in order."""
+        from tools import agent_review_diff as diff
+
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(b"x\n" * 10_000)
+            with self.assertRaisesRegex(
+                ValueError, "more parts than the naming allows"
+            ):
+                diff.split_diff(context, 2, line_cap=1900)
+
+
+class ThinChunkerEntrypointTests(unittest.TestCase):
+    """The chunker's entrypoint binds the core to the reader's budget; no more."""
+
+    def test_the_entrypoint_defines_no_chunking_rule(self) -> None:
+        """A rule defined in the entrypoint is one a second agent cannot use."""
+        entrypoint = ROOT / ".github" / "review-context" / "chunk_diff.py"
+        tree = ast.parse(entrypoint.read_text(encoding="utf-8"))
+        defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        rules = {
+            "escape_embedded_breaks",
+            "next_cut",
+            "_readme_notes",
+            "_write_parts",
+            "_overview_notices",
+            "_escape_invalid_utf8",
+        }
+        self.assertEqual(set(), defined & rules)
+
+
 class AdmissionFileTests(unittest.TestCase):
     """The payload is read, and the artefacts written, never through a link."""
 
@@ -1266,20 +1346,60 @@ class LocatedCreateTests(unittest.TestCase):
 
                     api_root = github_rest.API_ROOT
 
-                    def __init__(self) -> None:
+                    def __init__(self, answer: object) -> None:
+                        self.answer = answer
                         self.posted: list[str] = []
 
-                    def post(
-                        self, target: str, _payload: object, answer: object = answer
-                    ) -> object:
+                    def post(self, target: str, _payload: object) -> object:
                         self.posted.append(target)
-                        return answer
+                        return self.answer
 
-                client = Client()
+                client = Client(answer)
                 sink = github.IssueCommentSink(url, client=client)  # type: ignore[arg-type]
                 with self.assertRaises(delivery.DeliveryUncertain):
                     sink.create("body")
                 self.assertEqual([url], client.posted)
+
+
+class LocatedReadBackTests(unittest.TestCase):
+    """A read-back counts a comment as delivered only with its location."""
+
+    def test_a_matching_comment_without_a_location_is_uncertain(self) -> None:
+        """A comment of this delivery's that the provider listed without a location was
+        reported delivered with an empty one (CodeAnt on #353). It is uncertain."""
+        from tools import agent_review_delivery as delivery
+        from tools import agent_review_github as github
+        from tools import github_rest
+
+        url = f"{github_rest.API_ROOT}/repos/o/r/issues/1/comments"
+        marker = "<!-- marker -->"
+        for location in (None, "", 5):
+
+            class Client:
+                """A client listing one comment of this delivery's."""
+
+                api_root = github_rest.API_ROOT
+
+                def __init__(self, location: object) -> None:
+                    self.location = location
+
+                def read_page(self, _url: str) -> tuple[list[Any], dict[str, str]]:
+                    comment: dict[str, Any] = {
+                        "user": {"login": github.COMMENT_AUTHOR},
+                        "body": f"{marker}\nthe review",
+                    }
+                    if self.location is not None:
+                        comment["html_url"] = self.location
+                    return [comment], {}
+
+            with self.subTest(location=location):
+                sink = github.IssueCommentSink(
+                    url,
+                    client=Client(location),  # type: ignore[arg-type]
+                    since="2026-10-03T09:00:00Z",
+                )
+                with self.assertRaises(delivery.DeliveryUncertain):
+                    sink.find(marker)
 
 
 class RetriedReadBackTests(unittest.TestCase):
