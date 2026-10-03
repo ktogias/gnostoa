@@ -736,6 +736,8 @@ guardrails:
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
       - tests/test_claude_actions_workflows.py
+      - tests/test_agent_review_core.py
+      - tests/test_github_rest.py
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact

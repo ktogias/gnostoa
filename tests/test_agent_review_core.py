@@ -248,7 +248,7 @@ class _ForgeLikeRequests:
             item=model.Ref("work_item", target["iid"]),
             change_request=change,
             occurred_at=note["at"],
-            request=note["text"],
+            request_text=note["text"],
             title=target["title"],
             body=target["description"],
             item_association=target["author_role"],
@@ -316,8 +316,8 @@ def _forge_rules() -> Any:
     )
 
 
-def _forge_trigger(**changes: str) -> Any:
-    """What the second provider recorded about the triggering run."""
+def _forge_trigger(changes: dict[str, str] | None = None) -> Any:
+    """What the second provider recorded about the triggering run, with ``changes``."""
     from tools import agent_review_admission as admission
 
     fields = {
@@ -327,7 +327,7 @@ def _forge_trigger(**changes: str) -> Any:
         "created_at": "2026-10-03T10:00:05Z",
         "revision": _REVISION,
     }
-    fields.update(changes)
+    fields.update(changes or {})
     return admission.Trigger(**fields)
 
 
@@ -388,7 +388,7 @@ class SecondProviderAdmissionTests(unittest.TestCase):
                 source,
                 _FORGE_REPOSITORY,
                 pointer,
-                _forge_trigger(revision="main"),
+                _forge_trigger({"revision": "main"}),
                 _forge_rules(),
             )
 
@@ -436,7 +436,7 @@ class SecondProviderAdmissionTests(unittest.TestCase):
                     source,
                     _FORGE_REPOSITORY,
                     pointer,
-                    _forge_trigger(**trigger),
+                    _forge_trigger(trigger),
                     _forge_rules(),
                 )
 
@@ -700,7 +700,7 @@ class ReadBackWindowTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.read: list[str] = []
 
-            def get(self, url: str) -> tuple[list[Any], dict[str, str]]:
+            def read_page(self, url: str) -> tuple[list[Any], dict[str, str]]:
                 self.read.append(url)
                 return [], {}
 
@@ -721,6 +721,62 @@ class ReadBackWindowTests(unittest.TestCase):
                 self.assertRaises(delivery.DeliveryRefused),
             ):
                 github.IssueCommentSink(url, client=client, since=bad)  # type: ignore[arg-type]
+
+
+class RetriedReadBackTests(unittest.TestCase):
+    """A read-back is a read: a transient failure is retried, not a reason to stop."""
+
+    def test_a_transient_failure_reading_back_is_retried(self) -> None:
+        """One 502 during the read-back ended delivery as unconfirmed, and lost the
+        review, though reading again could not duplicate anything (CodeAnt on #353).
+        The sink's own client retries the read, and still never retries a create."""
+        import email.message
+        import io
+        import urllib.error
+        import urllib.request
+
+        from tools import agent_review_github as github
+        from tools import github_rest
+
+        url = f"{github_rest.API_ROOT}/repos/o/r/issues/1/comments"
+        marker = "<!-- marker -->"
+        comment = {
+            "user": {"login": github.COMMENT_AUTHOR},
+            "body": f"{marker}\nthe review",
+            "html_url": "https://github.com/o/r/issues/1#c1",
+        }
+
+        class Answer(io.BytesIO):
+            """A provider answer as an opener returns one."""
+
+            def __init__(self, body: bytes) -> None:
+                super().__init__(body)
+                self.headers: dict[str, str] = {}
+
+        calls: list[str] = []
+
+        def answer(request: urllib.request.Request, **_kwargs: Any) -> Any:
+            calls.append(request.full_url)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    502,
+                    "Bad Gateway",
+                    email.message.Message(),
+                    io.BytesIO(),
+                )
+            return Answer(json.dumps([comment]).encode("utf-8"))
+
+        opener = mock.MagicMock()
+        opener.open.side_effect = answer
+        with (
+            mock.patch.object(urllib.request, "build_opener", return_value=opener),
+            mock.patch.dict(os.environ, {"GH_TOKEN": "t"}),
+            mock.patch("time.sleep", lambda _seconds: None),
+        ):
+            sink = github.IssueCommentSink(url, since="2026-10-03T09:00:00Z")
+            self.assertEqual(comment["html_url"], sink.find(marker))
+        self.assertEqual(2, len(calls))
 
 
 class GitHubClaudeCompositionTests(unittest.TestCase):

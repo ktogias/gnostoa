@@ -748,6 +748,27 @@ class GitHubRestClient:
             policy=self.policy,
         )
 
+    def read_page(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, dict[str, str]]:
+        """Return a GET's document and headers, retried as an idempotent read.
+
+        For a paged listing, whose `Link` header names the next page: ``read_json``
+        keeps only the document, and ``get`` makes one attempt.
+        """
+        request = self.build_request("GET", url)
+
+        def attempt(
+            target: str, built: urllib.request.Request, limit: float
+        ) -> tuple[Any, dict[str, str]]:
+            raw, headers = self.fetch(target, built, limit)
+            return decode_json(raw, target), headers
+
+        page: tuple[Any, dict[str, str]] = read_with_retries(
+            url, request, attempt, deadline=deadline, policy=self.policy
+        )
+        return page
+
     def read_bytes(
         self,
         url: str,

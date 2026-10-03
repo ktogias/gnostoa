@@ -1505,6 +1505,29 @@ def _publication_error_diagnostic(error: BaseException) -> str:
     return type(error).__name__
 
 
+def _failed_publication(entry: dict[str, Any], error: BaseException) -> dict[str, Any]:
+    """Return the result of an entry whose publication failed with ``error``.
+
+    A write abandoned at its bound may still land, so whether it was published is not
+    known, and saying it was not would misreport it (CodeAnt on #353).
+    """
+    pull_number = entry.get("pull_number")
+    in_flight = bool(getattr(error, "in_flight", False))
+    return {
+        "pull_number": (
+            pull_number if type(pull_number) is int and pull_number > 0 else "UNKNOWN"
+        ),
+        "published": None if in_flight else False,
+        "reason": (
+            "PUBLICATION_OUTCOME_UNKNOWN"
+            if in_flight
+            else "PUBLICATION_ENTRY_UNAVAILABLE"
+        ),
+        "error_type": type(error).__name__,
+        "diagnostic": _publication_error_diagnostic(error),
+    }
+
+
 def _publication_result_line(item: dict[str, Any]) -> str:
     line = f"PR #{item['pull_number']}: {item['reason']}"
     diagnostic = item.get("diagnostic")
@@ -1623,26 +1646,8 @@ def main(argv: list[str] | None = None) -> int:
                 entry=entry,
             )
         except (OSError, RuntimeError, ValueError) as exc:
-            pull_number = entry.get("pull_number")
             publication_failed = True
-            # A write abandoned at its bound may still land, so whether it was
-            # published is not known, and saying it was not would misreport it.
-            in_flight = bool(getattr(exc, "in_flight", False))
-            result = {
-                "pull_number": (
-                    pull_number
-                    if type(pull_number) is int and pull_number > 0
-                    else "UNKNOWN"
-                ),
-                "published": None if in_flight else False,
-                "reason": (
-                    "PUBLICATION_OUTCOME_UNKNOWN"
-                    if in_flight
-                    else "PUBLICATION_ENTRY_UNAVAILABLE"
-                ),
-                "error_type": type(exc).__name__,
-                "diagnostic": _publication_error_diagnostic(exc),
-            }
+            result = _failed_publication(entry, exc)
         results.append(result)
 
     _emit_publication_results(results)

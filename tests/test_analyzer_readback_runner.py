@@ -310,12 +310,14 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 "x\u2603y",
                 "x\ud800y",
             ):
-                with self.subTest(client=factory.__name__, value=repr(value)):
-                    with patch("urllib.request.build_opener") as opener:
-                        with self.assertRaises(error_type) as caught:
-                            factory(value)
-                        self.assertNotIn(repr(value), str(caught.exception))
-                        opener.assert_not_called()
+                with (
+                    self.subTest(client=factory.__name__, value=repr(value)),
+                    patch("urllib.request.build_opener") as opener,
+                ):
+                    with self.assertRaises(error_type) as caught:
+                        factory(value)
+                    self.assertNotIn(repr(value), str(caught.exception))
+                    opener.assert_not_called()
             value = "aZ0._~+/=-!"
             client = factory(value)
             # skipcq: PYL-W0212 -- white-box test of the runner's internals

@@ -27,8 +27,10 @@ API = "https://api.github.com"
 COMMENT_AUTHOR = "github-actions[bot]"
 _LISTING_PAGES = 10
 _INSTANT = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
-# One attempt per exchange: post-once owns retries, and a create is never retried here.
-_POLICY = github_rest.Policy(attempts=1, max_response_bytes=4 << 20)
+# Reads are retried, as idempotent reads: one transient failure reading back must not
+# end a delivery (CodeAnt on #353). A create is never retried by the client, whatever
+# the policy: post-once owns that decision.
+_POLICY = github_rest.Policy(attempts=3, max_response_bytes=4 << 20)
 # GitHub's token shapes, after the pinned action's own sanitiser
 # (`src/github/utils/sanitizer.ts`, MIT), plus the forms this repository's jobs handle:
 # an App installation token (`ghs_`) and a token carried in a remote URL. No word
@@ -109,7 +111,7 @@ class IssueCommentSink:
             # `python -O`, and a bound is not something to compile away (Codacy, B101).
             while url is not None and pages < _LISTING_PAGES:
                 pages += 1
-                listing, headers = self.client.get(url)
+                listing, headers = self.client.read_page(url)
                 if not isinstance(listing, list):
                     raise DeliveryUncertain(
                         "the provider's comment listing was not a list"
@@ -230,7 +232,7 @@ class IssueRequests:
             item=Ref(ITEM_KIND, str(number)),
             change_request=_change(number, item),
             occurred_at=str(comment.get("created_at") or ""),
-            request=comment.get("body"),
+            request_text=comment.get("body"),
             title=item.get("title"),
             body=item.get("body"),
             item_association=item.get("author_association"),
@@ -253,7 +255,7 @@ class IssueRequests:
             # The issue *is* the request, and its mention may be in the title alone,
             # so the request artefact carries both. Forwarding only the body would
             # leave the file the reviewer is told to read first without the ask.
-            request=f"{title}\n{body}",
+            request_text=f"{title}\n{body}",
             title=issue.get("title"),
             body=issue.get("body"),
             item_association=issue.get("author_association"),

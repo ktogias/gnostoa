@@ -3902,6 +3902,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(module=module.name):
                 self.assertTrue(module.is_file(), f"{module.name} is missing")
                 self.assertIn(f"tools/{module.name}", entry["implementation"])
+        # And the falsifiers that hold them: the guardrail owns the tests that fail when
+        # the core is coupled or a shared-client element is removed (CodeAnt on #353).
+        for falsifiers in (
+            "tests/test_agent_review_core.py",
+            "tests/test_github_rest.py",
+        ):
+            with self.subTest(tests=falsifiers):
+                self.assertIn(falsifiers, entry["tests"])
 
     def test_the_artefact_makes_the_same_claim_as_the_prompt(self) -> None:
         """The prompt was corrected to stop asking which case a no-hunk entry is; the

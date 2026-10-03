@@ -98,7 +98,7 @@ class Request(NamedTuple):
     # When the provider says this object came to be: the event the relay claims.
     occurred_at: str
     # The forwarded text: the request itself, and the item's own title and body.
-    request: Any
+    request_text: Any
     title: Any
     body: Any
     # The item author's standing, which decides whether its text is forwarded.
@@ -181,7 +181,7 @@ def _forwarded(request: Request, rules: Rules) -> dict[str, Any]:
     else:
         title = _WITHHELD if request.title else ""
         body = _WITHHELD if request.body else ""
-    return {"request": request.request, "title": title, "item": body}
+    return {"request": request.request_text, "title": title, "item": body}
 
 
 def bind_to_trigger(pointer: Mapping[str, Any], trigger: Trigger, rules: Rules) -> None:
