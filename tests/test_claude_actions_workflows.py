@@ -1904,11 +1904,23 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     ["${{ needs.claude.outputs.report_artifact }}"],
                     [step["env"]["REPORT_ARTIFACT"] for step in posts],
                 )
+                # And whether the download itself succeeded: the pinned action extracts
+                # into the path before its download completes, so a failed download can
+                # leave a partial directory behind (Codex on #353).
+                self.assertEqual(["download"], [step.get("id") for step in downloads])
+                self.assertEqual(
+                    ["${{ steps.download.outcome }}"],
+                    [step["env"]["DOWNLOAD_OUTCOME"] for step in posts],
+                )
         self.assertEqual(
             "${{ steps.handoff.outputs.artifact-id }}",
             reviewer["outputs"]["report_artifact"],
         )
         self.assertEqual("handoff", upload.get("id"))
+        # Kept for as long as GitHub lets a job be rerun, 30 days: the poster refuses
+        # a report that was handed over but did not arrive, and tells the operator to
+        # rerun, which only works while the artifact exists (gitar on #353).
+        self.assertEqual(30, upload["with"]["retention-days"])
 
     def test_a_report_handed_over_but_not_received_is_not_finalised(self) -> None:
         """A failed download posted the unavailable notice under the report's marker,
@@ -1940,6 +1952,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {**env, "REPORT_ARTIFACT": "4242"}):
                 self.assertEqual(1, poster.main(["post_report.py", absent]))
             self.assertEqual([], posted)
+            # A download that failed after extracting part of the artifact leaves the
+            # directory present: its own outcome, not the directory, decides.
+            partial = pathlib.Path(absent)
+            partial.mkdir()
+            (partial / "status").write_text("complete\n", encoding="utf-8")
+            failed = {**env, "REPORT_ARTIFACT": "4242", "DOWNLOAD_OUTCOME": "failure"}
+            with mock.patch.dict(os.environ, failed):
+                self.assertEqual(1, poster.main(["post_report.py", absent]))
+            self.assertEqual([], posted)
+            (partial / "status").unlink()
+            partial.rmdir()
             # No artifact: the reviewing job ended before handing anything over, which
             # is the absence the notice exists for.
             with mock.patch.dict(os.environ, {**env, "REPORT_ARTIFACT": ""}):

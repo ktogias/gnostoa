@@ -328,7 +328,10 @@ jobs:
           name: claude-review-report-${{ github.run_attempt }}
           path: ${{ runner.temp }}/claude-review-report
           if-no-files-found: ignore
-          retention-days: 1
+          # As long as GitHub lets a job be rerun: a posting job that did not receive
+          # the report refuses and asks for a rerun, which needs the artifact to still
+          # exist (gitar on #353).
+          retention-days: 30
 
   # Decision 0098: a finished review is posted into the thread it was asked in, from a
   # job that runs no model, names no environment and no secret, and holds one write
@@ -356,6 +359,7 @@ jobs:
       # Absent when the reviewer job ended before handing anything over; the script
       # then posts a notice that the review did not complete.
       - name: Download the review report
+        id: download
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -379,6 +383,9 @@ jobs:
           RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
           DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
           REPORT_ARTIFACT: ${{ needs.claude.outputs.report_artifact }}
+          # The download's own outcome: the pinned action extracts into the path before
+          # its download completes, so a present directory proves nothing (Codex).
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
         run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"
 
   post-to-issue:
@@ -399,6 +406,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download the review report
+        id: download
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -422,4 +430,7 @@ jobs:
           RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
           DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
           REPORT_ARTIFACT: ${{ needs.claude.outputs.report_artifact }}
+          # The download's own outcome: the pinned action extracts into the path before
+          # its download completes, so a present directory proves nothing (Codex).
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
         run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"
