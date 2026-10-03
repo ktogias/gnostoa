@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import http.client
-import json
 import os
 import re
 import sys
@@ -14,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import analyzer_codacy, analyzer_deepsource
+from tools import analyzer_codacy, analyzer_deepsource, github_rest
 from tools.analyzer_readback import (
     AnalyzerReadbackError,
     build_readback,
@@ -46,25 +44,36 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _runner_message(error: github_rest.GitHubError) -> str:
+    """Return this runner's message for a shared-client failure, by its cause."""
+    if isinstance(error, github_rest.ResponseTooLarge):
+        return "GitHub API response exceeds bounded size"
+    if isinstance(error, github_rest.MalformedAnswer):
+        return "GitHub API returned invalid JSON"
+    if isinstance(error, github_rest.OutsideOrigin):
+        return "GitHub API URL is outside the admitted origin"
+    if error.status is not None:
+        return f"GitHub API HTTP {error.status}"
+    if str(error) == "GitHub request failed validation":
+        return str(error)
+    return "GitHub API unavailable"
+
+
 def _validate_github_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
+    """Return ``url`` if it stays on the API origin, or raise this runner's error."""
     try:
-        port = parsed.port
-    except ValueError as exc:
-        raise RunnerError("GitHub API URL has an invalid port") from exc
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "api.github.com"
-        or port not in {None, 443}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.fragment
-    ):
-        raise RunnerError("GitHub API URL is outside the admitted origin")
-    return url
+        return github_rest.validate_url(url)
+    except github_rest.GitHubError as error:
+        raise RunnerError(_runner_message(error)) from None
 
 
-class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+# The client is the shared one (`tools/github_rest.py`, Decision 0100), merged from this
+# runner's and four others: same-origin redirects with the credential re-added there
+# only, a bound on the whole exchange and the body, and a credential refused unless it
+# is one printable token -- never echoed into an error.
+class _GitHubRedirectHandler(github_rest.SameOriginRedirects):
+    """Follow same-origin redirects only, failing as this runner's error."""
+
     def redirect_request(
         self,
         req: urllib.request.Request,
@@ -74,58 +83,53 @@ class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
         headers: Any,
         newurl: str,
     ) -> urllib.request.Request | None:
-        admitted = _validate_github_url(newurl)
-        authorization = req.get_header("Authorization")
-        redirected = super().redirect_request(req, fp, code, msg, headers, admitted)
-        if redirected is not None and authorization is not None:
-            redirected.add_unredirected_header("Authorization", authorization)
-        return redirected
+        """Follow the redirect if it stays on the origin, carrying the credential."""
+        try:
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        except github_rest.GitHubError as error:
+            raise RunnerError(_runner_message(error)) from None
 
 
-class GitHubReadClient:
+class GitHubReadClient(github_rest.GitHubRestClient):
+    """The shared client for this runner's reads, failing as this runner's error."""
+
+    same_origin_redirects = _GitHubRedirectHandler
+
     def __init__(self, token: str) -> None:
-        if not token:
-            raise RunnerError("GitHub read token is unavailable")
-        if any(not "!" <= char <= "~" for char in token):
-            raise RunnerError("GitHub read credential is malformed")
-        self._token = token
-        self._opener = urllib.request.build_opener(_GitHubRedirectHandler())
+        try:
+            super().__init__(
+                token,
+                follow_same_origin_redirects=True,
+                user_agent="gnostoa-analyzer-readback",
+            )
+        except github_rest.GitHubError:
+            raise RunnerError(
+                "GitHub read credential is malformed"
+                if token
+                else "GitHub read token is unavailable"
+            ) from None
+
+    @property
+    def policy(self) -> github_rest.Policy:
+        """Return this runner's bounds, read per call so the current ones apply."""
+        return github_rest.Policy(
+            timeout_seconds=_TIMEOUT_SECONDS,
+            attempts=1,
+            max_response_bytes=_MAX_RESPONSE_BYTES,
+            workers=self._workers,
+        )
 
     @classmethod
-    def from_environment(cls) -> GitHubReadClient:
+    def from_environment(cls, **_options: Any) -> GitHubReadClient:
+        """Return a client for the job's token; this runner takes no other options."""
         return cls(os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", ""))
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
-        request = urllib.request.Request(
-            _validate_github_url(url),
-            method="GET",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": _API_VERSION,
-                "User-Agent": "gnostoa-analyzer-readback",
-            },
-        )
-        request.add_unredirected_header("Authorization", f"Bearer {self._token}")
+    def get(self, url: str) -> tuple[Any, dict[str, str]]:
+        """Return one GET's document and headers, failing as this runner's error."""
         try:
-            with self._opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
-                headers = {
-                    key.lower(): value for key, value in response.headers.items()
-                }
-        except urllib.error.HTTPError as exc:
-            raise RunnerError(f"GitHub API HTTP {exc.code}") from exc
-        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
-            raise RunnerError("GitHub API unavailable") from exc
-        except ValueError:
-            # HTTP header validation can include credential bytes in its error.
-            raise RunnerError("GitHub request failed validation") from None
-        if len(raw) > _MAX_RESPONSE_BYTES:
-            raise RunnerError("GitHub API response exceeds bounded size")
-        try:
-            document = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RunnerError("GitHub API returned invalid JSON") from exc
-        return document, headers
+            return super().get(url)
+        except github_rest.GitHubError as error:
+            raise RunnerError(_runner_message(error)) from error
 
 
 def _mapping(value: object, label: str) -> Mapping[str, Any]:

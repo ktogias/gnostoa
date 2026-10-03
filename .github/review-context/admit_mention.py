@@ -29,23 +29,19 @@ import datetime
 import errno
 import hashlib
 import hmac
-import http.client
 import json
 import os
 import pathlib
 import re
 import stat
 import sys
-import threading
-import time
-import urllib.error
-import urllib.request
 from typing import Any, NamedTuple
 
 from chunk_diff import CONTINUATION, LINE_CAP
-from review_context_paths import within
 
-_API = "https://api.github.com"
+from tools import github_rest
+from tools.agent_review_paths import within
+
 _ADMITTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 _MENTION = "@claude"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -99,84 +95,39 @@ class Subject(NamedTuple):
 # Provider access
 
 
-def _token() -> str:
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-    if not token:
-        raise Refused("no provider token is available to re-read the event")
-    return token
-
-
-def _read_answer(request: urllib.request.Request, path: str) -> Any:
-    """Return one decoded provider answer for ``path``, of at most ``MAX_BYTES``.
-
-    Bounded as a whole. The socket timeout bounds one receive, not the exchange, so a
-    provider sending a byte before each expiry -- in the headers or the body -- kept
-    this read alive far past ``_TIMEOUT_SECONDS`` and held the credential-bearing job
-    until its own timeout (CodeAnt). As the collector does, the read runs on a daemon
-    thread that is abandoned at the bound: admission makes a few sequential requests,
-    so at most ``_ATTEMPTS`` per request can be left running, and they end with the
-    step's process. The abandonment raises ``TimeoutError``, which is retried.
-    """
-    finished = threading.Event()
-    outcome: dict[str, Any] = {}
-
-    def run() -> None:
-        """Read the answer, recording what it returned or raised."""
-        try:
-            with urllib.request.urlopen(  # nosec B310 -- literal https API root
-                request, timeout=_TIMEOUT_SECONDS
-            ) as response:
-                outcome["raw"] = response.read(MAX_BYTES + 1)
-        except Exception as error:  # re-raised below, on the caller's thread
-            outcome["error"] = error
-        finally:
-            finished.set()
-
-    threading.Thread(target=run, daemon=True).start()
-    if not finished.wait(_TIMEOUT_SECONDS):
-        raise TimeoutError(f"the provider did not answer {path!r} within the bound")
-    if "error" in outcome:
-        raise outcome["error"]
-    raw = outcome.get("raw", b"")
-    if len(raw) > MAX_BYTES:
-        raise Refused(f"the provider answer for {path!r} exceeded its bound")
-    return json.loads(raw.decode("utf-8"))
+def _policy() -> github_rest.Policy:
+    """Admission's bounds, read when used, so a test can tighten them on this module."""
+    return github_rest.Policy(
+        timeout_seconds=_TIMEOUT_SECONDS,
+        attempts=_ATTEMPTS,
+        retry_sleep_seconds=_RETRY_SECONDS,
+        max_response_bytes=MAX_BYTES,
+    )
 
 
 def provider_get(path: str) -> Any:
     """Return the provider's JSON for ``path``, retried and bounded, or refuse.
 
-    Retried for the same reason every other request in this job is: one transient
-    failure must not decide whether a review happens. Exhausting the attempts refuses
-    rather than admits.
+    Read through the shared client (Decision 0100): bounded as a whole -- a provider
+    sending a byte before each socket timeout cannot hold the credential-bearing job --
+    and in size; retried, because one transient failure must not decide whether a review
+    happens, with a rate limit waited out rather than spent. Exhausting the attempts, or
+    any refusal, refuses rather than admits.
     """
-    request = urllib.request.Request(
-        f"{_API}/{path}",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Authorization": f"Bearer {_token()}",
-            "User-Agent": "gnostoa-admit-mention",
-        },
-        method="GET",
-    )
-    for attempt in range(_ATTEMPTS):
-        try:
-            return _read_answer(request, path)
-        except urllib.error.HTTPError as error:
-            # A refusal or a missing object is the answer, not a transient failure.
-            if error.code < 500 and error.code != 429:
-                raise Refused(f"HTTP {error.code} reading {path!r}") from error
-            if attempt == _ATTEMPTS - 1:
-                raise Refused(f"HTTP {error.code} reading {path!r}") from error
-        except (OSError, http.client.HTTPException, ValueError) as error:
-            # Base classes, not members: every way this read can fail below the
-            # protocol, plus a body that will not decode. Deciding what an error was
-            # may never be the thing that fails.
-            if attempt == _ATTEMPTS - 1:
-                raise Refused(f"{type(error).__name__} reading {path!r}") from error
-        time.sleep(_RETRY_SECONDS * (attempt + 1))
-    raise Refused(f"exhausted attempts reading {path!r}")  # pragma: no cover
+    try:
+        client = github_rest.GitHubRestClient.from_environment(
+            user_agent="gnostoa-admit-mention", policy=_policy()
+        )
+    except github_rest.GitHubError as error:
+        raise Refused(
+            "no usable provider token is available to re-read the event"
+        ) from error
+    try:
+        return client.read_json(client.url(path))
+    except github_rest.GitHubError as error:
+        if error.status is not None:
+            raise Refused(f"HTTP {error.status} reading {path!r}") from error
+        raise Refused(f"{error} reading {path!r}") from error
 
 
 # ---------------------------------------------------------------------------------

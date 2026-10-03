@@ -51,10 +51,8 @@ the repository's default branch, so this file is not candidate-supplied.
 from __future__ import annotations
 
 import base64
-import email.utils
 import errno
 import hashlib
-import http.client
 import json
 import os
 import pathlib
@@ -70,7 +68,9 @@ from collections.abc import Callable
 from typing import Any
 
 from chunk_diff import wrap_long_records
-from review_context_paths import within
+
+from tools import github_rest
+from tools.agent_review_paths import within
 
 API_ROOT = "https://api.github.com"
 FILE_CAP = 300
@@ -148,69 +148,21 @@ PROVIDER_URL = re.compile(
 )
 
 
-class ProviderError(RuntimeError):
-    """A provider response this collection could not use.
-
-    Deliberately not a ``ValueError``: the per-file handler records an unusable
-    *pathname* by catching that, and a truncated or malformed body filed under that
-    label would tell the reviewer a wrong cause, which is worse than a missing file.
-    """
-
-
-class DeadlineReached(ProviderError):
-    """The collection's wall-clock budget ran out before this request."""
-
-
-class UnsafeRedirect(ProviderError):
-    """A redirect that left the pinned endpoint.
-
-    Kept distinct from the other provider errors because it cannot become allowed by
-    trying again, and because "malformed provider body" would be the wrong cause -- and
-    a wrong cause is worse here than a recorded gap.
-    """
-
-
-class _PinnedRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse every redirect.
-
-    ``urlopen`` follows redirects, and the stdlib handler drops only ``content-length``
-    and ``content-type`` when it builds the next request -- so the ``Authorization``
-    header travels to wherever the redirect points, including another origin or plain
-    HTTP. Validating the endpoint at the point of use never saw that target.
-
-    The first version of this guard matched the pinned endpoint *shape*, which is the
-    scheme, the host, and a ``/repos/<owner>/<repo>/contents/...?ref=<40 hex>`` path.
-    Another owner, another repository, another revision and another file all satisfy
-    that, and each is somewhere this collection was never asked about; the bytes would
-    be written into ``base/`` as this repository's pre-change state. The blob-identity
-    check does not save it, because a *listing* request can be redirected the same way:
-    both halves then come from the wrong place and agree with each other.
-
-    A redirect that is safe here would have to be the same repository, the same
-    revision and the same path -- with the scheme and host already pinned, that is the
-    same URL, so there is nothing a redirect can legitimately change and no way to
-    verify one that does. GitHub does redirect a renamed or transferred repository, and
-    that case is refused too: the collection records ``unsafe-redirect`` and the
-    reviewer sees a gap, which is the outcome this collector prefers to bytes whose
-    origin it cannot state.
-    """
-
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: Any,
-        code: int,
-        msg: str,
-        headers: Any,
-        newurl: str,
-    ) -> urllib.request.Request | None:
-        """Refuse every redirect: none can be verified to keep the pinned subject."""
-        raise UnsafeRedirect(f"refusing a redirect from {req.full_url!r} to {newurl!r}")
-
-
-def pinned_redirect_handler() -> _PinnedRedirect:
-    """Return the redirect handler used for every provider request."""
-    return _PinnedRedirect()
+# The transport is the shared GitHub client's engine (Decision 0100), merged from this
+# collector's and four others. These names are this collector's view of it.
+#
+# A provider failure is deliberately not a ``ValueError``: the per-file handler records
+# an unusable *pathname* by catching that, and a truncated or malformed body filed under
+# that label would tell the reviewer a wrong cause, which is worse than a missing file.
+ProviderError = github_rest.GitHubReadError
+# The collection's wall-clock budget ran out before a request.
+DeadlineReached = github_rest.DeadlineReached
+# A refused redirect. Every redirect is refused: the scheme and host are pinned, so a
+# safe redirect would have to be the same URL, and GitHub's redirect of a renamed or
+# transferred repository is refused too -- the collection records `unsafe-redirect`
+# rather than bytes whose origin it cannot state.
+UnsafeRedirect = github_rest.UnsafeRedirect
+pinned_redirect_handler = github_rest.refusing_redirects
 
 
 def safe_relative_path(name: str) -> pathlib.PurePosixPath:
@@ -540,49 +492,22 @@ def _authorization() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def _bounded_pause(seconds: float, deadline: float | None) -> float:
-    """Never sleep past the collection's own deadline."""
-    if deadline is None:
-        return seconds
-    return max(0.0, min(seconds, deadline - time.monotonic()))
-
-
-# Longer than any delay or epoch this collection could honour. Bounding the digits keeps
-# `int()` inside Python's integer-string limit, which a provider header could exceed.
-HINT_DIGITS = 12
-
-
-def _header_number(value: str) -> int | None:
-    """Return ``value`` as a non-negative integer, or None if it is not one.
-
-    Only bounded ASCII digits count. ``str.isdigit()`` alone accepted digits ``int()``
-    rejects -- ``http.client`` decodes headers as latin-1, so ``\\xb2`` passed -- and a
-    value past the integer-string limit raised too. Either ``ValueError`` escaped the
-    retry decision and was recorded as ``unsupported-path``, a provider header filed
-    as a problem with the candidate's pathname. (CodeRabbit)
-    """
-    if value.isascii() and value.isdigit() and len(value) <= HINT_DIGITS:
-        return int(value)
-    return None
-
-
-def _retry_after_seconds(value: str, now: float | None) -> float | None:
-    """Return the wait a ``Retry-After`` value names, or None if it names none.
-
-    HTTP allows delay-seconds or an HTTP-date (RFC 9110). Only digits were read, so a
-    date fell through to the reset header or the fallback wait while Decision 0094 said
-    the header was honoured. A date without a zone is not an HTTP-date.
-    """
-    seconds = _header_number(value)
-    if seconds is not None:
-        return float(seconds)
-    try:
-        when = email.utils.parsedate_to_datetime(value)
-    except (TypeError, ValueError, IndexError):
-        return None
-    if when.tzinfo is None:
-        return None
-    return when.timestamp() - (time.time() if now is None else now)
+def _policy() -> github_rest.Policy:
+    """This collector's bounds, read when used, so a test can tighten one here."""
+    return github_rest.Policy(
+        timeout_seconds=TIMEOUT_SECONDS,
+        attempts=ATTEMPTS,
+        retry_sleep_seconds=RETRY_SLEEP_SECONDS,
+        max_response_bytes=MAX_RESPONSE_BYTES,
+        max_rate_limit_wait=MAX_RATE_LIMIT_WAIT,
+        unhinted_rate_limit_wait=UNHINTED_RATE_LIMIT_WAIT,
+        error_detail_bytes=ERROR_DETAIL_BYTES,
+        error_detail_seconds=ERROR_DETAIL_SECONDS,
+        min_request_seconds=MIN_REQUEST_SECONDS,
+        read_chunk_bytes=READ_CHUNK_BYTES,
+        max_abandoned=MAX_ABANDONED,
+        workers=_ABANDONED,
+    )
 
 
 def rate_limit_pause(
@@ -591,197 +516,34 @@ def rate_limit_pause(
     now: float | None = None,
     detail_deadline: float | None = None,
 ) -> float:
-    """Return how long to wait before retrying ``error``.
-
-    A fixed backoff can spend every attempt inside the window GitHub explicitly told us
-    to wait out, after which the error escapes and the whole review is lost. The
-    provider says when the next request is permitted: ``Retry-After`` in seconds for a
-    secondary limit, ``X-RateLimit-Reset`` as an epoch for a primary one. Either is
-    honoured, bounded by what this collection can afford to wait -- a limit that resets
-    in an hour is not something to sit through inside a job with its own deadline.
-
-    ``detail_deadline`` bounds only the classification's read of the error body, and it
-    is the deadline of the *attempt* that produced the error, not the collection's. The
-    name says which, because passing the collection deadline here once let a request
-    that had already spent its whole per-request allowance buy the diagnostic budget on
-    top of it. How long to *wait* afterwards is bounded by the caller against the
-    collection deadline, which is a different question and a different clock.
-    """
-    if not is_rate_limited(error, detail_deadline):
-        # GitHub sends X-RateLimit-* on ordinary responses too, and the reset is usually
-        # minutes away, so consulting them for a plain 5xx made a transient blip wait
-        # the cap -- about two minutes per request against a ten-minute budget.
-        return float(RETRY_SLEEP_SECONDS * (attempt + 1))
-    headers: Any = error.headers or {}
-    retry_after = str(headers.get("retry-after", "")).strip()
-    hinted = _retry_after_seconds(retry_after, now)
-    if hinted is None:
-        reset = _header_number(str(headers.get("x-ratelimit-reset", "")).strip())
-        if reset is not None:
-            hinted = float(reset - (time.time() if now is None else now))
-    if hinted is None:
-        # A limit this collection has recognised, with nothing to say when it lifts.
-        # The transient backoff belongs to the *unrecognised* case above; using it here
-        # spent every attempt inside the window the provider had just announced.
-        return float(min(UNHINTED_RATE_LIMIT_WAIT, MAX_RATE_LIMIT_WAIT))
-    return float(max(0.0, min(hinted, MAX_RATE_LIMIT_WAIT)))
+    """Return how long to wait before retrying ``error``, under this policy."""
+    return github_rest.rate_limit_pause(error, attempt, now, detail_deadline, _policy())
 
 
 def is_rate_limited(
     error: urllib.error.HTTPError, detail_deadline: float | None = None
 ) -> bool:
-    """Return whether a 4xx is GitHub reporting a rate limit rather than a refusal.
-
-    A primary rate limit arrives as 403 with the remaining count at zero, and a
-    secondary one as 403 or 429 with ``retry-after``. Treating every 403 as permanent
-    aborted the review on the failure most likely to occur when a Pull Request is large.
-
-    GitHub also documents a secondary limit arriving with *neither* header, identified
-    by its message alone, so a bounded prefix of the body is read as well. Header-only
-    classification sent that case down the permanent-refusal path, and on a large Pull
-    Request -- which is when secondary limits happen -- every later base lookup became
-    a gap. The bounded read follows ``ci/review_github_current_state.py``, which
-    already classifies GitHub errors this way in this repository.
-    """
-    if error.code == 429:
-        return True
-    if error.code != 403:
-        return False
-    headers: Any = error.headers or {}
-    remaining = str(headers.get("x-ratelimit-remaining", "")).strip()
-    if remaining == "0" or bool(str(headers.get("retry-after", "")).strip()):
-        return True
-    return "rate limit" in _error_detail(error, detail_deadline).lower()
+    """Return whether a 4xx is GitHub reporting a rate limit rather than a refusal."""
+    return github_rest.is_rate_limited(error, detail_deadline, _policy())
 
 
-def _error_detail(error: urllib.error.HTTPError, deadline: float | None = None) -> str:
-    """Return a bounded prefix of ``error``'s body, read at most once.
-
-    Reading it is destructive, and this classification runs **twice** for one error:
-    once in the retry condition and again inside ``rate_limit_pause``. The first call
-    consumed the body, so the second saw nothing and answered "not a rate limit" --
-    and the retry then used the fixed backoff, ignoring ``X-RateLimit-Reset``, which
-    GitHub sends on every response. Both attempts landed back inside the window, which
-    GitHub warns can escalate a secondary limit. The comment that introduced this read
-    claimed to be the body's only consumer; it was not, and the prefix is cached on the
-    error so the two calls cannot disagree.
-
-    The read runs on the abandoning helper because it is a blocking receive on a live
-    socket like any other. An unreadable, already-consumed or too-slow body yields an
-    empty prefix, which leaves the header answer standing rather than a guess.
-    """
-    cached = getattr(error, "gnostoa_error_detail", None)
-    if cached is not None:
-        return str(cached)
-    # Whatever is left, never more than the fixed cap, and nothing at all when the
-    # budget is gone. A per-error cap alone bounds the read without honouring the
-    # deadline this collection states, and each classified error would add its own on
-    # top of a budget already spent.
-    allowed = ERROR_DETAIL_SECONDS
-    if deadline is not None:
-        allowed = min(allowed, deadline - time.monotonic())
-    if allowed <= 0:
-        _remember_error_detail(error, "")
-        return ""
-    try:
-        detail: str = _abandon_after(
-            allowed,
-            "error body",
-            lambda: error.read(ERROR_DETAIL_BYTES),
-        ).decode("utf-8", errors="replace")
-    except (OSError, http.client.HTTPException, ValueError, ProviderError):
-        # Base classes, not members. This file already records why: naming the types
-        # individually missed one four times in a row on the request path, and this
-        # read repeated the mistake immediately -- `http.client.IncompleteRead` is an
-        # `HTTPException` and neither an `OSError` nor a `ValueError`, so a truncated
-        # error body escaped the classification, the retry and the per-file recovery,
-        # and ended the collection. Deciding what an error *was* may never be the
-        # thing that fails.
-        detail = ""
-    _remember_error_detail(error, detail)
-    return detail
-
-
-def _remember_error_detail(error: urllib.error.HTTPError, detail: str) -> None:
-    """Record the prefix so the second classification of one error agrees."""
-    try:
-        error.gnostoa_error_detail = detail  # type: ignore[attr-defined]
-    except AttributeError:  # pragma: no cover -- HTTPError accepts attributes
-        pass
-
-
-def _retry_pause(
-    error: Exception,
-    url: str,
-    attempt: int,
-    attempt_deadline: float,
-    deadline: float | None,
-) -> float:
-    """Return how long to wait before retrying after ``error``, or raise it as final.
-
-    Called for an HTTP error the request loop has not already answered, a malformed
-    body, or a transport failure. A refused redirect never reaches it.
-    """
-    final = attempt == ATTEMPTS - 1
-    if isinstance(error, urllib.error.HTTPError):
-        if error.code < 500 and not is_rate_limited(error, attempt_deadline):
-            # A genuine refusal stops at once. Retrying an authorisation failure
-            # only delays the same answer.
-            raise ProviderError(f"HTTP {error.code} for {url!r}") from error
-        if final:
-            raise ProviderError(f"HTTP {error.code} for {url!r}") from error
-        # The provider's own deadline, when it gave one.
-        return _bounded_pause(
-            rate_limit_pause(error, attempt, detail_deadline=attempt_deadline),
-            deadline,
-        )
-    if final and isinstance(error, ProviderError):
-        # It already named its own cause. `fetch_json` raises a ProviderError for a
-        # read that outlasts the request bound as well as for a body that will not
-        # decode, and relabelling the first as the second put a wrong cause in
-        # base.manifest: a slow provider reported to the reviewer as one sending
-        # corrupt bytes. A gap this collection cannot close is stated as a gap; a cause
-        # it does know is not overwritten with a different one.
-        raise error
-    if final and isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
-        # A malformed body is as transient as a dropped connection; only a persistent
-        # one is the provider's answer. Classified here as well as at the read, so it
-        # cannot matter which layer noticed: a JSONDecodeError is a ValueError, and
-        # reaching the per-file handler as one would file a transport problem as an
-        # unusable pathname.
-        raise ProviderError(f"malformed provider body for {url!r}") from error
-    if final:
-        # urlopen wraps connection errors only while it is making the request. A
-        # connection dropped during the body read surfaces unwrapped, as
-        # http.client.IncompleteRead or ConnectionResetError, and losing the review
-        # to one of those is the outcome this retry exists to remove.
-        #
-        # `OSError` and `HTTPException` between them are every way this request can
-        # fail below the protocol: URLError, ConnectionError, TimeoutError and the
-        # ssl errors are all OSError, and IncompleteRead is an HTTPException. Naming
-        # the types individually missed one four times in a row -- a TLS failure
-        # during the body read was the last -- so the base classes are named instead
-        # of the members. Nothing raw leaves here.
-        raise ProviderError(f"{type(error).__name__} for {url!r}") from error
-    return _bounded_pause(RETRY_SLEEP_SECONDS * (attempt + 1), deadline)
+def request_timeout(deadline: float | None) -> float:
+    """Return the timeout for one request, never longer than the budget that remains."""
+    return github_rest.request_timeout(deadline, _policy())
 
 
 def provider_json(url: str, deadline: float | None = None) -> Any:
     """Return the provider's JSON for ``url``, or the transport sentinel on 404.
 
     `None` is the internal transport sentinel for "the provider answered not-found" and
-    nothing else: it settles no question about the repository. An authentication failure
-    or a refusal must not be indistinguishable from it either, since that would let the
-    review continue while the manifest attributed a missing file to the wrong cause.
-    What the base does or does not hold is settled by the comparison.
+    nothing else: it settles no question about the repository. What the base does or
+    does not hold is settled by the comparison.
 
-    A **transient** failure is retried instead of propagating. The workflow step retries
-    its own requests for exactly this reason, but the collection makes one listing
-    request per changed directory plus one contents request per changed file -- up to
-    ``FILE_CAP`` of them -- so a single 502 or timeout anywhere in that sequence used
-    to end the step and cost the whole review, with the risk growing as the Pull Request
-    grew. Server errors, rate limits and transport failures are retried; everything else
-    still propagates on the first attempt.
+    A **transient** failure is retried instead of propagating: the collection makes one
+    listing request per changed directory plus one contents request per changed file,
+    so a single 502 or timeout anywhere in that sequence would otherwise cost the whole
+    review. Server errors, rate limits and transport failures are retried within the
+    collection deadline; everything else propagates on the first attempt.
     """
     # Checked here, at the point of use, and before any environment lookup. The value
     # that reaches the request is what matters, and trusting it because an earlier
@@ -792,128 +554,31 @@ def provider_json(url: str, deadline: float | None = None) -> Any:
     request = urllib.request.Request(
         url,
         headers={
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "Accept": github_rest.JSON_MEDIA_TYPE,
+            "X-GitHub-Api-Version": github_rest.API_VERSION,
             **_authorization(),
         },
         method="GET",
     )
-    for attempt in range(ATTEMPTS):
-        if deadline is not None and time.monotonic() >= deadline:
-            # Checking the clock only between files bounds nothing: three attempts,
-            # each with its own timeout and a rate-limit sleep, can run well past the
-            # budget while collecting one file. The number the collection states is
-            # only a number it keeps if it reaches here.
-            raise DeadlineReached(f"collection deadline reached before {url!r}")
-        # Fixed before the request, so it still means "this attempt" once the request
-        # has consumed it. Reading an error body is part of the exchange that produced
-        # the error, and bounding it against the *collection* deadline granted a
-        # request that had already spent its whole allowance a fresh diagnostic budget
-        # on top of it -- so the exchange outlasted the per-request bound this path
-        # promises while the collection's own budget still looked healthy.
-        timeout = request_timeout(deadline)
-        attempt_deadline = time.monotonic() + timeout
-        try:
-            return fetch_json(url, request, timeout)
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                return None
-            pause = _retry_pause(error, url, attempt, attempt_deadline, deadline)
-        except UnsafeRedirect:
-            # Retrying cannot make it allowed, and it is not a malformed body.
-            raise
-        except (
-            ProviderError,
-            json.JSONDecodeError,
-            UnicodeDecodeError,
-            OSError,
-            http.client.HTTPException,
-        ) as error:
-            pause = _retry_pause(error, url, attempt, attempt_deadline, deadline)
-        time.sleep(pause)
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
-def request_timeout(deadline: float | None) -> float:
-    """Return the timeout for one request, never longer than the budget that remains.
-
-    A request starting near the deadline could otherwise be given the full per-request
-    timeout, and the collection would pass the budget it states before it could record
-    what it did not reach.
-
-    The floor is `MIN_REQUEST_SECONDS`, and it is the exact amount by which the
-    deadline can be crossed: a timeout of zero would refuse a request the loop has
-    already decided to make. The loop refuses to *start* one after the deadline, so the
-    overshoot is one request's floor and no more.
-    """
-    if deadline is None:
-        return float(TIMEOUT_SECONDS)
-    return max(
-        MIN_REQUEST_SECONDS, min(float(TIMEOUT_SECONDS), deadline - time.monotonic())
+    # `fetch_json` is resolved when called, so this module's one attempt is the one used.
+    return github_rest.read_with_retries(
+        url,
+        request,
+        lambda target, prepared, timeout: fetch_json(target, prepared, timeout),
+        deadline=deadline,
+        missing_ok=True,
+        policy=_policy(),
     )
 
 
-# At most this many abandoned workers may still be running. Each keeps its socket until
-# its receive ends or the process does, and the deadline alone bounded them only by the
-# time each cost: about 20 request workers, and up to about 120 if every error body
-# stalled its read. Past the cap a request fails at once instead. (CodeAnt)
+# At most this many of this collector's abandoned workers may still be running. Each
+# keeps its socket until its receive ends or the process does, and the deadline alone
+# bounded them only by the time each cost: about 20 request workers, and up to about
+# 120 if every error body stalled its read. Past the cap a request fails at once
+# instead. (CodeAnt)
 MAX_ABANDONED = 16
-# The abandoned workers still running; pruned before each new one is counted.
+# This collector's abandoned workers; pruned before each new one is counted.
 _ABANDONED: list[threading.Thread] = []
-
-
-def _abandon_after(seconds: float, url: str, work: Callable[[], Any]) -> Any:
-    """Run ``work`` on a daemon thread and stop waiting for it after ``seconds``.
-
-    The read loop cannot bound the part of a request that happens inside ``open()``.
-    CPython reads the status line and headers as up to ``_MAXHEADERS + 1`` lines of
-    ``_MAXLINE`` bytes, and every byte may arrive in its own receive, each bounded by
-    the socket timeout and by nothing else -- about six million receives before the
-    limit is structural. A provider dripping header bytes therefore keeps ``open()``
-    alive past every deadline this collection states, the between-files deadline check
-    is never reached, and the step hits its job timeout having written no manifest at
-    all. That is the outcome the whole bounded collection exists to prevent, and no
-    arithmetic inside the loop can reach it: the caller has to stop waiting.
-
-    The abandoned thread keeps its socket until its receive ends or the process does.
-    At most ``MAX_ABANDONED`` may be running at once; past that a request fails at once
-    as a provider error, so a stalling provider cannot accumulate workers without
-    bound. A worker that finishes frees its place.
-    """
-    _ABANDONED[:] = [worker for worker in _ABANDONED if worker.is_alive()]
-    if len(_ABANDONED) >= MAX_ABANDONED:
-        raise ProviderError(
-            f"not requesting {url!r}: {len(_ABANDONED)} earlier requests are still "
-            "running past their bound"
-        )
-    finished = threading.Event()
-    outcome: dict[str, Any] = {}
-
-    def run() -> None:
-        """Record what ``work`` returned or raised, then signal that it finished."""
-        try:
-            outcome["value"] = work()
-        except Exception as error:
-            outcome["error"] = error
-        finally:
-            finished.set()
-
-    worker = threading.Thread(target=run, daemon=True)
-    worker.start()
-    if not finished.wait(seconds):
-        _ABANDONED.append(worker)
-        raise ProviderError(f"timed out while requesting {url!r}")
-    error = outcome.get("error")
-    if error is not None:
-        # Re-raised as itself: HTTPError carries the status the retry logic reads, and
-        # a ProviderError carries the cause it established.
-        raise error
-    if "value" not in outcome:
-        # Neither a value nor an exception can only mean the worker died on something
-        # that is not an Exception. Returning None here would be read as the
-        # transport sentinel and nothing else.
-        raise ProviderError(f"request for {url!r} ended without a result")
-    return outcome["value"]
 
 
 def fetch_json(
@@ -921,82 +586,19 @@ def fetch_json(
     request: urllib.request.Request,
     timeout: float | None = None,
 ) -> Any:
-    """Perform one request. The transport sentinel is produced only in the caller."""
+    """Perform one request, bounded as a whole. The sentinel is produced only above."""
     limit = float(TIMEOUT_SECONDS if timeout is None else timeout)
-    return _abandon_after(limit, url, lambda: _read_json(url, request, limit))
+    # `_read_json` is resolved when called: it is the one attempt this bound encloses.
+    return github_rest.abandon_after(
+        limit, url, lambda: _read_json(url, request, limit), _policy()
+    )
 
 
 def _read_json(url: str, request: urllib.request.Request, limit: float) -> Any:
-    """Perform the request itself, bounded between receives."""
+    """Perform the request itself, bounded between receives, and decode it."""
     opener = urllib.request.build_opener(pinned_redirect_handler())
-    # The socket timeout bounds one receive; the check between chunks bounds their sum.
-    # Neither bounds the request on its own: the timeout is set once, at open(), and a
-    # chunk arriving just before the absolute stop is followed by a receive given a
-    # *fresh* full socket timeout, so a request could run to twice the bound it states
-    # and overrun a collection deadline computed from that bound. Half the budget goes
-    # to the stop and half to the single receive that may straddle it, which makes
-    # `limit` a bound the request cannot exceed rather than one it usually respects.
-    per_receive = limit / 2
-    stop_at = time.monotonic() + (limit - per_receive)
-    with opener.open(  # nosec B310 -- scheme and host are pinned by PROVIDER_URL, redirects included
-        request, timeout=per_receive
-    ) as response:
-        # A socket timeout limits each receive, not the exchange: a provider sending one
-        # byte before each expiry keeps this alive indefinitely while neither the
-        # request timeout nor the collection deadline ever fires. The timeout is an
-        # absolute bound on the whole request, checked between chunks.
-        chunks = bytearray()
-        while True:
-            # Checked before the receive as well as after it. `open()` consumes part of
-            # the same budget -- connecting, the handshake and the headers all happen
-            # in there -- so a request whose stop has already passed would otherwise be
-            # granted one more full receive on top of it.
-            if time.monotonic() >= stop_at:
-                raise ProviderError(f"timed out while reading {url!r}")
-            # `read(n)` may perform several socket receives while trying to fill n, so
-            # a provider dripping bytes stays inside one call past every deadline.
-            # `read1` returns after a single underlying receive, which is what makes the
-            # check between chunks a bound rather than a hope.
-            reader = getattr(response, "read1", response.read)
-            chunk = reader(READ_CHUNK_BYTES)
-            if not chunk:
-                break
-            chunks += chunk
-            if len(chunks) > MAX_RESPONSE_BYTES:
-                # Checked on every chunk, so what is held is bounded by the cap plus
-                # one chunk rather than by the provider's willingness to stop.
-                raise ProviderError(
-                    f"provider body exceeded {MAX_RESPONSE_BYTES} bytes for {url!r}"
-                )
-            if time.monotonic() >= stop_at:
-                raise ProviderError(f"timed out while reading {url!r}")
-        raw = bytes(chunks)
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception as error:
-        # Enumerating what a decode can raise has failed four times here.
-        # `JSONDecodeError` missed a body that is not UTF-8 at all; naming that pair
-        # missed the plain `ValueError` CPython raises past
-        # `sys.get_int_max_str_digits()`; naming `ValueError` missed `RecursionError`,
-        # which is a `RuntimeError` and comes from input as ordinary as `[` repeated a
-        # hundred thousand times -- well under the size cap, and enough to end the whole
-        # collection with no manifest written.
-        #
-        # The only statement inside this guard is the decode, and every way it can fail
-        # means the same thing: the provider's answer is not usable. Naming that
-        # directly costs nothing a narrower clause was buying, and stops this file
-        # discovering a fifth member.
-        # Raised as a ProviderError so the per-file handler cannot file a truncated
-        # body as an unusable pathname.
-        raise ProviderError(f"malformed provider body for {url!r}") from error
-    if payload is None:
-        # `None` is this path's answer for 404 and nothing else, and `json.loads`
-        # returns the same object for a body of `null`. A 200 carrying `null` would
-        # otherwise reach the caller as "not at the merge base" -- a provider failure
-        # recorded as repository state, which is what the listing-shape check exists
-        # to prevent and could not see, because it tests for None first.
-        raise ProviderError(f"provider body was null for {url!r}")
-    return payload
+    raw, _ = github_rest.exchange_once(opener, request, limit, _policy())
+    return github_rest.decode_json(raw, url)
 
 
 def blob_id(content: bytes) -> str:

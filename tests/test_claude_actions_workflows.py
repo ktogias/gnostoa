@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import base64
 import contextlib
+import email.message
 import email.utils
 import errno
 import hashlib
@@ -25,11 +26,15 @@ import time
 import tokenize
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Self, TypeVar, cast
+from unittest import mock
 
+from tools import agent_review_claude_code as claude_adapter
+from tools import agent_review_report as report_core
 from tools.knowledge_common import load_yaml
 
 T = TypeVar("T")
@@ -178,6 +183,12 @@ def _references_a_secret(text: str) -> bool:
 
 BASE_COLLECTOR = ROOT / ".github" / "review-context" / "build_review_context.py"
 PUBLISHER = ROOT / ".github" / "review-context" / "publish_report.py"
+POSTER = ROOT / ".github" / "review-context" / "post_report.py"
+# The jobs that post a finished review into the thread it was asked in (Decision 0098).
+_POSTING_JOBS = {
+    "post-to-pull-request": {"contents": "read", "pull-requests": "write"},
+    "post-to-issue": {"contents": "read", "issues": "write"},
+}
 
 
 def _closes_fence(line: str, fence: str) -> bool:
@@ -218,7 +229,21 @@ def _load_script(path: pathlib.Path) -> Any:
 # Resolved absolutely so the behavioural test never depends on PATH order. Only sh
 # is needed now: the collection step is executed against a stubbed provider rather
 # than against a local repository.
+
+
+class _Answer(io.BytesIO):
+    """A provider answer as an opener returns one: a buffered body, with headers."""
+
+    def __init__(self, body: bytes, headers: dict[str, str]) -> None:
+        super().__init__(body)
+        self.headers = headers
+
+
 _SH = shutil.which("sh")
+# The workflow's Python steps run with PYTHONPATH set to the protected checkout
+# (`${{ github.workspace }}`), so a harness running a step's committed text sets it to
+# the repository root, as GitHub renders it.
+_STEP_PYTHONPATH = str(ROOT)
 
 
 def _workflow_paths(directory: Path) -> list[Path]:
@@ -446,8 +471,17 @@ def _checkouts(workflow: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _protected_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
-    """Return the single checkout the mention job performs."""
-    checkouts = _checkouts(workflow)
+    """Return the single checkout the reviewer job performs.
+
+    The posting jobs check out the same protected revision for their script; their
+    checkouts are pinned by test_the_report_is_posted_from_least_privilege_jobs and by
+    test_no_candidate_tree_is_materialised, which holds every checkout in the file.
+    """
+    checkouts = [
+        step
+        for step in workflow["jobs"]["claude"].get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
     if len(checkouts) != 1:
         raise AssertionError(f"expected exactly one checkout, found {len(checkouts)}")
     return checkouts[0]
@@ -787,13 +821,6 @@ def _triggers(workflow: Any) -> dict[Any, Any]:
     return cast("dict[Any, Any]", found)
 
 
-def _single_job(workflow: dict[str, Any]) -> dict[str, Any]:
-    jobs = list(workflow["jobs"].values())
-    if len(jobs) != 1:
-        raise AssertionError(f"expected exactly one job, found {len(jobs)}")
-    return cast("dict[str, Any]", jobs[0])
-
-
 class WorkflowEnumerationTests(unittest.TestCase):
     """Workflow enumeration tests."""
 
@@ -853,20 +880,23 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
     def test_claude_workflows_keep_minimal_token_permissions(self) -> None:
         """Claude workflows keep minimal token permissions."""
+        # Per job, exactly (Decision 0098). The reviewer holds no write scope and no
+        # `id-token` (#352); each posting job holds one write scope and nothing else.
         expected = {
-            MENTION_WORKFLOW: {
+            "claude": {
                 "contents": "read",
                 "pull-requests": "read",
                 "issues": "read",
-                "id-token": "write",
                 "actions": "read",
             },
+            **_POSTING_JOBS,
         }
-        for path, permissions in expected.items():
-            with self.subTest(workflow=path.name):
-                workflow = load_yaml(path)
-                self.assertNotIn("permissions", workflow)
-                self.assertEqual(_single_job(workflow)["permissions"], permissions)
+        workflow = load_yaml(MENTION_WORKFLOW)
+        self.assertNotIn("permissions", workflow)
+        self.assertEqual(set(expected), set(workflow["jobs"]))
+        for name, permissions in expected.items():
+            with self.subTest(job=name):
+                self.assertEqual(permissions, workflow["jobs"][name]["permissions"])
 
     def test_mention_job_requires_trusted_author_association(self) -> None:
         """Decision 0093's trusted-association gate now lives in two places with two
@@ -884,7 +914,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             self.assertIn(association, condition)
             self.assertIn(association, ADMIT_MENTION.read_text(encoding="utf-8"))
         workflow = load_yaml(MENTION_WORKFLOW)
-        job = _single_job(workflow)
+        job = workflow["jobs"]["claude"]
         self.assertIsInstance(job.get("timeout-minutes"), int)
         # A shared group would let an unrelated comment replace a pending request.
         self.assertNotIn("concurrency", workflow)
@@ -1098,9 +1128,15 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         text = MENTION_WORKFLOW.read_text(encoding="utf-8")
         # The head may still be named in the prompt and in the collection step; what
         # must not happen is a checkout of it.
+        # Every checkout in the file, the posting jobs' included: the protected revision,
+        # never a ref, and no credential left behind in the working tree.
         for checkout in _checkouts(workflow):
             with self.subTest(checkout=str(checkout.get("name", ""))):
                 self.assertNotIn("outputs.head_sha", str(checkout.get("with", "")))
+                self.assertNotIn("ref", checkout.get("with", {}))
+                self.assertIs(
+                    False, checkout.get("with", {}).get("persist-credentials")
+                )
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))
         self.assertNotIn("--add-dir", args)
         # No local materialisation of the head by any other means either.
@@ -1149,7 +1185,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "result": "Reached the maximum number of turns.",
             },
         ]
-        report, complete = publisher.final_report(failed)
+        report, complete = claude_adapter.final_report(failed)
         self.assertFalse(complete, "a failed run was reported as a complete review")
         # The text is still surfaced -- it is the only evidence of what happened -- but
         # it is not the reviewer's verdict.
@@ -1171,14 +1207,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 turns = [
                     {"type": "result", "result": "diagnostic text", **envelope},
                 ]
-                _, complete = publisher.final_report(turns)
+                _, complete = claude_adapter.final_report(turns)
                 self.assertFalse(complete, f"{label} did not mark the run incomplete")
         # An envelope that declares nothing is unknown, not successful. This repository
         # established the native shape in
         # knowledge/assessments/native-structured-review-handoff.md -- a finished run
         # carries subtype "success" with is_error false -- and retains a mutant showing
         # that ignoring the success subtype fails its oracle.
-        _, complete = publisher.final_report(
+        _, complete = claude_adapter.final_report(
             [{"type": "result", "result": "looks like a report"}]
         )
         self.assertFalse(complete, "an envelope with no subtype was called successful")
@@ -1190,20 +1226,20 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "message": {"content": [{"type": "text", "text": "still working"}]},
             }
         ]
-        _, complete = publisher.final_report(narration)
+        _, complete = claude_adapter.final_report(narration)
         self.assertFalse(complete, "a run with no result envelope was called complete")
         # Nor is an envelope that states the success subtype but not `is_error`. The
         # rule is that success is *stated*: a missing flag is the absence of a failure
         # signal, which this function's own contract refuses to read as success, and
         # the native envelope always carries it. The clean fixture below used to omit
         # it, so the test itself encoded the inference it was meant to forbid.
-        _, complete = publisher.final_report(
+        _, complete = claude_adapter.final_report(
             [{"type": "result", "subtype": "success", "result": "partial"}]
         )
         self.assertFalse(complete, "a missing is_error was read as success")
         for flag in (None, 0, "", "false"):
             with self.subTest(is_error=flag):
-                _, complete = publisher.final_report(
+                _, complete = claude_adapter.final_report(
                     [{"type": "result", "subtype": "success", "is_error": flag}]
                 )
                 self.assertFalse(complete, f"is_error={flag!r} was read as false")
@@ -1216,7 +1252,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "result": "real findings",
             }
         ]
-        report, complete = publisher.final_report(good)
+        report, complete = claude_adapter.final_report(good)
         self.assertEqual(("real findings", True), (report, complete))
 
     def test_admission_forwards_every_admitted_trigger(self) -> None:
@@ -1463,17 +1499,529 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 time.sleep(2)
                 return b"{}"
 
-        previous = module.urllib.request.urlopen
-        module.urllib.request.urlopen = lambda *_a, **_k: Dripping()
-        os.environ.setdefault("GH_TOKEN", "stub")  # nosec B105 -- placeholder
+        opener = mock.MagicMock()
+        opener.open.side_effect = lambda *_a, **_k: Dripping()
         started = time.monotonic()
-        try:
-            with self.assertRaises(module.Refused):
-                module.provider_get("repos/o/r/issues/1")
-        finally:
-            module.urllib.request.urlopen = previous
+        with (
+            mock.patch.object(urllib.request, "build_opener", return_value=opener),
+            mock.patch.dict(os.environ, {"GH_TOKEN": "stub"}),  # nosec B105 -- placeholder
+            self.assertRaises(module.Refused),
+        ):
+            module.provider_get("repos/o/r/issues/1")
         # Three attempts of 0.2 s each, with room for scheduling -- never the drip's 2 s.
         self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_the_reviewer_job_holds_no_write_capable_token(self) -> None:
+        """The job's `GITHUB_TOKEN` was read-only, but `id-token: write` let the pinned
+        action exchange OIDC for a Claude GitHub App installation token with
+        `contents`, `pull_requests` and `issues` **write** (`src/github/token.ts`).
+        Agent mode then wrote that token into the checkout's `.git/config` as the
+        remote URL (`src/github/operations/git-config.ts:132-133`), which the
+        reviewer's `Read` tool could reach (#352). Passing the job's own read-only
+        token skips the exchange entirely (`token.ts`: `OVERRIDE_GITHUB_TOKEN`); a
+        read-only `GITHUB_TOKEN` passes the action's permission check, measured live
+        (HTTP 200, `admin`). `.git/**` is denied as well, in depth.
+        """
+        workflow = load_yaml(MENTION_WORKFLOW)
+        job = workflow["jobs"]["claude"]
+        self.assertEqual(
+            {
+                "contents": "read",
+                "pull-requests": "read",
+                "issues": "read",
+                # Downloading the relayed event identity from the trigger's run.
+                "actions": "read",
+            },
+            job["permissions"],
+        )
+        claude = _claude_step(workflow)
+        self.assertEqual("${{ github.token }}", claude["with"].get("github_token"))
+        # Used only by the OIDC exchange, which no longer happens.
+        self.assertNotIn("additional_permissions", claude["with"])
+        denied = json.loads(str(claude["with"]["settings"]))["permissions"]["deny"]
+        for tool in ("Read", "Grep", "Glob"):
+            with self.subTest(tool=tool):
+                self.assertIn(f"{tool}(**/.git/**)", denied)
+        # Under workflow_run the action never installs its CI server: it needs an
+        # entity event on a Pull Request (src/mcp/install-mcp-server.ts). The grants
+        # named tools that could not exist.
+        self.assertNotIn("mcp__github_ci", str(claude["with"].get("claude_args", "")))
+
+    def test_the_report_is_posted_from_least_privilege_jobs(self) -> None:
+        """Decision 0098: the reviewer stays read-only, and a finished review reaches
+        the thread it was asked in through a separate job per item kind. Each holds
+        one write scope, runs no model, names no environment and no secret, checks
+        out the protected revision without credentials, and posts with a
+        repository-owned script. A comment made with `GITHUB_TOKEN` starts no
+        workflow run, so a posted review cannot re-trigger the relay.
+        """
+        workflow = load_yaml(MENTION_WORKFLOW)
+        jobs = workflow["jobs"]
+        self.assertEqual({"claude", *_POSTING_JOBS}, set(jobs))
+        outputs = jobs["claude"].get("outputs", {})
+        for name in ("item_number", "pull_number", "head_sha", "review_outcome"):
+            with self.subTest(output=name):
+                self.assertIn(name, outputs)
+        for name, permissions in _POSTING_JOBS.items():
+            with self.subTest(job=name):
+                job = jobs[name]
+                self.assertEqual("claude", job.get("needs"))
+                self.assertEqual(permissions, job.get("permissions"))
+                self.assertNotIn("environment", job)
+                text = json.dumps(job)
+                self.assertNotIn("secrets.", text)
+                condition = " ".join(str(job.get("if", "")).split())
+                self.assertIn("always()", condition)
+                self.assertIn("github.ref == format('refs/heads/{0}'", condition)
+                self.assertIn("needs.claude.outputs.item_number != ''", condition)
+                kind = "!=" if name == "post-to-pull-request" else "=="
+                self.assertIn(f"needs.claude.outputs.pull_number {kind} ''", condition)
+                for step in job.get("steps", []):
+                    uses = str(step.get("uses", ""))
+                    if uses:
+                        self.assertRegex(uses, r"@[0-9a-f]{40}( |$)")
+                    if uses.startswith("actions/checkout@"):
+                        self.assertIs(
+                            False, step.get("with", {}).get("persist-credentials")
+                        )
+                        self.assertNotIn("ref", step.get("with", {}))
+                runs = " ".join(
+                    str(step.get("run", "")) for step in job.get("steps", [])
+                )
+                self.assertIn("python3 .github/review-context/post_report.py", runs)
+
+    def test_a_comment_is_rendered_from_trusted_facts_and_neutralised_text(
+        self,
+    ) -> None:
+        """What reaches a public thread is model output shaped by untrusted content.
+        The step summary masked secrets and rendered nothing outside its fence; a
+        comment made through the API gets no masking. So the text is kept literal
+        in a fence no line can close, every mention is neutralised so no bot acts
+        on it, bidirectional and invisible characters are made visible, anything
+        shaped like a credential is redacted, and the whole body stays under the
+        provider's 65,536-character limit. Only trusted facts -- the run, the
+        reviewed revision, the truncation and redaction notices -- sit outside the
+        fence.
+        """
+        poster = _load_script(POSTER)
+        run_url = "https://github.com/o/r/actions/runs/123"
+        token = "ghp_" + "A" * 36
+        text = (
+            "## Findings\n"
+            "@claude please and @codex review and @org/team\n"
+            "```\n![x](https://evil/?q=1)\n```\n"
+            "rtl \u202eevil\u202c and zero\u200bwidth\n"
+            f"leaked {token}\n"
+        )
+        body = poster.render_comment(
+            "complete", text, run_url=run_url, head_sha="a" * 40
+        )
+        fence_at = body.index("~~~~") if "~~~~" in body else body.index("```")
+        header, fenced = body[:fence_at], body[fence_at:]
+        self.assertIn(run_url, header)
+        self.assertIn("a" * 40, header)
+        self.assertIn("redacted", header.lower())
+        self.assertNotIn(token, body)
+        self.assertNotIn("@claude", body)
+        self.assertNotIn("@codex", body)
+        self.assertNotIn("\u202e", body)
+        self.assertNotIn("\u200b", body)
+        self.assertIn("\\u202e", fenced)
+        # Nothing from the report reaches the header.
+        self.assertNotIn("Findings", header)
+        # Worst cases stay under the limit: one huge backtick run, and 4-byte text.
+        for label, worst, cut in (
+            # Capped before fencing, so it is short and never truncated.
+            ("backticks", "`" * 70000, False),
+            ("four-byte", "\U0001f600" * 70000, True),
+            ("mentions", "@a " * 40000, True),
+        ):
+            with self.subTest(case=label):
+                rendered = poster.render_comment(
+                    "complete", worst, run_url=run_url, head_sha="a" * 40
+                )
+                self.assertLess(len(rendered.encode("utf-16-le")) // 2, 65536)
+                notes = rendered[: rendered.index("```")]
+                self.assertEqual(cut, "truncated" in notes)
+        # A credential split by an invisible character is still a credential: the
+        # escape that makes the character visible must not also make the token survive.
+        token = "ghp_" + "B" * 36
+        for split in ("\u200b", "\u202e", "\u2060\ufeff"):
+            with self.subTest(split=repr(split)):
+                hidden = poster.render_comment(
+                    "complete",
+                    f"see {token[:10]}{split}{token[10:]} here",
+                    run_url=run_url,
+                    head_sha="a" * 40,
+                )
+                self.assertNotIn("B" * 20, hidden)
+                self.assertIn("[redacted: GitHub token]", hidden)
+        # Overlapping shapes, and shapes at either edge of an invisible character,
+        # leave nothing of the token behind (Codacy on #353).
+        for case in (
+            f"https://x-access-token:{'ghs_' + 'C' * 36}@github.com/o/r",
+            f"\u200b{'ghs_' + 'C' * 36}",
+            f"{'ghs_' + 'C' * 36}\u200b",
+            f"{'ghs_' + 'C' * 36}{'ghs_' + 'C' * 36}",
+            f"{'AKIA' + 'C' * 16}{'C' * 30}",
+            f"{'sk-ant-' + 'C' * 20}{'ghp_' + 'C' * 36}",
+        ):
+            with self.subTest(overlap=repr(case[:24])):
+                hidden = poster.render_comment(
+                    "complete", case, run_url=run_url, head_sha="a" * 40
+                )
+                self.assertNotIn("C" * 12, hidden)
+        # A long run of matches is walked once, not once per match.
+        started = time.monotonic()
+        poster.sanitise("AKIA" * 50000)
+        self.assertLess(time.monotonic() - started, 5)
+        failed = poster.render_comment("failed", "", run_url=run_url, head_sha="a" * 40)
+        self.assertIn(run_url, failed)
+        self.assertIn("did not complete", failed.lower())
+
+    def test_the_poster_refuses_what_it_cannot_trust(self) -> None:
+        """The handoff is an artifact the reviewer job wrote, so the poster reads it
+        as untrusted: a symlink, an oversized file or a missing one is a failure
+        notice, never content; and every identity it posts with comes from the
+        workflow, validated. It posts to the issue-comments endpoint of exactly the
+        item admission resolved.
+        """
+        poster = _load_script(POSTER)
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def record(url: str, payload: dict[str, Any], marker: str) -> str:
+            """Stand in for the provider: record the post, answer with its URL."""
+            self.assertTrue(payload["body"].startswith(marker + "\n"))
+            self.assertEqual("<!-- gnostoa:agent-review:9.1 -->", marker)
+            calls.append((url, payload))
+            return "https://github.com/o/r/issues/7#issuecomment-1"
+
+        poster.post_comment = record
+        with tempfile.TemporaryDirectory() as scratch:
+            handoff = pathlib.Path(scratch) / "claude-review-report"
+            handoff.mkdir()
+            (handoff / "status").write_text("complete\n", encoding="utf-8")
+            (handoff / "report.txt").write_text("Looks fine.\n", encoding="utf-8")
+            env = {
+                "RUNNER_TEMP": scratch,
+                "REPOSITORY": "o/r",
+                "ITEM_NUMBER": "7",
+                "HEAD_SHA": "b" * 40,
+                "REVIEW_OUTCOME": "success",
+                "RUN_URL": "https://github.com/o/r/actions/runs/9",
+            }
+            previous = dict(os.environ)
+            os.environ.update(env)
+            try:
+                self.assertEqual(0, poster.main(["post_report.py", str(handoff)]))
+                url, payload = calls[-1]
+                self.assertEqual(
+                    "https://api.github.com/repos/o/r/issues/7/comments", url
+                )
+                self.assertIn("Looks fine.", payload["body"])
+                # A symlinked report is not followed.
+                (handoff / "report.txt").unlink()
+                (handoff / "report.txt").symlink_to("/etc/hostname")
+                self.assertEqual(0, poster.main(["post_report.py", str(handoff)]))
+                self.assertNotIn("Looks fine.", calls[-1][1]["body"])
+                self.assertIn("unavailable", calls[-1][1]["body"].lower())
+                # Identities are validated before anything is posted.
+                for name, bad in (
+                    ("ITEM_NUMBER", "7; rm"),
+                    ("REPOSITORY", "o/r/../x"),
+                    ("RUN_URL", "https://evil.example/actions/runs/9"),
+                ):
+                    with self.subTest(env=name):
+                        os.environ[name] = bad
+                        count = len(calls)
+                        self.assertNotEqual(
+                            0, poster.main(["post_report.py", str(handoff)])
+                        )
+                        self.assertEqual(count, len(calls))
+                        os.environ[name] = env[name]
+            finally:
+                os.environ.clear()
+                os.environ.update(previous)
+
+    def test_the_publisher_hands_the_report_over_without_risking_the_summary(
+        self,
+    ) -> None:
+        """The handoff is a second destination for the same report, so it must never
+        cost the first: the summary is written before it, and a handoff that cannot
+        be made leaves the summary whole. The handoff holds the raw report and its
+        status, and it is created afresh -- one already in its place is refused, never
+        written through.
+        """
+        publisher = _load_script(PUBLISHER)
+        turns = [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Finding one.",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as scratch:
+            root = pathlib.Path(scratch)
+            execution = root / "execution.json"
+            execution.write_text(json.dumps(turns), encoding="utf-8")
+            summary = root / "summary.md"
+            handoff = root / "claude-review-report"
+            previous = os.environ.get("RUNNER_TEMP")
+            os.environ["RUNNER_TEMP"] = scratch
+            try:
+                argv = ["publish_report.py", str(execution), str(summary), str(handoff)]
+                self.assertEqual(0, publisher.main(argv))
+                self.assertEqual(
+                    "complete\n", (handoff / "status").read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    "Finding one.", (handoff / "report.txt").read_text(encoding="utf-8")
+                )
+                self.assertIn("Finding one.", summary.read_text(encoding="utf-8"))
+                # A second run finds the handoff in place: it is refused, and the
+                # summary is still written.
+                summary.unlink()
+                self.assertNotEqual(0, publisher.main(argv))
+                self.assertIn("Finding one.", summary.read_text(encoding="utf-8"))
+                # Kept long enough that the poster's own cut, not the handoff's, is
+                # what shortens it, so the comment's truncation notice stays true.
+                long = "\u4e00" * 100000
+                turns[0]["result"] = long
+                execution.write_text(json.dumps(turns), encoding="utf-8")
+                status, report, cut = publisher.handoff(execution)
+                self.assertEqual("complete", status)
+                # 300,000 bytes is past the handoff's 192 KiB, and the cut is stated.
+                self.assertTrue(cut)
+                self.assertGreater(len(report), 60000)
+            finally:
+                if previous is None:
+                    os.environ.pop("RUNNER_TEMP", None)
+                else:
+                    os.environ["RUNNER_TEMP"] = previous
+
+    def test_a_retried_post_never_duplicates_the_review(self) -> None:
+        """Creating a comment is not idempotent. A read timeout or a 5xx can arrive
+        after the provider created it, so a blind retry posts the review twice
+        (gitar, CodeAnt on #353). Before any retry the poster looks for this run's
+        marker on a comment by github-actions[bot] -- by that author only, since anyone
+        may comment a copy of the marker -- and when it cannot look, it stops rather
+        than guess.
+        """
+        poster = _load_script(POSTER)
+        # The script's modules are the process's own: anything patched on them must
+        # be put back, or every later test runs against this fake (gitar on #353).
+        real_sleep, real_opener = time.sleep, urllib.request.build_opener
+        url = "https://api.github.com/repos/o/r/issues/7/comments"
+        marker = "<!-- gnostoa:agent-review:9.1 -->"
+        payload = {"body": f"{marker}\n### Claude review\n"}
+
+        def provider(
+            posts: list[str], *, listing_fails: bool = False
+        ) -> list[dict[str, Any]]:
+            """Install a fake provider; ``posts`` scripts each POST's fate."""
+            comments: list[dict[str, Any]] = []
+
+            def urlopen(request: Any, **_options: Any) -> Any:
+                """Answer as the provider does, losing what ``posts`` says to lose."""
+                if request.get_method() == "GET":
+                    if listing_fails:
+                        raise TimeoutError("listing timed out")
+                    self.assertIn("since=", request.full_url)
+                    # As the provider pages: at most 100 a page, `page` from 1, the
+                    # next page named in a `Link` header while one remains.
+                    query = urllib.parse.parse_qs(
+                        urllib.parse.urlsplit(request.full_url).query
+                    )
+                    size = min(100, int(query.get("per_page", ["30"])[0]))
+                    page = int(query.get("page", ["1"])[0])
+                    window = comments[(page - 1) * size : page * size]
+                    links = {}
+                    if len(comments) > page * size:
+                        base = request.full_url.split("&page=")[0]
+                        links["Link"] = f'<{base}&page={page + 1}>; rel="next"'
+                    return _Answer(json.dumps(window).encode("utf-8"), links)
+                fate = posts.pop(0)
+                if fate == "refused":
+                    raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+                comment = {
+                    "user": {"login": "github-actions[bot]"},
+                    "body": json.loads(request.data)["body"],
+                    "html_url": f"https://github.com/o/r/issues/7#c{len(comments)}",
+                }
+                comments.append(comment)
+                if fate == "lost":
+                    raise TimeoutError("the response never arrived")
+                if fate == "502":
+                    raise urllib.error.HTTPError(
+                        url, 502, "Bad Gateway", email.message.Message(), io.BytesIO()
+                    )
+                return _Answer(json.dumps(comment).encode("utf-8"), {})
+
+            opener.open.side_effect = urlopen
+            return comments
+
+        # The shared client's own entry point: one opener per client, its `open` the
+        # provider. Built in this scope, so nothing outlives the test.
+        opener = mock.MagicMock()
+        with (
+            mock.patch.object(time, "sleep", lambda _seconds: None),
+            mock.patch.object(urllib.request, "build_opener", return_value=opener),
+            mock.patch.dict(os.environ, {"GH_TOKEN": "t"}),
+        ):
+            for fates in (["lost"], ["502"], ["refused", "ok"]):
+                with self.subTest(fates=fates):
+                    comments = provider(list(fates))
+                    posted = poster.post_comment(url, payload, marker)
+                    self.assertEqual(1, len(comments))
+                    self.assertEqual(comments[0]["html_url"], posted)
+            # Someone else's comment carrying the marker is not this run's review.
+            comments = provider(["refused", "ok"])
+            comments.append(
+                {"user": {"login": "mallory"}, "body": marker, "html_url": "x"}
+            )
+            poster.post_comment(url, payload, marker)
+            self.assertEqual(
+                1,
+                sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
+            )
+            # Unable to look, after a response that may have been lost: no retry.
+            comments = provider(["lost", "ok"], listing_fails=True)
+            with self.assertRaises(RuntimeError):
+                poster.post_comment(url, payload, marker)
+            self.assertEqual(1, len(comments))
+            # A busy thread cannot hide the comment behind the first page
+            # (CodeAnt on #353): the read-back pages on.
+            comments = provider(["lost", "ok"])
+            comments.extend(
+                {"user": {"login": "mallory"}, "body": "noise", "html_url": "n"}
+                for _ in range(150)
+            )
+            poster.post_comment(url, payload, marker)
+            self.assertEqual(
+                1,
+                sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
+            )
+            # And a thread too busy to read back whole is a reason to stop.
+            comments = provider(["lost", "ok"])
+            comments.extend(
+                {"user": {"login": "mallory"}, "body": "noise", "html_url": "n"}
+                for _ in range(2000)
+            )
+            with self.assertRaises(RuntimeError):
+                poster.post_comment(url, payload, marker)
+            self.assertEqual(
+                1,
+                sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
+            )
+        self.assertIs(real_sleep, time.sleep)
+        self.assertIs(real_opener, urllib.request.build_opener)
+
+    def test_an_interrupted_handoff_is_never_posted_as_finished(self) -> None:
+        """A cancelled job still runs its `always()` upload, so the handoff can be cut
+        off mid-write. Written status-first, a cut report went up beside `complete`
+        and was posted as a finished review (CodeAnt on #353). The status is the
+        commit record: it is written last, after the whole report.
+        """
+        publisher = _load_script(PUBLISHER)
+        poster = _load_script(POSTER)
+        turns = [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Finding one. " * 200,
+            }
+        ]
+        names: dict[int, str] = {}
+        real_open, real_fdopen = os.open, os.fdopen
+
+        def recording_open(
+            path: Any, flags: int, mode: int = 0o777, **options: Any
+        ) -> int:
+            """Open as os.open does, remembering which descriptor names which file."""
+            descriptor = real_open(path, flags, mode, **options)
+            names[descriptor] = os.path.basename(str(path))
+            return descriptor
+
+        def interrupting_fdopen(descriptor: int, *args: Any, **options: Any) -> Any:
+            """Wrap as os.fdopen does, but cut the report's write off half way."""
+            stream = real_fdopen(descriptor, *args, **options)
+            if names.get(descriptor) != "report.txt":
+                return stream
+            original = stream.write
+
+            def write(text: str) -> int:
+                """Write half, as a cancellation would leave it, then stop."""
+                original(text[: len(text) // 2])
+                stream.flush()
+                raise OSError("cancelled mid-write")
+
+            stream.write = write
+            return stream
+
+        with tempfile.TemporaryDirectory() as scratch:
+            root = pathlib.Path(scratch)
+            execution = root / "execution.json"
+            execution.write_text(json.dumps(turns), encoding="utf-8")
+            handoff = root / "claude-review-report"
+            argv = [
+                "publish_report.py",
+                str(execution),
+                str(root / "summary.md"),
+                str(handoff),
+            ]
+            with (
+                mock.patch.dict(os.environ, {"RUNNER_TEMP": scratch}),
+                mock.patch.object(publisher.os, "open", recording_open),
+                mock.patch.object(publisher.os, "fdopen", interrupting_fdopen),
+            ):
+                self.assertNotEqual(0, publisher.main(argv))
+            self.assertEqual(("unavailable", "", False), poster.read_handoff(handoff))
+
+    def test_a_report_cut_at_the_handoff_still_says_it_was_cut(self) -> None:
+        """The handoff keeps 192 KiB, enough that the poster's own cut is normally the
+        one that shows. But sanitising can shrink text -- a capped backtick run, a
+        redacted token -- so a report cut at the handoff could reach the comment
+        short enough to need no cut there, and be posted without its notice (Codex
+        on #353). The handoff carries the fact of the cut itself.
+        """
+        publisher = _load_script(PUBLISHER)
+        poster = _load_script(POSTER)
+        report = "Findings:" + "`" * 300000 + " and the conclusion"
+        turns = [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": report,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as scratch:
+            root = pathlib.Path(scratch)
+            execution = root / "execution.json"
+            execution.write_text(json.dumps(turns), encoding="utf-8")
+            handoff = root / "claude-review-report"
+            argv = [
+                "publish_report.py",
+                str(execution),
+                str(root / "summary.md"),
+                str(handoff),
+            ]
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": scratch}):
+                self.assertEqual(0, publisher.main(argv))
+            kind, text, cut = poster.read_handoff(handoff)
+        self.assertEqual("complete", kind)
+        self.assertNotIn("conclusion", text)
+        self.assertTrue(cut)
+        rendered = poster.render_comment(
+            kind,
+            text,
+            run_url="https://github.com/o/r/actions/runs/9",
+            head_sha="a" * 40,
+            cut=cut,
+        )
+        self.assertIn("truncated", rendered[: rendered.index("```")])
 
     def test_admission_matches_the_mention_as_github_s_contains_does(self) -> None:
         """GitHub's expression `contains()` is case-insensitive. The gate this replaces
@@ -2002,6 +2550,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     "the job does not assert it is running from the protected ref",
                 )
                 self.assertIn("refs/heads/", guard)
+                if "needs" in job:
+                    # A posting job runs only after the reviewer job, so it inherits
+                    # that job's gate on the trigger run (Decision 0098).
+                    self.assertEqual("claude", job["needs"])
+                    continue
                 # And only a trigger run that actually recorded a mention. An
                 # efficiency gate rather than an admission: without it every comment
                 # in the repository would start a privileged run to be refused.
@@ -3228,7 +3781,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ".github/review-context/build_review_context.py",
             ".github/review-context/chunk_diff.py",
             ".github/review-context/publish_report.py",
-            ".github/review-context/review_context_paths.py",
+            "tools/agent_review_paths.py",
         ):
             with self.subTest(owned=owned):
                 self.assertIn(owned, entry["implementation"])
@@ -3242,13 +3795,21 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 # Decision 0096: admission runs before the collection step and shares
                 # its confinement module, and the guardrail owns it as well.
                 "admit_mention.py",
+                # Decision 0098: the posting jobs' script.
+                "post_report.py",
                 "build_review_context.py",
                 "chunk_diff.py",
                 "publish_report.py",
-                "review_context_paths.py",
             },
             present,
         )
+        # Decision 0100: the pipeline's core and adapter modules, and the shared GitHub
+        # client they read through, enumerated too (CodeAnt on #353).
+        shared = [ROOT / "tools" / "github_rest.py"]
+        for module in sorted((ROOT / "tools").glob("agent_review_*.py")) + shared:
+            with self.subTest(module=module.name):
+                self.assertTrue(module.is_file(), f"{module.name} is missing")
+                self.assertIn(f"tools/{module.name}", entry["implementation"])
 
     def test_the_artefact_makes_the_same_claim_as_the_prompt(self) -> None:
         """The prompt was corrected to stop asking which case a no-hunk entry is; the
@@ -3299,12 +3860,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             path.write_text(
                 json.dumps([{"type": "result", "result": "x" * 200}]), encoding="utf-8"
             )
-            previous = publisher.MAX_EXECUTION_BYTES
-            publisher.MAX_EXECUTION_BYTES = 10
+            previous = claude_adapter.MAX_EXECUTION_BYTES
+            claude_adapter.MAX_EXECUTION_BYTES = 10
             try:
                 rendered = publisher.render(path)
             finally:
-                publisher.MAX_EXECUTION_BYTES = previous
+                claude_adapter.MAX_EXECUTION_BYTES = previous
         self.assertIn("unavailable", rendered)
         self.assertIn("too large", rendered)
 
@@ -3664,6 +4225,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     "RUNNER_TEMP": _admitted_request(scratch),
                     "GITHUB_WORKSPACE": scratch,
                     "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                    # As the step's committed env renders it (Decision 0100).
+                    "PYTHONPATH": _STEP_PYTHONPATH,
                     "GH_TOKEN": "stub",  # nosec B105
                     "REPOSITORY": "owner/repo",
                     "PULL_NUMBER": "329",
@@ -3730,6 +4293,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     "RUNNER_TEMP": _admitted_request(scratch),
                     "GITHUB_WORKSPACE": scratch,
                     "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                    # As the step's committed env renders it (Decision 0100).
+                    "PYTHONPATH": _STEP_PYTHONPATH,
                     "GH_TOKEN": "stub",  # nosec B105
                     "REPOSITORY": "owner/repo",
                     "PULL_NUMBER": "329",
@@ -3792,6 +4357,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         "RUNNER_TEMP": _admitted_request(scratch),
                         "GITHUB_WORKSPACE": scratch,
                         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                        # As the step's committed env renders it (Decision 0100).
+                        "PYTHONPATH": _STEP_PYTHONPATH,
                         "GH_TOKEN": "stub",  # nosec B105
                         "REPOSITORY": "owner/repo",
                         "PULL_NUMBER": "329",
@@ -8311,7 +8878,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         result"), and the publisher now holds the same contract: exactly one result
         envelope, and both halves of the answer bound to it.
         """
-        publisher = _load_script(PUBLISHER)
         ok = {"type": "result", "subtype": "success", "is_error": False}
         cases = {
             "error diagnostic, then an empty success": [
@@ -8327,11 +8893,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         }
         for label, turns in cases.items():
             with self.subTest(case=label):
-                _, complete = publisher.final_report(turns)
+                _, complete = claude_adapter.final_report(turns)
                 self.assertFalse(complete, f"{label} was called a finished review")
         # One successful envelope is still a finished run.
         self.assertEqual(
-            ("findings", True), publisher.final_report([{**ok, "result": "findings"}])
+            ("findings", True),
+            claude_adapter.final_report([{**ok, "result": "findings"}]),
         )
 
     def test_no_execution_output_is_not_published_as_a_report(self) -> None:
@@ -8358,18 +8925,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         evidence is what makes this safe to require: it cannot refuse a real run.
         (Codex)
         """
-        publisher = _load_script(PUBLISHER)
         ok = {"type": "result", "subtype": "success", "is_error": False, "result": "x"}
         after = {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "kept going"}]},
         }
-        _, complete = publisher.final_report([ok, after])
+        _, complete = claude_adapter.final_report([ok, after])
         self.assertFalse(
             complete, "a result followed by more turns was called finished"
         )
         # The shape the action actually writes is still a finished run.
-        _, complete = publisher.final_report([after, ok])
+        _, complete = claude_adapter.final_report([after, ok])
         self.assertTrue(complete)
 
     def test_the_fallback_text_is_the_assistant_s_own(self) -> None:
@@ -8378,34 +8944,34 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         text -- the reviewer's *input* -- was then published under "Claude review
         report". Only an assistant turn's text blocks are the reviewer's output.
         """
-        publisher = _load_script(PUBLISHER)
         ok = {"type": "result", "subtype": "success", "is_error": False, "result": ""}
         injected = {
             "type": "user",
             "message": {"content": [{"type": "text", "text": "injected input"}]},
         }
-        report, _ = publisher.final_report([injected, ok])
+        report, _ = claude_adapter.final_report([injected, ok])
         self.assertNotIn("injected input", report)
         # A non-text block inside an assistant turn is not report text either.
         tool = {
             "type": "assistant",
             "message": {"content": [{"type": "tool_use", "text": "not prose"}]},
         }
-        report, _ = publisher.final_report([tool, ok])
+        report, _ = claude_adapter.final_report([tool, ok])
         self.assertNotIn("not prose", report)
         # The assistant's own text is still found.
         said = {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "real findings"}]},
         }
-        self.assertEqual(("real findings", True), publisher.final_report([said, ok]))
+        self.assertEqual(
+            ("real findings", True), claude_adapter.final_report([said, ok])
+        )
 
     def test_an_empty_result_turn_does_not_hide_the_report(self) -> None:
         """The reviewer's final text was taken from the last result turn even when that
         turn carried an empty string, so real assistant output was dropped and the
         summary said the reviewer produced nothing.
         """
-        publisher = _load_script(PUBLISHER)
         # The envelope declares success, because that is what this case is about: a run
         # that *finished* and whose result string happened to be blank. The fixture
         # predates the subtype rule and carried no subtype, which now means "unknown"
@@ -8426,7 +8992,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         ]
         # The run status travels with the text, because a diagnostic and a report are
         # both non-empty strings and the caller cannot tell them apart otherwise.
-        self.assertEqual(("real findings", True), publisher.final_report(turns))
+        self.assertEqual(("real findings", True), claude_adapter.final_report(turns))
 
     def test_paths_are_quoted_the_way_git_quotes_them(self) -> None:
         """`git -c core.quotePath=false ls-files` was run against a repository holding
@@ -8597,7 +9163,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         inside one fenced block this script owns, where nothing renders. The invariant
         is that no line of the report can close that block.
         """
-        publisher = _load_script(PUBLISHER)
         url = "https://attacker.example/?q=leak"
         vectors = {
             "inline image": f"![]({url})",
@@ -8625,8 +9190,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         }
         for name, raw in vectors.items():
             with self.subTest(vector=name):
-                block = publisher.neutralise(raw)
-                fence = publisher.enclosing_fence(raw)
+                block = report_core.neutralise(raw)
+                fence = report_core.enclosing_fence(raw)
                 self.assertTrue(block.startswith(f"{fence}text\n"), name)
                 self.assertTrue(block.endswith(f"\n{fence}"), name)
                 # The report is carried through byte for byte: it is data here, not
@@ -8643,11 +9208,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         only through the vectors above: CommonMark closes a fenced block at a line
         whose run is the same character and at least as long as the opening one.
         """
-        publisher = _load_script(PUBLISHER)
         for length in range(0, 9):
             with self.subTest(run=length):
                 raw = f"a{'`' * length}b\n{'`' * length}\nc"
-                fence = publisher.enclosing_fence(raw)
+                fence = report_core.enclosing_fence(raw)
                 self.assertGreaterEqual(len(fence), 3)
                 self.assertGreater(len(fence), length)
                 self.assertNotIn(fence, raw)
@@ -8656,11 +9220,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         """A report about code is worthless if its code is rewritten, and inside the
         block there is no reason to rewrite anything.
         """
-        publisher = _load_script(PUBLISHER)
         body = (
             "before\n```python\nx = a < b and c > d  # ![](https://x/)\n```\nafter <b>"
         )
-        self.assertIn(body, publisher.neutralise(body))
+        self.assertIn(body, report_core.neutralise(body))
 
     def test_the_report_is_extracted_and_bounded(self) -> None:
         """The report is extracted and bounded."""
@@ -8676,7 +9239,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         },
                         {
                             "type": "result",
-                            "result": "F" * (publisher.MAX_BYTES + 500),
+                            "result": "F" * (report_core.REPORT_BYTES + 500),
                         },
                     ]
                 ),
@@ -8684,7 +9247,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             )
             rendered = publisher.render(path)
             self.assertIn("truncated", rendered)
-            self.assertLess(len(rendered.encode("utf-8")), publisher.MAX_BYTES + 2048)
+            self.assertLess(
+                len(rendered.encode("utf-8")), report_core.REPORT_BYTES + 2048
+            )
 
             # With no result turn, the last assistant text is used instead.
             path.write_text(
@@ -8766,22 +9331,25 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         one and miss another, so there is exactly one implementation and the scripts
         import it.
         """
-        shared = ROOT / ".github" / "review-context" / "review_context_paths.py"
+        # Decision 0100: the one implementation is the neutral core's, and every
+        # entrypoint imports it from there.
+        shared = ROOT / "tools" / "agent_review_paths.py"
         self.assertTrue(shared.is_file(), "the shared confinement module is missing")
         # Enumerated, not listed: the admission script was added later and took its
         # paths from argv unconfined, because this loop named the three scripts it
         # knew. SonarCloud found it (S8707); a list of names could not have.
-        scripts = sorted(path for path in shared.parent.glob("*.py") if path != shared)
+        scripts = sorted(BASE_COLLECTOR.parent.glob("*.py"))
         self.assertIn(ADMIT_MENTION, scripts)
         for script in scripts:
             with self.subTest(script=script.name):
                 source = script.read_text(encoding="utf-8")
-                self.assertIn("from review_context_paths import within", source)
+                self.assertIn("from tools.agent_review_paths import within", source)
                 self.assertNotIn("def within(", source)
-        # Each script is run as `python3 .github/review-context/<name>.py`, so the
-        # directory holding both is what Python puts first on its own search path.
-        # Asserting that here keeps the import from depending on the caller's PATH.
-        self.assertEqual(shared.parent, BASE_COLLECTOR.parent)
+        # And no second copy anywhere in the pipeline's own modules.
+        for module in sorted((ROOT / "tools").glob("agent_review_*.py")):
+            with self.subTest(module=module.name):
+                if module != shared:
+                    self.assertNotIn("def within(", module.read_text(encoding="utf-8"))
 
     def test_the_summary_path_is_checked_without_pinning_a_root(self) -> None:
         """GITHUB_STEP_SUMMARY lives under RUNNER_TEMP on today's hosted runners, but
@@ -8956,6 +9524,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "RUNNER_TEMP": _admitted_request(scratch),
                 "GITHUB_WORKSPACE": scratch,
                 "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                # As the step's committed env renders it (Decision 0100).
+                "PYTHONPATH": _STEP_PYTHONPATH,
                 "REAL_PYTHON": sys.executable,
                 "GH_TOKEN": "stub",  # nosec B105
                 "REPOSITORY": "owner/repo",
@@ -9851,6 +10421,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         # unset, and fails in CI, where it points at the checkout.
                         "GITHUB_WORKSPACE": scratch,
                         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                        # As the step's committed env renders it (Decision 0100).
+                        "PYTHONPATH": _STEP_PYTHONPATH,
                         # nosec B105 -- literal placeholder for the stubbed
                         # provider, not a credential
                         "GH_TOKEN": "stub",  # nosec B105
@@ -10494,16 +11066,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("its eight hardening rules and", normalised)
 
     def test_mention_tool_grant_matches_the_requested_permissions(self) -> None:
-        """additional_permissions grants actions: read, but agent mode installs the
-        CI server only when --allowedTools names an mcp__github_ci tool. The
-        permission and the tool list must agree, or one of them is dead config.
+        """additional_permissions once asked the App-token exchange for actions: read,
+        to back the mcp__github_ci tools. Under workflow_run the action never installs
+        that server -- it needs an entity event on a Pull Request
+        (src/mcp/install-mcp-server.ts) -- and since #352 there is no exchange at all.
+        Neither the permission nor the tools are granted, so neither is dead config.
         """
         workflow = load_yaml(MENTION_WORKFLOW)
         claude = _claude_step(workflow)
-        args = str(claude["with"].get("claude_args", ""))
-        permissions = str(claude["with"].get("additional_permissions", ""))
-        if "actions: read" in permissions:
-            self.assertIn("mcp__github_ci", args)
+        self.assertNotIn("additional_permissions", claude["with"])
+        self.assertNotIn("mcp__github_ci", str(claude["with"].get("claude_args", "")))
 
     def test_decision_0094_keeps_every_rule_inside_the_decision_section(self) -> None:
         """Decision 0094 keeps every rule inside the decision section."""

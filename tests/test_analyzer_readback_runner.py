@@ -4,6 +4,7 @@ import contextlib
 import http.client
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import traceback
@@ -199,10 +200,18 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 super().__init__(b"x" * (response_limit + 1))
                 self.headers: dict[str, str] = {}
                 self.requested_read_size: int | None = None
+                self.consumed = 0
 
             def read(self, size: int = -1) -> bytes:
                 self.requested_read_size = size
-                return super().read(size)
+                chunk = super().read(size)
+                self.consumed += len(chunk)
+                return chunk
+
+            def read1(self, size: int | None = -1) -> bytes:
+                chunk = super().read1(size)
+                self.consumed += len(chunk)
+                return chunk
 
         client = runner.GitHubReadClient("test-token")
         response = _OversizedResponse()
@@ -216,7 +225,10 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
         ):
             client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
 
-        self.assertEqual(response_limit + 1, response.requested_read_size)
+        # Refused, and read no further than one receive past the bound: the shared
+        # client reads in single receives (Decision 0100), so the property held here
+        # is the bound on what was read, not the size of one call.
+        self.assertLessEqual(response.consumed, response_limit + 65536)
         open_request.assert_called_once()
 
     def test_malformed_credentials_do_not_echo_through_real_http_headers(self) -> None:
@@ -457,7 +469,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     "synthetic-optional-credential",
                     serialized + stderr.getvalue() + stdout.getvalue(),
                 )
-                document = runner.json.loads(serialized)
+                document = json.loads(serialized)
                 self.assertEqual("BOUND", document["subject_binding"])
                 readbacks = {
                     item["provider"]: item
@@ -492,7 +504,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     {"body": "x" * 45_000, "id": comment_id}
                     for comment_id in range(start, stop)
                 ]
-                response_size = len(runner.json.dumps(comments).encode("utf-8"))
+                response_size = len(json.dumps(comments).encode("utf-8"))
                 if response_size > runner._MAX_RESPONSE_BYTES:
                     raise runner.RunnerError("GitHub API response exceeds bounded size")
                 headers: dict[str, str] = {}

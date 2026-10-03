@@ -57,12 +57,22 @@ jobs:
     # declaration scopes nothing. (CodeAnt)
     environment: claude-review
     timeout-minutes: 60
+    # The identities the posting jobs act on, from admission's own outputs -- never from
+    # the reviewer's handoff, which the model wrote (Decision 0098).
+    outputs:
+      item_number: ${{ steps.admit.outputs.item_number }}
+      pull_number: ${{ steps.admit.outputs.pull_number }}
+      head_sha: ${{ steps.admit.outputs.head_sha }}
+      review_outcome: ${{ steps.claude.outcome }}
+    # Read-only, and no `id-token`: with it the pinned action exchanged OIDC for a
+    # Claude GitHub App token with contents, pull-request and issue *write*, and agent
+    # mode wrote that token into the checkout's .git/config, where the reviewer could
+    # read it (#352). The action is given this job's own token instead (below).
     permissions:
       contents: read
       pull-requests: read
       issues: read
-      id-token: write # OIDC exchange for the Claude GitHub App token
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read # Downloading the relayed event identity from the trigger's run
     steps:
 
       # The reviewed candidate is never materialised as a working tree in this job.
@@ -123,6 +133,9 @@ jobs:
       - name: Admit the relayed mention from the provider
         id: admit
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
@@ -140,6 +153,9 @@ jobs:
 
       - name: Collect review context
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           # Item type is keyed on the resolved pull number, never on head/base
@@ -465,8 +481,10 @@ jobs:
         uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          additional_permissions: |
-            actions: read
+          # This job's read-only token, so the action skips its OIDC exchange for a
+          # write-capable App token (src/github/token.ts: OVERRIDE_GITHUB_TOKEN). Its
+          # permission check passes with it: measured, HTTP 200 and `admin` (#352).
+          github_token: ${{ github.token }}
           # Decision 0094: supplying `prompt` selects agent mode, which fetches no
           # GitHub data. Tag mode instead retrieves every comment and review with
           # no cap, which exhausted the request on a large Pull Request. Every
@@ -506,6 +524,7 @@ jobs:
                   "Glob(//home/**/_diag/**)",
                   "Read(**/event.json)", "Grep(**/event.json)",
                   "Glob(**/event.json)",
+                  "Read(**/.git/**)", "Grep(**/.git/**)", "Glob(**/.git/**)",
                   "Read(//run/**)", "Grep(//run/**)", "Glob(//run/**)",
                   "Read(//var/run/**)", "Grep(//var/run/**)", "Glob(//var/run/**)",
                   "Read(//tmp/**)", "Grep(//tmp/**)", "Glob(//tmp/**)"
@@ -514,7 +533,7 @@ jobs:
             }
           claude_args: >-
             --max-turns 40
-            --allowedTools "Read,Grep,Glob,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
+            --allowedTools "Read,Grep,Glob"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
@@ -579,6 +598,9 @@ jobs:
       - name: Publish the review report
         if: always()
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         # The protected checkout is the first step, but it can itself fail, leaving no
         # publisher on disk. The fallback is a fixed notice that executes nothing from
@@ -592,4 +614,98 @@ jobs:
             exit 0
           fi
           python3 .github/review-context/publish_report.py \
-            "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}"
+            "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}" \
+            "${RUNNER_TEMP}/claude-review-report"
+
+      # Handed to the posting jobs (Decision 0098), only once admission resolved an item:
+      # a refused request is not answered in the thread.
+      - name: Hand the report to the posting job
+        if: always() && steps.admit.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claude-review-report
+          path: ${{ runner.temp }}/claude-review-report
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Decision 0098: a finished review is posted into the thread it was asked in, from a
+  # job that runs no model, names no environment and no secret, and holds one write
+  # scope for one kind of item. It checks out the protected revision without
+  # credentials and posts with a repository-owned script, as github-actions[bot]. A
+  # comment made with GITHUB_TOKEN starts no workflow run, so a posted review cannot
+  # re-trigger the relay; and its author association is not one admission admits.
+  post-to-pull-request:
+    needs: claude
+    if: >-
+      always()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.claude.outputs.item_number != ''
+      && needs.claude.outputs.pull_number != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the protected workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      # Absent when the reviewer job ended before handing anything over; the script
+      # then posts a notice that the review did not complete.
+      - name: Download the review report
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: claude-review-report
+          path: ${{ runner.temp }}/claude-review-report
+      - name: Post the review to the Pull Request
+        env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ITEM_NUMBER: ${{ needs.claude.outputs.item_number }}
+          HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
+          REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"
+
+  post-to-issue:
+    needs: claude
+    if: >-
+      always()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.claude.outputs.item_number != ''
+      && needs.claude.outputs.pull_number == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout the protected workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Download the review report
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: claude-review-report
+          path: ${{ runner.temp }}/claude-review-report
+      - name: Post the review to the issue
+        env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ITEM_NUMBER: ${{ needs.claude.outputs.item_number }}
+          HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
+          REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"

@@ -4,13 +4,12 @@ import argparse
 import json
 import os
 import re
-import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from tools import github_rest
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
@@ -19,8 +18,6 @@ from tools.review_reconcile import (
 )
 
 _API_ROOT = "https://api.github.com"
-_GRAPHQL_ROOT = f"{_API_ROOT}/graphql"
-_API_VERSION = "2022-11-28"
 _REVIEW_THREADS_QUERY = """
 query ReviewThreads(
   $owner: String!
@@ -65,24 +62,32 @@ _MAX_COLLECTION_PASSES = 3
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 _GITHUB_EXECUTION_ID = re.compile(r"^github-actions:([1-9][0-9]*):([1-9][0-9]*)$")
 
 
-class ProviderReadError(RuntimeError):
+# The client is the shared one (`tools/github_rest.py`, Decision 0100), merged from this
+# adapter's and four others. This adapter's reads are not subject-bound: a redirect of
+# the repository's own API path is followed on the admitted origin, with the credential
+# re-added there only. Its failures keep this adapter's own names, which its
+# publication diagnostics render.
+class ProviderReadError(github_rest.GitHubReadError):
     """A bounded GitHub provider read failed."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
-        super().__init__(message)
-        self.status = status
 
-
-class ProviderWriteError(RuntimeError):
+class ProviderWriteError(github_rest.GitHubWriteError):
     """A bounded GitHub provider write failed."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
-        super().__init__(message)
-        self.status = status
+
+def _translated(error: github_rest.GitHubError) -> github_rest.GitHubError:
+    """Return ``error`` under this adapter's names, keeping its status and hint."""
+    if isinstance(error, (ProviderReadError, ProviderWriteError)):
+        return error
+    kind = (
+        ProviderWriteError
+        if isinstance(error, github_rest.GitHubWriteError)
+        else ProviderReadError
+    )
+    return kind(str(error), status=error.status, retry_after=error.retry_after)
 
 
 class JsonReader(Protocol):
@@ -92,24 +97,14 @@ class JsonReader(Protocol):
 
 
 def _validate_api_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
+    """Return ``url`` if it stays on the API origin, under this adapter's error name."""
     try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ProviderReadError("GitHub API URL has an invalid port") from exc
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "api.github.com"
-        or port not in {None, 443}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.fragment
-    ):
-        raise ProviderReadError("GitHub API URL is outside the admitted host")
-    return url
+        return github_rest.validate_url(url, _API_ROOT)
+    except github_rest.GitHubError as error:
+        raise _translated(error) from error
 
 
-class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+class _GitHubRedirectHandler(github_rest.SameOriginRedirects):
     """Keep every authenticated redirect inside the admitted GitHub API origin."""
 
     def redirect_request(
@@ -121,34 +116,32 @@ class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
         headers: Any,
         newurl: str,
     ) -> urllib.request.Request | None:
-        admitted_url = _validate_api_url(newurl)
-        authorization = req.get_header("Authorization")
-        redirected = super().redirect_request(
-            req,
-            fp,
-            code,
-            msg,
-            headers,
-            admitted_url,
-        )
-        if redirected is not None and authorization is not None:
-            redirected.add_unredirected_header("Authorization", authorization)
-        return redirected
+        """Follow a same-origin redirect, failing under this adapter's error name."""
+        try:
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        except github_rest.GitHubError as error:
+            raise _translated(error) from error
 
 
-def _decode_json(raw: bytes, label: str) -> Any:
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProviderReadError(f"{label} returned invalid JSON") from exc
+class GitHubRestClient(github_rest.GitHubRestClient):
+    """The shared client under this adapter's bounds: one attempt, a 4 MiB body."""
 
+    same_origin_redirects = _GitHubRedirectHandler
 
-class GitHubRestClient:
     def __init__(self, token: str) -> None:
         if not token:
             raise ValueError("GitHub token is required")
-        self._token = token
-        self._opener = urllib.request.build_opener(_GitHubRedirectHandler())
+        super().__init__(
+            token,
+            api_root=_API_ROOT,
+            follow_same_origin_redirects=True,
+            user_agent="gnostoa-useful-l1",
+            policy=github_rest.Policy(
+                timeout_seconds=_TIMEOUT_SECONDS,
+                attempts=1,
+                max_response_bytes=_MAX_RESPONSE_BYTES,
+            ),
+        )
 
     def _request(
         self,
@@ -158,130 +151,26 @@ class GitHubRestClient:
         *,
         read: bool = False,
     ) -> tuple[Any, dict[str, str]]:
-        encoded = None
-        if payload is not None:
-            encoded = json.dumps(
-                payload,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-                allow_nan=False,
-            ).encode("utf-8")
-        request = urllib.request.Request(
-            _validate_api_url(url),
-            data=encoded,
-            method=method,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": _API_VERSION,
-                "User-Agent": "gnostoa-useful-l1",
-                **({"Content-Type": "application/json"} if encoded is not None else {}),
-            },
-        )
-        request.add_unredirected_header(
-            "Authorization",
-            f"Bearer {self._token}",
-        )
+        """Make one attempt, failing under this adapter's error names."""
         try:
-            # The request and every redirect target are restricted to HTTPS
-            # api.github.com on the default/443 port before credentials are sent.
-            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
-            with self._opener.open(
-                request,
-                timeout=_TIMEOUT_SECONDS,
-            ) as response:
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
-                if len(raw) > _MAX_RESPONSE_BYTES:
-                    raise ProviderReadError("GitHub API response exceeds bounded size")
-                headers = {
-                    key.lower(): value for key, value in response.headers.items()
-                }
-                return _decode_json(raw, "GitHub API"), headers
-        except urllib.error.HTTPError as exc:
-            detail = exc.read(4_096).decode("utf-8", errors="replace")
-            headers = {key.lower(): value for key, value in (exc.headers or {}).items()}
-            message = f"GitHub API HTTP {exc.code}"
-            if detail:
-                message += f": {' '.join(detail.split())[:512]}"
-            if method == "GET" or read:
-                status = exc.code
-                if exc.code == 403 and _http_error_indicates_rate_limit(
-                    headers,
-                    detail,
-                ):
-                    status = 429
-                raise ProviderReadError(message, status=status) from exc
-            raise ProviderWriteError(message, status=exc.code) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            if method == "GET" or read:
-                raise ProviderReadError("GitHub API transport failed") from exc
-            raise ProviderWriteError("GitHub API transport failed") from exc
-
-    def get(self, url: str) -> tuple[Any, dict[str, str]]:
-        return self._request("GET", url)
+            return super()._request(method, url, payload, read=read)
+        except github_rest.GitHubError as error:
+            raise _translated(error) from error
 
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        document, headers = self._request(
-            "POST",
-            _GRAPHQL_ROOT,
-            {"query": query, "variables": variables},
-            read=True,
-        )
-        if not isinstance(document, dict):
-            raise ProviderReadError("GitHub GraphQL returned invalid shape")
-        errors = document.get("errors")
-        if errors:
-            rate_limited = (
-                headers.get("x-ratelimit-remaining") == "0"
-                or bool(headers.get("retry-after"))
-                or _graphql_errors_indicate_rate_limit(errors)
-            )
-            raise ProviderReadError(
-                "GitHub GraphQL returned errors",
-                status=429 if rate_limited else None,
-            )
-        return document
-
-    def post(self, url: str, payload: dict[str, Any]) -> Any:
-        document, _ = self._request("POST", url, payload)
-        return document
-
-    def patch(self, url: str, payload: dict[str, Any]) -> Any:
-        document, _ = self._request("PATCH", url, payload)
-        return document
-
-
-def _http_error_indicates_rate_limit(
-    headers: dict[str, str],
-    detail: str,
-) -> bool:
-    return (
-        headers.get("x-ratelimit-remaining") == "0"
-        or bool(headers.get("retry-after"))
-        or "rate limit" in detail.lower()
-    )
-
-
-def _graphql_errors_indicate_rate_limit(errors: Any) -> bool:
-    if not isinstance(errors, list):
-        return False
-    for raw_error in errors:
-        if not isinstance(raw_error, dict):
-            continue
-        message = raw_error.get("message")
-        if isinstance(message, str) and "rate limit" in message.lower():
-            return True
-    return False
+        """Return a GraphQL document, failing under this adapter's error names."""
+        try:
+            return super().graphql(query, variables)
+        except github_rest.GitHubError as error:
+            raise _translated(error) from error
 
 
 def _next_url(headers: dict[str, str]) -> str | None:
-    link = headers.get("link")
-    if not link:
-        return None
-    match = _NEXT_LINK.search(link)
-    if match is None:
-        return None
-    return _validate_api_url(match.group(1))
+    """Return the next page's URL, pinned to the API origin, or None."""
+    try:
+        return github_rest.next_url(headers, _API_ROOT)
+    except github_rest.GitHubError as error:
+        raise _translated(error) from error
 
 
 def _error_status(error: ProviderReadError, pages: int) -> str:

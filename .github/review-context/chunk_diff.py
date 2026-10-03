@@ -16,7 +16,7 @@ import pathlib
 import re
 import sys
 
-from review_context_paths import within
+from tools.agent_review_paths import within
 
 _MAX_PARTS = 9999
 # A byte that is not valid UTF-8, as `surrogateescape` decodes it.

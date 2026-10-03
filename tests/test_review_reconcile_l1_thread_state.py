@@ -429,12 +429,12 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                adapter.urllib.request,
+                urllib.request,
                 "build_opener",
                 return_value=opener,
             ) as build_opener,
             mock.patch.object(
-                adapter.urllib.request,
+                urllib.request,
                 "urlopen",
                 side_effect=AssertionError("unguarded urlopen must not be used"),
             ),
