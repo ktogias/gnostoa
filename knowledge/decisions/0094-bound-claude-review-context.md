@@ -1379,6 +1379,7 @@ No new dependency, service or runtime is introduced.
     *Since Decision 0096 this holds through the relay:* the job can no longer be candidate-supplied at all.
 
 22. **The report is published by this repository, with render-time fetches removed.**
+   *Extended by Decision 0098* to the comment the posting job makes.
    The action's `display_report` input documents itself as outputting
    "Claude-authored content in the GitHub Step Summary" and says it "should only be
    used in cases where the action is used solely with trusted input". This job's input
@@ -1805,6 +1806,10 @@ No new dependency, service or runtime is introduced.
    the diff shows have no base bytes and no entry (Codex, #330).
 
 ## Accepted trade: delivery is no longer on the Pull Request
+
+*Withdrawn by Decision 0098.* A finished review is posted in its thread from a
+least-privilege job that runs no model; the step summary remains. The paragraphs below
+record the trade as it was made.
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
 comment-posting tool**. A review therefore cannot post itself to the Pull

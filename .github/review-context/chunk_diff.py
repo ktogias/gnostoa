@@ -16,30 +16,22 @@ import pathlib
 import re
 import sys
 
-from review_context_paths import within
+from tools.agent_review_base import wrap_records
+from tools.agent_review_claude_code import READ_LINE_CAP as LINE_CAP
+from tools.agent_review_model import CONTINUATION
+from tools.agent_review_paths import within
 
 _MAX_PARTS = 9999
 # A byte that is not valid UTF-8, as `surrogateescape` decodes it.
 _INVALID_OCTET = re.compile("[\udc80-\udcff]")
-# The reviewer's Read tool truncates a physical line beyond roughly this length and
-# offsets into a file by line, so a single very long record -- a minified bundle, a
-# generated lockfile -- would leave its tail unreachable even though the bytes are
-# present. Such records are therefore hard-wrapped at a reader-visible boundary. Only
-# newlines are inserted: no byte of the diff is removed or reordered.
-LINE_CAP = 1900
-# A wrapped continuation carries no diff prefix, so a segment beginning with "-", "+",
-# "@@" or "+++ b/" would read as a deletion, an addition or a new hunk or file header
-# and be attributed to the wrong side of the change. Continuations are therefore marked
-# with a byte that never begins a line of unified diff output.
-CONTINUATION = b">"
-
-
-def _wrap_point(record: bytes, room: int) -> int:
-    """Return how many bytes of an oversized record fit on one line without splitting."""
-    end = room
-    while end > 0 and (record[end] & 0xC0) == 0x80:
-        end -= 1
-    return end or room
+# `LINE_CAP` is the reviewer's own line budget, which its adapter declares: a single
+# very long record -- a minified bundle, a generated lockfile -- would otherwise leave
+# its tail unreachable even though the bytes are present. Such records are therefore
+# hard-wrapped at a reader-visible boundary. Only newlines are inserted: no byte of the
+# diff is removed or reordered. A wrapped continuation carries no diff prefix, so a
+# segment beginning with "-", "+", "@@" or "+++ b/" would read as a deletion, an
+# addition or a new hunk or file header; continuations are therefore marked with the
+# core's `CONTINUATION`, a byte that never begins a line of unified diff output.
 
 
 # Taken from what the reader actually breaks on rather than from the obvious few:
@@ -165,49 +157,13 @@ def escape_embedded_breaks(data: bytes) -> tuple[bytes, int, int, int]:
 
 
 def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
-    """Hard-wrap records longer than the readable cap.
+    """Hard-wrap records longer than the readable cap: the core's rule, bound to
+    the reviewer's line budget (Decision 0100).
 
-    Returns the wrapped text, how many records were wrapped, and how many continuation
-    lines were introduced. Each continuation costs exactly two bytes -- one newline and
-    one marker -- which is what lets a test assert that nothing else changed.
+    Returns the wrapped text, how many records were wrapped, and how many
+    continuation lines were introduced.
     """
-    out = bytearray()
-    wrapped = 0
-    continuations = 0
-    for record in data.split(b"\n"):
-        if len(record) <= LINE_CAP:
-            out += record + b"\n"
-            continue
-        wrapped += 1
-        offset = 0
-        first = True
-        while offset < len(record):
-            room = LINE_CAP if first else LINE_CAP - len(CONTINUATION)
-            remaining = len(record) - offset
-            take = (
-                remaining if remaining <= room else _wrap_point(record[offset:], room)
-            )
-            if not first:
-                out += CONTINUATION
-                continuations += 1
-            out += record[offset : offset + take] + b"\n"
-            offset += take
-            first = False
-    # One trailing newline too many, always. Every path through the loop above ends by
-    # appending a newline -- the short-record branch directly, the wrapping branch on
-    # its last segment -- and `split()` yields at least one record, so `out` is
-    # non-empty and newline-terminated here whatever the input was.
-    #
-    # This used to be two branches with identical bodies, keyed on whether `data` ended
-    # with a newline. That implied the two cases did different things; they did not,
-    # and the second condition was true in every case the first was false, so the pair
-    # was a vacuous dressing on an unconditional delete. Keeping the `out` test rather
-    # than deleting outright is deliberate: it is the actual precondition, so if a
-    # later change stops the loop terminating records with a newline this removes
-    # nothing instead of silently eating a byte of content.
-    if out.endswith(b"\n"):
-        del out[-1:]
-    return bytes(out), wrapped, continuations
+    return wrap_records(data, LINE_CAP)
 
 
 def next_cut(buffer: bytes, limit: int) -> int:
