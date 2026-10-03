@@ -696,12 +696,14 @@ guardrails:
       - tools/agent_review_model.py
       - tools/agent_review_paths.py
       - tools/agent_review_admission.py
+      - tools/agent_review_context.py
       - tools/agent_review_report.py
       - tools/agent_review_delivery.py
       - tools/agent_review_claude_code.py
       - tools/agent_review_github.py
       - tools/github_rest.py
       - .github/review-context/admit_mention.py
+      - .github/review-context/collect_context.py
       - .github/review-context/post_report.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml

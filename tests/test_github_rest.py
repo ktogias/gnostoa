@@ -343,6 +343,22 @@ class SharedGitHubClientTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_a_malformed_url_is_refused_as_a_provider_error(self) -> None:
+        """`urlparse` raises ValueError for a malformed host, before any check ran, so a
+        provider's `Link` header could crash a caller that handles only the client's
+        own errors (CodeAnt on #353). It is refused as one."""
+        for url in (
+            "https://[::1/x",
+            "https://[zz]/x",
+            "https://api.github.com:99999/x",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(github_rest.GitHubReadError):
+                    github_rest.validate_url(url)
+                with self.assertRaises(github_rest.GitHubError):
+                    # As the client hands headers over: names lowercased.
+                    github_rest.next_url({"link": f'<{url}>; rel="next"'})
+
     def test_a_write_outliving_its_bound_is_reported_in_flight(self) -> None:
         """A write abandoned at its bound may still land; the error says so, so its
         caller does not retry it (Codex on #353)."""

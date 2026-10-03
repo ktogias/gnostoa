@@ -155,7 +155,12 @@ def origin_of(root: str) -> tuple[str, str, int]:
 
 def validate_url(url: str, root: str = API_ROOT) -> str:
     """Return ``url`` if it stays on ``root``'s origin, or raise ``GitHubReadError``."""
-    parsed = urllib.parse.urlparse(url)
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:
+        # A malformed host -- an unclosed or invalid IPv6 literal -- raises before any
+        # check here, and the URL can be a provider's `Link` header (CodeAnt on #353).
+        raise GitHubReadError("GitHub API URL is malformed") from exc
     try:
         port = parsed.port
     except ValueError as exc:

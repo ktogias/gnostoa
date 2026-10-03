@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ CORE = (
     "agent_review_model",
     "agent_review_paths",
     "agent_review_admission",
+    "agent_review_context",
     "agent_review_report",
     "agent_review_delivery",
 )
@@ -458,6 +460,195 @@ class SecondProviderAdmissionTests(unittest.TestCase):
                 self.assertIn("withheld", admitted.forwarded[field])
                 self.assertNotIn("parser", admitted.forwarded[field])
                 self.assertNotIn("Details", admitted.forwarded[field])
+
+
+class _ForgeLikeChanges:
+    """A test-only second provider's change source, in its own native shapes.
+
+    Its comparison counts commits as `commit_count`, its commits carry `id` and
+    `title`, and its diff refusal is its own error: it translates each into the core's
+    vocabulary and decides nothing itself.
+    """
+
+    def __init__(
+        self,
+        native: dict[str, Any],
+        commits: list[dict[str, str]],
+        diff: bytes | None,
+    ) -> None:
+        self.native = native
+        self.native_commits = commits
+        self.diff = diff
+
+    def comparison(self) -> bytes:
+        """Translate the native comparison into the document the collector reads."""
+        return json.dumps(
+            {"total_commits": self.native["commit_count"], "files": []}
+        ).encode("utf-8")
+
+    def commits(self) -> list[Any]:
+        """Translate native commits: an `id` and a `title`."""
+        from tools import agent_review_context as context
+
+        return [
+            context.Commit(item["id"][:9], item["title"])
+            for item in self.native_commits
+        ]
+
+    def unified_diff(self) -> bytes:
+        """Return the diff, or the core's refusal for the forge's own."""
+        from tools import agent_review_context as context
+
+        if self.diff is None:
+            raise context.DiffRefused("the forge declined to render the diff")
+        return self.diff
+
+
+def _forge_collector(state: int, *, logged: int = 1, listed: bool = False) -> Any:
+    """A collector that writes what the real one writes, then exits ``state``."""
+
+    def collect(target: pathlib.Path) -> int:
+        if state == 1:
+            return 1
+        (target / "commits.log").write_text(
+            "".join(f"abcdef12{n} subject\n" for n in range(logged)), encoding="utf-8"
+        )
+        (target / "diff.stat").write_text(
+            " one.py | 2 +-\n" if listed else "", encoding="utf-8"
+        )
+        (target / "no-patch.txt").write_text("", encoding="utf-8")
+        (target / "assembled.diff").write_text(
+            "--- a/one.py\n+++ b/one.py\n" if listed else "", encoding="utf-8"
+        )
+        (target / "base").mkdir(exist_ok=True)
+        (target / "base.manifest").write_text(
+            "Written: 0. Unavailable: 0.\n", encoding="utf-8"
+        )
+        return state
+
+    return collect
+
+
+class SecondProviderContextTests(unittest.TestCase):
+    """The unchanged context core assembles a second provider's change."""
+
+    @staticmethod
+    def _assemble(
+        source: Any, collect: Any, chunked: list[pathlib.Path]
+    ) -> tuple[pathlib.Path, str]:
+        """Assemble into a fresh context; return it and how far collection got."""
+        from tools import agent_review_context as context
+
+        scratch = pathlib.Path(tempfile.mkdtemp())
+        request = scratch / "request-in"
+        request.mkdir()
+        (request / "request").write_text("please review\n", encoding="utf-8")
+        target = scratch / "context"
+        context.prepare(target, request)
+        state = context.assemble(
+            target,
+            source,
+            collect=collect,
+            chunk=chunked.append,
+            vocabulary=context.Vocabulary(change_request="merge request"),
+        )
+        return target, state
+
+    def test_an_empty_change_is_named_in_the_providers_own_words(self) -> None:
+        """No refusal, a comparison that was read, an empty list: "No changes"."""
+        source = _ForgeLikeChanges(
+            {"commit_count": 1}, [{"id": "f" * 40, "title": "t"}], b""
+        )
+        chunked: list[pathlib.Path] = []
+        target, state = self._assemble(source, _forge_collector(0), chunked)
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        self.assertEqual("collected", state)
+        self.assertEqual(
+            "No changes between base and head for this merge request.\n",
+            (target / "diff.patch").read_text(encoding="utf-8"),
+        )
+        self.assertEqual([], chunked)
+        self.assertEqual(
+            "please review\n", (target / "request" / "request").read_text()
+        )
+        for spent in ("diff.full", "comparison.json"):
+            with self.subTest(spent=spent):
+                self.assertFalse((target / spent).exists())
+
+    def test_the_forges_refusal_reaches_the_per_file_fallback(self) -> None:
+        """Only the provider's refusal is lossy, and the fallback says what it lacks."""
+        source = _ForgeLikeChanges(
+            {"commit_count": 1}, [{"id": "f" * 40, "title": "t"}], None
+        )
+        chunked: list[pathlib.Path] = []
+        target, _ = self._assemble(source, _forge_collector(0, listed=True), chunked)
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        notice = (target / "patches-source").read_text(encoding="utf-8")
+        self.assertIn("refused the unified diff", notice)
+        self.assertIn("file modes", notice)
+        self.assertEqual([target], chunked)
+
+    def test_a_failed_collection_keeps_the_diff_and_says_so(self) -> None:
+        """The collector's failure is a degraded context, never an absent one."""
+        source = _ForgeLikeChanges(
+            {"commit_count": 3}, [{"id": "f" * 40, "title": "t"}], b"+x\n"
+        )
+        chunked: list[pathlib.Path] = []
+        target, state = self._assemble(source, _forge_collector(1), chunked)
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        self.assertEqual("failed", state)
+        self.assertIn(
+            "provider-error base-context",
+            (target / "base.manifest").read_text(encoding="utf-8"),
+        )
+        log = (target / "commits.log").read_text(encoding="utf-8")
+        self.assertIn("commit log unavailable", log)
+        self.assertNotIn("provider listed", log)
+        self.assertEqual([target], chunked)
+
+    def test_a_capped_commit_list_says_so(self) -> None:
+        """The second provider's count, in its own field, still bounds the log."""
+        source = _ForgeLikeChanges(
+            {"commit_count": 5}, [{"id": "f" * 40, "title": "t"}] * 2, b"+x\n"
+        )
+        target, _ = self._assemble(
+            source, _forge_collector(0, logged=2, listed=True), []
+        )
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        self.assertIn(
+            "[provider listed 2 of 5 commits]",
+            (target / "commits.log").read_text(encoding="utf-8"),
+        )
+
+    def test_a_comparison_that_is_not_one_ends_the_assembly(self) -> None:
+        """Refusal is the default for what the core cannot establish."""
+        from tools import agent_review_context as context
+
+        for body in (b"{not json", b"[]", b'{"total_commits": "5"}'):
+            with self.subTest(body=body), self.assertRaises(context.Unavailable):
+                context.total_commits(body)
+
+
+class ThinContextEntrypointTests(unittest.TestCase):
+    """The context entrypoint composes; the workflow step runs it and nothing else."""
+
+    def test_the_step_runs_the_entrypoint_alone(self) -> None:
+        """The inline shell held the context's rules; they are the core's now."""
+        import yaml
+
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
+        )
+        runs = [
+            str(step["run"]).strip()
+            for step in workflow["jobs"]["claude"]["steps"]
+            if step.get("name") == "Collect review context"
+        ]
+        self.assertEqual(["python3 .github/review-context/collect_context.py"], runs)
+        entrypoint = ROOT / ".github" / "review-context" / "collect_context.py"
+        source = entrypoint.read_text(encoding="utf-8")
+        self.assertIn("agent_review_context", source)
+        self.assertNotIn("shell=True", source)
 
 
 class AdmissionFileTests(unittest.TestCase):

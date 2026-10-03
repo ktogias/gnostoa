@@ -2,8 +2,9 @@
 
 Translates between GitHub's native vocabulary and the neutral core's: the issue
 comments, issues and Pull Requests a request is re-read from, the trusted
-`author_association` values, the issue comments a review is delivered as, the identity
-that authors them, and the credential shapes GitHub issues.
+`author_association` values, a Pull Request's comparison, commits and unified diff,
+the issue comments a review is delivered as, the identity that authors them, and the
+credential shapes GitHub issues.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any
 
 from tools import github_rest
 from tools.agent_review_admission import Refused, Request, Revisions
+from tools.agent_review_context import Commit, DiffRefused, Unavailable, Vocabulary
 from tools.agent_review_delivery import (
     DeliveryRefused,
     DeliveryUncertain,
@@ -146,6 +148,11 @@ TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 ITEM_KIND = "issue"
 CHANGE_KIND = "pull_request"
 _REPOSITORY = re.compile(r"\A[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
+
+
+def is_repository(name: str) -> bool:
+    """Return whether ``name`` is a repository in GitHub's owner/name form."""
+    return bool(_REPOSITORY.match(name))
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:
@@ -284,3 +291,117 @@ def step_outputs(subject: ReviewSubject) -> dict[str, str]:
         "head_sha": subject.head_commit,
         "base_sha": subject.base_commit,
     }
+
+
+# ---------------------------------------------------------------------------------
+# The change source: a Pull Request's comparison, commits and unified diff
+
+# What the reader calls a change request here, and what it reads when there is none.
+VOCABULARY = Vocabulary(change_request="Pull Request")
+NO_CHANGE_REQUEST = "No Pull Request: this request concerns the issue itself.\n"
+DIFF_MEDIA_TYPE = "application/vnd.github.v3.diff"
+# The comparison's pages of commits: the provider caps a comparison's commits well
+# below this, and the commit-count notice says when fewer are listed than it has.
+_COMMIT_PAGES = 10
+_CONTEXT_POLICY = github_rest.Policy(
+    attempts=3, retry_sleep_seconds=5, max_response_bytes=8 << 20
+)
+# The unified diff of a large change is large and slow to render, so it has a longer
+# whole-exchange bound and a larger size bound. Past either the step fails: only the
+# provider's refusal reaches the lossy per-file fallback.
+_DIFF_POLICY = github_rest.Policy(
+    attempts=3, retry_sleep_seconds=5, timeout_seconds=120, max_response_bytes=256 << 20
+)
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+class CompareSource:
+    """Read a Pull Request's comparison of its exact base and head.
+
+    The revisions are admission's, never a relay's or the candidate's, and each is
+    validated before it reaches a URL. Every read is the shared client's: bounded,
+    retried as an idempotent read, rate limits waited out.
+    """
+
+    def __init__(
+        self,
+        repository: str,
+        base: str,
+        head: str,
+        *,
+        client: github_rest.GitHubRestClient | None = None,
+        diff_client: github_rest.GitHubRestClient | None = None,
+    ) -> None:
+        if not _REPOSITORY.match(repository):
+            raise Unavailable("the repository name is not in owner/name form")
+        if not (_SHA.match(base) and _SHA.match(head)):
+            raise Unavailable("the comparison's revisions are not exact SHAs")
+        try:
+            self.client = client or github_rest.GitHubRestClient.from_environment(
+                user_agent="gnostoa-review-context", policy=_CONTEXT_POLICY
+            )
+            self.diff_client = (
+                diff_client
+                or github_rest.GitHubRestClient.from_environment(
+                    user_agent="gnostoa-review-context", policy=_DIFF_POLICY
+                )
+            )
+        except github_rest.GitHubError as error:
+            raise Unavailable(
+                "no usable token is available to read the change"
+            ) from error
+        self.url = self.client.url(f"repos/{repository}/compare/{base}...{head}")
+
+    def comparison(self) -> bytes:
+        """Return the comparison document."""
+        try:
+            return self.client.read_bytes(self.url, accept=github_rest.JSON_MEDIA_TYPE)
+        except github_rest.GitHubError as error:
+            raise Unavailable(f"the comparison could not be read: {error}") from error
+
+    def commits(self) -> list[Commit]:
+        """Return the comparison's commits, following its pages within a bound."""
+        url: str | None = f"{self.url}?per_page=100"
+        listed: list[Commit] = []
+        pages = 0
+        try:
+            while url is not None and pages < _COMMIT_PAGES:
+                pages += 1
+                page, headers = self.client.read_page(url)
+                listed.extend(_commits_of(page))
+                url = github_rest.next_url(headers, self.client.api_root)
+        except github_rest.GitHubError as error:
+            raise Unavailable(f"the commit list could not be read: {error}") from error
+        return listed
+
+    def unified_diff(self) -> bytes:
+        """Return the comparison's unified diff, or raise ``DiffRefused`` on a 406."""
+        try:
+            return self.diff_client.read_bytes(self.url, accept=DIFF_MEDIA_TYPE)
+        except github_rest.GitHubError as error:
+            # The provider's refusal to render a diff too large to generate, and that
+            # status alone: an authentication error, a permission error or an outage
+            # presented as a refusal would publish an incomplete review as complete.
+            if error.status == 406:
+                raise DiffRefused(str(error)) from error
+            raise Unavailable(f"the unified diff could not be read: {error}") from error
+
+
+def _commits_of(page: Any) -> list[Commit]:
+    """Return one comparison page's commits: a short id and a first line each."""
+    if not isinstance(page, dict):
+        raise Unavailable("a page of the comparison was not an object")
+    commits = page.get("commits") or []
+    if not isinstance(commits, list):
+        raise Unavailable("the comparison's commits were not a list")
+    listed = []
+    for entry in commits:
+        sha = entry.get("sha") if isinstance(entry, dict) else None
+        commit = entry.get("commit") if isinstance(entry, dict) else None
+        message = commit.get("message") if isinstance(commit, dict) else None
+        if not isinstance(sha, str) or not isinstance(message, str):
+            raise Unavailable("a commit of the comparison is malformed")
+        # Split on "\n" alone, as the provider's own tools do; every other line
+        # separator is neutralised where the log is rendered.
+        listed.append(Commit(sha[:9], message.split("\n", 1)[0]))
+    return listed

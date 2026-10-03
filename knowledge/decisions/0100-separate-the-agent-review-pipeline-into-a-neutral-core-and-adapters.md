@@ -167,7 +167,7 @@ Recorded per stage, so that this draft does not read as describing work not yet 
 | 1. Delivery and the agent report | **Delivered.** Core: `agent_review_report`, `agent_review_delivery` and `agent_review_paths`. Adapters: Claude Code, plus GitHub's comment sink. |
 | 2. The shared GitHub client | **Delivered.** `tools/github_rest.py` serves all five consumers, with one falsifier per element and a mutant that each falsifier kills. |
 | 3. Admission | **Delivered.** Core: `agent_review_model` (the subject vocabulary and the continuation marker) and `agent_review_admission` (every admission rule, the relay payload and the request artefacts). Adapters: GitHub's request source and step outputs, plus the Claude Code mention and line budget. The entrypoint composes them. A test-only second provider, with string ids, merge requests and a role vocabulary, is admitted and refused by the unchanged core for the same reasons; each rule has a mutant that a test kills. |
-| 4. Context collection | Pending. `agent_review_context` does not yet exist; the inline shell still runs. |
+| 4. Context collection | **4a delivered.** The collection step's 310-line inline shell is one entrypoint, `collect_context.py`. Its rules are in the core's `agent_review_context`: the guarded collector, the commit-count notice, the refusal-only fallback and the empty-diff verdicts. GitHub's `CompareSource` reads the comparison, its pages of commits and the unified diff through the shared client. A test-only second provider's change source, with its own fields, refusal and vocabulary, is assembled by the unchanged core. **4b and 4c pending:** the base collector's rules, and the chunker, move to the core. |
 | 5. Whole-pipeline falsifiers | Pending. |
 
 Two facts from stage 2 are recorded rather than smoothed over:
@@ -242,6 +242,10 @@ in Python.
   `server_url`. That is another deployment of the same provider, out of this slice's
   scope: no such deployment exists here, and the pins reject forged identities
   (CodeAnt on #353).
+- **Known limit: the unified diff is read within 256 MiB.** The shell's `gh api`
+  read it without a bound. The shared client bounds every read, so a larger diff now
+  fails the step, as any failure other than the provider's refusal does: only a 406
+  reaches the lossy per-file fallback. Its whole exchange is bounded at 120 seconds.
 - **Known limit: the repository-name pattern admits dot segments.** The GitHub request
   source's owner/name pattern, moved unchanged from the admission script, accepts
   `../r`. The value is GitHub's own `github.repository`, which cannot be a dot segment,
