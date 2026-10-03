@@ -1897,6 +1897,55 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         for step in posts
                     ],
                 )
+                # Whether a report was handed over at all travels with the delivery,
+                # so a failed download cannot be posted as an absent report under the
+                # marker a rerun would then find (Codex on #353).
+                self.assertEqual(
+                    ["${{ needs.claude.outputs.report_artifact }}"],
+                    [step["env"]["REPORT_ARTIFACT"] for step in posts],
+                )
+        self.assertEqual(
+            "${{ steps.handoff.outputs.artifact-id }}",
+            reviewer["outputs"]["report_artifact"],
+        )
+        self.assertEqual("handoff", upload.get("id"))
+
+    def test_a_report_handed_over_but_not_received_is_not_finalised(self) -> None:
+        """A failed download posted the unavailable notice under the report's marker,
+        and a rerun that then received the real report found that marker and posted
+        nothing (Codex on #353). The reviewing job's artifact says a report exists, so
+        its absence here is a failure to deliver, not a review that never finished.
+        """
+        poster = _load_script(POSTER)
+        posted: list[str] = []
+
+        def record(
+            _url: str, payload: dict[str, Any], _marker: str, _since: str
+        ) -> str:
+            posted.append(payload["body"])
+            return "https://github.com/o/r/issues/7#issuecomment-1"
+
+        poster.post_comment = record
+        with tempfile.TemporaryDirectory() as scratch:
+            env = {
+                "RUNNER_TEMP": scratch,
+                "REPOSITORY": "o/r",
+                "ITEM_NUMBER": "7",
+                "HEAD_SHA": "b" * 40,
+                "REVIEW_OUTCOME": "success",
+                "RUN_URL": "https://github.com/o/r/actions/runs/9",
+                "DELIVERY_SINCE": "2026-10-03T09:00:00Z",
+            }
+            absent = str(pathlib.Path(scratch) / "claude-review-report")
+            with mock.patch.dict(os.environ, {**env, "REPORT_ARTIFACT": "4242"}):
+                self.assertEqual(1, poster.main(["post_report.py", absent]))
+            self.assertEqual([], posted)
+            # No artifact: the reviewing job ended before handing anything over, which
+            # is the absence the notice exists for.
+            with mock.patch.dict(os.environ, {**env, "REPORT_ARTIFACT": ""}):
+                self.assertEqual(0, poster.main(["post_report.py", absent]))
+            self.assertEqual(1, len(posted))
+            self.assertIn("unavailable", posted[0].lower())
 
     def test_the_poster_refuses_what_it_cannot_trust(self) -> None:
         """The handoff is an artifact the reviewer job wrote, so the poster reads it

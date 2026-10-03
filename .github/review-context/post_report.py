@@ -145,6 +145,17 @@ def main(argv: list[str]) -> int:
     except ValueError as error:
         print(f"refusing to post: {error}", file=sys.stderr)
         return 2
+    if outcome == "success" and directory is None and os.environ.get("REPORT_ARTIFACT"):
+        # The reviewing job handed a report over and it did not arrive here: a failed
+        # download, not a review that never finished. Posting the unavailable notice
+        # would commit this delivery's marker, and a rerun that then received the real
+        # report would find it and post nothing (Codex on #353).
+        print(
+            "refusing to post: the reviewing job handed a report over, but it was not "
+            "received; rerun this job to deliver it",
+            file=sys.stderr,
+        )
+        return 1
     if outcome != "success":
         kind, text, cut = "failed", "", False
     elif directory is None:
