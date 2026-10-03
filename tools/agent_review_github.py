@@ -333,9 +333,10 @@ def step_outputs(subject: ReviewSubject) -> dict[str, str]:
 VOCABULARY = Vocabulary(change_request="Pull Request")
 NO_CHANGE_REQUEST = "No Pull Request: this request concerns the issue itself.\n"
 DIFF_MEDIA_TYPE = "application/vnd.github.v3.diff"
-# The comparison's pages of commits: the provider caps a comparison's commits well
-# below this, and the commit-count notice says when fewer are listed than it has.
-_COMMIT_PAGES = 10
+# The most pages of a comparison's commits read, 100 commits each. Past it the list is
+# refused rather than cut: a cut list would pass for the provider's own cap (Codex on
+# #353), and the core states the refusal instead.
+COMMIT_PAGE_BOUND = 100
 _CONTEXT_POLICY = github_rest.Policy(
     attempts=3, retry_sleep_seconds=5, max_response_bytes=8 << 20
 )
@@ -398,13 +399,17 @@ class CompareSource:
         listed: list[Commit] = []
         pages = 0
         try:
-            while url is not None and pages < _COMMIT_PAGES:
+            while url is not None and pages < COMMIT_PAGE_BOUND:
                 pages += 1
                 page, headers = self.client.read_page(url)
                 listed.extend(_commits_of(page))
                 url = github_rest.next_url(headers, self.client.api_root)
         except github_rest.GitHubError as error:
-            raise Unavailable(f"the commit list could not be read: {error}") from error
+            raise Unavailable("the commit list could not be read") from error
+        if url is not None:
+            raise Unavailable(
+                f"the comparison has more than {COMMIT_PAGE_BOUND} pages of commits"
+            )
         return listed
 
     def unified_diff(self) -> bytes:
@@ -436,7 +441,9 @@ def _commits_of(page: Any) -> list[Commit]:
         sha = entry.get("sha") if isinstance(entry, dict) else None
         commit = entry.get("commit") if isinstance(entry, dict) else None
         message = commit.get("message") if isinstance(commit, dict) else None
-        if not isinstance(sha, str) or not isinstance(message, str):
+        if not is_object_id(sha) or not isinstance(message, str):
+            # The id reaches a line-oriented log, so it is an exact object id or the
+            # commit is malformed (CodeAnt on #353).
             raise Unavailable("a commit of the comparison is malformed")
         # Split on "\n" alone, as the provider's own tools do; every other line
         # separator is neutralised where the log is rendered.

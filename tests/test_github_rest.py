@@ -7,12 +7,14 @@ bodies and request counts are real network behaviour rather than a stub's assump
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import email.utils
 import gc
 import http.server
 import io
 import json
+import pathlib
 import socket
 import threading
 import time
@@ -24,6 +26,8 @@ import warnings
 from collections.abc import Callable
 from typing import Any
 from unittest import mock
+
+import yaml
 
 from tools import github_rest
 
@@ -596,6 +600,36 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _names_the_client(node: ast.AST) -> bool:
+    """Return whether an import statement imports the shared client."""
+    if isinstance(node, ast.ImportFrom):
+        imported = {alias.name for alias in node.names}
+        return node.module == "tools.github_rest" or (
+            node.module == "tools" and "github_rest" in imported
+        )
+    return isinstance(node, ast.Import) and any(
+        alias.name == "tools.github_rest" for alias in node.names
+    )
+
+
+def _imports_the_client(path: pathlib.Path) -> bool:
+    """Return whether the module at ``path`` imports the shared client."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return any(_names_the_client(node) for node in ast.walk(tree))
+
+
+def _client_consumers(root: pathlib.Path, guardrail: dict[str, Any]) -> list[str]:
+    """Return the guardrail's implementation modules that import the client."""
+    return [
+        name
+        for name in guardrail.get("implementation") or []
+        if name.endswith(".py")
+        and name != "tools/github_rest.py"
+        and (root / name).is_file()
+        and _imports_the_client(root / name)
+    ]
+
+
 class SharedClientOwnershipTests(unittest.TestCase):
     """Every guardrail whose control reads through the shared client owns it."""
 
@@ -604,48 +638,13 @@ class SharedClientOwnershipTests(unittest.TestCase):
         transport change must reach that control's ownership record. Registered under
         one guardrail only, it bypassed two others' (Codex on #353). Checked by import,
         so a consumer added later is held to it too."""
-        import ast
-        import pathlib
-
-        import yaml
-
         root = pathlib.Path(__file__).resolve().parents[1]
         guardrails = yaml.safe_load(
             (root / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         )["guardrails"]
-
-        def imports_client(path: pathlib.Path) -> bool:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.module == "tools":
-                    if any(alias.name == "github_rest" for alias in node.names):
-                        return True
-                if (
-                    isinstance(node, ast.ImportFrom)
-                    and node.module == "tools.github_rest"
-                ):
-                    return True
-                if isinstance(node, ast.Import) and any(
-                    alias.name == "tools.github_rest" for alias in node.names
-                ):
-                    return True
-            return False
-
-        consumers = 0
-        for guardrail in guardrails:
-            implementation = guardrail.get("implementation") or []
-            uses = [
-                name
-                for name in implementation
-                if name.endswith(".py")
-                and name != "tools/github_rest.py"
-                and (root / name).is_file()
-                and imports_client(root / name)
-            ]
-            if not uses:
-                continue
-            consumers += 1
+        owners = [g for g in guardrails if _client_consumers(root, g)]
+        for guardrail in owners:
             with self.subTest(guardrail=guardrail["id"]):
-                self.assertIn("tools/github_rest.py", implementation)
+                self.assertIn("tools/github_rest.py", guardrail["implementation"])
                 self.assertIn("tests/test_github_rest.py", guardrail.get("tests") or [])
-        self.assertGreaterEqual(consumers, 3)
+        self.assertGreaterEqual(len(owners), 3)

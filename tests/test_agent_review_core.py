@@ -651,7 +651,7 @@ class SecondProviderContextTests(unittest.TestCase):
             """A change source whose commit list cannot be read."""
 
             def commits(self) -> list[Any]:
-                raise context.Unavailable("the commit list could not be read")
+                raise context.Unavailable("the source refused its commit list")
 
         source = Unlisted({"commit_count": 3}, [], b"+x\n")
         chunked: list[pathlib.Path] = []
@@ -662,8 +662,27 @@ class SecondProviderContextTests(unittest.TestCase):
         self.assertEqual("collected", state)
         self.assertEqual([target], chunked)
         log = (target / "commits.log").read_text(encoding="utf-8")
-        self.assertIn("commit list could not be read", log)
+        # With the source's own reason, never a provider cap's.
+        self.assertIn(
+            "[commit log unavailable: the source refused its commit list]", log
+        )
         self.assertNotIn("provider listed", log)
+
+    def test_a_commit_id_is_never_written_unless_it_is_hex(self) -> None:
+        """Whatever an adapter hands over, the log's records are the core's: an id that
+        is not a commit's is written as "?", so it cannot start a record of its own."""
+        from tools import agent_review_context as context
+
+        with tempfile.TemporaryDirectory() as scratch:
+            target = pathlib.Path(scratch) / "commits.b64"
+            context.write_commits(
+                target,
+                [context.Commit("abc\nforged", "s"), context.Commit("aaaaaaaa1", "t")],
+            )
+            lines = target.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(2, len(lines))
+        self.assertTrue(lines[0].startswith("? "))
+        self.assertTrue(lines[1].startswith("aaaaaaaa1 "))
 
     def test_a_comparison_that_is_not_one_ends_the_assembly(self) -> None:
         """Refusal is the default for what the core cannot establish."""

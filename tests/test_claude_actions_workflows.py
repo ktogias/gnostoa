@@ -3214,6 +3214,48 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     else:
                         self.assertEqual([], source.commits())
 
+    def test_a_commit_id_that_is_not_one_is_refused(self) -> None:
+        """A commit's id reached the line-oriented log unvalidated, so a malformed one
+        carrying a newline could forge records (CodeAnt on #353)."""
+        from tools import agent_review_context as context_core
+        from tools import agent_review_github as github
+
+        for sha in ("abc\nforged 1234", "not-hex" * 6, "a" * 39):
+            with self.subTest(sha=sha):
+
+                def answer(_request: urllib.request.Request, sha: str = sha) -> Any:
+                    commits = [{"sha": sha, "commit": {"message": "subject"}}]
+                    return _Answer(json.dumps({"commits": commits}).encode(), {})
+
+                with (
+                    mock.patch.dict(os.environ, {"GH_TOKEN": _PLACEHOLDER_TOKEN}),
+                    _provider_answering(answer),
+                ):
+                    source = github.CompareSource("o/r", "a" * 40, "b" * 40)
+                    with self.assertRaises(context_core.Unavailable):
+                        source.commits()
+
+    def test_a_commit_list_past_the_page_bound_is_refused_not_cut(self) -> None:
+        """The pages stopped at a bound, and the list passed as the provider's own cap
+        (Codex on #353). Past the bound the list is refused, which the core states."""
+        from tools import agent_review_context as context_core
+        from tools import agent_review_github as github
+
+        def endless(request: urllib.request.Request) -> Any:
+            commits = [{"sha": "1" * 40, "commit": {"message": "one"}}]
+            link = f'<{request.full_url}&page=n>; rel="next"'
+            return _Answer(json.dumps({"commits": commits}).encode(), {"Link": link})
+
+        with (
+            mock.patch.dict(os.environ, {"GH_TOKEN": _PLACEHOLDER_TOKEN}),
+            mock.patch.object(github, "COMMIT_PAGE_BOUND", 3),
+            _provider_answering(endless) as opener,
+        ):
+            source = github.CompareSource("o/r", "a" * 40, "b" * 40)
+            with self.assertRaisesRegex(context_core.Unavailable, "more than 3 pages"):
+                source.commits()
+        self.assertEqual(3, opener.open.call_count)
+
     def test_the_commit_list_follows_every_page(self) -> None:
         """The provider pages a comparison's commits; reading the first page alone
         published a short log as complete. The change source follows `Link`."""
