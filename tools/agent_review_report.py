@@ -92,15 +92,23 @@ def write_handoff(report: AgentReport, directory: pathlib.Path) -> None:
     Created exclusively and never through a link: a directory that already exists was
     not made by this step. The status is the commit record, so it is written after the
     whole report.
+
+    Each file is written whole under a staging name and only then renamed into place,
+    so a reader finds it whole or not at all. A cut report's record is two lines, and
+    its first line alone is a valid record of an uncut one: written in place, an
+    interruption between them was read back as a finished, uncut review (a review finding on #353).
     """
     bounded = for_handoff(report)
     record = f"{bounded.status}\ntruncated\n" if bounded.cut else f"{bounded.status}\n"
     directory.mkdir(parents=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     for name, content in (("report.txt", bounded.text), ("status", record)):
-        descriptor = os.open(directory / name, flags, 0o644)
+        staged = directory / f".{name}.partial"
+        descriptor = os.open(staged, flags, 0o644)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(content)
+        # Atomic on one filesystem: the published name appears with all its bytes.
+        os.rename(staged, directory / name)
 
 
 def _read_bounded(name: str, directory: int) -> str | None:
@@ -142,6 +150,10 @@ def read_handoff(directory: pathlib.Path) -> AgentReport:
     try:
         status = _read_bounded("status", descriptor)
         text = _read_bounded("report.txt", descriptor)
+    except OSError:
+        # Present but unreadable is still no report: the poster must say so rather
+        # than fail before posting anything (CodeAnt on #353).
+        return missing
     finally:
         os.close(descriptor)
     # The status record: its first line, then `truncated` when the writer cut the

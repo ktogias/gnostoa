@@ -588,6 +588,7 @@ def read_with_retries(
         # has consumed it: reading an error body is part of that exchange.
         timeout = request_timeout(deadline, policy)
         attempt_deadline = time.monotonic() + timeout
+        pause = 0.0
         try:
             return fetch(url, request, timeout)
         except urllib.error.HTTPError as error:

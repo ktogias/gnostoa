@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import pathlib
 import re
 import sys
 import tempfile
 import unittest
 from typing import Any
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
@@ -197,6 +199,71 @@ class SecondAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual(1, len(sink.notes))
                 self.assertEqual(sink.notes[0]["id"], posted)
+
+
+class HandoffRecordTests(unittest.TestCase):
+    """The handoff's status record is all or nothing."""
+
+    def test_a_status_record_cut_off_after_its_first_line_is_not_a_record(self) -> None:
+        """A cut report's record is two lines, and its first line alone is a valid
+        record of an uncut one: a write interrupted between them was read back as a
+        complete, uncut report, and the comment lost its tail and its notice (Codex on
+        #353). The record is published only whole."""
+        from tools import agent_review_report as report
+
+        cut = report.AgentReport("complete", "x" * (report.HANDOFF_BYTES + 10), False)
+        names: dict[int, str] = {}
+        real_open, real_fdopen = os.open, os.fdopen
+
+        def recording_open(
+            path: Any, flags: int, mode: int = 0o777, **options: Any
+        ) -> int:
+            """Open as os.open does, remembering which descriptor names which file."""
+            descriptor = real_open(path, flags, mode, **options)
+            names[descriptor] = os.path.basename(str(path))
+            return descriptor
+
+        def interrupting(descriptor: int, *args: Any, **options: Any) -> Any:
+            """Wrap as os.fdopen does, cutting the status record after its first line."""
+            stream = real_fdopen(descriptor, *args, **options)
+            if not names.get(descriptor, "").lstrip(".").startswith("status"):
+                return stream
+            original = stream.write
+
+            def write(text: str) -> int:
+                """Write the first line, as an interruption could leave it, then stop."""
+                original(text.split("\n")[0] + "\n")
+                stream.flush()
+                raise OSError("cancelled mid-record")
+
+            stream.write = write
+            return stream
+
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch) / "handoff"
+            with (
+                mock.patch.object(os, "open", recording_open),
+                mock.patch.object(os, "fdopen", interrupting),
+                self.assertRaises(OSError),
+            ):
+                report.write_handoff(cut, directory)
+            received = report.read_handoff(directory)
+        self.assertEqual("unavailable", received.status)
+
+    def test_an_unreadable_handoff_is_an_unavailable_report(self) -> None:
+        """A handoff file that exists but cannot be read is not a crash: the poster
+        must still post that the report is unavailable (CodeAnt on #353)."""
+        from tools import agent_review_report as report
+
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch) / "handoff"
+            report.write_handoff(report.AgentReport("complete", "x", False), directory)
+            (directory / "report.txt").chmod(0)
+            try:
+                received = report.read_handoff(directory)
+            finally:
+                (directory / "report.txt").chmod(0o600)
+        self.assertEqual("unavailable", received.status)
 
 
 class GitHubClaudeCompositionTests(unittest.TestCase):

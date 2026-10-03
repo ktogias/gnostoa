@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterable
 from typing import Protocol
 
@@ -52,12 +53,41 @@ _BACKTICKS = re.compile(f"`{{{_LONGEST_BACKTICK_RUN + 1},}}")
 _MENTION = re.compile(r"@(?=[A-Za-z0-9])")
 # What a credential is made of, for running a match on to the end of its word.
 _TOKEN_CHARACTER = re.compile(r"[A-Za-z0-9_-]")
-# Bidirectional controls, zero-width and other invisible formatting characters, and
-# every control character except a newline and a tab.
-_INVISIBLE = re.compile(
-    "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f"
-    "\\u2028-\\u202e\\u2060-\\u2069\\ufeff\\ufff9-\\ufffb]"
+# What counts as invisible is decided by category, not by a list: an enumerated class
+# missed tag characters, the soft hyphen and others, and a token split by one survived
+# redaction (CodeRabbit on #353). Every control, format, surrogate, private-use and
+# unassigned code point, and the line and paragraph separators, except a newline and a
+# tab. These categories hold no character a review needs to show as itself.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
+# And the invisible characters whose category is a visible one: the combining grapheme
+# joiner, Hangul fillers, Khmer inherent vowels, Mongolian free variation selectors and
+# the variation selectors.
+_INVISIBLE_EXTRA = frozenset(
+    {"\u034f", "\u115f", "\u1160", "\u17b4", "\u17b5", "\u3164", "\uffa0"}
+    | {chr(code) for code in range(0x180B, 0x1810)}
+    | {chr(code) for code in range(0xFE00, 0xFE10)}
+    | {chr(code) for code in range(0xE0100, 0xE01F0)}
 )
+_KEPT = frozenset("\n\t")
+
+
+def _invisible(character: str) -> bool:
+    """Return whether ``character`` cannot be seen as itself in a public comment."""
+    if character in _KEPT:
+        return False
+    return (
+        character in _INVISIBLE_EXTRA
+        or unicodedata.category(character) in _INVISIBLE_CATEGORIES
+    )
+
+
+def _escaped(character: str) -> str:
+    """Return ``character`` as a visible escape, or itself if it can be seen."""
+    if not _invisible(character):
+        return character
+    code = ord(character)
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
+
 
 SecretPattern = tuple[re.Pattern[str], str]
 
@@ -167,9 +197,7 @@ def _redacted(text: str, patterns: Iterable[SecretPattern]) -> tuple[str, int]:
     Matched on the text with invisible characters removed, then applied to the text as
     written, so a token split by one is still redacted rather than escaped into view.
     """
-    kept = [
-        index for index, character in enumerate(text) if not _INVISIBLE.match(character)
-    ]
+    kept = [index for index, character in enumerate(text) if not _invisible(character)]
     skeleton = "".join(text[index] for index in kept)
     spans = sorted(
         (kept[start], kept[end - 1] + 1, kind)
@@ -200,7 +228,7 @@ def sanitise(
     generic ones.
     """
     text, redacted = _redacted(text, (*GENERIC_SECRET_PATTERNS, *secret_patterns))
-    text = _INVISIBLE.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+    text = "".join(_escaped(character) for character in text)
     text = _MENTION.sub(_FULLWIDTH_AT, text)
     text = _BACKTICKS.sub(
         lambda match: (

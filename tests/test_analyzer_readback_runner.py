@@ -505,6 +505,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     for comment_id in range(start, stop)
                 ]
                 response_size = len(json.dumps(comments).encode("utf-8"))
+                # skipcq: PYL-W0212 -- the runner's own bound, read by this white-box stub
                 if response_size > runner._MAX_RESPONSE_BYTES:
                     raise runner.RunnerError("GitHub API response exceeds bounded size")
                 headers: dict[str, str] = {}

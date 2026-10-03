@@ -1646,7 +1646,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # A credential split by an invisible character is still a credential: the
         # escape that makes the character visible must not also make the token survive.
         token = "ghp_" + "B" * 36
-        for split in ("\u200b", "\u202e", "\u2060\ufeff"):
+        for split in (
+            "\u200b",
+            "\u202e",
+            "\u2060\ufeff",
+            # Invisible characters outside any enumerated list (CodeRabbit on #353):
+            # a tag character, a soft hyphen, a combining grapheme joiner, a Hangul
+            # filler and a variation selector.
+            "\U000e0041",
+            "\u00ad",
+            "\u034f",
+            "\u3164",
+            "\ufe0f",
+        ):
             with self.subTest(split=repr(split)):
                 hidden = poster.render_comment(
                     "complete",
@@ -1947,7 +1959,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         def interrupting_fdopen(descriptor: int, *args: Any, **options: Any) -> Any:
             """Wrap as os.fdopen does, but cut the report's write off half way."""
             stream = real_fdopen(descriptor, *args, **options)
-            if names.get(descriptor) != "report.txt":
+            # The report under its staging name, written before it is renamed into place.
+            if not names.get(descriptor, "").lstrip(".").startswith("report.txt"):
                 return stream
             original = stream.write
 
