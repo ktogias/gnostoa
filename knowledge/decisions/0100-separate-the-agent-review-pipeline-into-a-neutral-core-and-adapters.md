@@ -200,7 +200,9 @@ Two facts from stage 2 are recorded rather than smoothed over:
   read-back started minutes before the job. So a rerun after an uncertain create
   searched for another marker in too short a window, and posted again. The marker now
   carries the report's attempt, and the read-back starts where the run did (Codex on
-  #353).
+  #353). Delivery also reads back before its first create, not only after a failure,
+  because a rerun is a new process: it resumes a delivery rather than repeating it
+  (Codex on #353).
 - **A cap that held only for sequential use.** A worker was counted only once
   abandoned, so concurrent requests could all pass the check first. Workers are now
   counted from their start, under a lock (CodeAnt on #353), with a falsifier and a

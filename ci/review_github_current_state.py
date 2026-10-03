@@ -1568,71 +1568,70 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-    client = GitHubRestClient(token)
-
-    if args.mode == "collect":
-        if args.output is None:
-            raise SystemExit("--output is required for collect")
-        if args.run_id <= 0 or args.run_attempt <= 0:
-            raise SystemExit("--run-id and --run-attempt must be positive for collect")
-        pulls = list(
-            dict.fromkeys(
-                [
-                    *args.pull_number,
-                    *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
-                ]
-            )
-        )
-        if not pulls:
-            pulls = _select_scheduled_pull_batch(
-                _open_pull_numbers(client, args.repository),
-                _now(),
-            )
-        if len(pulls) > _MAX_OPEN_PULLS:
-            raise SystemExit(
-                "selected Pull Request population exceeds bounded reconciliation capacity"
-            )
-        entries = []
-        for number in pulls:
-            try:
-                entry = _collect_entry(
-                    client,
-                    args.repository,
-                    number,
-                    run_id=args.run_id,
-                    run_attempt=args.run_attempt,
-                )
-            except (OSError, RuntimeError, ValueError) as exc:
-                entry = {
-                    "pull_number": number,
-                    "collection_status": "UNAVAILABLE",
-                    "reason": "RECONCILIATION_ENTRY_UNAVAILABLE",
-                    "error_type": type(exc).__name__,
-                }
-            entries.append(entry)
-        _write_payload(args.output, entries)
-        _summary(
+def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Collect a projection for each selected Pull Request and write the payload."""
+    if args.output is None:
+        raise SystemExit("--output is required for collect")
+    if args.run_id <= 0 or args.run_attempt <= 0:
+        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+    pulls = list(
+        dict.fromkeys(
             [
-                "## Gnostoa useful L1 collection",
-                "",
-                f"- Pull Requests attempted: {len(entries)}",
-                *[
-                    f"- PR #{item['pull_number']}: "
-                    + (
-                        f"UNAVAILABLE ({item.get('reason', 'UNKNOWN')}); no projection"
-                        if item.get("collection_status") == "UNAVAILABLE"
-                        else "projection collected; inspect its coverage and R2A state"
-                    )
-                    for item in entries
-                ],
-                "- Projection is non-canonical and binding remains false.",
+                *args.pull_number,
+                *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
             ]
         )
-        return 0
+    )
+    if not pulls:
+        pulls = _select_scheduled_pull_batch(
+            _open_pull_numbers(client, args.repository),
+            _now(),
+        )
+    if len(pulls) > _MAX_OPEN_PULLS:
+        raise SystemExit(
+            "selected Pull Request population exceeds bounded reconciliation capacity"
+        )
+    entries = []
+    for number in pulls:
+        try:
+            entry = _collect_entry(
+                client,
+                args.repository,
+                number,
+                run_id=args.run_id,
+                run_attempt=args.run_attempt,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            entry = {
+                "pull_number": number,
+                "collection_status": "UNAVAILABLE",
+                "reason": "RECONCILIATION_ENTRY_UNAVAILABLE",
+                "error_type": type(exc).__name__,
+            }
+        entries.append(entry)
+    _write_payload(args.output, entries)
+    _summary(
+        [
+            "## Gnostoa useful L1 collection",
+            "",
+            f"- Pull Requests attempted: {len(entries)}",
+            *[
+                f"- PR #{item['pull_number']}: "
+                + (
+                    f"UNAVAILABLE ({item.get('reason', 'UNKNOWN')}); no projection"
+                    if item.get("collection_status") == "UNAVAILABLE"
+                    else "projection collected; inspect its coverage and R2A state"
+                )
+                for item in entries
+            ],
+            "- Projection is non-canonical and binding remains false.",
+        ]
+    )
+    return 0
 
+
+def _publish_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Publish each collected projection, isolating one entry's failure."""
     if args.payload is None:
         raise SystemExit("--payload is required for publish")
     entries = _load_payload(args.payload)
@@ -1652,6 +1651,15 @@ def main(argv: list[str] | None = None) -> int:
 
     _emit_publication_results(results)
     return 1 if publication_failed else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    client = GitHubRestClient(token)
+    if args.mode == "collect":
+        return _collect_mode(args, client)
+    return _publish_mode(args, client)
 
 
 if __name__ == "__main__":

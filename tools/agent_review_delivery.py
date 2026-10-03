@@ -346,10 +346,12 @@ def post_once(
     """Create ``body`` through ``sink`` once, retrying only what cannot duplicate it.
 
     Creating a comment is not idempotent: an uncertain failure can arrive after the
-    provider created it. So before any retry the sink is asked for this delivery's own
-    comment, found by ``marker_line``, which starts the body. When that read-back fails,
-    delivery stops rather than risk posting the review twice: a missing comment is
-    visible as a failed job; a duplicate is not.
+    provider created it. So before every create -- the first one too, since a rerun of
+    the delivery is a new process with the same marker (a review finding on #353) --
+    the sink is asked for this delivery's own comment, found by ``marker_line``, which
+    starts the body. When that read-back fails, delivery stops rather than risk
+    posting the review twice: a missing comment is visible as a failed job; a
+    duplicate is not.
 
     An attempt still in flight ends delivery too. A read-back finding nothing proves
     only that the comment does not exist yet, and an abandoned attempt can still create
@@ -365,15 +367,15 @@ def post_once(
             # The provider's own word on when to try again, when it gave one: retrying
             # inside a rate-limit window can extend it.
             wait(max(5.0 * attempt, min(hint, _MAX_HINT_SECONDS)))
-            try:
-                existing = sink.find(marker_line)
-            except DeliveryUncertain as error:
-                raise DeliveryUnconfirmed(
-                    "could not confirm whether the review was delivered, so it was "
-                    f"not delivered again: {error}"
-                ) from error
-            if existing is not None:
-                return existing
+        try:
+            existing = sink.find(marker_line)
+        except DeliveryUncertain as error:
+            raise DeliveryUnconfirmed(
+                "could not confirm whether the review was delivered, so it was "
+                f"not delivered again: {error}"
+            ) from error
+        if existing is not None:
+            return existing
         try:
             return sink.create(body)
         except DeliveryUncertain as error:

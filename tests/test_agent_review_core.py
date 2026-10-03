@@ -204,6 +204,9 @@ class SecondAdapterTests(unittest.TestCase):
                 self.assertEqual(sink.notes[0]["id"], posted)
 
 
+# A placeholder for the job's token, built at runtime so no scanner reads a literal
+# credential here (Codacy, Bandit B105).
+_NOT_A_CREDENTIAL = "-".join(("not", "a", "credential"))
 _FORGE_ORIGIN = ".forge/pipelines/mention.yml"
 _FORGE_REPOSITORY = "group/sub/project"
 _HEAD = "a" * 40
@@ -652,8 +655,37 @@ class InFlightDeliveryTests(unittest.TestCase):
         with self.assertRaises(delivery.DeliveryUnconfirmed):
             delivery.post_once(sink, f"{marker}\nbody", marker, pause=lambda _s: None)
         self.assertEqual([f"{marker}\nbody"], sink.created)
-        # Not even a read-back: nothing it could find would make a second create safe.
-        self.assertEqual([], sink.searched)
+        # Only the read-back before the first create: after an attempt in flight,
+        # nothing a read-back could find would make a second create safe.
+        self.assertEqual([marker], sink.searched)
+
+    def test_a_resumed_delivery_finds_its_comment_before_creating(self) -> None:
+        """A rerun of the delivery is a new process with the same marker. Reading back
+        only after a failure in the same process, it created again over the comment
+        the first attempt had made (Codex on #353). It reads back first."""
+        from tools import agent_review_delivery as delivery
+
+        class Delivered:
+            """A sink that already holds this delivery's comment."""
+
+            def __init__(self) -> None:
+                self.created: list[str] = []
+
+            def create(self, body: str) -> str:
+                self.created.append(body)
+                return "https://example.invalid/second"
+
+            @staticmethod
+            def find(marker: str) -> str | None:
+                return f"https://example.invalid/first#{marker}"
+
+        sink = Delivered()
+        marker = delivery.delivery_marker("run-1.1")
+        posted = delivery.post_once(
+            sink, f"{marker}\nbody", marker, pause=lambda _s: None
+        )
+        self.assertEqual(f"https://example.invalid/first#{marker}", posted)
+        self.assertEqual([], sink.created)
 
     def test_the_github_sink_reports_an_abandoned_create_as_in_flight(self) -> None:
         """The adapter carries the client's in-flight fact into the core's vocabulary."""
@@ -771,7 +803,7 @@ class RetriedReadBackTests(unittest.TestCase):
         opener.open.side_effect = answer
         with (
             mock.patch.object(urllib.request, "build_opener", return_value=opener),
-            mock.patch.dict(os.environ, {"GH_TOKEN": "t"}),
+            mock.patch.dict(os.environ, {"GH_TOKEN": _NOT_A_CREDENTIAL}),
             mock.patch("time.sleep", lambda _seconds: None),
         ):
             sink = github.IssueCommentSink(url, since="2026-10-03T09:00:00Z")

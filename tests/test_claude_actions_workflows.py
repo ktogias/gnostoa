@@ -1966,6 +1966,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     posted = poster.post_comment(url, payload, marker, since)
                     self.assertEqual(1, len(comments))
                     self.assertEqual(comments[0]["html_url"], posted)
+            # A rerun finds the comment the first run made, and makes no other.
+            comments = provider(["ok"])
+            first = poster.post_comment(url, payload, marker, since)
+            self.assertEqual(first, poster.post_comment(url, payload, marker, since))
+            self.assertEqual(1, len(comments))
             # Someone else's comment carrying the marker is not this run's review.
             comments = provider(["refused", "ok"])
             comments.append(
@@ -1976,11 +1981,13 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 1,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
             )
-            # Unable to look, after a response that may have been lost: no retry.
+            # Unable to look: nothing is created. Delivery reads back before its
+            # first create too, since a rerun is a new process with the same marker
+            # (Codex on #353), so an unreadable thread stops it before any create.
             comments = provider(["lost", "ok"], listing_fails=True)
             with self.assertRaises(RuntimeError):
                 poster.post_comment(url, payload, marker, since)
-            self.assertEqual(1, len(comments))
+            self.assertEqual(0, len(comments))
             # A busy thread cannot hide the comment behind the first page
             # (CodeAnt on #353): the read-back pages on.
             comments = provider(["lost", "ok"])
@@ -1993,7 +2000,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 1,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
             )
-            # And a thread too busy to read back whole is a reason to stop.
+            # And a thread too busy to read back whole is a reason to stop, before
+            # the first create as before any retry.
             comments = provider(["lost", "ok"])
             comments.extend(
                 {"user": {"login": "mallory"}, "body": "noise", "html_url": "n"}
@@ -2002,7 +2010,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 poster.post_comment(url, payload, marker, since)
             self.assertEqual(
-                1,
+                0,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
             )
         self.assertIs(real_sleep, time.sleep)
