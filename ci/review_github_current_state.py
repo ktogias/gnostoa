@@ -1571,6 +1571,21 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _collection_summary(lines: list[str]) -> None:
+    """Write the collection's step summary, which the payload never depends on.
+
+    The payload was already written, so an unwritable summary is reported rather than
+    allowed to fail the collection, as the publication's summary is (CodeAnt on #353).
+    """
+    try:
+        _summary(lines)
+    except OSError as exc:
+        print(
+            "Gnostoa useful L1 collection: "
+            f"STEP_SUMMARY_UNAVAILABLE ({_publication_error_diagnostic(exc)})"
+        )
+
+
 def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Collect a projection for each selected Pull Request and write the payload."""
     if args.output is None:
@@ -1613,7 +1628,7 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
             }
         entries.append(entry)
     _write_payload(args.output, entries)
-    _summary(
+    _collection_summary(
         [
             "## Gnostoa useful L1 collection",
             "",

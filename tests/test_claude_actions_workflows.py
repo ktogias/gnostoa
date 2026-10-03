@@ -532,6 +532,75 @@ def _named_step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"no step named {name!r}")
 
 
+def _collection_source() -> str:
+    """Return the sources of every module that decides the base collection, joined.
+
+    Decision 0100: the collection's rules are the neutral core's, the comparison's
+    schema and the contents API the GitHub adapter's, and the entrypoint composes them.
+    """
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            BASE_COLLECTOR,
+            ROOT / "tools" / "agent_review_base.py",
+            ROOT / "tools" / "agent_review_github.py",
+        )
+    )
+
+
+def _changed(entry: dict[str, Any]) -> Any:
+    """Translate a GitHub comparison entry into the core's vocabulary."""
+    from tools import agent_review_github as github
+
+    return github.changed_file(entry)
+
+
+def _hunkless_label(entry: dict[str, Any], record: dict[str, Any], name: str) -> str:
+    """Classify a hunkless GitHub entry against its GitHub listing record."""
+    from tools import agent_review_base as base
+    from tools import agent_review_github as github
+
+    # A test's entry may name no file; the name it is classified under is its path.
+    changed = _changed({"filename": name, **entry})
+    return base.hunkless_label(changed, github.base_record(record), name)
+
+
+def _write_summaries(
+    context: pathlib.Path,
+    comparison: dict[str, Any],
+    delivered: int,
+    file_cap: int | None = None,
+) -> None:
+    """Write the summaries of a GitHub comparison's entries, at the provider's cap."""
+    from tools import agent_review_base as base
+    from tools import agent_review_claude_code as claude_code
+    from tools import agent_review_github as github
+
+    base.write_summaries(
+        context,
+        [_changed(entry) for entry in comparison.get("files") or []],
+        delivered,
+        file_cap=github.FILE_CAP if file_cap is None else file_cap,
+        line_cap=claude_code.READ_LINE_CAP,
+    )
+
+
+def _write_assembled(handle: Any, comparison: dict[str, Any]) -> None:
+    """Write the fallback diff of a GitHub comparison's entries."""
+    from tools import agent_review_base as base
+
+    base.write_assembled(
+        handle, [_changed(entry) for entry in comparison.get("files") or []]
+    )
+
+
+def _base_path_of(entry: dict[str, Any]) -> str:
+    """Return where the base holds a GitHub comparison entry."""
+    from tools import agent_review_base as base
+
+    return base.base_path_of(_changed(entry))
+
+
 # What a stubbed collector can have written before it exits: every artefact `collect`
 # produces before its per-file fetch loop, nothing at all, or what a finished
 # collection writes in each of its outcomes. Each writes exactly what the real collector
@@ -3038,8 +3107,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         The summary moved into the committed script, so that is where the
         contract lives now.
         """
-        source = BASE_COLLECTOR.read_text(encoding="utf-8")
-        self.assertIn("entry['status']", source)
+        # The status is written whole, in the core's own vocabulary (Decision 0100).
+        source = _collection_source()
+        self.assertIn("{changed.status}", source)
         self.assertNotIn("[0:1]", source)
 
     def test_a_capped_commit_list_says_so(self) -> None:
@@ -3048,6 +3118,30 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         records logged (behaviour: test_collected_review_context_is_bounded_...).
         """
         self.assertIn("total_commits", _context_source())
+
+    def test_a_commit_list_that_is_not_a_list_is_refused(self) -> None:
+        """A falsy `commits` of another type -- false, 0, "" -- read as an empty list,
+        and a malformed page passed as a complete one (CodeAnt on #353). Only an absent
+        or null field is an empty page."""
+        from tools import agent_review_context as context_core
+        from tools import agent_review_github as github
+
+        for value, refused in ((False, True), (0, True), ("", True), (None, False)):
+            with self.subTest(commits=value):
+
+                def answer(_request: urllib.request.Request, value: Any = value) -> Any:
+                    return _Answer(json.dumps({"commits": value}).encode(), {})
+
+                with (
+                    mock.patch.dict(os.environ, {"GH_TOKEN": _PLACEHOLDER_TOKEN}),
+                    _provider_answering(answer),
+                ):
+                    source = github.CompareSource("o/r", "a" * 40, "b" * 40)
+                    if refused:
+                        with self.assertRaises(context_core.Unavailable):
+                            source.commits()
+                    else:
+                        self.assertEqual([], source.commits())
 
     def test_the_commit_list_follows_every_page(self) -> None:
         """The provider pages a comparison's commits; reading the first page alone
@@ -3433,7 +3527,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("patches-source", clause)
         # The manifest the prompt defers to must carry the same caveat, or the reviewer
         # reads a verdict there that the prompt has already qualified away.
-        manifest_header = BASE_COLLECTOR.read_text(encoding="utf-8")
+        manifest_header = _collection_source()
         self.assertIn("is carried by the unified diff's mode lines", manifest_header)
         self.assertIn(
             "metadata-only entry is then not examined either", manifest_header
@@ -3601,7 +3695,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         drift, and so a later change to the floor shows up as a changed claim.
         """
         builder = _load_script(BASE_COLLECTOR)
-        now = builder.time.monotonic()
+        now = time.monotonic()
         for remaining in (0.0, -5.0, 0.01):
             with self.subTest(remaining=remaining):
                 self.assertEqual(
@@ -3641,12 +3735,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # Plenty of budget: the ordinary timeout applies.
             builder.provider_json(
                 f"https://api.github.com/repos/o/r/contents/f?ref={'c' * 40}",
-                deadline=builder.time.monotonic() + 3600,
+                deadline=time.monotonic() + 3600,
             )
             # Nearly out of budget: the request may not outlast what is left.
             builder.provider_json(
                 f"https://api.github.com/repos/o/r/contents/g?ref={'c' * 40}",
-                deadline=builder.time.monotonic() + 3,
+                deadline=time.monotonic() + 3,
             )
         finally:
             builder.fetch_json = previous
@@ -4144,7 +4238,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             "patch": "@@ -0,0 +1 @@\n+a",
             "sha": "a" * 40,
         }
-        self.assertEqual("src.py", builder.base_path_of(entry))
+        self.assertEqual("src.py", _base_path_of(entry))
         with tempfile.TemporaryDirectory() as d:
             context = pathlib.Path(d)
             (context / "comparison.json").write_text(
@@ -4748,15 +4842,68 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             json.dumps(comparison), encoding="utf-8"
         )
         replaced["provider_json"] = answer
-        previous = {name: getattr(builder, name) for name in replaced}
-        for name, value in replaced.items():
-            setattr(builder, name, value)
+        # Decision 0100: the collection's rules are the core's, so a stand-in for one of
+        # its writers is put where the core calls it, as well as here.
+        from tools import agent_review_base as base
+
+        targets = [
+            (module, name)
+            for name in replaced
+            for module in (builder, base)
+            if hasattr(module, name)
+        ]
+        previous = {
+            (id(module), name): getattr(module, name) for module, name in targets
+        }
+        for module, name in targets:
+            setattr(module, name, replaced[name])
         try:
             builder.collect(context, "owner/repo", 1 << 20)
         finally:
-            for name, value in previous.items():
-                setattr(builder, name, value)
+            for module, name in targets:
+                setattr(module, name, previous[(id(module), name)])
         return (context / "base.manifest").read_text(encoding="utf-8"), context
+
+    def test_the_providers_contradictions_are_named_for_what_they_are(self) -> None:
+        """A not-found for a path its own listing holds, and a refused redirect, are
+        each the provider's to answer for, and named so: the stage-4b mutation pass
+        found neither label pinned through the GitHub composition."""
+        from tools import github_rest
+
+        merge_base = "c" * 40
+        body = b"body"
+        comparison = {
+            "merge_base_commit": {"sha": merge_base},
+            "files": [
+                {
+                    "filename": "one.py",
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 1,
+                    "patch": "@@ -1 +1 @@\n-a\n+b",
+                    "sha": _blob_id(b"after"),
+                }
+            ],
+        }
+        listing = [{"name": "one.py", "type": "file", "size": 4, "sha": _blob_id(body)}]
+
+        def missing(url: str, _deadline: float | None = None) -> Any:
+            return listing if url.endswith(f"/contents/?ref={merge_base}") else None
+
+        manifest, _ = self._collect_with(comparison, missing)
+        self.assertIn(
+            "provider-error one.py: listed at the merge base but its contents were "
+            "not found",
+            " ".join(manifest.split()),
+        )
+
+        def redirected(url: str, _deadline: float | None = None) -> Any:
+            if url.endswith(f"/contents/?ref={merge_base}"):
+                return listing
+            raise github_rest.UnsafeRedirect("refusing a redirect")
+
+        manifest, _ = self._collect_with(comparison, redirected)
+        self.assertIn("unsafe-redirect one.py: refusing a redirect", manifest)
 
     def test_a_comparison_entry_is_read_in_the_types_it_promises(self) -> None:
         """Each provider field was checked where it was read, and each review found a
@@ -4794,7 +4941,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIsNone(usable[0].get("additions"))
         # And nothing coerced reaches the fallback diff.
         rendered = io.StringIO()
-        builder.write_assembled(
+        _write_assembled(
             rendered, {"files": [builder.usable_files({"files": [entry]})[0][0]]}
         )
         self.assertNotIn("12345", rendered.getvalue())
@@ -5041,11 +5188,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         `base.manifest` was written. It is rendered into its staging file instead.
         (Codex)
         """
-        builder = _load_script(BASE_COLLECTOR)
         handles: list[Any] = []
-        real = builder.write_assembled
+        from tools import agent_review_base as base
 
-        def recording(handle: Any, comparison: dict[str, Any]) -> None:
+        real = base.write_assembled
+
+        def recording(handle: Any, comparison: Any) -> None:
             """Record where the diff is rendered, then render it."""
             handles.append(handle)
             real(handle, comparison)
@@ -5870,7 +6018,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         copy. The count of writes is asserted rather than the peak memory, because the
         claim is about the shape of the work and a memory probe would be flaky.
         """
-        builder = _load_script(BASE_COLLECTOR)
         entries = [_file(f"file{index}.py", "modified") for index in range(40)]
         written: list[str] = []
 
@@ -5889,7 +6036,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 written.append(piece)
                 return len(piece)
 
-        builder.write_assembled(Recording(), {"files": entries})
+        _write_assembled(Recording(), {"files": entries})
         self.assertGreaterEqual(len(written), len(entries))
         # And the content is the same as the joined form produced.
         joined = "".join(written)
@@ -6234,7 +6381,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         `content-changed-without-hunks`, so the reviewer needs no new instruction and
         the copy mapping is still listed separately.
         """
-        builder = _load_script(BASE_COLLECTOR)
         source_blob, edited_blob = "a" * 40, "b" * 40
         cases = (
             # An exact copy: the destination holds the source's content.
@@ -6244,7 +6390,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
         for head_blob, base_blob, expected in cases:
             with self.subTest(expected=expected):
-                label = builder.hunkless_label(
+                label = _hunkless_label(
                     {
                         "status": "copied",
                         "sha": head_blob,
@@ -6255,7 +6401,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 )
                 self.assertTrue(label.startswith(expected), label)
         # And a malformed identity is still unclassified rather than guessed.
-        unclassified = builder.hunkless_label(
+        unclassified = _hunkless_label(
             {"status": "copied", "sha": "abc", "previous_filename": "src.py"},
             {"sha": "abc"},
             "dst.py",
@@ -6272,9 +6418,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         different and stays metadata-only, because the file moved rather than
         multiplied, and the manifest lists the mapping separately.
         """
-        builder = _load_script(BASE_COLLECTOR)
         same = "a" * 40
-        copied = builder.hunkless_label(
+        copied = _hunkless_label(
             {"status": "copied", "sha": same, "previous_filename": "src.py"},
             {"type": "file", "sha": same},
             "dst.py",
@@ -6283,7 +6428,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             copied.startswith("metadata-only"),
             f"{copied!r} tells the reviewer a new file's content is unchanged",
         )
-        renamed = builder.hunkless_label(
+        renamed = _hunkless_label(
             {"status": "renamed", "sha": same, "previous_filename": "src.py"},
             {"type": "file", "sha": same},
             "dst.py",
@@ -6294,7 +6439,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         """The control for the test above: rejecting malformed identities must not stop
         well-formed ones from doing the job the manifest exists for.
         """
-        builder = _load_script(BASE_COLLECTOR)
         same, other = "a" * 40, "b" * 40
         cases = (
             ({"sha": same}, {"type": "file", "sha": same}, "metadata-only"),
@@ -6306,7 +6450,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
         for entry_sha, record_sha, expected in cases:
             with self.subTest(expected=expected):
-                label = builder.hunkless_label(
+                label = _hunkless_label(
                     {"status": "modified", **entry_sha}, record_sha, "mode.sh"
                 )
                 self.assertTrue(
@@ -6324,7 +6468,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         builder = _load_script(BASE_COLLECTOR)
         limit = float(builder.TIMEOUT_SECONDS)
         clock = {"now": 0.0}
-        builder_monotonic = builder.time.monotonic
+        builder_monotonic = time.monotonic
 
         class Blocking:
             """A transport whose every receive consumes its full socket timeout."""
@@ -6377,7 +6521,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
         previous_builder = builder.urllib.request.build_opener
         builder.urllib.request.build_opener = lambda *_: Opener()
-        builder.time.monotonic = lambda: clock["now"]
+        time.monotonic = lambda: clock["now"]
         try:
             # Built outside the block, so the only call inside it is the one whose
             # failure is asserted. A constructor that raised would have satisfied
@@ -6392,7 +6536,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 )
         finally:
             builder.urllib.request.build_opener = previous_builder
-            builder.time.monotonic = builder_monotonic
+            time.monotonic = builder_monotonic
         self.assertLessEqual(
             clock["now"],
             limit,
@@ -6570,14 +6714,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             )
 
         previous_fetch = builder.fetch_json
-        previous_sleep = builder.time.sleep
-        previous_monotonic = builder.time.monotonic
+        previous_sleep = time.sleep
+        previous_monotonic = time.monotonic
         previous_deadline = builder.DEADLINE_SECONDS
         builder.fetch_json = slow
-        builder.time.sleep = lambda seconds: elapsed.__setitem__(
+        time.sleep = lambda seconds: elapsed.__setitem__(
             "now", elapsed["now"] + seconds
         )
-        builder.time.monotonic = clock
+        time.monotonic = clock
         builder.DEADLINE_SECONDS = 90
         try:
             with tempfile.TemporaryDirectory() as scratch:
@@ -6604,8 +6748,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 manifest = (context / "base.manifest").read_text(encoding="utf-8")
         finally:
             builder.fetch_json = previous_fetch
-            builder.time.sleep = previous_sleep
-            builder.time.monotonic = previous_monotonic
+            time.sleep = previous_sleep
+            time.monotonic = previous_monotonic
             builder.DEADLINE_SECONDS = previous_deadline
 
         # It stopped rather than spending every attempt past the budget, and it said so.
@@ -6895,7 +7039,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         """
         builder = _load_script(BASE_COLLECTOR)
         clock = {"now": 0.0}
-        builder_monotonic = builder.time.monotonic
+        builder_monotonic = time.monotonic
 
         class Dripping:
             """Dripping."""
@@ -6924,7 +7068,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
         previous_builder = builder.urllib.request.build_opener
         builder.urllib.request.build_opener = lambda *_: Opener()
-        builder.time.monotonic = lambda: clock["now"]
+        time.monotonic = lambda: clock["now"]
         try:
             # Built outside the block, so the only call inside it is the one whose
             # failure is asserted. A constructor that raised would have satisfied
@@ -6939,7 +7083,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 )
         finally:
             builder.urllib.request.build_opener = previous_builder
-            builder.time.monotonic = builder_monotonic
+            time.monotonic = builder_monotonic
 
     def test_a_hunkless_entry_is_classified_on_every_path(self) -> None:
         """The rule is that a change with no hunks gets a verdict whatever else happens,
@@ -7585,7 +7729,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         builder.RETRY_SLEEP_SECONDS = 0
         clock = {"now": 0.0}
         opened: list[float] = []
-        builder_monotonic = builder.time.monotonic
+        builder_monotonic = time.monotonic
 
         class Dripping:
             """Dripping."""
@@ -7623,7 +7767,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
         previous_builder = builder.urllib.request.build_opener
         builder.urllib.request.build_opener = lambda *_: Opener()
-        builder.time.monotonic = lambda: clock["now"]
+        time.monotonic = lambda: clock["now"]
         try:
             with self.assertRaises(builder.ProviderError) as caught:
                 builder.provider_json(
@@ -7631,7 +7775,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 )
         finally:
             builder.urllib.request.build_opener = previous_builder
-            builder.time.monotonic = builder_monotonic
+            time.monotonic = builder_monotonic
         self.assertIn("timed out", str(caught.exception))
         self.assertNotIn(
             "malformed",
@@ -7795,16 +7939,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             return once
 
         previous_fetch = builder.fetch_json
-        previous_sleep = builder.time.sleep
+        previous_sleep = time.sleep
         builder.fetch_json = rate_limited(calls)
-        builder.time.sleep = slept.append
+        time.sleep = cast("Any", slept.append)
         try:
             builder.provider_json(
                 f"https://api.github.com/repos/o/r/contents/f?ref={'c' * 40}"
             )
         finally:
             builder.fetch_json = previous_fetch
-            builder.time.sleep = previous_sleep
+            time.sleep = previous_sleep
         self.assertEqual([7.0], slept)
 
     def test_a_malformed_body_is_not_recorded_as_a_path_problem(self) -> None:
@@ -8343,8 +8487,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         same over-claim as the manifest's inventory: state the condition observed,
         not the conclusion it merely allows.
         """
-        collector = _load_script(BASE_COLLECTOR)
-        collector.FILE_CAP = 3
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
             comparison = {
@@ -8362,7 +8504,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             }
             # The provider's delivered count travels separately from the reduced
             # list; here every entry it sent was usable.
-            collector.write_summaries(context, comparison, 3)
+            _write_summaries(context, comparison, 3, file_cap=3)
             at_cap = (context / "diff.stat").read_text(encoding="utf-8")
         self.assertIn("maximum", at_cap)
         self.assertNotIn(
@@ -8375,7 +8517,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # Below the cap, nothing is said at all.
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            collector.write_summaries(
+            _write_summaries(
                 context,
                 {
                     "files": [
@@ -8800,7 +8942,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # The delivered count is now passed in, because a comparison reaching
             # `write_summaries` has already been reduced to its usable entries and can
             # no longer report what the provider sent.
-            collector.write_summaries(context, {"files": [dict(entry)] * 300}, 300)
+            _write_summaries(context, {"files": [dict(entry)] * 300}, 300)
             # The claim, not the wording. This asserted the exact sentence, so
             # correcting the notice to stop over-claiming truncation read as a
             # regression -- a guard aimed at spelling rather than at what the artefact
@@ -8808,7 +8950,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             at_cap = (context / "diff.stat").read_text(encoding="utf-8")
             self.assertIn("300", at_cap)
             self.assertIn("may be incomplete", at_cap)
-            collector.write_summaries(context, {"files": [dict(entry)]}, 1)
+            _write_summaries(context, {"files": [dict(entry)]}, 1)
             below = (context / "diff.stat").read_text(encoding="utf-8")
             self.assertNotIn("may be incomplete", below)
             self.assertNotIn("maximum", below)
@@ -9064,10 +9206,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         diff nor the protected checkout, so it cannot be reviewed from this context.
         """
         workflow = load_yaml(MENTION_WORKFLOW)
-        collector = _load_script(BASE_COLLECTOR)
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            collector.write_summaries(
+            _write_summaries(
                 context,
                 {
                     "files": [
@@ -10196,16 +10337,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             return {"ok": True}
 
         previous_fetch = builder.fetch_json
-        previous_sleep = builder.time.sleep
+        previous_sleep = time.sleep
         builder.fetch_json = answer
-        builder.time.sleep = slept.append
+        time.sleep = cast("Any", slept.append)
         try:
             builder.provider_json(
                 f"https://api.github.com/repos/o/r/contents/f?ref={'c' * 40}"
             )
         finally:
             builder.fetch_json = previous_fetch
-            builder.time.sleep = previous_sleep
+            time.sleep = previous_sleep
         return slept
 
     def test_a_malformed_rate_limit_hint_is_no_hint(self) -> None:
@@ -10700,8 +10841,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             )
             raise RuntimeError("interrupted mid-hunk")
 
-        collector.write_assembled = interrupted
-        with tempfile.TemporaryDirectory() as scratch:
+        from tools import agent_review_base as base
+
+        with (
+            mock.patch.object(base, "write_assembled", interrupted),
+            tempfile.TemporaryDirectory() as scratch,
+        ):
             context = pathlib.Path(scratch)
             _comparison(context, "d" * 40, [_file("a.py", "modified")])
             collector.provider_json = _provider([], listings={}, contents={})
@@ -10715,7 +10860,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # single atomic helper, so the next streamed artefact cannot reopen this. A
         # writer handed to `write_exact` writes the staging file it is given, which is
         # renamed into place whole, so its writes are the helper's own.
-        source = BASE_COLLECTOR.read_text(encoding="utf-8")
+        source = (ROOT / "tools" / "agent_review_base.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         writers = {
             arg.id
@@ -10964,9 +11109,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         the collector. Pinning the set makes adding or removing a label a change this
         suite sees, rather than one that quietly leaves the record behind.
         """
-        source = (
-            ROOT / ".github" / "review-context" / "build_review_context.py"
-        ).read_text(encoding="utf-8")
+        source = _collection_source()
         emitted = {
             match.group(1)
             for match in re.finditer(r'f"([a-z0-9-]+) \{quote_path', source)

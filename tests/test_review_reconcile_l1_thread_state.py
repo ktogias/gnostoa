@@ -1131,6 +1131,49 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("PR #1: STALE_HEAD", logged)
         self.assertIn("PR #2: SUPERSEDED_PROJECTION", logged)
 
+    def test_collect_mode_summary_failure_cannot_replace_success(self) -> None:
+        """The payload was written, then an unwritable step summary failed the whole
+        collection; publish mode already survived the same failure (CodeAnt on #353).
+        """
+        fixtures = _fixtures()
+        adapter = fixtures.adapter_fixture()
+        entry = {"pull_number": 1, "collection_status": "AVAILABLE"}
+        with (
+            mock.patch.object(adapter, "_collect_entry", return_value=entry),
+            mock.patch.object(adapter, "_write_payload") as write_payload,
+            mock.patch.object(
+                adapter,
+                "_summary",
+                side_effect=OSError("sensitive summary path detail"),
+            ),
+            mock.patch("builtins.print") as print_line,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "collect",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--pull-number",
+                    "1",
+                    "--output",
+                    "unused.json",
+                    "--run-id",
+                    "1",
+                    "--run-attempt",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(0, code)
+        write_payload.assert_called_once()
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("STEP_SUMMARY_UNAVAILABLE (OSError)", logged)
+        self.assertNotIn("sensitive summary path detail", logged)
+
     def test_publish_mode_summary_failure_cannot_replace_success(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()

@@ -9,13 +9,28 @@ credential shapes GitHub issues.
 
 from __future__ import annotations
 
+import base64
+import json
+import pathlib
 import re
 import time
+import urllib.parse
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from tools import github_rest
 from tools.agent_review_admission import Refused, Request, Revisions
+from tools.agent_review_base import (
+    BaseRecord,
+    ChangedFile,
+    Comparison,
+    Contents,
+    Listing,
+    SourceFailure,
+    is_object_id,
+    quote_path,
+    safe_relative_path,
+)
 from tools.agent_review_context import Commit, DiffRefused, Unavailable, Vocabulary
 from tools.agent_review_delivery import (
     DeliveryRefused,
@@ -102,7 +117,15 @@ class IssueCommentSink:
             raise DeliveryRefused(
                 f"refused posting to {self.comments_url}: {error}"
             ) from error
-        return str(answer.get("html_url", "")) if isinstance(answer, dict) else ""
+        location = answer.get("html_url") if isinstance(answer, dict) else None
+        if not isinstance(location, str) or not location:
+            # Accepted, but with no comment's location: whether it was made is not
+            # established, so delivery reads back for it (CodeAnt on #353).
+            raise DeliveryUncertain(
+                f"posting to {self.comments_url} was answered without the comment's "
+                "location"
+            )
+        return location
 
     def find(self, marker: str) -> str | None:
         """Return this job's comment that starts with ``marker``, if GitHub has it."""
@@ -391,7 +414,11 @@ def _commits_of(page: Any) -> list[Commit]:
     """Return one comparison page's commits: a short id and a first line each."""
     if not isinstance(page, dict):
         raise Unavailable("a page of the comparison was not an object")
-    commits = page.get("commits") or []
+    # Absent or null is a page without commits; any other value that is not a list is a
+    # malformed page, not an empty one (CodeAnt on #353).
+    commits = page.get("commits")
+    if commits is None:
+        commits = []
     if not isinstance(commits, list):
         raise Unavailable("the comparison's commits were not a list")
     listed = []
@@ -405,3 +432,522 @@ def _commits_of(page: Any) -> list[Commit]:
         # separator is neutralised where the log is rendered.
         listed.append(Commit(sha[:9], message.split("\n", 1)[0]))
     return listed
+
+
+# ---------------------------------------------------------------------------------
+# The base source: a comparison's files and the base revision's contents
+
+# The contents API returns at most this many entries for a directory and does not
+# paginate it. A changed file in a larger directory is simply missing from the listing,
+# which must not be reported as "the base did not hold this".
+LISTING_CAP = 1000
+# The comparison's changed-file list holds at most this many entries and is not
+# paginated.
+FILE_CAP = 300
+# The only fields a listing record is read for. The contents API sends `_links`,
+# `download_url`, `git_url`, `html_url` and `url` alongside them, and keeping the whole
+# record retained all of that for every changed file.
+_LISTING_FIELDS = ("name", "type", "size", "sha")
+# Selecting those fields is not enough: their *values* are the provider's, and a valid
+# array whose matching record carries a megabyte-long `type` or `sha` reopens the same
+# exhaustion. Each is normalised to the representation the code downstream uses.
+_TYPE_LIMIT = 32
+# A declared size above any response this collection reads still says "larger than
+# anything it will write" without carrying the digits to say it.
+_SIZE_CEILING = 8 * 1024 * 1024 + 1
+# Each side must begin with an alphanumeric. A leading dash is precisely the shape an
+# earlier version of this check accepted, and the reason it is spelled out here.
+_CONTENTS_REPOSITORY = re.compile(
+    r"\A[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z"
+)
+# Pins scheme, host and shape together, so the request cannot be pointed at another
+# origin whatever reaches the fetch.
+PROVIDER_URL = re.compile(
+    r"\Ahttps://api\.github\.com/repos/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*\?ref=[0-9a-f]{40}\Z"
+)
+
+
+def base_endpoint(repository: str, path: str, base_sha: str, root: str = API) -> str:
+    """Build the contents URL for ``path`` at ``base_sha``, under ``root``."""
+    if not _CONTENTS_REPOSITORY.match(repository):
+        raise ValueError(f"refusing a malformed repository: {repository!r}")
+    if not is_object_id(base_sha):
+        raise ValueError(f"refusing a non-exact base revision: {base_sha!r}")
+    encoded = urllib.parse.quote(str(safe_relative_path(path)), safe="/")
+    return f"{root}/repos/{repository}/contents/{encoded}?ref={base_sha}"
+
+
+def listing_endpoint(
+    repository: str, directory: str, base_sha: str, root: str = API
+) -> str:
+    """Build the contents URL for a directory listing at ``base_sha``, under ``root``."""
+    if not _CONTENTS_REPOSITORY.match(repository):
+        raise ValueError(f"refusing a malformed repository: {repository!r}")
+    if not is_object_id(base_sha):
+        raise ValueError(f"refusing a non-exact base revision: {base_sha!r}")
+    encoded = (
+        urllib.parse.quote(str(safe_relative_path(directory)), safe="/")
+        if directory
+        else ""
+    )
+    return f"{root}/repos/{repository}/contents/{encoded}?ref={base_sha}"
+
+
+class _MalformedListing:
+    """Stands in for a directory response that was not an array.
+
+    Only the array-shaped responses were reduced at first, so a provider returning a
+    large syntactically valid object for each of `FILE_CAP` directories still filled
+    the runner while every individual response respected the size cap. A reduction has
+    to cover every shape it caches, not the convenient one. This carries no payload and
+    still classifies as a shape error, because it is neither `None` -- the not-found
+    transport sentinel -- nor a list.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover -- diagnostics only
+        return "<malformed directory listing>"
+
+
+_MALFORMED_LISTING = _MalformedListing()
+
+
+def _text(value: Any) -> str:
+    """Return ``value`` if the provider sent a string, and "" for anything else.
+
+    A provider field is read as the JSON type it arrived as. `str()` turned a null into
+    "None" -- a name a changed path can have -- so a listing record with no name matched
+    the path `None`, and its type and blob id authorised the write. It turned a 40-digit
+    number into something the object-id check accepts, so malformed metadata could make two
+    blob ids equal and call a change `metadata-only`. An empty string is what every
+    reader here already treats as absent.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def reduce_listing(listing: Any, needed: set[str]) -> tuple[Any, int]:
+    """Return only the records ``needed`` from ``listing``, and its original length.
+
+    The cache used to hold every parsed directory response until the collection
+    finished. A response may approach the collector's response bound, so a change touching one
+    file in each of many crowded directories retained gigabytes: the per-response bound
+    bounds each answer and not their sum, which is the same mistake the read loop made
+    with time before its deadline became absolute.
+
+    A directory is consulted for two things -- the records of the names the comparison
+    places in it, and whether the provider capped the list -- so those are what is kept.
+    The original length is returned separately because the truncation notice depends on
+    it and a reduced list can no longer report it. `None` -- the not-found transport
+    sentinel -- passes through; anything else that is not a list is replaced by a
+    payload-free stand-in that still classifies as a shape error, because retaining a
+    large malformed response is the same exhaustion by another route.
+    """
+    if listing is None:
+        return None, 0
+    if not isinstance(listing, list):
+        return _MALFORMED_LISTING, 0
+    kept = [
+        _bounded_record(item)
+        for item in listing
+        if isinstance(item, dict) and _text(item.get("name")) in needed
+    ]
+    return kept, len(listing)
+
+
+def _bounded_record(item: dict[str, Any]) -> dict[str, Any]:
+    """Return the record as the bounded values the rest of the collection reads."""
+    declared = item.get("type")
+    size = item.get("size")
+    sha = _text(item.get("sha"))
+    return {
+        # Equal to a name this collection asked for, so already bounded by its own set.
+        "name": _text(item.get("name")),
+        # Compared against "file"; anything longer than a declared type could be is not
+        # one, and an empty string reads as a type this collection will not write.
+        "type": declared
+        if isinstance(declared, str) and len(declared) <= _TYPE_LIMIT
+        else "",
+        # Subtracted from the remaining budget. A larger value still says "larger than
+        # anything this collection will write" without carrying the digits to say it,
+        # and a non-integer is no size at all.
+        "size": min(size, _SIZE_CEILING)
+        if isinstance(size, int) and not isinstance(size, bool) and size >= 0
+        else None,
+        # Checked as an object id before it is compared with real bytes, so a value that
+        # cannot match is worth nothing and is not kept.
+        "sha": sha if is_object_id(sha) else "",
+    }
+
+
+def listing_entry(listing: Any, name: str) -> dict[str, Any] | None:
+    """Return the ``listing`` record for ``name``, or None when it is not there."""
+    if not isinstance(listing, list):
+        return None
+    for item in listing:
+        if isinstance(item, dict) and _text(item.get("name")) == name:
+            return item
+    return None
+
+
+def _records_named(listing: Any, name: str) -> int:
+    """Return how many records in a directory ``listing`` carry ``name``."""
+    if not isinstance(listing, list):
+        return 0
+    return sum(
+        1
+        for item in listing
+        if isinstance(item, dict) and _text(item.get("name")) == name
+    )
+
+
+def entry_type(listing: Any, name: str) -> str | None:
+    """Return the declared type of ``name`` within a directory ``listing``."""
+    item = listing_entry(listing, name)
+    return _text(item.get("type")) if item else None
+
+
+def decoded_file(payload: dict[str, Any]) -> tuple[bytes | None, str]:
+    """Return the payload's bytes, or ``None`` and the reason they are not usable.
+
+    The response *shape* cannot identify a symlink: the contents API answers a symlink
+    to a regular file with the target's content under an ordinary ``type: file``. The
+    authoritative check is the parent directory's listing, which declares
+    ``type: symlink``; this function only rejects what the response itself rules out.
+
+    The reason is returned rather than left to the caller, because the caller cannot
+    recover it. Every failure used to arrive as a bare ``None`` and be recorded as
+    ``not-a-plain-file`` -- a claim about the **repository** -- when three of the five
+    causes say only that the provider's answer was unusable. `base.manifest` is the
+    reviewer's provenance and it has no way to question what it is told, so a response
+    this collection could not read must not be published as a fact about the base
+    revision. The two genuinely repository-side causes keep the label they earned: a
+    declared non-file type, and the ``encoding: "none"`` an oversized blob comes back
+    with.
+    """
+    # A syntactically valid response of the wrong shape -- a list where an object was
+    # expected -- reached `.get` and raised AttributeError, which no handler catches, so
+    # the collection ended before base.manifest was written. Every other malformed
+    # answer is that file's gap; this one took the review.
+    if not isinstance(payload, dict):
+        return None, "provider-error: its contents response was not an object"
+    # Only *declared* metadata is a fact about the repository. The parent listing has
+    # already called this entry a file, so an absent type or an absent or unknown
+    # encoding says only that the provider's answer was unusable.
+    kind = payload.get("type")
+    if kind is None:
+        return None, "provider-error: its contents response declared no type"
+    if kind in ("dir", "symlink", "submodule"):
+        return None, "not-a-plain-file"
+    if kind != "file":
+        # The listing has already called this path a file. An unknown kind, or one
+        # that is not a string, contradicts that answer rather than describing the
+        # repository, so it is the provider's error, as the listing's own is.
+        return None, "provider-error: its contents response declared no recognised type"
+    encoding = payload.get("encoding")
+    if encoding == "none":
+        # Files above roughly 1 MB come back with `encoding: "none"` and empty content.
+        return None, "not-a-plain-file"
+    if encoding != "base64":
+        state = "no" if encoding is None else "an unknown"
+        return None, f"provider-error: its contents response carried {state} encoding"
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return None, "provider-error: its contents response carried no base64 string"
+    try:
+        # The provider wraps its base64 in newlines, so whitespace is removed rather
+        # than tolerated: validate=True then rejects anything else. Without it, a
+        # corrupt payload decodes to *some* bytes, and those bytes would be written
+        # into base/, which the prompt calls the exact pre-change revision. A quiet
+        # wrong answer is worse than a recorded gap.
+        return base64.b64decode("".join(content.split()), validate=True), ""
+    except ValueError:
+        # `binascii.Error` *is* a `ValueError`, so naming both said there were two
+        # branches here when there is one. This file names base classes rather than
+        # members on purpose -- enumerating them missed a member four times -- and
+        # listing a base class beside one of its own members is the same mistake
+        # wearing the fix's clothes: it reads as coverage that the base already gave.
+        return None, "provider-error: its contents response would not base64-decode"
+
+
+def _repeated_names(files: list[Any]) -> dict[str, int]:
+    """Return every filename the comparison lists more than once, with its count.
+
+    Counted over every named entry, before any is filtered. Both entries were admitted
+    and each fetch wrote the same `base/` destination, so the second replaced the first
+    while `Written:` counted two; and counting after the status check let a second
+    record dropped for its status leave the first admitted alone. A comparison listing
+    a path twice contradicts itself, and which entry is right is unknown. (Codex)
+    """
+    seen: dict[str, int] = {}
+    for entry in files:
+        name = entry.get("filename") if isinstance(entry, dict) else None
+        if isinstance(name, str) and name:
+            seen[name] = seen.get(name, 0) + 1
+    return {name: count for name, count in seen.items() if count > 1}
+
+
+def usable_files(
+    comparison: Any, refused: list[str] | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return the entries this collection can act on, and notices for the rest.
+
+    Per-file isolation covers what happens *inside* the loop. It did not cover the
+    comparison itself: a valid JSON document that is not an object, a file list that is
+    not an array, an entry that is not an object, or an entry without a filename each
+    reached an unguarded index or attribute and ended `collect` before any manifest
+    existed. A review is lost either way, but a manifest naming what could not be read
+    is the difference between a reported gap and silence.
+    """
+    notices: list[str] = []
+    if not isinstance(comparison, dict):
+        notices.append(
+            "provider-error comparison.json: the comparison was not an object"
+        )
+        return [], notices
+    files = comparison.get("files")
+    if not isinstance(files, list):
+        # `None` is not admitted here, though it is this file's transport sentinel for
+        # not-found elsewhere. A comparison that omits `files`, or sends it as null, is
+        # unreadable, not empty -- and passing it through as an empty change published
+        # `Written: 0. Unavailable: 0` with no notice, so a Pull Request whose unified
+        # diff still showed hunks had every changed path left without base bytes and
+        # without a line saying why. An empty comparison states itself with `[]`.
+        notices.append("provider-error comparison.json: its file list was not an array")
+        return [], notices
+    sink = notices if refused is None else refused
+    repeated = _repeated_names(files)
+    usable: list[dict[str, Any]] = []
+    for position, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            notices.append(
+                f"provider-error comparison.json: entry {position} was not an object"
+            )
+            continue
+        name = entry.get("filename")
+        if not isinstance(name, str) or not name:
+            notices.append(
+                f"provider-error comparison.json: entry {position} carried no filename"
+            )
+            continue
+        if name in repeated:
+            continue  # named once below, as the contradiction it is
+        status = entry.get("status")
+        # A string first: a list or an object is unhashable, and the membership test
+        # alone raised TypeError out of here before any manifest existed. (gitar)
+        if not isinstance(status, str) or status not in _STATUSES:
+            # Every later step decides from the status -- no base side for an added
+            # file, `/dev/null` for a removed one, the old name for a rename -- so an
+            # entry without a documented one describes nothing reliably. (Codex)
+            # Named, so it is about a path: the collector counts it in `Unavailable:`,
+            # which said 0 for a provider-listed path that was never fetched. (Codex)
+            sink.append(
+                f"provider-error {quote_path(name)}: the comparison entry carried no "
+                "recognised status, so nothing about it is stated"
+            )
+            continue
+        clean, malformed = _typed_entry(entry)
+        notices.extend(
+            f"provider-error comparison.json: the entry for {quote_path(name)} "
+            f"carried a {field} of the wrong type, so it is treated as absent"
+            for field in malformed
+        )
+        usable.append(clean)
+    sink.extend(
+        f"provider-error {quote_path(name)}: the comparison listed it {count} times, "
+        "so none of its entries is used"
+        for name, count in repeated.items()
+    )
+    return usable, notices
+
+
+# Every field of a comparison entry this collection reads, with the JSON type it must
+# arrive as. Checked once, where the entry is admitted: each reader had been trusted to
+# check for itself, and review after review found one that coerced instead.
+# The statuses GitHub documents for a comparison entry. Admission requires one of them.
+_STATUSES = frozenset(
+    {"added", "removed", "modified", "renamed", "copied", "changed", "unchanged"}
+)
+# The only entry field GitHub's published diff-entry schema marks nullable. A `patch`
+# is an optional string that a binary file omits -- a changed PNG on microsoft/vscode
+# carried no `patch` key at all -- so a present null is malformed, not an absence.
+# Skipping every null read a null `patch` or `previous_filename` as legitimate.
+# (CodeAnt)
+_NULLABLE_FIELDS = frozenset({"sha"})
+_ENTRY_FIELDS: dict[str, type] = {
+    "patch": str,
+    "sha": str,
+    "previous_filename": str,
+    "additions": int,
+    "deletions": int,
+}
+
+
+def _typed_entry(entry: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Return ``entry`` with each field read later in its own type, and the rest named.
+
+    A field of another type becomes absent, which every reader already handles; the
+    caller names it, so a malformed provider answer is a stated gap rather than a
+    coerced value. A count is a whole number, so a boolean is not one.
+    """
+    clean = dict(entry)
+    # An empty patch is no hunks. Counted as hunks, a refused diff left the file out of
+    # no-patch.txt and its blob-identity verdict, with no content and no notice. (Codex)
+    if clean.get("patch") == "":
+        clean["patch"] = None
+    malformed = []
+    for field, kind in _ENTRY_FIELDS.items():
+        if field not in entry:
+            continue  # omitted, which is how GitHub leaves out a patch
+        value = entry[field]
+        if value is None and field in _NULLABLE_FIELDS:
+            continue
+        # A count is a non-negative whole number: `-1` rendered as `+-1`, malformed
+        # metadata presented as exact provenance. (Codex)
+        negative = isinstance(value, int) and value < 0
+        if (
+            value is None
+            or not isinstance(value, kind)
+            or isinstance(value, bool)
+            or negative
+        ):
+            clean[field] = None
+            malformed.append(field)
+    return clean, malformed
+
+
+def changed_file(entry: dict[str, Any]) -> ChangedFile:
+    """Translate one admitted comparison entry into the core's vocabulary."""
+    previous = _text(entry.get("previous_filename"))
+    additions = entry.get("additions")
+    deletions = entry.get("deletions")
+    patch = entry.get("patch")
+    blob = entry.get("sha")
+    return ChangedFile(
+        path=str(entry["filename"]),
+        status=str(entry["status"]),
+        previous_path=previous or None,
+        patch=patch if isinstance(patch, str) else None,
+        additions=additions if isinstance(additions, int) else None,
+        deletions=deletions if isinstance(deletions, int) else None,
+        blob=blob if isinstance(blob, str) else None,
+    )
+
+
+def base_record(record: dict[str, Any]) -> BaseRecord:
+    """Translate one bounded listing record into the core's vocabulary."""
+    size = record.get("size")
+    return BaseRecord(
+        name=_text(record.get("name")),
+        kind=_text(record.get("type")),
+        size=size if isinstance(size, int) and not isinstance(size, bool) else None,
+        blob=_text(record.get("sha")),
+    )
+
+
+def read_comparison(path: pathlib.Path) -> Comparison:
+    """Read a comparison document into the core's vocabulary, naming what is unusable."""
+    try:
+        delivered: Any = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as error:
+        # The outermost escape, and the last one. Guarding the comparison's *shape* left
+        # its *parse* unguarded, so malformed JSON, a body that is not UTF-8, or a file
+        # that cannot be read at all raised before any manifest existed. Naming the base
+        # class is deliberate: every way this can fail means the comparison is unusable,
+        # and enumerations here have each missed a member. The shape check is skipped
+        # rather than run against nothing, which would report a second, derived error.
+        return Comparison(
+            files=[],
+            delivered=0,
+            merge_base="",
+            notices=[
+                f"provider-error comparison.json: it could not be read "
+                f"({type(error).__name__}), so no changed file could be named"
+            ],
+            refused=[],
+            listed=False,
+        )
+    refused: list[str] = []
+    files, notices = usable_files(delivered, refused)
+    sent = delivered.get("files") if isinstance(delivered, dict) else None
+    # Entries listed but none usable leave the fallback diff as empty as an unread
+    # comparison does, so they say no more that nothing changed.
+    listed = isinstance(sent, list) and (not sent or bool(files))
+    base_commit = (
+        delivered.get("merge_base_commit") if isinstance(delivered, dict) else None
+    )
+    merge_base = _text(
+        (base_commit if isinstance(base_commit, dict) else {}).get("sha")
+    )
+    return Comparison(
+        files=[changed_file(entry) for entry in files],
+        delivered=len(sent) if isinstance(sent, list) else len(files),
+        merge_base=merge_base,
+        notices=notices,
+        refused=refused,
+        listed=listed,
+    )
+
+
+class ContentsSource:
+    """The base revision at ``merge_base``, read through GitHub's contents API.
+
+    ``read`` returns the provider's JSON for a contents URL, or None for not-found; the
+    entrypoint supplies it, bounded and retried by the shared client. Every failure is
+    translated into the core's ``SourceFailure``, by kind.
+    """
+
+    listing_cap = LISTING_CAP
+
+    def __init__(
+        self,
+        repository: str,
+        merge_base: str,
+        read: Callable[[str, float | None], Any],
+        *,
+        api_root: str = API,
+    ) -> None:
+        self.repository = repository
+        self.merge_base = merge_base
+        self.read = read
+        self.api_root = api_root
+
+    def _answer(self, url: str, deadline: float) -> Any:
+        """Read ``url``, translating the client's failures into the core's."""
+        try:
+            return self.read(url, deadline)
+        except github_rest.DeadlineReached as error:
+            raise SourceFailure(str(error), kind="deadline") from error
+        except github_rest.UnsafeRedirect as error:
+            raise SourceFailure(str(error), kind="redirect") from error
+        except github_rest.GitHubReadError as error:
+            raise SourceFailure(str(error)) from error
+
+    def listing(self, directory: str, needed: set[str], deadline: float) -> Listing:
+        """Return ``directory``'s records for ``needed`` names, reduced as they arrive."""
+        url = listing_endpoint(
+            self.repository, directory, self.merge_base, self.api_root
+        )
+        kept, total = reduce_listing(self._answer(url, deadline), needed)
+        if kept is None:
+            return Listing(records=None, total=0, malformed=False)
+        if not isinstance(kept, list):
+            return Listing(records=(), total=0, malformed=True)
+        return Listing(
+            records=tuple(base_record(record) for record in kept),
+            total=total,
+            malformed=False,
+        )
+
+    def contents(self, path: str, deadline: float) -> Contents:
+        """Return ``path``'s base-revision bytes, or why they are not usable."""
+        payload = self._answer(
+            base_endpoint(self.repository, path, self.merge_base, self.api_root),
+            deadline,
+        )
+        if payload is None:
+            return Contents(data=None, reason="", found=False)
+        data, reason = decoded_file(payload)
+        return Contents(data=data, reason=reason, found=True)

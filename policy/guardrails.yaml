@@ -697,6 +697,7 @@ guardrails:
       - tools/agent_review_paths.py
       - tools/agent_review_admission.py
       - tools/agent_review_context.py
+      - tools/agent_review_base.py
       - tools/agent_review_report.py
       - tools/agent_review_delivery.py
       - tools/agent_review_claude_code.py

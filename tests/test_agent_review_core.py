@@ -29,6 +29,7 @@ CORE = (
     "agent_review_paths",
     "agent_review_admission",
     "agent_review_context",
+    "agent_review_base",
     "agent_review_report",
     "agent_review_delivery",
 )
@@ -663,6 +664,292 @@ class ThinContextEntrypointTests(unittest.TestCase):
         self.assertNotIn("shell=True", source)
 
 
+class _ForgeLikeBase:
+    """A test-only second provider's base source, in its own native shapes.
+
+    Its tree is a mapping of paths to bytes, with kinds of its own: `link` for a
+    symbolic link, `tree` for a directory. Its listings cap at a size of its own, and
+    a path it does not hold is answered with its own absence. It translates each into
+    the core's vocabulary and decides nothing itself.
+    """
+
+    def __init__(
+        self,
+        tree: dict[str, bytes],
+        *,
+        kinds: dict[str, str] | None = None,
+        tampered: dict[str, bytes] | None = None,
+        listing_cap: int = 50,
+        sizeless: frozenset[str] = frozenset(),
+        malformed: frozenset[str] = frozenset(),
+    ) -> None:
+        self.tree = tree
+        self.kinds = kinds or {}
+        self.tampered = tampered or {}
+        self.listing_cap = listing_cap
+        self.sizeless = sizeless
+        self.malformed = malformed
+        self.requests: list[str] = []
+
+    def listing(self, directory: str, needed: set[str], _deadline: float) -> Any:
+        """Return the base revision's records for ``needed`` names in ``directory``."""
+        from tools import agent_review_base as base
+
+        self.requests.append(f"list {directory}")
+        if directory in self.malformed:
+            return base.Listing(records=(), total=0, malformed=True)
+        native = {"link": "symlink", "tree": "dir", "blob": "file"}
+        here = {
+            path.rsplit("/", 1)[-1]: data
+            for path, data in self.tree.items()
+            if (path.rsplit("/", 1)[0] if "/" in path else "") == directory
+        }
+        records = tuple(
+            base.BaseRecord(
+                name=name,
+                kind=native[self.kinds.get(name, "blob")],
+                size=None if name in self.sizeless else len(data),
+                blob=base.blob_id(data),
+            )
+            for name, data in here.items()
+            if name in needed
+        )
+        return base.Listing(records=records, total=len(here), malformed=False)
+
+    def contents(self, path: str, _deadline: float) -> Any:
+        """Return the base revision's bytes for ``path``, as the forge serves them."""
+        from tools import agent_review_base as base
+
+        self.requests.append(f"read {path}")
+        if path not in self.tree:
+            return base.Contents(data=None, reason="", found=False)
+        return base.Contents(
+            data=self.tampered.get(path, self.tree[path]), reason="", found=True
+        )
+
+
+def _forge_changes(
+    *entries: tuple[str, str, str | None], hunkless: frozenset[str] = frozenset()
+) -> Any:
+    """A comparison in the core's vocabulary, as a forge adapter would translate it."""
+    from tools import agent_review_base as base
+
+    files = [
+        base.ChangedFile(
+            path=path,
+            status=status,
+            previous_path=previous,
+            patch=None if path in hunkless else "@@ -1 +1 @@\n-a\n+b",
+            additions=1,
+            deletions=1,
+            blob="f" * 40,
+        )
+        for path, status, previous in entries
+    ]
+    return base.Comparison(
+        files=files,
+        delivered=len(files),
+        merge_base="c" * 40,
+        notices=[],
+        refused=[],
+        listed=True,
+    )
+
+
+def _collect_base(
+    case: unittest.TestCase, source: Any, comparison: Any, **bounds: Any
+) -> tuple[pathlib.Path, str, int]:
+    """Collect into a fresh context; return it, its manifest and the count written."""
+    from tools import agent_review_base as base
+
+    context = pathlib.Path(tempfile.mkdtemp())
+    case.addCleanup(shutil.rmtree, context, True)
+    written, _, _ = base.collect(
+        context,
+        comparison,
+        source,
+        budget=bounds.get("budget", 1 << 20),
+        file_cap=bounds.get("file_cap", 300),
+        deadline_seconds=bounds.get("deadline_seconds", 60),
+        # The reader's own line budget, which its adapter declares.
+        line_cap=bounds.get("line_cap", 1900),
+    )
+    manifest = (context / "base.manifest").read_text(encoding="utf-8")
+    return context, manifest, written
+
+
+class SecondProviderBaseTests(unittest.TestCase):
+    """The unchanged collection core gathers a second provider's base revision."""
+
+    def _collect(
+        self, source: Any, comparison: Any, **bounds: Any
+    ) -> tuple[pathlib.Path, str, int]:
+        """Collect into a fresh context; return it, its manifest and the count."""
+        return _collect_base(self, source, comparison, **bounds)
+
+    def test_the_exact_base_bytes_are_written_and_a_rename_read_from_its_source(
+        self,
+    ) -> None:
+        """Written under its new name, read from where the base holds it."""
+        source = _ForgeLikeBase({"src/a.py": b"before\n", "old.py": b"moved\n"})
+        context, manifest, written = self._collect(
+            source,
+            _forge_changes(
+                ("src/a.py", "modified", None),
+                ("new.py", "renamed", "old.py"),
+                ("added.py", "added", None),
+            ),
+        )
+        self.assertEqual(2, written)
+        self.assertEqual(b"before\n", (context / "base" / "src" / "a.py").read_bytes())
+        self.assertEqual(b"moved\n", (context / "base" / "new.py").read_bytes())
+        self.assertIn("read old.py", source.requests)
+        self.assertIn("renamed old.py -> new.py", manifest)
+        self.assertIn("added-by-candidate added.py", manifest)
+
+    def test_every_gap_is_named_for_the_second_provider(self) -> None:
+        """Each refusal names the path and the reason, in the core's own labels."""
+        tree = {
+            "bad.py": b"real\n",
+            "link": b"target\n",
+            "big.bin": b"x" * 64,
+        }
+        source = _ForgeLikeBase(
+            tree, kinds={"link": "link"}, tampered={"bad.py": b"forged\n"}
+        )
+        _, manifest, written = self._collect(
+            source,
+            _forge_changes(
+                ("bad.py", "modified", None),
+                ("link", "modified", None),
+                ("big.bin", "modified", None),
+                ("gone.py", "modified", None),
+            ),
+            budget=32,
+        )
+        self.assertEqual(0, written)
+        for line in (
+            "blob-mismatch bad.py",
+            "not-a-plain-file link",
+            "over-budget big.bin",
+            "provider-error gone.py",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, manifest)
+
+    def test_a_listing_at_its_cap_and_a_spent_deadline_are_stated(self) -> None:
+        """The second provider's own cap, and the collection's own deadline."""
+        crowded = {f"f{n}.py": b"x" for n in range(3)}
+        _, manifest, _ = self._collect(
+            _ForgeLikeBase(crowded, listing_cap=3),
+            _forge_changes(("missing.py", "modified", None)),
+        )
+        self.assertIn("listing-at-cap missing.py", manifest)
+        _, manifest, written = self._collect(
+            _ForgeLikeBase({"a.py": b"x"}),
+            _forge_changes(("a.py", "modified", None)),
+            deadline_seconds=0,
+        )
+        self.assertEqual(0, written)
+        self.assertIn("deadline-reached a.py", manifest)
+
+
+class BaseCollectionRuleTests(unittest.TestCase):
+    """Rules the stage-4b mutation pass found no test pinning, each now pinned."""
+
+    def _collect(
+        self, source: Any, comparison: Any, **bounds: Any
+    ) -> tuple[pathlib.Path, str, int]:
+        """Collect into a fresh context; return it, its manifest and the count."""
+        return _collect_base(self, source, comparison, **bounds)
+
+    def test_bytes_over_the_budget_are_refused_without_a_declared_size(self) -> None:
+        """The declared size is checked first; a listing without one is backstopped
+        by the bytes themselves."""
+        source = _ForgeLikeBase({"big.bin": b"x" * 64}, sizeless=frozenset({"big.bin"}))
+        _, manifest, written = self._collect(
+            source, _forge_changes(("big.bin", "modified", None)), budget=32
+        )
+        self.assertEqual(0, written)
+        self.assertIn("over-budget big.bin", manifest)
+        self.assertIn("read big.bin", source.requests)
+
+    def test_a_malformed_listing_is_the_providers_error_not_an_absence(self) -> None:
+        """The collection never got to look, so the gap is named as that."""
+        _, manifest, _ = self._collect(
+            _ForgeLikeBase({"src/a.py": b"x"}, malformed=frozenset({"src"})),
+            _forge_changes(("src/a.py", "modified", None)),
+        )
+        self.assertIn(
+            "provider-error src/a.py: directory listing was not an array", manifest
+        )
+
+    def test_a_change_with_hunks_is_collected_before_one_without(self) -> None:
+        """A large binary listed first cannot spend the budget a textual change needs."""
+        source = _ForgeLikeBase({"big.bin": b"x" * 64, "small.py": b"y" * 8})
+        context, manifest, written = self._collect(
+            source,
+            _forge_changes(
+                ("big.bin", "modified", None),
+                ("small.py", "modified", None),
+                hunkless=frozenset({"big.bin"}),
+            ),
+            budget=64,
+        )
+        self.assertEqual(1, written)
+        self.assertTrue((context / "base" / "small.py").is_file())
+        self.assertIn("over-budget big.bin", manifest)
+
+    def test_bytes_are_staged_outside_the_directory_they_go_to(self) -> None:
+        """No name in base/ can be told apart from a staging file, so none is staged
+        there: an interrupted write leaves nothing among the files."""
+        from tools import agent_review_base as base
+
+        staged: list[pathlib.Path] = []
+
+        def writer(path: pathlib.Path, content: bytes) -> None:
+            staged.append(path)
+            path.write_bytes(content)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            target = pathlib.Path(scratch) / "base"
+            target.mkdir()
+            staging = pathlib.Path(scratch) / ".base-staging"
+            base.write_exact(target / "x", b"bytes", writer, staging=staging)
+            self.assertEqual([staging], [path.parent for path in staged])
+            self.assertEqual(b"bytes", (target / "x").read_bytes())
+
+
+class ThinCollectorEntrypointTests(unittest.TestCase):
+    """The base collector's entrypoint composes; the rules are the core's."""
+
+    def test_the_entrypoint_defines_no_collection_rule(self) -> None:
+        """A rule defined in the entrypoint is a rule a second provider cannot use."""
+        entrypoint = ROOT / ".github" / "review-context" / "build_review_context.py"
+        tree = ast.parse(entrypoint.read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        }
+        rules = {
+            "_visit",
+            "_base_record",
+            "_fetch_and_write",
+            "_content_gap",
+            "_manifest_lines",
+            "hunkless_label",
+            "write_summaries",
+            "write_assembled",
+            "quote_path",
+            "write_exact",
+            "usable_files",
+            "decoded_file",
+            "reduce_listing",
+        }
+        self.assertEqual(set(), defined & rules)
+
+
 class AdmissionFileTests(unittest.TestCase):
     """The payload is read, and the artefacts written, never through a link."""
 
@@ -956,6 +1243,43 @@ class ReadBackWindowTests(unittest.TestCase):
                 self.assertRaises(delivery.DeliveryRefused),
             ):
                 github.IssueCommentSink(url, client=client, since=bad)  # type: ignore[arg-type]
+
+
+class LocatedCreateTests(unittest.TestCase):
+    """A create counts as delivered only with the comment's location."""
+
+    def test_a_create_answered_without_a_location_is_uncertain(self) -> None:
+        """A success whose answer was not an object, or named no location, was reported
+        as delivered with an empty location (CodeAnt on #353). It is uncertain, so
+        delivery reads back for the comment it may have made."""
+        from tools import agent_review_delivery as delivery
+        from tools import agent_review_github as github
+        from tools import github_rest
+
+        url = f"{github_rest.API_ROOT}/repos/o/r/issues/1/comments"
+        answers: tuple[object, ...] = ([], {}, {"html_url": ""}, {"html_url": 5})
+        for answer in answers:
+            with self.subTest(answer=answer):
+
+                class Client:
+                    """A client whose create succeeded with ``answer``."""
+
+                    api_root = github_rest.API_ROOT
+
+                    def __init__(self) -> None:
+                        self.posted: list[str] = []
+
+                    def post(
+                        self, target: str, _payload: object, answer: object = answer
+                    ) -> object:
+                        self.posted.append(target)
+                        return answer
+
+                client = Client()
+                sink = github.IssueCommentSink(url, client=client)  # type: ignore[arg-type]
+                with self.assertRaises(delivery.DeliveryUncertain):
+                    sink.create("body")
+                self.assertEqual([url], client.posted)
 
 
 class RetriedReadBackTests(unittest.TestCase):
