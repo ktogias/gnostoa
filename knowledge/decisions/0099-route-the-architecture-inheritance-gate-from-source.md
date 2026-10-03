@@ -62,7 +62,9 @@ independently of VF0.
 
 ## Prior-art and reuse disposition
 
-This slice's own lineage table:
+This slice's own lineage table, bound to its exact base: protected `main` at
+`b011edeb70e4d8e5757e2d58f493de06ee642dd5`, against which each existing owner and
+implementation below was inspected (Codex on #354).
 
 | responsibility | existing owner | existing implementation/contract | disposition | proof/falsifier |
 |---|---|---|---|---|
