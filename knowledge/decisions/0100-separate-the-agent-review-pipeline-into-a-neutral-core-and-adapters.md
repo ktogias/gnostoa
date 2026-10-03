@@ -187,6 +187,12 @@ Two facts from stage 2 are recorded rather than smoothed over:
   garbage collection. The extended profile surfaced it as a `ResourceWarning` in an
   unrelated test's output. The shared client now releases each error once it is
   classified, with a falsifier and a mutant.
+- **An abandoned write was retried.** Bounding a whole exchange abandons its worker
+  rather than stopping it, so a create that outlives its bound can still land. The
+  read-back before a retry proves only that the comment does not exist yet. The client
+  now reports an abandoned exchange as *in flight*, the GitHub adapter carries that
+  into the core's vocabulary, and delivery stops instead of creating again (Codex on
+  #353). Each layer has a falsifier, and the client's two have mutants.
 
 ## Verification
 

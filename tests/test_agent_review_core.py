@@ -266,6 +266,65 @@ class HandoffRecordTests(unittest.TestCase):
         self.assertEqual("unavailable", received.status)
 
 
+class InFlightDeliveryTests(unittest.TestCase):
+    """A create that may still be running is never followed by another (Codex)."""
+
+    def test_an_attempt_still_in_flight_is_not_followed_by_another(self) -> None:
+        """When an attempt outlives its bound it is abandoned, not stopped: it can
+        still create the comment after a read-back found nothing, and a second create
+        would then make two. Delivery stops instead, visibly."""
+        from tools import agent_review_delivery as delivery
+
+        class Abandoning:
+            """A sink whose first create is abandoned in flight and lands later."""
+
+            def __init__(self) -> None:
+                self.created: list[str] = []
+                self.searched: list[str] = []
+
+            def create(self, body: str) -> str:
+                self.created.append(body)
+                raise delivery.DeliveryUncertain("still running", in_flight=True)
+
+            def find(self, marker: str) -> str | None:
+                self.searched.append(marker)
+                return None
+
+        sink = Abandoning()
+        marker = delivery.delivery_marker("run-1.1")
+        with self.assertRaises(delivery.DeliveryUnconfirmed):
+            delivery.post_once(sink, f"{marker}\nbody", marker, pause=lambda _s: None)
+        self.assertEqual([f"{marker}\nbody"], sink.created)
+        # Not even a read-back: nothing it could find would make a second create safe.
+        self.assertEqual([], sink.searched)
+
+    def test_the_github_sink_reports_an_abandoned_create_as_in_flight(self) -> None:
+        """The adapter carries the client's in-flight fact into the core's vocabulary."""
+        from tools import agent_review_delivery as delivery
+        from tools import agent_review_github as github
+        from tools import github_rest
+
+        class Client:
+            """A client whose create outlived its bound and was abandoned."""
+
+            api_root = github_rest.API_ROOT
+
+            def __init__(self) -> None:
+                self.posted: list[tuple[str, object]] = []
+
+            def post(self, url: str, payload: object) -> object:
+                self.posted.append((url, payload))
+                raise github_rest.GitHubWriteError("timed out", in_flight=True)
+
+        url = f"{github_rest.API_ROOT}/repos/o/r/issues/1/comments"
+        client = Client()
+        sink = github.IssueCommentSink(url, client=client)  # type: ignore[arg-type]
+        with self.assertRaises(delivery.DeliveryUncertain) as caught:
+            sink.create("body")
+        self.assertTrue(caught.exception.in_flight)
+        self.assertEqual([(url, {"body": "body"})], client.posted)
+
+
 class GitHubClaudeCompositionTests(unittest.TestCase):
     """The GitHub-and-Claude composition keeps the guarantees the core leaves to it."""
 

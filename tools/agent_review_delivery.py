@@ -55,7 +55,7 @@ _MENTION = re.compile(r"@(?=[A-Za-z0-9])")
 _TOKEN_CHARACTER = re.compile(r"[A-Za-z0-9_-]")
 # What counts as invisible is decided by category, not by a list: an enumerated class
 # missed tag characters, the soft hyphen and others, and a token split by one survived
-# redaction (CodeRabbit on #353). Every control, format, surrogate, private-use and
+# redaction (a review finding on #353). Every control, format, surrogate, private-use and
 # unassigned code point, and the line and paragraph separators, except a newline and a
 # tab. These categories hold no character a review needs to show as itself.
 _INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
@@ -121,12 +121,20 @@ class DeliveryUncertain(RuntimeError):
 
     A sink raises this from ``create`` for a timeout, an outage, a lost answer, a rate
     limit or a failure to connect, and from ``find`` for any failure to read back. When
-    the provider said when to try again, ``retry_after`` carries it.
+    the provider said when to try again, ``retry_after`` carries it. ``in_flight`` says
+    the attempt was abandoned rather than ended, so it may still create the comment.
     """
 
-    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: float | None = None,
+        in_flight: bool = False,
+    ) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        self.in_flight = in_flight
 
 
 class DeliveryUnconfirmed(RuntimeError):
@@ -342,6 +350,10 @@ def post_once(
     comment, found by ``marker_line``, which starts the body. When that read-back fails,
     delivery stops rather than risk posting the review twice: a missing comment is
     visible as a failed job; a duplicate is not.
+
+    An attempt still in flight ends delivery too. A read-back finding nothing proves
+    only that the comment does not exist yet, and an abandoned attempt can still create
+    it after a second one was sent (a review finding on #353).
     """
     if not body.startswith(marker_line):
         raise ValueError("the body must start with its delivery marker")
@@ -365,6 +377,11 @@ def post_once(
         try:
             return sink.create(body)
         except DeliveryUncertain as error:
+            if error.in_flight:
+                raise DeliveryUnconfirmed(
+                    "an attempt to deliver the review may still be running, so it was "
+                    f"not delivered again: {error}"
+                ) from error
             if attempt == attempts - 1:
                 raise
             hint = error.retry_after or 0.0

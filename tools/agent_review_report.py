@@ -152,7 +152,7 @@ def read_handoff(directory: pathlib.Path) -> AgentReport:
         text = _read_bounded("report.txt", descriptor)
     except OSError:
         # Present but unreadable is still no report: the poster must say so rather
-        # than fail before posting anything (CodeAnt on #353).
+        # than fail before posting anything (a review finding on #353).
         return missing
     finally:
         os.close(descriptor)

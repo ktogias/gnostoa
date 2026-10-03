@@ -64,6 +64,10 @@ jobs:
       pull_number: ${{ steps.admit.outputs.pull_number }}
       head_sha: ${{ steps.admit.outputs.head_sha }}
       review_outcome: ${{ steps.claude.outcome }}
+      # The attempt that wrote the report. Artifacts are immutable within a run, so each
+      # attempt hands over under its own name; rerunning only a posting job reuses this
+      # output and so still finds the report its reviewing job produced.
+      report_attempt: ${{ github.run_attempt }}
     # Read-only, and no `id-token`: with it the pinned action exchanged OIDC for a
     # Claude GitHub App token with contents, pull-request and issue *write*, and agent
     # mode wrote that token into the checkout's .git/config, where the reviewer could
@@ -623,7 +627,7 @@ jobs:
         if: always() && steps.admit.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: claude-review-report
+          name: claude-review-report-${{ github.run_attempt }}
           path: ${{ runner.temp }}/claude-review-report
           if-no-files-found: ignore
           retention-days: 1
@@ -657,7 +661,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: claude-review-report
+          name: claude-review-report-${{ needs.claude.outputs.report_attempt }}
           path: ${{ runner.temp }}/claude-review-report
       - name: Post the review to the Pull Request
         env:
@@ -694,7 +698,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: claude-review-report
+          name: claude-review-report-${{ needs.claude.outputs.report_attempt }}
           path: ${{ runner.temp }}/claude-review-report
       - name: Post the review to the issue
         env:

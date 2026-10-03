@@ -1691,6 +1691,37 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn(run_url, failed)
         self.assertIn("did not complete", failed.lower())
 
+    def test_a_rerun_never_posts_another_attempts_report(self) -> None:
+        """Artifacts are immutable within a run, and a rerun keeps the run. With one
+        fixed name, a rerun's upload clashed with the first attempt's artifact, and the
+        posting job could post that stale report under the new attempt (CodeAnt on
+        #353). Each reviewing attempt hands over under its own name, the attempt is a
+        job output, and each posting job downloads exactly that attempt -- so rerunning
+        only a posting job still finds the report its reviewing job produced.
+        """
+        workflow = load_yaml(MENTION_WORKFLOW)
+        reviewer = workflow["jobs"]["claude"]
+        self.assertEqual(
+            "${{ github.run_attempt }}", reviewer["outputs"]["report_attempt"]
+        )
+        upload = _named_step(workflow, "Hand the report to the posting job")
+        self.assertEqual(
+            "claude-review-report-${{ github.run_attempt }}", upload["with"]["name"]
+        )
+        for job in ("post-to-pull-request", "post-to-issue"):
+            with self.subTest(job=job):
+                downloads = [
+                    step
+                    for step in workflow["jobs"][job]["steps"]
+                    if str(step.get("uses", "")).startswith(
+                        "actions/download-artifact@"
+                    )
+                ]
+                self.assertEqual(
+                    ["claude-review-report-${{ needs.claude.outputs.report_attempt }}"],
+                    [step["with"]["name"] for step in downloads],
+                )
+
     def test_the_poster_refuses_what_it_cannot_trust(self) -> None:
         """The handoff is an artifact the reviewer job wrote, so the poster reads it
         as untrusted: a symlink, an oversized file or a missing one is a failure

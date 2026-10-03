@@ -74,6 +74,7 @@ class IssueCommentSink:
             raise DeliveryUncertain(
                 f"could not post to {self.comments_url}: {error}",
                 retry_after=error.retry_after,
+                in_flight=error.in_flight,
             ) from error
         except github_rest.GitHubError as error:
             # Refused before anything was sent, or a redirect the client would not
@@ -86,9 +87,12 @@ class IssueCommentSink:
     def find(self, marker: str) -> str | None:
         """Return this job's comment that starts with ``marker``, if GitHub has it."""
         url: str | None = f"{self.comments_url}?since={self.since}&per_page=100"
+        pages = 0
         try:
-            for _ in range(_LISTING_PAGES):
-                assert url is not None
+            # Narrowed by an explicit check, not an assert: an assert is stripped under
+            # `python -O`, and a bound is not something to compile away (Codacy, B101).
+            while url is not None and pages < _LISTING_PAGES:
+                pages += 1
                 listing, headers = self.client.get(url)
                 if not isinstance(listing, list):
                     raise DeliveryUncertain(
@@ -105,8 +109,8 @@ class IssueCommentSink:
                     ):
                         return str(comment.get("html_url", ""))
                 url = github_rest.next_url(headers, self.client.api_root)
-                if url is None:
-                    return None
+            if url is None:
+                return None
         except github_rest.GitHubError as error:
             raise DeliveryUncertain(str(error)) from error
         raise DeliveryUncertain(

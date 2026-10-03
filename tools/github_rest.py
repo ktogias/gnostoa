@@ -99,11 +99,15 @@ class GitHubError(RuntimeError):
         *,
         status: int | None = None,
         retry_after: float | None = None,
+        in_flight: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
         # When the provider said when to try again, bounded by the policy.
         self.retry_after = retry_after
+        # The exchange was abandoned at its bound, not stopped: it may still reach the
+        # provider. A write in flight must not be retried, since it can still land.
+        self.in_flight = in_flight
 
 
 class GitHubReadError(GitHubError):
@@ -272,7 +276,7 @@ def abandon_after(
     worker.start()
     if not finished.wait(seconds):
         workers.append(worker)
-        raise GitHubReadError(f"timed out while requesting {label!r}")
+        raise GitHubReadError(f"timed out while requesting {label!r}", in_flight=True)
     error = outcome.get("error")
     if error is not None:
         # Re-raised as itself: HTTPError carries the status the retry logic reads.
@@ -792,7 +796,9 @@ class GitHubRestClient:
             # A read keeps its cause's own type; a write becomes a write failure, for
             # the caller to read back.
             if write and not isinstance(error, GitHubWriteError):
-                raise GitHubWriteError(str(error), status=error.status) from error
+                raise GitHubWriteError(
+                    str(error), status=error.status, in_flight=error.in_flight
+                ) from error
             raise
         except ValueError:
             # Header validation can quote the credential in its error, so it is never
