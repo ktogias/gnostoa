@@ -582,6 +582,7 @@ guardrails:
       - tools/review_reconcile.py
       - ci/review_github_current_state.py
       - .github/workflows/review-current-state.yml
+      - tools/github_rest.py
     tests:
       - tests/test_review_reconcile_l1.py
       - tests/test_review_reconcile_l1_followups.py
@@ -589,6 +590,7 @@ guardrails:
       - tests/test_review_reconcile_l1_thread_state.py
       - tests/test_review_reconcile_l1_render_compat.py
       - tests/test_review_reconcile_l1_full_review_followups.py
+      - tests/test_github_rest.py
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
@@ -602,9 +604,11 @@ guardrails:
       - tools/analyzer_codacy.py
       - ci/analyzer_readback.py
       - .github/workflows/analyzer-readback.yml
+      - tools/github_rest.py
     tests:
       - tests/test_analyzer_readback.py
       - tests/test_analyzer_readback_runner.py
+      - tests/test_github_rest.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

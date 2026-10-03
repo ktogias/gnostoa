@@ -212,10 +212,14 @@ def _after_a_failed_collection(context: pathlib.Path) -> bool:
 
 
 def _note_the_commit_count(
-    context: pathlib.Path, total: int | None, made: bool
+    context: pathlib.Path, total: int | None, made: bool, unread: bool = False
 ) -> None:
     """Say when the commit log is not the whole list, and whose shortfall it is."""
     log = context / "commits.log"
+    if unread:
+        # Not a cap: the list was never read, so no count of what it held is due.
+        _append(log, "[commit log unavailable: the commit list could not be read]\n")
+        return
     if made:
         # The zero is the step's own, not a truncation the provider performed.
         _append(log, "[commit log unavailable: the base-context collection failed]\n")
@@ -311,13 +315,19 @@ def assemble(
     comparison = source.comparison()
     (context / "comparison.json").write_bytes(comparison)
     total = total_commits(comparison)
-    write_commits(context / "commits.b64", source.commits())
+    # The commit list is the context's least part: failing to read it is a stated gap,
+    # not a reason to lose the diff (a review finding on #353).
+    try:
+        commits = list(source.commits())
+    except Unavailable:
+        commits = None
+    write_commits(context / "commits.b64", commits or [])
     # The collector runs before the unified diff is read, so its failure must not end
     # the assembly: that would take the diff with it and leave the reviewer nothing at
     # all rather than a degraded context.
     state = collection_state(collect(context))
     made = _after_a_failed_collection(context) if state == FAILED else False
-    _note_the_commit_count(context, total, made)
+    _note_the_commit_count(context, total, made, unread=commits is None)
     refused = _unified_diff(context, source)
     _publish_the_diff(context, state, refused, chunk, vocabulary)
     for spent in ("diff.full", "comparison.json"):

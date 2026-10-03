@@ -594,3 +594,58 @@ class SharedGitHubClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedClientOwnershipTests(unittest.TestCase):
+    """Every guardrail whose control reads through the shared client owns it."""
+
+    def test_every_consumer_guardrail_owns_the_shared_client(self) -> None:
+        """The client is a runtime dependency of each control that imports it, so a
+        transport change must reach that control's ownership record. Registered under
+        one guardrail only, it bypassed two others' (Codex on #353). Checked by import,
+        so a consumer added later is held to it too."""
+        import ast
+        import pathlib
+
+        import yaml
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        guardrails = yaml.safe_load(
+            (root / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        )["guardrails"]
+
+        def imports_client(path: pathlib.Path) -> bool:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "tools":
+                    if any(alias.name == "github_rest" for alias in node.names):
+                        return True
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "tools.github_rest"
+                ):
+                    return True
+                if isinstance(node, ast.Import) and any(
+                    alias.name == "tools.github_rest" for alias in node.names
+                ):
+                    return True
+            return False
+
+        consumers = 0
+        for guardrail in guardrails:
+            implementation = guardrail.get("implementation") or []
+            uses = [
+                name
+                for name in implementation
+                if name.endswith(".py")
+                and name != "tools/github_rest.py"
+                and (root / name).is_file()
+                and imports_client(root / name)
+            ]
+            if not uses:
+                continue
+            consumers += 1
+            with self.subTest(guardrail=guardrail["id"]):
+                self.assertIn("tools/github_rest.py", implementation)
+                self.assertIn("tests/test_github_rest.py", guardrail.get("tests") or [])
+        self.assertGreaterEqual(consumers, 3)

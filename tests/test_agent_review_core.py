@@ -641,6 +641,30 @@ class SecondProviderContextTests(unittest.TestCase):
         self.assertIn("gave no commit count", log)
         self.assertNotIn("provider listed", log)
 
+    def test_an_unreadable_commit_list_is_a_stated_gap_not_a_lost_review(self) -> None:
+        """The commit list is the context's least part: failing to read it ended the
+        assembly before the diff was read (CodeAnt on #353). It is a stated gap, and
+        the log does not blame a provider cap for it."""
+        from tools import agent_review_context as context
+
+        class Unlisted(_ForgeLikeChanges):
+            """A change source whose commit list cannot be read."""
+
+            def commits(self) -> list[Any]:
+                raise context.Unavailable("the commit list could not be read")
+
+        source = Unlisted({"commit_count": 3}, [], b"+x\n")
+        chunked: list[pathlib.Path] = []
+        target, state = self._assemble(
+            source, _forge_collector(0, logged=0, listed=True), chunked
+        )
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        self.assertEqual("collected", state)
+        self.assertEqual([target], chunked)
+        log = (target / "commits.log").read_text(encoding="utf-8")
+        self.assertIn("commit list could not be read", log)
+        self.assertNotIn("provider listed", log)
+
     def test_a_comparison_that_is_not_one_ends_the_assembly(self) -> None:
         """Refusal is the default for what the core cannot establish."""
         from tools import agent_review_context as context
