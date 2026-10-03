@@ -61,7 +61,7 @@ def _escape_invalid_utf8(data: bytes) -> tuple[bytes, int]:
     """
     text = data.decode("utf-8", "surrogateescape")
     text, count = _INVALID_OCTET.subn(
-        lambda match: "\\%03o" % (ord(match.group()) - 0xDC00), text
+        lambda match: f"\\{ord(match.group()) - 0xDC00:03o}", text
     )
     return text.encode("utf-8"), count
 
@@ -229,8 +229,9 @@ def _readme_notes(
     return notes
 
 
-def _write_parts(parts: pathlib.Path, data: bytes, limit: int) -> int:
-    """Write ``data`` as bounded parts in name order, and return how many."""
+def _cuts(data: bytes, limit: int) -> list[tuple[int, int]]:
+    """Return where each bounded part of ``data`` starts and how long it is."""
+    cuts = []
     offset = 0
     index = 0
     while offset < len(data):
@@ -238,9 +239,9 @@ def _write_parts(parts: pathlib.Path, data: bytes, limit: int) -> int:
         index += 1
         if index > _MAX_PARTS:
             raise ValueError("diff needs more parts than the naming allows")
-        (parts / f"part-{index:04d}").write_bytes(data[offset : offset + take])
+        cuts.append((offset, take))
         offset += take
-    return index
+    return cuts
 
 
 def _overview_notices(
@@ -291,12 +292,10 @@ def split_diff(context: pathlib.Path, limit: int, *, line_cap: int) -> int:
         (context / "diff.full").read_bytes()
     )
     data, wrapped, continuations = wrap_records(data, line_cap)
-    parts = context / "patches"
-    parts.mkdir(exist_ok=True)
-    notes = _readme_notes(escaped, doubled, octets, wrapped, continuations, line_cap)
-    if notes:
-        (parts / "README").write_text(notes, encoding="utf-8")
-    index = _write_parts(parts, data, limit)
+    # Every part and the overview are decided before anything is written, so a bound
+    # that cannot serve this diff leaves nothing published (a review finding on #353).
+    cuts = _cuts(data, limit)
+    index = len(cuts)
     # The overview and its notice are written here rather than by the caller, because
     # only this function knows how many parts exist. Deciding from the *input* size
     # would miss a diff that fits the bound until wrapping pushes it past: the
@@ -328,5 +327,12 @@ def split_diff(context: pathlib.Path, limit: int, *, line_cap: int) -> int:
             f"a {limit}-byte bound cannot hold the overview's own notices"
             f" ({len(overview)} bytes)"
         )
+    parts = context / "patches"
+    parts.mkdir(exist_ok=True)
+    notes = _readme_notes(escaped, doubled, octets, wrapped, continuations, line_cap)
+    if notes:
+        (parts / "README").write_text(notes, encoding="utf-8")
+    for number, (offset, take) in enumerate(cuts, start=1):
+        (parts / f"part-{number:04d}").write_bytes(data[offset : offset + take])
     (context / "diff.patch").write_bytes(overview)
     return index

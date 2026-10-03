@@ -131,7 +131,13 @@ def _read_bounded(name: str, directory: int) -> str | None:
         os.close(descriptor)
     if len(raw) > _HANDOFF_READ_BYTES:
         return None
-    return raw.decode("utf-8", "replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # The writer writes UTF-8, so bytes that are not are a corrupted handoff, and
+        # decoded with replacement they read as a finished review (a review finding on
+        # #353).
+        return None
 
 
 def read_handoff(directory: pathlib.Path) -> AgentReport:

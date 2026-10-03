@@ -170,7 +170,7 @@ Recorded per stage, so that this draft does not read as describing work not yet 
 | 2. The shared GitHub client | **Delivered.** `tools/github_rest.py` serves all five consumers, with one falsifier per element and a mutant that each falsifier kills. |
 | 3. Admission | **Delivered.** Core: `agent_review_model` (the subject vocabulary and the continuation marker) and `agent_review_admission` (every admission rule, the relay payload and the request artefacts). Adapters: GitHub's request source and step outputs, plus the Claude Code mention and line budget. The entrypoint composes them. A test-only second provider, with string ids, merge requests and a role vocabulary, is admitted and refused by the unchanged core for the same reasons; each rule has a mutant that a test kills. |
 | 4. Context collection | **4a delivered.** The collection step's 310-line inline shell is one entrypoint, `collect_context.py`. Its rules are in the core's `agent_review_context`: the guarded collector, the commit-count notice, the refusal-only fallback and the empty-diff verdicts. GitHub's `CompareSource` reads the comparison, its pages of commits and the unified diff through the shared client. A test-only second provider's change source, with its own fields, refusal and vocabulary, is assembled by the unchanged core. **4b delivered.** The base collector's rules are the core's `agent_review_base`, over `ChangedFile`, `BaseRecord`, `Listing` and `Contents`, and a `BaseSource` port: the merge base, the rename source, the blob check, the budget, the deadline, the hunkless verdicts and the per-path manifest. GitHub's comparison schema and contents API are the adapter's (`read_comparison`, `ContentsSource`), and the collector's entrypoint is its transport binding plus composition, 1,632 lines down to about 300. A test-only second provider's base source is collected by the unchanged core. **4c delivered.** The chunker's rules are the core's `agent_review_diff`: the character-safe cut, the separator and encoding escapes, record wrapping, and the overview's bound and disclosures. They take the reader's line budget, which the agent adapter declares, as a parameter, and `chunk_diff.py` binds the two. A second reader's budget drives the unchanged core. |
-| 5. Whole-pipeline falsifiers | Pending. |
+| 5. Whole-pipeline falsifiers | **Delivered.** One change request runs through every core stage with only test-only adapters: admission, then context assembly with base collection and chunking, then the report handoff and rendering, then post-once delivery. The adapters are a forge-like provider and a JSONL agent. Each stage's outcome is the one the GitHub and Claude Code composition produces. The structural guard's replay against `main` is recorded under Verification. |
 
 Two facts from stage 2 are recorded rather than smoothed over:
 - **A chronology violation.** The shared client was written before its element tests.
@@ -229,8 +229,14 @@ Two facts from stage 2 are recorded rather than smoothed over:
   unchanged publisher and poster.
 - **The shared client:** each listed element has a test that fails when that element
   is removed.
-- **Replay:** the structural guard is run against `main`'s coupled scripts and
-  rejects them. This is post-hoc evidence, not RED chronology.
+- **Replay:** the structural guard was run against `main`'s coupled scripts, at
+  `598b65a`, and rejects every one of them. This is post-hoc evidence, not RED
+  chronology:
+  - .github/review-context/admit_mention.py: rejected, 716 lines, 37 coupling terms (author_association, claude, codex, github, runner_temp, workflow_run), non-stdlib imports ['chunk_diff', 'review_context_paths']
+  - .github/review-context/build_review_context.py: rejected, 2030 lines, 36 coupling terms (claude, codex, github), non-stdlib imports ['chunk_diff', 'review_context_paths']
+  - .github/review-context/chunk_diff.py: rejected, 401 lines, 3 coupling terms (claude, github), non-stdlib imports ['review_context_paths']
+  - .github/review-context/publish_report.py: rejected, 255 lines, 12 coupling terms (claude, github, runner_temp), non-stdlib imports ['review_context_paths']
+  - .github/review-context/review_context_paths.py: rejected, 51 lines, 3 coupling terms (claude, github), non-stdlib imports none
 
 **Existing tests.** The existing hardening tests keep their meaning and are retargeted
 to where each rule now lives. A test that pinned shell text pins the same property

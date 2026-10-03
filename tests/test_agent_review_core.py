@@ -1011,6 +1011,23 @@ class DiffDisclosureTests(unittest.TestCase):
                 diff.split_diff(context, 2, line_cap=1900)
 
 
+class UnpublishedOnRefusalTests(unittest.TestCase):
+    """A diff the bound cannot serve leaves nothing published."""
+
+    def test_a_bound_too_small_for_the_notices_writes_nothing(self) -> None:
+        """The refusal came after the README and the parts were written, so a failed
+        split left a partial context behind (CodeAnt on #353). It is decided first."""
+        from tools import agent_review_diff as diff
+
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(b"+a\rb\n" * 3)
+            with self.assertRaisesRegex(ValueError, "cannot hold the overview"):
+                diff.split_diff(context, 40, line_cap=1900)
+            self.assertFalse((context / "patches").exists())
+            self.assertFalse((context / "diff.patch").exists())
+
+
 class ThinChunkerEntrypointTests(unittest.TestCase):
     """The chunker's entrypoint binds the core to the reader's budget; no more."""
 
@@ -1179,6 +1196,18 @@ class HandoffRecordTests(unittest.TestCase):
                 report.write_handoff(cut, directory)
             received = report.read_handoff(directory)
         self.assertEqual("unavailable", received.status)
+
+    def test_a_handoff_that_is_not_utf8_is_an_unavailable_report(self) -> None:
+        """The writer writes UTF-8, so bytes that are not are a corrupted handoff:
+        decoded with replacement, they were posted as a finished review (CodeAnt on
+        #353)."""
+        from tools import agent_review_report as report
+
+        with tempfile.TemporaryDirectory() as scratch:
+            handoff = pathlib.Path(scratch) / "handoff"
+            report.write_handoff(report.AgentReport("complete", "fine", False), handoff)
+            (handoff / "report.txt").write_bytes(b"a corrupted \xff review")
+            self.assertEqual("unavailable", report.read_handoff(handoff).status)
 
     def test_an_unreadable_handoff_is_an_unavailable_report(self) -> None:
         """A handoff file that exists but cannot be read is not a crash: the poster
@@ -1456,6 +1485,115 @@ class RetriedReadBackTests(unittest.TestCase):
             sink = github.IssueCommentSink(url, since="2026-10-03T09:00:00Z")
             self.assertEqual(comment["html_url"], sink.find(marker))
         self.assertEqual(2, len(calls))
+
+
+class WholePipelineTests(unittest.TestCase):
+    """Decision 0100, stage 5: one change request through every stage of the core.
+
+    Only test-only adapters are used: the forge-like provider's request source, change
+    source, base source and note sink, and the JSONL agent's report. Each stage's
+    outcome is the one the GitHub and Claude Code composition produces for the same
+    request. Nothing in the core is touched to make it so.
+    """
+
+    def test_a_second_provider_and_agent_run_the_whole_pipeline(self) -> None:
+        """Admitted, assembled, reviewed and delivered once, in another vocabulary."""
+        from tools import agent_review_admission as admission
+        from tools import agent_review_base as base
+        from tools import agent_review_context as context
+        from tools import agent_review_delivery as delivery
+        from tools import agent_review_diff as diff
+        from tools import agent_review_report as report
+
+        # Admission: the forge's note on its merge request, re-read and bound to the run.
+        requests, pointer = _forge_case()
+        admitted = admission.admit(
+            requests, _FORGE_REPOSITORY, pointer, _forge_trigger(), _forge_rules()
+        )
+        self.assertEqual(
+            "merge_request", getattr(admitted.subject.change_request, "kind", None)
+        )
+        # The context: the forge's comparison, base revision and diff, for a reader
+        # whose line budget is 80 bytes.
+        changes = _ForgeLikeChanges(
+            {"commit_count": 1},
+            [{"id": "f" * 40, "title": "Tighten the parser"}],
+            b"diff --git a/src/a.py b/src/a.py\n-before\n+after\n",
+        )
+        comparison = _forge_changes(("src/a.py", "modified", None))
+        revision = _ForgeLikeBase({"src/a.py": b"before\n"})
+        with tempfile.TemporaryDirectory() as scratch:
+            work = pathlib.Path(scratch)
+            request = work / "request"
+            admission.write_request(request, admitted.forwarded, line_cap=80)
+            target = work / "context"
+            context.prepare(target, request)
+
+            def collect(at: pathlib.Path) -> int:
+                _, _, listed = base.collect(
+                    at,
+                    comparison,
+                    revision,
+                    budget=1 << 20,
+                    file_cap=50,
+                    deadline_seconds=60,
+                    line_cap=80,
+                )
+                return 0 if listed else 3
+
+            def chunk(at: pathlib.Path) -> None:
+                diff.split_diff(at, 4096, line_cap=80)
+
+            state = context.assemble(
+                target,
+                changes,
+                collect=collect,
+                chunk=chunk,
+                vocabulary=context.Vocabulary(change_request="merge request"),
+            )
+            self.assertEqual("collected", state)
+            self.assertEqual(
+                b"before\n", (target / "base" / "src" / "a.py").read_bytes()
+            )
+            self.assertIn(
+                "Written: 1.", (target / "base.manifest").read_text(encoding="utf-8")
+            )
+            self.assertTrue(sorted((target / "patches").glob("part-*")))
+            self.assertIn(
+                "please look",
+                (target / "request" / "request").read_text(encoding="utf-8"),
+            )
+            # The review: the second agent's stream, handed over between jobs.
+            stream = "\n".join(
+                json.dumps(event)
+                for event in (
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "No finding."},
+                    },
+                    {"type": "turn.completed"},
+                )
+            )
+            handoff = work / "handoff"
+            report.write_handoff(_codex_like_report(stream), handoff)
+            received = report.read_handoff(handoff)
+        self.assertEqual("complete", received.status)
+        # Delivery: rendered and posted once through the forge's sink, whose create
+        # lands and loses its answer, so post-once has to read back to know.
+        body = delivery.render_comment(
+            received,
+            reviewer="Second agent",
+            provenance=f"Reviewed revision: `{admitted.subject.head_commit[:9]}`",
+            secret_patterns=(),
+        )
+        marker = delivery.delivery_marker("forge-run.1")
+        sink = _ForgeLikeSink(["lost"])
+        posted = delivery.post_once(
+            sink, f"{marker}\n{body}", marker, pause=lambda _seconds: None
+        )
+        self.assertEqual(1, len(sink.notes))
+        self.assertEqual(sink.notes[0]["id"], posted)
+        self.assertIn("No finding.", sink.notes[0]["body"])
 
 
 class GitHubClaudeCompositionTests(unittest.TestCase):
