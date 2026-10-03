@@ -630,10 +630,6 @@ class SharedGitHubClientTests(unittest.TestCase):
             github_rest.next_url({"link": '<https://evil.example/x>; rel="next"'}, root)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _names_the_client(node: ast.AST) -> bool:
     """Return whether an import statement imports the shared client."""
     if isinstance(node, ast.ImportFrom):
@@ -682,3 +678,7 @@ class SharedClientOwnershipTests(unittest.TestCase):
                 self.assertIn("tools/github_rest.py", guardrail["implementation"])
                 self.assertIn("tests/test_github_rest.py", guardrail.get("tests") or [])
         self.assertGreaterEqual(len(owners), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
