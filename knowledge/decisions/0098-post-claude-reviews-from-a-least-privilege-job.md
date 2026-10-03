@@ -98,7 +98,9 @@ copies a token it can read into the report it publishes.
 
 3. **The report crosses jobs as an artifact, and the identities do not.** The reviewer's
    publisher writes the bounded report and its status (`complete`, `incomplete` or
-   `unavailable`) to a handoff directory, uploaded as `claude-review-report` for one day.
+   `unavailable`) to a handoff directory, uploaded as `claude-review-report-<run attempt>`,
+   one artifact per run attempt, and kept for 30 days: a posting job that did not
+   receive the report refuses and asks for a rerun, which needs the artifact to exist.
    The status is the commit record. It is written last, after the whole report, and
    it states whether the report was cut, because sanitising can shrink a cut report
    below any length that would show the cut.

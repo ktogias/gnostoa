@@ -1921,6 +1921,22 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # a report that was handed over but did not arrive, and tells the operator to
         # rerun, which only works while the artifact exists (gitar on #353).
         self.assertEqual(30, upload["with"]["retention-days"])
+        # The Decision states the handoff as the workflow makes it: it said one day,
+        # and one artifact name, after both had changed (Codex on #353).
+        self.assertEqual(
+            "claude-review-report-${{ github.run_attempt }}", upload["with"]["name"]
+        )
+        decision = " ".join(
+            (
+                ROOT
+                / "knowledge/decisions/0098-post-claude-reviews-from-a-least-privilege-job.md"
+            )
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn("`claude-review-report-<run attempt>`", decision)
+        self.assertIn(f"kept for {upload['with']['retention-days']} days", decision)
+        self.assertNotIn("for one day", decision)
 
     def test_a_report_handed_over_but_not_received_is_not_finalised(self) -> None:
         """A failed download posted the unavailable notice under the report's marker,

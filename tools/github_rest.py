@@ -155,7 +155,13 @@ class MalformedAnswer(GitHubReadError):
 
 def origin_of(root: str) -> tuple[str, str, int]:
     """Return the (scheme, host, port) a root URL admits."""
-    parsed = urllib.parse.urlparse(root)
+    try:
+        parsed = urllib.parse.urlparse(root)
+        port = parsed.port
+    except ValueError as exc:
+        # An unclosed IPv6 host or an invalid port, refused under the client's own
+        # error rather than escaping as a raw ValueError (CodeAnt on #353).
+        raise GitHubError("the API root is not a valid URL") from exc
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         raise GitHubError("the API root is not an absolute HTTP(S) URL")
     if parsed.username is not None or parsed.password is not None:
@@ -165,7 +171,7 @@ def origin_of(root: str) -> tuple[str, str, int]:
     if parsed.fragment or parsed.query:
         raise GitHubError("the API root carries a query or a fragment")
     default = 443 if parsed.scheme == "https" else 80
-    return parsed.scheme, parsed.hostname, parsed.port or default
+    return parsed.scheme, parsed.hostname, port or default
 
 
 def validate_url(url: str, root: str = API_ROOT) -> str:

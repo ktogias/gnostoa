@@ -359,6 +359,16 @@ class SharedGitHubClientTests(unittest.TestCase):
             with self.subTest(root=root), self.assertRaises(github_rest.GitHubError):
                 github_rest.GitHubRestClient("t", api_root=root)
 
+    def test_a_root_that_does_not_parse_is_refused_as_a_provider_error(self) -> None:
+        """An invalid port or an unclosed IPv6 host escaped as a raw `ValueError`,
+        outside the client's error contract (CodeAnt on #353)."""
+        for root in ("https://api.github.com:99999", "https://[::1"):
+            with self.subTest(root=root):
+                with self.assertRaises(github_rest.GitHubError):
+                    github_rest.GitHubRestClient("t", api_root=root)
+                with self.assertRaises(github_rest.GitHubError):
+                    github_rest.origin_of(root)
+
     def test_a_request_refused_by_the_cap_fails_at_once(self) -> None:
         """Past the cap a request fails at once: retrying the refusal only waited out
         pauses while the workers that filled the cap kept stalling (CodeAnt on #353)."""
