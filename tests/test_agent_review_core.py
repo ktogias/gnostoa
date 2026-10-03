@@ -620,6 +620,18 @@ class SecondProviderContextTests(unittest.TestCase):
             (target / "commits.log").read_text(encoding="utf-8"),
         )
 
+    def test_a_comparison_without_a_count_says_the_log_may_be_short(self) -> None:
+        """A missing count was read as zero, so a log of unknown completeness passed as
+        complete (CodeAnt on #353). It is stated instead."""
+        source = _ForgeLikeChanges(
+            {"commit_count": None}, [{"id": "f" * 40, "title": "t"}], b"+x\n"
+        )
+        target, _ = self._assemble(source, _forge_collector(0, listed=True), [])
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        log = (target / "commits.log").read_text(encoding="utf-8")
+        self.assertIn("gave no commit count", log)
+        self.assertNotIn("provider listed", log)
+
     def test_a_comparison_that_is_not_one_ends_the_assembly(self) -> None:
         """Refusal is the default for what the core cannot establish."""
         from tools import agent_review_context as context

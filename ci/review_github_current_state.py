@@ -93,6 +93,7 @@ def _translated(error: github_rest.GitHubError) -> github_rest.GitHubError:
         status=error.status,
         retry_after=error.retry_after,
         in_flight=error.in_flight,
+        outcome_unknown=error.outcome_unknown,
     )
 
 
@@ -1512,7 +1513,9 @@ def _failed_publication(entry: dict[str, Any], error: BaseException) -> dict[str
     known, and saying it was not would misreport it (CodeAnt on #353).
     """
     pull_number = entry.get("pull_number")
-    in_flight = bool(getattr(error, "in_flight", False))
+    # A write that reached the provider unrefused, or was abandoned in flight; L1's own
+    # refusals before writing are neither.
+    in_flight = bool(getattr(error, "outcome_unknown", False))
     return {
         "pull_number": (
             pull_number if type(pull_number) is int and pull_number > 0 else "UNKNOWN"

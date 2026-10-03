@@ -3869,6 +3869,25 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             (context / "base.manifest").read_text(encoding="utf-8"),
         )
 
+    def test_a_filesystem_failure_ends_the_step_with_its_reason(self) -> None:
+        """A failure to write the context, or to start a process, escaped as a
+        traceback with no line naming it (CodeAnt on #353). It ends the step as every
+        other failure here does: one line, with the reason."""
+
+        def unstartable(_target: pathlib.Path, _repository: str, _bytes: int) -> int:
+            raise OSError(2, "No such file or directory", "python3")
+
+        with tempfile.TemporaryDirectory() as scratch:
+            code, stderr = self._collect_context(
+                scratch,
+                pathlib.Path(scratch) / "context",
+                source=_FakeChanges({"files": [], "total_commits": 0}),
+                collector=unstartable,
+            )
+        self.assertEqual(1, code)
+        self.assertIn("ERROR:", stderr)
+        self.assertIn("No such file or directory", stderr)
+
     def test_an_empty_fallback_diff_is_not_published_as_no_changes(self) -> None:
         """Guarding the collector gave the step a second way to reach a zero-byte
         `diff.full`: the provider refuses the unified diff, the fallback moves an

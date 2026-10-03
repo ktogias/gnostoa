@@ -102,6 +102,7 @@ class GitHubError(RuntimeError):
         status: int | None = None,
         retry_after: float | None = None,
         in_flight: bool = False,
+        outcome_unknown: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -110,10 +111,18 @@ class GitHubError(RuntimeError):
         # The exchange was abandoned at its bound, not stopped: it may still reach the
         # provider. A write in flight must not be retried, since it can still land.
         self.in_flight = in_flight
+        # A write that reached the provider and was not refused may have been applied:
+        # a server error, a broken transport, an answer that could not be read. Only a
+        # refusal, or a request never sent, says it was not (CodeAnt on #353).
+        self.outcome_unknown = outcome_unknown or in_flight
 
 
 class GitHubReadError(GitHubError):
     """A bounded read failed."""
+
+
+class NotSent(GitHubReadError):
+    """The request was refused before it was sent, so nothing reached the provider."""
 
 
 class GitHubWriteError(GitHubError):
@@ -282,7 +291,7 @@ def abandon_after(
     with _REGISTRY_LOCK:
         workers[:] = [running for running in workers if running.is_alive()]
         if len(workers) >= policy.max_abandoned:
-            raise GitHubReadError(
+            raise NotSent(
                 f"not requesting {label!r}: {len(workers)} earlier requests are still "
                 "running"
             )
@@ -802,7 +811,10 @@ class GitHubRestClient:
         status = 429 if error.code == 403 and limited else error.code
         hint = rate_limit_pause(error, 0, policy=self.policy) if limited else None
         kind = GitHubWriteError if write else GitHubReadError
-        return kind(message, status=status, retry_after=hint)
+        # A server error is the provider failing after it received the request, so a
+        # write may have been applied; a 4xx, a rate limit included, refused it.
+        reached = write and error.code >= 500
+        return kind(message, status=status, retry_after=hint, outcome_unknown=reached)
 
     def _request(
         self,
@@ -835,7 +847,10 @@ class GitHubRestClient:
             # the caller to read back.
             if write and not isinstance(error, GitHubWriteError):
                 raise GitHubWriteError(
-                    str(error), status=error.status, in_flight=error.in_flight
+                    str(error),
+                    status=error.status,
+                    in_flight=error.in_flight,
+                    outcome_unknown=not isinstance(error, NotSent),
                 ) from error
             raise
         except ValueError:
@@ -843,12 +858,16 @@ class GitHubRestClient:
             # chained: not here, and not in any traceback a caller formats.
             raise failure("GitHub request failed validation") from None
         except (OSError, http.client.HTTPException) as error:
-            raise failure("GitHub API transport failed") from error
+            raise failure(
+                "GitHub API transport failed", outcome_unknown=write
+            ) from error
         try:
             return decode_json(raw, url), headers
         except GitHubReadError as error:
             if write:
-                raise GitHubWriteError(str(error)) from error
+                # The provider answered, and its answer could not be read: the write may
+                # well have been applied.
+                raise GitHubWriteError(str(error), outcome_unknown=True) from error
             raise
 
     def get(self, url: str) -> tuple[Any, dict[str, str]]:

@@ -359,6 +359,56 @@ class SharedGitHubClientTests(unittest.TestCase):
                     # As the client hands headers over: names lowercased.
                     github_rest.next_url({"link": f'<{url}>; rel="next"'})
 
+    def test_a_write_that_reached_the_provider_has_an_unknown_outcome(self) -> None:
+        """A write the provider answered with a success it could not read, a server
+        error, or a broken transport may have been applied; only a refusal says it was
+        not (CodeAnt on #353). The error says which."""
+
+        def created_unreadably(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(201)
+            handler.end_headers()
+            handler.wfile.write(b"{not json")
+
+        def failed(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(502)
+            handler.end_headers()
+
+        def refused(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(422)
+            handler.end_headers()
+            handler.wfile.write(b'{"message": "Validation Failed"}')
+
+        def dropped(handler: http.server.BaseHTTPRequestHandler) -> None:
+            # The connection closes with no answer at all: a broken transport.
+            handler.close_connection = True
+
+        provider = self._provider(
+            {
+                "/created": created_unreadably,
+                "/failed": failed,
+                "/refused": refused,
+                "/dropped": dropped,
+            }
+        )
+        client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        for path, unknown in (
+            ("/created", True),
+            ("/failed", True),
+            ("/dropped", True),
+            ("/refused", False),
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(github_rest.GitHubWriteError) as caught:
+                    client.post(f"{provider.root}{path}", {"body": "x"})
+                self.assertIs(unknown, caught.exception.outcome_unknown)
+        # Refused before sending -- here by a full worker registry -- reached nothing.
+        unsent = github_rest.GitHubRestClient(
+            "t", api_root=provider.root, policy=github_rest.Policy(max_abandoned=0)
+        )
+        with self.assertRaises(github_rest.GitHubWriteError) as caught:
+            unsent.post(f"{provider.root}/created", {"body": "x"})
+        self.assertFalse(caught.exception.outcome_unknown)
+
     def test_a_write_outliving_its_bound_is_reported_in_flight(self) -> None:
         """A write abandoned at its bound may still land; the error says so, so its
         caller does not retry it (Codex on #353)."""

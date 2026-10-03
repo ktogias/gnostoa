@@ -203,6 +203,12 @@ Two facts from stage 2 are recorded rather than smoothed over:
   #353). Delivery also reads back before its first create, not only after a failure,
   because a rerun is a new process: it resumes a delivery rather than repeating it
   (Codex on #353).
+- **A write that reached the provider was reported as not applied.** A server error,
+  a broken transport or a success answer that could not be read each left a write
+  that may well have been applied. The client now marks such a write as of unknown
+  outcome. Only a refusal, or a request never sent, leaves it known. L1 reports an
+  unknown outcome as such, while its own refusals before writing stay "not published"
+  (CodeAnt on #353).
 - **A cap that held only for sequential use.** A worker was counted only once
   abandoned, so concurrent requests could all pass the check first. Workers are now
   counted from their start, under a lock (CodeAnt on #353), with a falsifier and a

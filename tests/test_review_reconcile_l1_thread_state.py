@@ -1062,6 +1062,29 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("PR #1: PUBLICATION_OUTCOME_UNKNOWN", rendered)
         self.assertNotIn("PUBLICATION_ENTRY_UNAVAILABLE", rendered)
 
+    def test_a_publication_the_provider_may_have_applied_is_reported_unknown(
+        self,
+    ) -> None:
+        """A write that reached the provider without a refusal may have been applied.
+        L1's own pre-write refusals are not: they say nothing was sent (CodeAnt)."""
+        fixtures = _fixtures()
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
+        adapter = fixtures._adapter()
+        # skipcq: PYL-W0212 -- the translation itself is under test
+        reached = adapter._translated(
+            adapter.github_rest.GitHubWriteError("HTTP 502", outcome_unknown=True)
+        )
+        self.assertTrue(reached.outcome_unknown)
+        unsent = adapter.ProviderWriteError("publication payload is malformed")
+        for error, reason in (
+            (reached, "PUBLICATION_OUTCOME_UNKNOWN"),
+            (unsent, "PUBLICATION_ENTRY_UNAVAILABLE"),
+        ):
+            with self.subTest(reason=reason):
+                # skipcq: PYL-W0212 -- the result of a failed entry is under test
+                result = adapter._failed_publication({"pull_number": 1}, error)
+                self.assertEqual(reason, result["reason"])
+
     def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()

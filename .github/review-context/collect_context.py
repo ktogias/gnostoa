@@ -39,9 +39,14 @@ def _child_environment() -> dict[str, str]:
 
 
 def run_collector(context: pathlib.Path, repository: str, max_bytes: int) -> int:
-    """Run the base collector over ``context`` in its own process; return its status."""
-    completed = subprocess.run(  # nosec B603 -- fixed arguments, no shell
-        [
+    """Run the base collector over ``context`` in its own process; return its status.
+
+    The argument list is fixed: this interpreter, a script in the protected checkout, a
+    path confined to the workspace, a repository validated against owner/name form and
+    a whole number. No shell is involved, so nothing in it is interpreted.
+    """
+    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             sys.executable,
             str(HERE / "build_review_context.py"),
             str(context),
@@ -55,9 +60,17 @@ def run_collector(context: pathlib.Path, repository: str, max_bytes: int) -> int
 
 
 def run_chunker(context: pathlib.Path, max_bytes: int) -> None:
-    """Split ``context/diff.full`` into bounded parts, failing the step if it fails."""
-    subprocess.run(  # nosec B603 -- fixed arguments, no shell
-        [sys.executable, str(HERE / "chunk_diff.py"), str(context), str(max_bytes)],
+    """Split ``context/diff.full`` into bounded parts, failing the step if it fails.
+
+    Fixed arguments, as the collector's: no shell, nothing interpreted.
+    """
+    subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            sys.executable,
+            str(HERE / "chunk_diff.py"),
+            str(context),
+            str(max_bytes),
+        ],
         check=True,
         env=_child_environment(),
     )
@@ -107,11 +120,11 @@ def main(argv: list[str]) -> int:
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
-    context_core.prepare(context, request)
-    if not pull:
-        (context / "README").write_text(github.NO_CHANGE_REQUEST, encoding="utf-8")
-        return 0
     try:
+        context_core.prepare(context, request)
+        if not pull:
+            (context / "README").write_text(github.NO_CHANGE_REQUEST, encoding="utf-8")
+            return 0
         context_core.assemble(
             context,
             change_source(repository, base, head),
@@ -119,7 +132,9 @@ def main(argv: list[str]) -> int:
             chunk=lambda target: run_chunker(target, max_bytes),
             vocabulary=github.VOCABULARY,
         )
-    except (context_core.Unavailable, subprocess.CalledProcessError) as error:
+    except (context_core.Unavailable, subprocess.CalledProcessError, OSError) as error:
+        # One line with the reason, as every other failure of the step: a filesystem or
+        # process failure escaped as a traceback naming nothing (CodeAnt on #353).
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     return 0

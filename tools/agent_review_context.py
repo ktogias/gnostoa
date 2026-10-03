@@ -135,11 +135,13 @@ class Vocabulary(NamedTuple):
     change_request: str
 
 
-def total_commits(comparison: bytes) -> int:
-    """Return the number of commits the comparison says it has, or refuse.
+def total_commits(comparison: bytes) -> int | None:
+    """Return the number of commits the comparison says it has, None if it says none.
 
     A comparison that is not an object, or whose count is not a whole number, is not
-    one: the count is what tells a capped commit list from a complete one.
+    one: the count is what tells a capped commit list from a complete one. A comparison
+    giving no count leaves that unknown, which the log then says rather than reading it
+    as zero (a review finding on #353).
     """
     try:
         document = json.loads(comparison)
@@ -147,7 +149,9 @@ def total_commits(comparison: bytes) -> int:
         raise Unavailable("the comparison is not a JSON document") from error
     if not isinstance(document, dict):
         raise Unavailable("the comparison is not an object")
-    count = document.get("total_commits") or 0
+    count = document.get("total_commits")
+    if count is None:
+        return None
     if isinstance(count, bool) or not isinstance(count, int) or count < 0:
         raise Unavailable("the comparison's commit count is not a whole number")
     return count
@@ -207,7 +211,9 @@ def _after_a_failed_collection(context: pathlib.Path) -> bool:
     return made
 
 
-def _note_the_commit_count(context: pathlib.Path, total: int, made: bool) -> None:
+def _note_the_commit_count(
+    context: pathlib.Path, total: int | None, made: bool
+) -> None:
     """Say when the commit log is not the whole list, and whose shortfall it is."""
     log = context / "commits.log"
     if made:
@@ -215,6 +221,13 @@ def _note_the_commit_count(context: pathlib.Path, total: int, made: bool) -> Non
         _append(log, "[commit log unavailable: the base-context collection failed]\n")
         return
     if not log.is_file():
+        return
+    if total is None:
+        _append(
+            log,
+            "[the provider gave no commit count, so whether this list is complete "
+            "is not known]\n",
+        )
         return
     with log.open(encoding="utf-8", errors="replace") as handle:
         listed = sum(1 for line in handle if not line.startswith(">"))
