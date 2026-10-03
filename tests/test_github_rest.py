@@ -35,11 +35,18 @@ Route = Callable[[http.server.BaseHTTPRequestHandler], None]
 
 
 class _Provider:
-    """A local provider whose routes a test scripts, counting what it received."""
+    """A local provider whose routes a test scripts, counting what it received.
+
+    A route answers only its exact path and query, so a client that drops a page's
+    query reaches no route; and each request's method and body are
+    kept, so a write's form is checked, not only how its failure is classified
+    (CodeAnt on #353).
+    """
 
     def __init__(self, routes: dict[str, Route]) -> None:
         self.routes = routes
         self.seen: list[tuple[str, str, str]] = []
+        self.received: list[tuple[str, str, bytes]] = []
         self.log: list[str] = []
         provider = self
 
@@ -54,7 +61,12 @@ class _Provider:
                 provider.seen.append(
                     (self.command, self.path, self.headers.get("Authorization", ""))
                 )
-                route = provider.routes.get(self.path.split("?")[0])
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else b""
+                provider.received.append((self.command, self.path, body))
+                # The exact path and query: a request that loses its query reaches
+                # no route, rather than the one it was meant for.
+                route = provider.routes.get(self.path)
                 if route is None:
                     self.send_response(404)
                     self.end_headers()
@@ -63,6 +75,7 @@ class _Provider:
 
             do_GET = _answer
             do_POST = _answer
+            do_PATCH = _answer
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.root = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -451,6 +464,10 @@ class SharedGitHubClientTests(unittest.TestCase):
                 with self.assertRaises(github_rest.GitHubWriteError) as caught:
                     client.post(f"{provider.root}{path}", {"body": "x"})
                 self.assertIs(unknown, caught.exception.outcome_unknown)
+                # And it was the write asked for, in its own form.
+                method, received, body = provider.received[-1]
+                self.assertEqual(("POST", path), (method, received))
+                self.assertEqual({"body": "x"}, json.loads(body))
         # Refused before sending -- here by a full worker registry -- reached nothing.
         unsent = github_rest.GitHubRestClient(
             "t", api_root=provider.root, policy=github_rest.Policy(max_abandoned=0)
@@ -458,6 +475,49 @@ class SharedGitHubClientTests(unittest.TestCase):
         with self.assertRaises(github_rest.GitHubWriteError) as caught:
             unsent.post(f"{provider.root}/created", {"body": "x"})
         self.assertFalse(caught.exception.outcome_unknown)
+
+    def test_each_write_sends_its_own_method_and_payload(self) -> None:
+        """A write reaches the provider as the method and JSON body it was asked for,
+        and returns the provider's document."""
+        provider = self._provider(
+            {
+                "/made": _json(201, {"id": 1}),
+                "/edited": _json(200, {"id": 2}),
+            }
+        )
+        client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        self.assertEqual({"id": 1}, client.post(f"{provider.root}/made", {"a": 1}))
+        self.assertEqual({"id": 2}, client.patch(f"{provider.root}/edited", {"b": [2]}))
+        self.assertEqual(
+            [("POST", "/made", {"a": 1}), ("PATCH", "/edited", {"b": [2]})],
+            [(m, p, json.loads(b)) for m, p, b in provider.received],
+        )
+
+    def test_a_followed_page_keeps_its_query(self) -> None:
+        """The next page is the URL the provider named, query and all: a client that
+        dropped it would read the first page again."""
+        provider = self._provider({})
+        provider.routes.update(
+            {
+                "/list?per_page=2": _json(
+                    200,
+                    [1, 2],
+                    {"Link": f'<{provider.root}/list?per_page=2&page=2>; rel="next"'},
+                ),
+                "/list?per_page=2&page=2": _json(200, [3]),
+            }
+        )
+        client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        first, headers = client.read_page(f"{provider.root}/list?per_page=2")
+        following = github_rest.next_url(headers, provider.root)
+        self.assertIsNotNone(following)
+        second, last = client.read_page(str(following))
+        self.assertEqual(([1, 2], [3]), (first, second))
+        self.assertIsNone(github_rest.next_url(last, provider.root))
+        self.assertEqual(
+            ["/list?per_page=2", "/list?per_page=2&page=2"],
+            [path for _, path, _ in provider.received],
+        )
 
     def test_a_write_outliving_its_bound_is_reported_in_flight(self) -> None:
         """A write abandoned at its bound may still land; the error says so, so its
