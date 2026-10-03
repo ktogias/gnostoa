@@ -16,22 +16,21 @@ import pathlib
 import re
 import sys
 
+from tools.agent_review_claude_code import READ_LINE_CAP as LINE_CAP
+from tools.agent_review_model import CONTINUATION
 from tools.agent_review_paths import within
 
 _MAX_PARTS = 9999
 # A byte that is not valid UTF-8, as `surrogateescape` decodes it.
 _INVALID_OCTET = re.compile("[\udc80-\udcff]")
-# The reviewer's Read tool truncates a physical line beyond roughly this length and
-# offsets into a file by line, so a single very long record -- a minified bundle, a
-# generated lockfile -- would leave its tail unreachable even though the bytes are
-# present. Such records are therefore hard-wrapped at a reader-visible boundary. Only
-# newlines are inserted: no byte of the diff is removed or reordered.
-LINE_CAP = 1900
-# A wrapped continuation carries no diff prefix, so a segment beginning with "-", "+",
-# "@@" or "+++ b/" would read as a deletion, an addition or a new hunk or file header
-# and be attributed to the wrong side of the change. Continuations are therefore marked
-# with a byte that never begins a line of unified diff output.
-CONTINUATION = b">"
+# `LINE_CAP` is the reviewer's own line budget, which its adapter declares: a single
+# very long record -- a minified bundle, a generated lockfile -- would otherwise leave
+# its tail unreachable even though the bytes are present. Such records are therefore
+# hard-wrapped at a reader-visible boundary. Only newlines are inserted: no byte of the
+# diff is removed or reordered. A wrapped continuation carries no diff prefix, so a
+# segment beginning with "-", "+", "@@" or "+++ b/" would read as a deletion, an
+# addition or a new hunk or file header; continuations are therefore marked with the
+# core's `CONTINUATION`, a byte that never begins a line of unified diff output.
 
 
 def _wrap_point(record: bytes, room: int) -> int:

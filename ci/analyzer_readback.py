@@ -4,8 +4,6 @@ import argparse
 import os
 import re
 import sys
-import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime

@@ -1025,6 +1025,43 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("ProviderWriteError:HTTP_403", logged)
         self.assertIn("PR #2: UPDATED", logged)
 
+    def test_an_abandoned_publication_is_reported_unknown_not_failed(self) -> None:
+        """A write abandoned at its bound may still land. Translated under this
+        adapter's names it kept no such fact, so the entry was reported as not
+        published (CodeAnt on #353). It is now reported as of unknown outcome."""
+        fixtures = _fixtures()
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
+        adapter = fixtures._adapter()
+        # skipcq: PYL-W0212 -- the translation itself is under test
+        translated = adapter._translated(
+            adapter.github_rest.GitHubWriteError("timed out", in_flight=True)
+        )
+        self.assertIsInstance(translated, adapter.ProviderWriteError)
+        self.assertTrue(translated.in_flight)
+        with (
+            mock.patch.object(
+                adapter, "_load_payload", return_value=[{"pull_number": 1}]
+            ),
+            mock.patch.object(adapter, "publish_entry", side_effect=[translated]),
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print"),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+        self.assertEqual(1, code)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #1: PUBLICATION_OUTCOME_UNKNOWN", rendered)
+        self.assertNotIn("PUBLICATION_ENTRY_UNAVAILABLE", rendered)
+
     def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()

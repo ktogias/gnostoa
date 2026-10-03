@@ -674,7 +674,12 @@ jobs:
           HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
           REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          # The delivery is the report's: its marker carries the report's attempt, so
+          # rerunning only this job after an uncertain create finds that comment rather
+          # than posting the review again (Codex on #353). Its read-back starts where
+          # the run did, which a rerun keeps.
+          RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
+          DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
         run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"
 
   post-to-issue:
@@ -711,5 +716,10 @@ jobs:
           HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
           REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          # The delivery is the report's: its marker carries the report's attempt, so
+          # rerunning only this job after an uncertain create finds that comment rather
+          # than posting the review again (Codex on #353). Its read-back starts where
+          # the run did, which a rerun keeps.
+          RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
+          DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
         run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"

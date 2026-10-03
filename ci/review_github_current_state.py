@@ -79,7 +79,8 @@ class ProviderWriteError(github_rest.GitHubWriteError):
 
 
 def _translated(error: github_rest.GitHubError) -> github_rest.GitHubError:
-    """Return ``error`` under this adapter's names, keeping its status and hint."""
+    """Return ``error`` under this adapter's names, keeping its status, its hint and
+    whether it may still be in flight (CodeAnt on #353)."""
     if isinstance(error, (ProviderReadError, ProviderWriteError)):
         return error
     kind = (
@@ -87,7 +88,12 @@ def _translated(error: github_rest.GitHubError) -> github_rest.GitHubError:
         if isinstance(error, github_rest.GitHubWriteError)
         else ProviderReadError
     )
-    return kind(str(error), status=error.status, retry_after=error.retry_after)
+    return kind(
+        str(error),
+        status=error.status,
+        retry_after=error.retry_after,
+        in_flight=error.in_flight,
+    )
 
 
 class JsonReader(Protocol):
@@ -1619,14 +1625,21 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, RuntimeError, ValueError) as exc:
             pull_number = entry.get("pull_number")
             publication_failed = True
+            # A write abandoned at its bound may still land, so whether it was
+            # published is not known, and saying it was not would misreport it.
+            in_flight = bool(getattr(exc, "in_flight", False))
             result = {
                 "pull_number": (
                     pull_number
                     if type(pull_number) is int and pull_number > 0
                     else "UNKNOWN"
                 ),
-                "published": False,
-                "reason": "PUBLICATION_ENTRY_UNAVAILABLE",
+                "published": None if in_flight else False,
+                "reason": (
+                    "PUBLICATION_OUTCOME_UNKNOWN"
+                    if in_flight
+                    else "PUBLICATION_ENTRY_UNAVAILABLE"
+                ),
                 "error_type": type(exc).__name__,
                 "diagnostic": _publication_error_diagnostic(exc),
             }

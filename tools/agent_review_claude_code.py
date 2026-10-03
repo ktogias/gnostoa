@@ -28,6 +28,9 @@ REVIEWER_NAME = "Claude"
 # What a request must carry to be one for this agent. Matched case-insensitively, as
 # the provider's own trigger filter matches it.
 MENTION = "@claude"
+# The agent's Read tool truncates a physical line beyond roughly this length and
+# offsets into a file by line, so every reader-facing artefact wraps longer lines.
+READ_LINE_CAP = 1900
 # The execution file holds every turn, not just the report, so its bound is larger.
 MAX_EXECUTION_BYTES = 8 * 1024 * 1024
 SECRET_PATTERNS: tuple[SecretPattern, ...] = (

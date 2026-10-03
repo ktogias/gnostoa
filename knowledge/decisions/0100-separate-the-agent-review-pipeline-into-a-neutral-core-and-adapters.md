@@ -166,7 +166,7 @@ Recorded per stage, so that this draft does not read as describing work not yet 
 |---|---|
 | 1. Delivery and the agent report | **Delivered.** Core: `agent_review_report`, `agent_review_delivery` and `agent_review_paths`. Adapters: Claude Code, plus GitHub's comment sink. |
 | 2. The shared GitHub client | **Delivered.** `tools/github_rest.py` serves all five consumers, with one falsifier per element and a mutant that each falsifier kills. |
-| 3. Admission | Pending. `agent_review_model` and `agent_review_admission` do not yet exist. |
+| 3. Admission | **Delivered.** Core: `agent_review_model` (the subject vocabulary and the continuation marker) and `agent_review_admission` (every admission rule, the relay payload and the request artefacts). Adapters: GitHub's request source and step outputs, plus the Claude Code mention and line budget. The entrypoint composes them. A test-only second provider, with string ids, merge requests and a role vocabulary, is admitted and refused by the unchanged core for the same reasons; each rule has a mutant that a test kills. |
 | 4. Context collection | Pending. `agent_review_context` does not yet exist; the inline shell still runs. |
 | 5. Whole-pipeline falsifiers | Pending. |
 
@@ -192,7 +192,19 @@ Two facts from stage 2 are recorded rather than smoothed over:
   read-back before a retry proves only that the comment does not exist yet. The client
   now reports an abandoned exchange as *in flight*, the GitHub adapter carries that
   into the core's vocabulary, and delivery stops instead of creating again (Codex on
-  #353). Each layer has a falsifier, and the client's two have mutants.
+  #353). Each layer has a falsifier, and the client's two have mutants. L1, which
+  renames the client's errors, kept the fact too, and reports such a publication as of
+  unknown outcome rather than as not published (CodeAnt on #353).
+- **A rerun of only the posting job could post the review twice.** The report was
+  bound to its own attempt, but the delivery marker took the posting job's, and the
+  read-back started minutes before the job. So a rerun after an uncertain create
+  searched for another marker in too short a window, and posted again. The marker now
+  carries the report's attempt, and the read-back starts where the run did (Codex on
+  #353).
+- **A cap that held only for sequential use.** A worker was counted only once
+  abandoned, so concurrent requests could all pass the check first. Workers are now
+  counted from their start, under a lock (CodeAnt on #353), with a falsifier and a
+  mutant.
 
 ## Verification
 
@@ -228,3 +240,8 @@ in Python.
   `server_url`. That is another deployment of the same provider, out of this slice's
   scope: no such deployment exists here, and the pins reject forged identities
   (CodeAnt on #353).
+- **Known limit: the repository-name pattern admits dot segments.** The GitHub request
+  source's owner/name pattern, moved unchanged from the admission script, accepts
+  `../r`. The value is GitHub's own `github.repository`, which cannot be a dot segment,
+  so nothing reaches the gap. Tightening the grammar would change a rule, which this
+  Decision does not do. It is recorded here, found by the stage-3 mutation pass.

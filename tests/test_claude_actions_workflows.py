@@ -107,6 +107,22 @@ _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
 CHUNKER = ROOT / ".github" / "review-context" / "chunk_diff.py"
 ADMIT_MENTION = ROOT / ".github" / "review-context" / "admit_mention.py"
+# Decision 0100: admission's rules are the neutral core's, its vocabulary the adapters',
+# and the entrypoint composes them. A property once pinned in the script's source is
+# pinned in the sources of the whole admission path.
+ADMISSION_PATH = (
+    ADMIT_MENTION,
+    ROOT / "tools" / "agent_review_admission.py",
+    ROOT / "tools" / "agent_review_github.py",
+    ROOT / "tools" / "agent_review_claude_code.py",
+)
+
+
+def _admission_source() -> str:
+    """Return the sources of every module that decides admission, joined."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in ADMISSION_PATH)
+
+
 # Decision 0097: the credential lives only in an environment admitting the default
 # branch, so naming it outside that environment is the defect.
 _CLAUDE_CREDENTIAL = "secrets.CLAUDE_CODE_OAUTH_TOKEN"
@@ -910,9 +926,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for field in _ASSOCIATION_FIELDS:
             with self.subTest(field=field):
                 self.assertIn(field, condition)
+        # Admission's configuration, not its text: the rules it is composed with.
+        rules = _load_script(ADMIT_MENTION).RULES
         for association in _TRUSTED_ASSOCIATIONS:
             self.assertIn(association, condition)
-            self.assertIn(association, ADMIT_MENTION.read_text(encoding="utf-8"))
+            self.assertIn(association, rules.trusted)
         workflow = load_yaml(MENTION_WORKFLOW)
         job = workflow["jobs"]["claude"]
         self.assertIsInstance(job.get("timeout-minutes"), int)
@@ -1063,7 +1081,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         workflow = load_yaml(MENTION_WORKFLOW)
         self.assertNotIn("ref", _protected_checkout(workflow).get("with", {}))
         self.assertEqual(["workflow_run"], sorted(_triggers(workflow)))
-        source = ADMIT_MENTION.read_text(encoding="utf-8")
+        source = _admission_source()
         self.assertIn("full_name", source)
         self.assertIn("fork-controlled head", source)
 
@@ -1721,6 +1739,28 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     ["claude-review-report-${{ needs.claude.outputs.report_attempt }}"],
                     [step["with"]["name"] for step in downloads],
                 )
+                # The delivery is the report's, so its marker carries the report's
+                # attempt: a rerun of only this job after an uncertain create looks
+                # for the same marker and finds that comment (Codex on #353). The
+                # read-back starts where the run did, which a rerun keeps, rather
+                # than minutes before this job started.
+                posts = [
+                    step
+                    for step in workflow["jobs"][job]["steps"]
+                    if "post_report.py" in str(step.get("run", ""))
+                ]
+                self.assertEqual(
+                    [
+                        (
+                            "${{ needs.claude.outputs.report_attempt }}",
+                            "${{ github.event.workflow_run.created_at }}",
+                        )
+                    ],
+                    [
+                        (step["env"]["RUN_ATTEMPT"], step["env"]["DELIVERY_SINCE"])
+                        for step in posts
+                    ],
+                )
 
     def test_the_poster_refuses_what_it_cannot_trust(self) -> None:
         """The handoff is an artifact the reviewer job wrote, so the poster reads it
@@ -1732,10 +1772,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         poster = _load_script(POSTER)
         calls: list[tuple[str, dict[str, Any]]] = []
 
-        def record(url: str, payload: dict[str, Any], marker: str) -> str:
+        def record(url: str, payload: dict[str, Any], marker: str, since: str) -> str:
             """Stand in for the provider: record the post, answer with its URL."""
             self.assertTrue(payload["body"].startswith(marker + "\n"))
             self.assertEqual("<!-- gnostoa:agent-review:9.1 -->", marker)
+            self.assertEqual("2026-10-03T09:00:00Z", since)
             calls.append((url, payload))
             return "https://github.com/o/r/issues/7#issuecomment-1"
 
@@ -1752,6 +1793,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "HEAD_SHA": "b" * 40,
                 "REVIEW_OUTCOME": "success",
                 "RUN_URL": "https://github.com/o/r/actions/runs/9",
+                "DELIVERY_SINCE": "2026-10-03T09:00:00Z",
             }
             previous = dict(os.environ)
             os.environ.update(env)
@@ -1773,6 +1815,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     ("ITEM_NUMBER", "7; rm"),
                     ("REPOSITORY", "o/r/../x"),
                     ("RUN_URL", "https://evil.example/actions/runs/9"),
+                    # The read-back window reaches a URL, so it is an exact instant.
+                    ("DELIVERY_SINCE", "2026-10-03T09:00:00Z&per_page=1"),
+                    ("DELIVERY_SINCE", ""),
                 ):
                     with self.subTest(env=name):
                         os.environ[name] = bad
@@ -1870,7 +1915,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 if request.get_method() == "GET":
                     if listing_fails:
                         raise TimeoutError("listing timed out")
-                    self.assertIn("since=", request.full_url)
+                    # From the run's start, not from minutes before this job.
+                    self.assertIn("since=2026-10-03T09:00:00Z&", request.full_url)
                     # As the provider pages: at most 100 a page, `page` from 1, the
                     # next page named in a `Link` header while one remains.
                     query = urllib.parse.parse_qs(
@@ -1907,6 +1953,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The shared client's own entry point: one opener per client, its `open` the
         # provider. Built in this scope, so nothing outlives the test.
         opener = mock.MagicMock()
+        # The run's start, from which every read-back looks for this delivery.
+        since = "2026-10-03T09:00:00Z"
         with (
             mock.patch.object(time, "sleep", lambda _seconds: None),
             mock.patch.object(urllib.request, "build_opener", return_value=opener),
@@ -1915,7 +1963,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             for fates in (["lost"], ["502"], ["refused", "ok"]):
                 with self.subTest(fates=fates):
                     comments = provider(list(fates))
-                    posted = poster.post_comment(url, payload, marker)
+                    posted = poster.post_comment(url, payload, marker, since)
                     self.assertEqual(1, len(comments))
                     self.assertEqual(comments[0]["html_url"], posted)
             # Someone else's comment carrying the marker is not this run's review.
@@ -1923,7 +1971,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             comments.append(
                 {"user": {"login": "mallory"}, "body": marker, "html_url": "x"}
             )
-            poster.post_comment(url, payload, marker)
+            poster.post_comment(url, payload, marker, since)
             self.assertEqual(
                 1,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
@@ -1931,7 +1979,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # Unable to look, after a response that may have been lost: no retry.
             comments = provider(["lost", "ok"], listing_fails=True)
             with self.assertRaises(RuntimeError):
-                poster.post_comment(url, payload, marker)
+                poster.post_comment(url, payload, marker, since)
             self.assertEqual(1, len(comments))
             # A busy thread cannot hide the comment behind the first page
             # (CodeAnt on #353): the read-back pages on.
@@ -1940,7 +1988,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 {"user": {"login": "mallory"}, "body": "noise", "html_url": "n"}
                 for _ in range(150)
             )
-            poster.post_comment(url, payload, marker)
+            poster.post_comment(url, payload, marker, since)
             self.assertEqual(
                 1,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
@@ -1952,7 +2000,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 for _ in range(2000)
             )
             with self.assertRaises(RuntimeError):
-                poster.post_comment(url, payload, marker)
+                poster.post_comment(url, payload, marker, since)
             self.assertEqual(
                 1,
                 sum(c["user"]["login"] == "github-actions[bot]" for c in comments),
@@ -2199,7 +2247,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # actor, carrying the mention -- so only the binding can refuse it.
         issue_payload, issue_responses = _trigger_fixtures()["issues"]
         module = _admission({**responses, **issue_responses})
-        with self.assertRaisesRegex(module.Refused, "GitHub recorded"):
+        with self.assertRaisesRegex(module.Refused, "the provider recorded"):
             module.admit("o/r", issue_payload, _TRIGGER_FACTS)
         # Identifiers are validated before they reach a URL, and it is the validation
         # that refuses them -- not a 404 for whatever path they would have produced.
@@ -2874,7 +2922,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # invariant.
         self.assertIn("admit_mention.py", admit)
         self.assertTrue(ADMIT_MENTION.is_file(), "the admission script does not exist")
-        source = ADMIT_MENTION.read_text(encoding="utf-8")
+        source = _admission_source()
         # It decides the three things the trigger is not trusted for.
         for established in ("author_association", "@claude", "fork"):
             with self.subTest(establishes=established):

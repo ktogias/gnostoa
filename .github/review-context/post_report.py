@@ -34,6 +34,8 @@ from tools.agent_review_report import read_handoff as read_report
 _REPOSITORY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+\Z")
 _ITEM = re.compile(r"\A[1-9][0-9]{0,9}\Z")
 _SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+# The run's start, as GitHub records `workflow_run.created_at`.
+_INSTANT = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 _SECRETS = github.SECRET_PATTERNS + claude.SECRET_PATTERNS
 
 
@@ -82,10 +84,12 @@ def read_handoff(directory: pathlib.Path) -> tuple[str, str, bool]:
     return report.status, report.text, report.cut
 
 
-def post_comment(url: str, payload: dict[str, Any], marker: str) -> str:
-    """Deliver ``payload`` to the issue-comments ``url`` once (core post-once)."""
+def post_comment(url: str, payload: dict[str, Any], marker: str, since: str) -> str:
+    """Deliver ``payload`` to the issue-comments ``url`` once (core post-once), reading
+    back every comment since ``since``."""
     try:
-        return delivery.post_once(github.IssueCommentSink(url), payload["body"], marker)
+        sink = github.IssueCommentSink(url, since=since)
+        return delivery.post_once(sink, payload["body"], marker)
     except (
         delivery.DeliveryRefused,
         delivery.DeliveryUncertain,
@@ -128,8 +132,13 @@ def main(argv: list[str]) -> int:
     if not _ITEM.match(attempt):
         print("refusing to post: RUN_ATTEMPT did not validate", file=sys.stderr)
         return 2
-    # Trusted, first in the body, and unique to this run attempt: what a retry looks
-    # for. A rerun is a new attempt and posts anew.
+    since = os.environ.get("DELIVERY_SINCE", "")
+    if not _INSTANT.match(since):
+        print("refusing to post: DELIVERY_SINCE did not validate", file=sys.stderr)
+        return 2
+    # Trusted, first in the body, and unique to the attempt that wrote the report: what
+    # a retry, or a rerun of only this job, looks for. A rerun of the review is a new
+    # report and posts anew.
     marker = delivery.delivery_marker(f"{run_url.rsplit('/', 1)[1]}.{attempt}")
     try:
         directory = handoff_directory(argv[1])
@@ -146,7 +155,7 @@ def main(argv: list[str]) -> int:
     body = f"{marker}\n{rendered}"
     url = f"{github.API}/repos/{repository}/issues/{item}/comments"
     try:
-        posted = post_comment(url, {"body": body}, marker)
+        posted = post_comment(url, {"body": body}, marker, since)
     except RuntimeError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

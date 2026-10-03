@@ -24,6 +24,9 @@ TOOLS = ROOT / "tools"
 # The neutral core. Adapters (`*_github.py`, `*_claude_code.py`) are deliberately not
 # in this list: translating native vocabulary is their job.
 CORE = (
+    "agent_review_model",
+    "agent_review_paths",
+    "agent_review_admission",
     "agent_review_report",
     "agent_review_delivery",
 )
@@ -201,6 +204,360 @@ class SecondAdapterTests(unittest.TestCase):
                 self.assertEqual(sink.notes[0]["id"], posted)
 
 
+_FORGE_ORIGIN = ".forge/pipelines/mention.yml"
+_FORGE_REPOSITORY = "group/sub/project"
+_HEAD = "a" * 40
+_BASE = "b" * 40
+_REVISION = "c" * 40
+
+
+class _ForgeLikeRequests:
+    """A test-only second provider's request source, in materially different shapes.
+
+    Notes with string ids rather than numbers; change requests called merge requests,
+    with "!"-prefixed ids; a role vocabulary rather than associations; the author
+    nested as `author.username`; a nested repository path. It translates them into
+    the core's vocabulary and decides nothing itself.
+    """
+
+    def __init__(self, notes: dict[str, Any], merges: dict[str, Any]) -> None:
+        from tools import agent_review_model as model
+
+        self.provider = model.Provider("forge", "test-forge")
+        self.notes = notes
+        self.merges = merges
+
+    def read_request(self, event: str, pointer: dict[str, Any]) -> Any:
+        """Re-read the note the pointer names."""
+        from tools import agent_review_admission as admission
+        from tools import agent_review_model as model
+
+        if event != "note":
+            raise admission.Refused(f"event {event!r} is not an admitted trigger")
+        note = self.notes[pointer["note"]]
+        target = note["noteable"]
+        change = (
+            model.Ref("merge_request", target["iid"])
+            if target["type"] == "MergeRequest"
+            else None
+        )
+        return admission.Request(
+            author=note["author"]["username"],
+            association=note["author"]["role"],
+            mention_text=note["text"],
+            item=model.Ref("work_item", target["iid"]),
+            change_request=change,
+            occurred_at=note["at"],
+            request=note["text"],
+            title=target["title"],
+            body=target["description"],
+            item_association=target["author_role"],
+        )
+
+    def revisions(self, change_request: Any) -> Any:
+        """Read a merge request's live revisions."""
+        from tools import agent_review_admission as admission
+
+        merge = self.merges[change_request.id]
+        return admission.Revisions(
+            head_repository=merge["source_project"],
+            head_commit=merge["sha"],
+            base_commit=merge["target_sha"],
+        )
+
+
+def _forge_case(
+    *,
+    text: str = "@reviewer please look",
+    role: str = "maintainer",
+    item_role: str = "maintainer",
+    on_merge: bool = True,
+    source_project: str = _FORGE_REPOSITORY,
+    at: str = "2026-10-03T10:00:00Z",
+    digest_of: str | None = None,
+    head: str = _HEAD,
+) -> tuple[Any, dict[str, Any]]:
+    """Return a forge-like source and the pointer a relay would hand over."""
+    from tools import agent_review_admission as admission
+
+    note = {
+        "author": {"username": "ana", "role": role},
+        "text": text,
+        "at": at,
+        "noteable": {
+            "type": "MergeRequest" if on_merge else "WorkItem",
+            "iid": "!12",
+            "title": "Tighten the parser",
+            "description": "Details of the change.",
+            "author_role": item_role,
+        },
+    }
+    merge = {"source_project": source_project, "sha": head, "target_sha": _BASE}
+    source = _ForgeLikeRequests({"n-7f3a": note}, {"!12": merge})
+    pointer = {
+        "event_name": "note",
+        "note": "n-7f3a",
+        "request_sha256": admission.request_sha256(
+            text if digest_of is None else digest_of
+        ),
+    }
+    return source, pointer
+
+
+def _forge_rules() -> Any:
+    """The second provider's configuration: its own token, roles, origin and event."""
+    from tools import agent_review_admission as admission
+
+    return admission.Rules(
+        mention_tokens=("@reviewer",),
+        trusted=("owner", "maintainer"),
+        origin=_FORGE_ORIGIN,
+        events=("note",),
+    )
+
+
+def _forge_trigger(**changes: str) -> Any:
+    """What the second provider recorded about the triggering run."""
+    from tools import agent_review_admission as admission
+
+    fields = {
+        "event": "note",
+        "origin": _FORGE_ORIGIN,
+        "actor": "ana",
+        "created_at": "2026-10-03T10:00:05Z",
+        "revision": _REVISION,
+    }
+    fields.update(changes)
+    return admission.Trigger(**fields)
+
+
+class SecondProviderAdmissionTests(unittest.TestCase):
+    """The unchanged admission core decides a second provider's request.
+
+    Every rule is exercised through the forge-like source above, whose shapes differ
+    from the first provider's in every field the rules read. The same request is
+    admitted or refused for the same reason as on the first provider.
+    """
+
+    def test_a_trusted_unedited_timely_mention_is_admitted(self) -> None:
+        """Admitted, with the provider's own subject vocabulary passed through."""
+        from tools import agent_review_admission as admission
+        from tools import agent_review_model as model
+
+        source, pointer = _forge_case()
+        admitted = admission.admit(
+            source, _FORGE_REPOSITORY, pointer, _forge_trigger(), _forge_rules()
+        )
+        self.assertEqual(
+            model.ReviewSubject(
+                provider=model.Provider("forge", "test-forge"),
+                repository=_FORGE_REPOSITORY,
+                item=model.Ref("work_item", "!12"),
+                change_request=model.Ref("merge_request", "!12"),
+                head_commit=_HEAD,
+                base_commit=_BASE,
+            ),
+            admitted.subject,
+        )
+        self.assertEqual(
+            {
+                "request": "@reviewer please look",
+                "title": "Tighten the parser",
+                "item": "Details of the change.",
+            },
+            admitted.forwarded,
+        )
+
+    def test_an_item_without_a_change_request_is_reviewed_at_the_protected_revision(
+        self,
+    ) -> None:
+        """Both revisions are the run's own, equal, as on the first provider."""
+        from tools import agent_review_admission as admission
+
+        source, pointer = _forge_case(on_merge=False)
+        admitted = admission.admit(
+            source, _FORGE_REPOSITORY, pointer, _forge_trigger(), _forge_rules()
+        )
+        self.assertIsNone(admitted.subject.change_request)
+        self.assertEqual(
+            (_REVISION, _REVISION),
+            (admitted.subject.head_commit, admitted.subject.base_commit),
+        )
+        with self.assertRaisesRegex(admission.Refused, "protected revision"):
+            admission.admit(
+                source,
+                _FORGE_REPOSITORY,
+                pointer,
+                _forge_trigger(revision="main"),
+                _forge_rules(),
+            )
+
+    def test_every_refusal_holds_for_the_second_provider(self) -> None:
+        """Each rule refuses the second provider's request for the same reason."""
+        from tools import agent_review_admission as admission
+
+        cases = {
+            "an untrusted role": (_forge_case(role="guest"), {}, "not admitted"),
+            "no mention": (_forge_case(text="please look"), {}, "carry the mention"),
+            "an edited request": (
+                _forge_case(digest_of="@reviewer earlier text"),
+                {},
+                "edited after",
+            ),
+            "a fork-controlled head": (
+                _forge_case(source_project="someone/fork"),
+                {},
+                "fork-controlled head",
+            ),
+            "a head that is not an exact commit": (
+                _forge_case(head="main"),
+                {},
+                "not an exact SHA",
+            ),
+            "a stale occurrence": (
+                _forge_case(at="2026-10-02T10:00:00Z"),
+                {},
+                "not the occurrence",
+            ),
+            "another origin": (
+                _forge_case(),
+                {"origin": ".forge/pipelines/other.yml"},
+                "not the trigger",
+            ),
+            "another event": (_forge_case(), {"event": "push"}, "not an admitted"),
+            "another requester": (_forge_case(), {"actor": "bo"}, "triggered by 'bo'"),
+        }
+        for name, ((source, pointer), trigger, reason) in cases.items():
+            with (
+                self.subTest(case=name),
+                self.assertRaisesRegex(admission.Refused, reason),
+            ):
+                admission.admit(
+                    source,
+                    _FORGE_REPOSITORY,
+                    pointer,
+                    _forge_trigger(**trigger),
+                    _forge_rules(),
+                )
+
+    def test_an_untrusted_item_authors_text_is_withheld(self) -> None:
+        """The requester is trusted; the item's author is not, so its text is not
+        forwarded, and the withholding is stated rather than silent."""
+        from tools import agent_review_admission as admission
+
+        source, pointer = _forge_case(item_role="guest")
+        admitted = admission.admit(
+            source, _FORGE_REPOSITORY, pointer, _forge_trigger(), _forge_rules()
+        )
+        self.assertEqual("@reviewer please look", admitted.forwarded["request"])
+        for field in ("title", "item"):
+            with self.subTest(field=field):
+                self.assertIn("withheld", admitted.forwarded[field])
+                self.assertNotIn("parser", admitted.forwarded[field])
+                self.assertNotIn("Details", admitted.forwarded[field])
+
+
+class AdmissionFileTests(unittest.TestCase):
+    """The payload is read, and the artefacts written, never through a link."""
+
+    def test_the_payload_reader_never_follows_a_link(self) -> None:
+        """The entrypoint refuses a link before reading; the reader refuses one too,
+        so a link swapped in after that check is not followed either."""
+        from tools import agent_review_admission as admission
+
+        with tempfile.TemporaryDirectory() as scratch:
+            outside = pathlib.Path(scratch) / "outside.json"
+            outside.write_text('{"event_name": "note"}', encoding="utf-8")
+            link = pathlib.Path(scratch) / "payload.json"
+            link.symlink_to(outside)
+            with self.assertRaisesRegex(admission.Refused, "not a regular file"):
+                admission.read_payload(str(link))
+
+    def test_an_artefact_is_never_written_through_a_link(self) -> None:
+        """The directory is created here, so nothing should be in it; if something is
+        -- a link planted between creation and writing -- it is refused, and the file
+        it names is untouched."""
+        from tools import agent_review_admission as admission
+
+        with tempfile.TemporaryDirectory() as scratch:
+            target = pathlib.Path(scratch) / "request"
+            target.mkdir()
+            victim = pathlib.Path(scratch) / "victim"
+            victim.write_text("kept", encoding="utf-8")
+            (target / "request").symlink_to(victim)
+            with (
+                mock.patch.object(pathlib.Path, "mkdir"),
+                self.assertRaises(OSError),
+            ):
+                admission.write_request(target, {"request": "x"}, line_cap=100)
+            self.assertEqual("kept", victim.read_text(encoding="utf-8"))
+
+
+class GitHubRequestSourceTests(unittest.TestCase):
+    """The GitHub request source takes ids from the relay and facts from GitHub."""
+
+    @staticmethod
+    def _source(answers: dict[str, Any], repository: str = "o/r") -> Any:
+        """A source whose provider answers only ``answers`` and refuses the rest."""
+        from tools import agent_review_admission as admission
+        from tools import agent_review_github as github
+
+        def read(path: str) -> Any:
+            if path not in answers:
+                raise admission.Refused(f"HTTP 404 reading {path!r}")
+            return answers[path]
+
+        return github.IssueRequests(repository, read)
+
+    def test_the_item_is_the_comments_own_not_the_relays(self) -> None:
+        """A relay naming another issue beside the comment changes nothing."""
+        from tools import agent_review_model as model
+
+        source = self._source(
+            {
+                "repos/o/r/issues/comments/7": {
+                    "issue_url": "https://api.github.com/repos/o/r/issues/5",
+                    "user": {"login": "ana"},
+                    "body": "please review",
+                },
+                "repos/o/r/issues/5": {"title": "t", "body": "b"},
+                "repos/o/r/issues/9": {"title": "other", "body": "other"},
+            }
+        )
+        request = source.read_request(
+            "issue_comment", {"comment_id": 7, "issue_number": 9}
+        )
+        self.assertEqual(model.Ref("issue", "5"), request.item)
+        self.assertEqual("t", request.title)
+
+    def test_a_repository_not_in_owner_name_form_is_refused(self) -> None:
+        """The name reaches every URL, so a path in its place is refused first."""
+        from tools import agent_review_admission as admission
+
+        # Not "../r": the pattern admits dot segments, and the value is GitHub's own
+        # `github.repository`, which cannot be one. Decision 0100 records the limit.
+        for repository in ("o", "o/r/../x", "o/r?x=1", "o/r/issues", "o r/x"):
+            with (
+                self.subTest(repository=repository),
+                self.assertRaisesRegex(admission.Refused, "owner/name form"),
+            ):
+                self._source({}, repository)
+
+
+class ThinAdmissionEntrypointTests(unittest.TestCase):
+    """The admission entrypoint composes; it holds no rule of its own."""
+
+    def test_the_entrypoint_imports_the_core_and_decides_nothing(self) -> None:
+        """The rules' own dependencies -- digests, constant-time comparison, instants
+        -- belong to the core, so an entrypoint that imports them has a rule in it."""
+        entrypoint = ROOT / ".github" / "review-context" / "admit_mention.py"
+        imported = _imports(entrypoint.read_text(encoding="utf-8"))
+        self.assertIn("tools", imported)
+        self.assertEqual(set(), imported & {"hashlib", "hmac", "datetime"})
+        source = entrypoint.read_text(encoding="utf-8")
+        self.assertIn("agent_review_admission", source)
+
+
 class HandoffRecordTests(unittest.TestCase):
     """The handoff's status record is all or nothing."""
 
@@ -323,6 +680,47 @@ class InFlightDeliveryTests(unittest.TestCase):
             sink.create("body")
         self.assertTrue(caught.exception.in_flight)
         self.assertEqual([(url, {"body": "body"})], client.posted)
+
+
+class ReadBackWindowTests(unittest.TestCase):
+    """The read-back covers the whole delivery, not the minutes before a job."""
+
+    def test_the_sink_reads_back_from_the_instant_it_is_given(self) -> None:
+        """A rerun of only the posting job keeps the run's start; reading back from
+        five minutes before the rerun missed a comment the first attempt created."""
+        from tools import agent_review_delivery as delivery
+        from tools import agent_review_github as github
+        from tools import github_rest
+
+        class Client:
+            """A client that records each read and answers an empty listing."""
+
+            api_root = github_rest.API_ROOT
+
+            def __init__(self) -> None:
+                self.read: list[str] = []
+
+            def get(self, url: str) -> tuple[list[Any], dict[str, str]]:
+                self.read.append(url)
+                return [], {}
+
+        url = f"{github_rest.API_ROOT}/repos/o/r/issues/1/comments"
+        client = Client()
+        sink = github.IssueCommentSink(
+            url,
+            client=client,  # type: ignore[arg-type]
+            since="2026-10-03T09:00:00Z",
+        )
+        self.assertIsNone(sink.find("marker"))
+        self.assertEqual(
+            [f"{url}?since=2026-10-03T09:00:00Z&per_page=100"], client.read
+        )
+        for bad in ("2026-10-03T09:00:00Z&per_page=1", "yesterday", ""):
+            with (
+                self.subTest(since=bad),
+                self.assertRaises(delivery.DeliveryRefused),
+            ):
+                github.IssueCommentSink(url, client=client, since=bad)  # type: ignore[arg-type]
 
 
 class GitHubClaudeCompositionTests(unittest.TestCase):

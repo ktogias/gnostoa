@@ -305,6 +305,44 @@ class SharedGitHubClientTests(unittest.TestCase):
         ]
         self.assertEqual([], leaked)
 
+    def test_the_abandoned_cap_holds_for_concurrent_requests(self) -> None:
+        """Concurrent requests could all pass the cap's check before any was counted,
+        since a worker was registered only once abandoned (CodeAnt on #353). A worker
+        is now counted from its start, so at most the cap is ever running."""
+        release = threading.Event()
+        started: list[int] = []
+        lock = threading.Lock()
+
+        def stall() -> None:
+            with lock:
+                started.append(1)
+            release.wait(10)
+
+        policy = github_rest.Policy(max_abandoned=2, workers=[])
+        barrier = threading.Barrier(5)
+        refused: list[Exception] = []
+
+        def call() -> None:
+            barrier.wait()
+            try:
+                github_rest.abandon_after(0.5, "x", stall, policy)
+            except github_rest.GitHubReadError as error:
+                refused.append(error)
+
+        callers = [threading.Thread(target=call) for _ in range(5)]
+        try:
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join(10)
+            self.assertLessEqual(len(started), 2)
+            self.assertEqual(5, len(refused))
+            self.assertGreaterEqual(
+                sum("still running" in str(error) for error in refused), 3
+            )
+        finally:
+            release.set()
+
     def test_a_write_outliving_its_bound_is_reported_in_flight(self) -> None:
         """A write abandoned at its bound may still land; the error says so, so its
         caller does not retry it (Codex on #353)."""

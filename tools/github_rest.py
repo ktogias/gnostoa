@@ -62,6 +62,8 @@ HINT_DIGITS = 12
 MAX_ABANDONED = 16
 # The registry a policy uses when it names none of its own.
 _ABANDONED: list[threading.Thread] = []
+# Guards every registry: a check and the count it checks are one step.
+_REGISTRY_LOCK = threading.Lock()
 
 
 class Policy(NamedTuple):
@@ -252,14 +254,13 @@ def abandon_after(
     ends or the process does; past ``MAX_ABANDONED`` running at once, a request fails at
     once, so a stalling provider cannot accumulate workers without bound. The registry
     and its cap are the policy's: one per consumer.
+
+    A worker is counted from its start, not from its abandonment, and the check, the
+    count and the start are one step under a lock. Counted only once abandoned,
+    concurrent requests could all pass the check before any was counted (CodeAnt on
+    #353). A request that finishes in time is uncounted again.
     """
     workers = _ABANDONED if policy.workers is None else policy.workers
-    workers[:] = [worker for worker in workers if worker.is_alive()]
-    if len(workers) >= policy.max_abandoned:
-        raise GitHubReadError(
-            f"not requesting {label!r}: {len(workers)} earlier requests are still "
-            "running past their bound"
-        )
     finished = threading.Event()
     outcome: dict[str, Any] = {}
 
@@ -273,10 +274,21 @@ def abandon_after(
             finished.set()
 
     worker = threading.Thread(target=run, daemon=True)
-    worker.start()
-    if not finished.wait(seconds):
+    with _REGISTRY_LOCK:
+        workers[:] = [running for running in workers if running.is_alive()]
+        if len(workers) >= policy.max_abandoned:
+            raise GitHubReadError(
+                f"not requesting {label!r}: {len(workers)} earlier requests are still "
+                "running"
+            )
+        # Started inside the lock: a registered worker not yet started is not alive,
+        # and another caller's pruning would uncount it.
         workers.append(worker)
+        worker.start()
+    if not finished.wait(seconds):
         raise GitHubReadError(f"timed out while requesting {label!r}", in_flight=True)
+    with _REGISTRY_LOCK, contextlib.suppress(ValueError):
+        workers.remove(worker)
     error = outcome.get("error")
     if error is not None:
         # Re-raised as itself: HTTPError carries the status the retry logic reads.
