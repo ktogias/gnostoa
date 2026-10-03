@@ -56,6 +56,7 @@ def render_comment(
     return delivery.render_comment(
         report,
         reviewer=claude.REVIEWER_NAME,
+        poster=github.POSTED_BY,
         provenance=f"Run: {run_url} · Reviewed revision: `{head_sha}`",
         secret_patterns=_SECRETS,
         failed=failed,

@@ -40,6 +40,8 @@ from tools.agent_review_delivery import (
 from tools.agent_review_model import Provider, Ref, ReviewSubject
 
 API = "https://api.github.com"
+# What posts a review here, in the reader's words: a GitHub Actions workflow.
+POSTED_BY = "this repository's workflow"
 # The identity a GITHUB_TOKEN comment is authored by.
 COMMENT_AUTHOR = "github-actions[bot]"
 _LISTING_PAGES = 10

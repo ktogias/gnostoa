@@ -273,12 +273,14 @@ def render_comment(
     report: AgentReport,
     *,
     reviewer: str,
+    poster: str,
     provenance: str,
     secret_patterns: Iterable[SecretPattern],
     failed: bool = False,
 ) -> str:
     """Return the comment body for ``report`` from ``reviewer``.
 
+    ``poster`` says, in the composition's own words, what posted the comment;
     ``provenance`` is the composition's trusted line saying which run reviewed which
     revision. ``failed`` says the reviewing job itself failed, whatever it handed over.
     """
@@ -293,8 +295,8 @@ def render_comment(
             f"reason.\n\n{provenance}\n"
         )
     advisory = (
-        f"_Advisory review by {reviewer}, posted by this repository's workflow. It is "
-        "not an approval and carries no merge authority._"
+        f"_Advisory review by {reviewer}, posted by {poster}. It is not an approval "
+        "and carries no merge authority._"
     )
     safe, redacted = sanitise(report.text, secret_patterns)
     safe, truncated = _bounded(safe)

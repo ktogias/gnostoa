@@ -38,7 +38,10 @@ CORE = (
 # not a portability oracle: the second-adapter tests below are the semantic check.
 COUPLING = re.compile(
     r"github|gitlab|bitbucket|claude|anthropic|codex|openai|\bgemini\b|"
-    r"RUNNER_TEMP|GITHUB_|actions/runs|\[bot\]|workflow_run|author_association",
+    r"RUNNER_TEMP|GITHUB_|actions/runs|\[bot\]|workflow_run|author_association|"
+    # A CI system's own word for what posts: the poster names it, the core does not
+    # (CodeAnt on #353).
+    r"\bworkflow\b",
     re.IGNORECASE,
 )
 
@@ -182,10 +185,14 @@ class SecondAdapterTests(unittest.TestCase):
         body = delivery.render_comment(
             received,
             reviewer="Codex",
+            poster="the forge's review pipeline",
             provenance="Run: https://ci.example/runs/7 · Reviewed revision: `abc`",
             secret_patterns=(),
         )
         self.assertIn("### Codex review", body)
+        # Who posted it is the composition's to say, in its own words.
+        self.assertIn("posted by the forge's review pipeline", body)
+        self.assertNotIn("workflow", body)
         self.assertIn("Finding: see a.py:3.", body)
         self.assertNotIn("@someone", body)
         self.assertIn("\uff20someone", body)
@@ -1583,6 +1590,7 @@ class WholePipelineTests(unittest.TestCase):
         body = delivery.render_comment(
             received,
             reviewer="Second agent",
+            poster="the forge's review pipeline",
             provenance=f"Reviewed revision: `{admitted.subject.head_commit[:9]}`",
             secret_patterns=(),
         )
@@ -1618,6 +1626,7 @@ class GitHubClaudeCompositionTests(unittest.TestCase):
         body = delivery.render_comment(
             report.AgentReport("complete", text, False),
             reviewer=claude.REVIEWER_NAME,
+            poster=github.POSTED_BY,
             provenance="Run: x",
             secret_patterns=github.SECRET_PATTERNS + claude.SECRET_PATTERNS,
         )

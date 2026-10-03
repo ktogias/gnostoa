@@ -158,6 +158,12 @@ def origin_of(root: str) -> tuple[str, str, int]:
     parsed = urllib.parse.urlparse(root)
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         raise GitHubError("the API root is not an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        # Refused here rather than at the first request, which every request built from
+        # such a root would be (CodeAnt on #353).
+        raise GitHubError("the API root carries credentials")
+    if parsed.fragment or parsed.query:
+        raise GitHubError("the API root carries a query or a fragment")
     default = 443 if parsed.scheme == "https" else 80
     return parsed.scheme, parsed.hostname, parsed.port or default
 

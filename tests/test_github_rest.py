@@ -343,6 +343,18 @@ class SharedGitHubClientTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_a_root_that_no_request_could_pass_is_refused_when_configured(self) -> None:
+        """A root carrying userinfo, a fragment or a query was accepted, and every
+        request built from it was then refused: a bad configuration that failed only
+        at its first request (CodeAnt on #353). It is refused at construction."""
+        for root in (
+            "https://user@api.github.com",
+            "https://api.github.com#x",
+            "https://api.github.com?x=1",
+        ):
+            with self.subTest(root=root), self.assertRaises(github_rest.GitHubError):
+                github_rest.GitHubRestClient("t", api_root=root)
+
     def test_a_malformed_url_is_refused_as_a_provider_error(self) -> None:
         """`urlparse` raises ValueError for a malformed host, before any check ran, so a
         provider's `Link` header could crash a caller that handles only the client's
