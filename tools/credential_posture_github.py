@@ -53,6 +53,10 @@ class Answer(NamedTuple):
     headers: Mapping[str, str]
     message: str
     document: Any = None
+    # A write that reached the provider and was not refused -- a timeout, a lost
+    # transport, a 5xx, an unreadable success -- may have been applied: the shared
+    # client's own `outcome_unknown`.
+    outcome_unknown: bool = False
 
 
 Send = Callable[[str, str, Any], Answer]
@@ -486,6 +490,11 @@ def _accepted_sets(headers: Mapping[str, str]) -> list[frozenset[str]]:
 def classify(probe: Probe, answer: Answer) -> tuple[str, str]:
     """Return the state ``answer`` establishes for ``probe``, and the evidence."""
     evidence = f"{probe.method} {probe.id}: {answer.status}"
+    if probe.method != "GET" and answer.outcome_unknown:
+        raise ProbeHadEffect(
+            f"the write probe {probe.id} reached the provider and its outcome is"
+            " unknown; it may have had an effect"
+        )
     if (
         probe.method != "GET"
         and answer.status is not None

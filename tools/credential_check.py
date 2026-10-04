@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess  # nosec B404 -- `gh auth token`, a fixed argv, no shell
 import sys
 from collections.abc import Mapping
@@ -31,7 +30,12 @@ from typing import Any
 from tools import agent_review_paths, github_rest
 from tools import credential_posture as posture
 from tools import credential_posture_github as github
-from tools.knowledge_common import load_yaml, utc_timestamp
+from tools.knowledge_common import (
+    TRUSTED_EXECUTABLE_PATH,
+    load_yaml,
+    trusted_executable,
+    utc_timestamp,
+)
 from tools.schema_validation import schema_errors
 
 SCHEMA = "agent-credentials.schema.json"
@@ -60,10 +64,13 @@ def _token() -> str:
     value = github_rest.environment_token().strip()
     if value:
         return value
-    executable = shutil.which("gh")
+    # From the trusted system directories, never from the caller's `PATH`, where a
+    # shadowed `gh` would run (CodeAnt on #364).
+    executable = trusted_executable("gh")
     if executable is None:
         raise posture.PolicyError(
-            "no GH_TOKEN, GITHUB_TOKEN or gh to read a token from"
+            "no GH_TOKEN or GITHUB_TOKEN, and no gh in the trusted directories"
+            f" ({TRUSTED_EXECUTABLE_PATH}) to read a token from"
         )
     # The executable is resolved once, so the argv is fixed: no shell, no caller text.
     completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
@@ -101,7 +108,10 @@ def _transport(token: str) -> github.Send:
             headers = {}
             if error.accepted_permissions is not None:
                 headers[github.ACCEPTED_HEADER] = error.accepted_permissions
-            return github.Answer(error.status, headers, str(error))
+            # The client's own judgement of whether a write may have landed travels
+            # with the answer, so the adapter stops on it (Codex on #364).
+            unknown = method != "GET" and error.outcome_unknown
+            return github.Answer(error.status, headers, str(error), None, unknown)
 
     return send
 
@@ -150,9 +160,10 @@ def _repository_facts(
         raise posture.PolicyError(f"the repository {repository} could not be read")
     public = answer.document.get("private") is False
     listed = send("GET", f"repos/{repository}/environments", None)
-    environments = (
-        (listed.document or {}).get("environments") if listed.status == 200 else None
-    )
+    if listed.status != 200 or not isinstance(listed.document, dict):
+        # An outage or a refusal is not "no environments" (CodeAnt on #364).
+        raise posture.PolicyError(f"the environment listing failed: {listed.status}")
+    environments = listed.document.get("environments")
     names = [
         str(item.get("name"))
         for item in environments or []

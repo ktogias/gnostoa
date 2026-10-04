@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -81,6 +82,18 @@ KnowledgeLoader.yaml_implicit_resolvers = {
 
 class KnowledgeFormatError(ValueError):
     pass
+
+
+# The root-owned system directories a host tool is resolved from -- never the caller's
+# `PATH`, where a shadowed executable would run. The same list as the preparation
+# wrapper's (`ci/prepare-candidate`), which is shell and cannot import this; a test
+# holds the two equal. Not `os.defpath`, which omits `/usr/local/bin`.
+TRUSTED_EXECUTABLE_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+
+def trusted_executable(name: str) -> str | None:
+    """Return ``name`` resolved from the trusted system directories, or None."""
+    return shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
 
 
 def utc_timestamp() -> str:

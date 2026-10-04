@@ -227,6 +227,10 @@ class _Replay:
             raise AssertionError(f"unexpected probe {method} {path}")
         status, accepted, message = self.answers[(method, path)]
         headers = {"x-accepted-github-permissions": accepted} if accepted else {}
+        if message.startswith("OUTCOME-UNKNOWN"):
+            # A write that reached the provider and was not refused: the shared
+            # client reports its outcome as unknown.
+            return github.Answer(status, headers, message, None, outcome_unknown=True)
         if path == "user":
             headers["github-authentication-token-expiration"] = (
                 "2026-11-03 13:01:27 UTC"
@@ -868,6 +872,26 @@ class GitHubAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(github.ProbeHadEffect, "pull-requests-write"):
             _observe(answers)
 
+    def test_a_write_probe_whose_outcome_is_unknown_stops_the_check(self) -> None:
+        """A write that timed out, lost its transport, met a 5xx or got an unreadable
+        success may have been applied, as the shared client says (`outcome_unknown`):
+        the check stops on it as on an accepted write, never reading it as a mere
+        unanswered probe (Codex on #364)."""
+        from tools import credential_posture_github as github
+
+        probe = _probe("issues")
+        unknown = github.Answer(
+            502, {github.ACCEPTED_HEADER: "issues=write"}, "Bad Gateway", None, True
+        )
+        with self.assertRaisesRegex(github.ProbeHadEffect, "issues-write"):
+            github.classify(probe, unknown)
+        # A read whose answer was lost changed nothing: it is only unanswered.
+        read = _probe("secrets")
+        lost = github.Answer(
+            502, {github.ACCEPTED_HEADER: "secrets=read"}, "", None, True
+        )
+        self.assertEqual("UNKNOWN", github.classify(read, lost)[0])
+
     def test_the_kind_is_read_from_its_prefix_and_never_kept(self) -> None:
         from tools import credential_posture_github as github
 
@@ -1193,6 +1217,50 @@ class CredentialCheckCliTests(unittest.TestCase):
         self.assertIn("capabilities.contents.max", output)
         self.assertEqual([], replay.sent)
 
+    def test_a_write_whose_outcome_is_unknown_exits_two(self) -> None:
+        answers = _calibrated_exact()
+        answers[("POST", f"repos/{SUBJECT}/issues")] = (
+            502,
+            "issues=write",
+            "OUTCOME-UNKNOWN: Bad Gateway",
+        )
+        code, output, _ = _run(answers)
+        self.assertEqual(2, code, output)
+        self.assertIn("may have had an effect", output)
+
+    def test_a_failed_environment_listing_stops_the_check(self) -> None:
+        """An outage or a refusal is not "no environments": skipping the environment
+        probe on it would hide the failure behind an unmeasured row (CodeAnt on #364)."""
+        answers = _calibrated_exact()
+        answers[("GET", f"repos/{SUBJECT}/environments")] = (
+            502,
+            "actions=read",
+            "Bad Gateway",
+        )
+        code, output, replay = _run(answers)
+        self.assertEqual(2, code, output)
+        self.assertIn("environment listing", output)
+        self.assertFalse(any(m != "GET" for m, _, _ in replay.sent))
+
+    def test_gh_is_resolved_only_from_trusted_system_directories(self) -> None:
+        """Without a token in the environment the command runs `gh auth token`. The
+        executable comes from the root-owned system directories the preparation wrapper
+        trusts (`knowledge_common.trusted_executable`), never from the caller's `PATH`,
+        where a shadowed `gh` would run (CodeAnt on #364). Not `os.defpath`: on this
+        host `gh` is in `/usr/local/bin`, which `os.defpath` omits."""
+        from tools import credential_check, github_rest
+        from tools import credential_posture as posture
+
+        with (
+            mock.patch.object(github_rest, "environment_token", return_value=""),
+            mock.patch.object(
+                credential_check, "trusted_executable", return_value=None
+            ) as trusted,
+            self.assertRaisesRegex(posture.PolicyError, "GH_TOKEN"),
+        ):
+            credential_check._token()  # skipcq: PYL-W0212
+        trusted.assert_called_once_with("gh")
+
     def test_the_command_is_registered(self) -> None:
         from tools import cli
 
@@ -1223,7 +1291,13 @@ class _Client:
         return {"ok": True}, {"link": ""}
 
     def _write(self, method: str, url: str, payload: dict[str, Any]) -> Any:
+        from tools import github_rest
+
         self.requests.append((method, url))
+        if url.endswith("/unknown"):
+            raise github_rest.GitHubWriteError(
+                "Bad Gateway", status=502, outcome_unknown=True
+            )
         return payload
 
     def post(self, url: str, payload: dict[str, Any]) -> Any:
@@ -1277,6 +1351,11 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(403, answer.status)
         self.assertEqual("secrets=read", answer.headers[github.ACCEPTED_HEADER])
         self.assertIn(NOT_ACCESSIBLE, answer.message)
+
+    def test_a_write_the_client_reports_outcome_unknown_keeps_the_flag(self) -> None:
+        send, _ = _fake_transport()
+        self.assertTrue(send("POST", "repos/o/r/unknown", {"a": 1}).outcome_unknown)
+        self.assertFalse(send("GET", "repos/o/r/refused", None).outcome_unknown)
 
     def test_an_accepted_write_is_reported_as_accepted(self) -> None:
         send, client = _fake_transport()

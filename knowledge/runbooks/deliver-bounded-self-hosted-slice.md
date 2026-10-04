@@ -192,9 +192,9 @@ probes the token without effect and compares the result with
 
 - `EXACT`: the token holds the declared grants and no others, within scope and
   lifetime, over every permission the provider documents. A required grant no probe can
-  measure (`workflows=write`) is listed under `minimum_unverified`, and a level the
-  declaration accepts as unmeasurable under `accepted_unverified`; neither changes the
-  verdict.
+  measure (`workflows=write`) is listed under `minimum_unverified`. A level the
+  declaration accepts in `accepted_unmeasurable` is listed in the verdict under
+  `accepted_unverified`. Neither changes the verdict.
 - `EXCESS`: a grant beyond the declaration, or a writable repository outside it.
 - `DEFICIENT`: a declared grant is missing.
 - `UNVERIFIED`: an excess grant could not be ruled out.
