@@ -572,37 +572,23 @@ def _unprobed(
     return Observation(capability, level, "UNMEASURABLE", "no probe")
 
 
-def observe(
-    send: Send,
-    *,
-    repository: str,
-    public: bool,
-    environment: str | None,
-    visible_repositories: tuple[str, ...],
-    login: str,
-    token: str,
-    private_repositories: frozenset[str] = frozenset(),
-) -> Facts:
-    """Probe the token ``send`` carries and return what the answers establish.
-
-    ``private_repositories`` are the visible ones the listing marks private: a
-    fine-grained token sees a private repository only in its selection. ``token`` is
-    read for its kind only; it is neither kept nor returned.
-    """
-    user = send("GET", "user", None)
-    # Scope first: whether the selection is the public subject alone decides whether
-    # a repository read grant is moot.
+def _scope_observations(
+    send: Send, repository: str, visible_repositories: tuple[str, ...]
+) -> list[ScopeObservation]:
+    """Aim the scope probe at the subject and every repository the token can see."""
     scope = []
     for other in dict.fromkeys((repository, *visible_repositories)):
         path = _SCOPE_PROBE.path.format(repository=other)
         state, evidence = classify(_SCOPE_PROBE, send("POST", path, _SCOPE_PROBE.body))
         scope.append(ScopeObservation(other, state, evidence))
-    writable = {s.repository for s in scope if s.state == "GRANTED"}
-    # A repository read grant is moot only if every repository it reaches is public:
-    # none visible is private, and none but the public subject is writable.
-    public_selection = (
-        public and writable == {repository} and not private_repositories - {repository}
-    )
+    return scope
+
+
+def _catalogue_observations(
+    send: Send, repository: str, environment: str | None, login: str
+) -> tuple[list[Observation], set[tuple[str, str]], set[str]]:
+    """Run every catalogue probe: what each established, what was measured, which
+    capabilities had a read probe."""
     observations: list[Observation] = []
     measured: set[tuple[str, str]] = set()
     read_probed: set[str] = set()
@@ -619,16 +605,66 @@ def observe(
         measured.add((probe.capability, probe.level))
         if probe.level == "read":
             read_probed.add(probe.capability)
+    return observations, measured, read_probed
+
+
+def _selection_bounded(scope: list[ScopeObservation], resource_owner: str) -> bool:
+    """Whether a refused repository of the owner shows the selection is not "all".
+
+    A token for "all repositories" reaches every repository its owner has and will
+    have; one the owner has and the token cannot write proves it narrower.
+    """
+    owner = resource_owner.lower()
+    bounded = bool(owner) and any(
+        s.state == "NOT_GRANTED" and s.repository.split("/", 1)[0] == owner
+        for s in scope
+    )
+    return bounded
+
+
+def observe(
+    send: Send,
+    *,
+    repository: str,
+    public: bool,
+    environment: str | None,
+    visible_repositories: tuple[str, ...],
+    login: str,
+    token: str,
+    private_repositories: frozenset[str] = frozenset(),
+    resource_owner: str = "",
+) -> Facts:
+    """Probe the token ``send`` carries and return what the answers establish.
+
+    ``private_repositories`` are the visible ones the listing marks private: a
+    fine-grained token sees a private repository only in its selection. ``token`` is
+    read for its kind only; it is neither kept nor returned.
+    """
+    user = send("GET", "user", None)
+    # Scope first: whether the selection is the public subject alone decides whether
+    # a repository read grant is moot.
+    scope = _scope_observations(send, repository, visible_repositories)
+    writable = {s.repository for s in scope if s.state == "GRANTED"}
+    # A repository read grant is moot only if every repository it reaches is public:
+    # none visible is private, and none but the public subject is writable.
+    public_selection = (
+        public and writable == {repository} and not private_repositories - {repository}
+    )
+    observations, measured, read_probed = _catalogue_observations(
+        send, repository, environment, login
+    )
     for capability in PERMISSIONS:
         for level in ("read", "write"):
             if (capability, level) not in measured:
                 observations.append(
                     _unprobed(capability, level, public_selection, read_probed)
                 )
+    bounded = _selection_bounded(scope, resource_owner)
     return Facts(
         subject=repository,
         credential_kind=credential_kind(token),
         expires_at=_expiry(user.headers),
         observations=tuple(observations),
         scope=tuple(scope),
+        selection_bounded=bounded,
     )

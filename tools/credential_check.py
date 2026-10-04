@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import subprocess  # nosec B404 -- `gh auth token`, a fixed argv, no shell
 import sys
+import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -49,6 +52,7 @@ _EXIT = {
 }
 _MAX_REPOSITORY_PAGES = 10
 _GH_TIMEOUT_SECONDS = 30
+_GIT_TIMEOUT_SECONDS = 30
 _REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
@@ -219,6 +223,109 @@ def _policy(raw: str) -> posture.Policy:
     return policy._replace(repositories=declared)
 
 
+def _git(worktree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run the trusted git in ``worktree``, reading what a push there would read."""
+    executable = trusted_executable("git")
+    if executable is None:
+        raise posture.PolicyError(
+            f"no git in the trusted directories ({TRUSTED_EXECUTABLE_PATH})"
+        )
+    return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        [executable, "-C", str(worktree), *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT_SECONDS,
+    )
+
+
+def _applies(key: str, target: str) -> bool | None:
+    """Whether credential config ``key`` applies to ``target``; None if not judged."""
+    if key == "credential.helper":
+        return True
+    pattern = key.removeprefix("credential.").removesuffix(".helper").rstrip("/")
+    if "*" in pattern or not pattern.startswith(("https://", "http://")):
+        # A wildcard or a scheme-less context is not judged here: fail closed.
+        return None
+    return target == pattern or target.startswith(f"{pattern}/")
+
+
+def _effective_helpers(worktree: Path, target: str) -> list[str] | None:
+    """Git's credential helpers for ``target``, in order; an empty one resets them."""
+    listed = _git(
+        worktree, "config", "--null", "--get-regexp", r"^credential\..*helper$"
+    )
+    if listed.returncode not in (0, 1):
+        return None
+    helpers: list[str] = []
+    for entry in filter(None, listed.stdout.split("\0")):
+        key, _, value = entry.partition("\n")
+        applies = _applies(key, target)
+        if applies is None:
+            return None
+        if applies:
+            helpers = [] if value == "" else [*helpers, value]
+    return helpers
+
+
+def _is_trusted_gh(helper: str) -> bool:
+    """Whether ``helper`` is exactly the trusted gh's credential helper."""
+    gh = trusted_executable("gh")
+    if gh is None or not helper.startswith("!"):
+        return False
+    words = shlex.split(helper[1:])
+    return (
+        len(words) == 3
+        and words[1:] == ["auth", "git-credential"]
+        and os.path.isabs(words[0])
+        and os.path.realpath(words[0]) == gh
+    )
+
+
+def _push_binding(worktree: Path, subject: str, remote: str) -> tuple[str, str]:
+    """Whether a push of ``subject`` from ``worktree`` uses the checked token.
+
+    It does when the push URL is HTTPS to github.com with no credential in it, no extra
+    header is configured for it, and Git's effective credential helpers for it are
+    exactly the trusted gh, which answers with the token this check read. Only
+    configuration is read, never a credential (Codex on #364).
+    """
+    try:
+        pushed = _git(worktree, "remote", "get-url", "--push", remote)
+    except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
+        return "UNKNOWN", f"git could not be read: {error}"
+    if pushed.returncode != 0:
+        return "UNKNOWN", f"no push URL for the remote {remote!r}"
+    url = urllib.parse.urlsplit(pushed.stdout.strip())
+    if url.scheme != "https" or (url.hostname or "").lower() != "github.com":
+        return "UNBOUND", "the push URL is not HTTPS to github.com"
+    if url.username or url.password:
+        return "UNBOUND", "the push URL carries a credential of its own"
+    path = url.path.strip("/").removesuffix(".git")
+    try:
+        named = github_rest.repository_key(path)
+    except github_rest.InvalidRepository:
+        return "UNBOUND", "the push URL names no repository"
+    if named != subject:
+        return "UNBOUND", f"the push URL names {named}, not {subject}"
+    target = f"https://github.com/{path}"
+    header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+    if header.returncode == 0 and header.stdout.strip():
+        return "UNBOUND", "an extra HTTP header is configured for the push URL"
+    helpers = _effective_helpers(worktree, target)
+    if helpers is None:
+        return (
+            "UNKNOWN",
+            "Git's credential helpers for the push URL could not be judged",
+        )
+    if len(helpers) != 1 or not _is_trusted_gh(helpers[0]):
+        return "UNBOUND", (
+            "Git's credential helpers for the push URL are not exactly the trusted gh"
+            f" ({len(helpers)} configured)"
+        )
+    return "BOUND", "HTTPS push through the trusted gh's credential helper"
+
+
 def _render(verdict: dict[str, Any]) -> str:
     """Return the verdict as text for a person."""
     kind, lifetime = verdict["credential_kind"], verdict["lifetime"]
@@ -253,6 +360,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", required=True, help="the subject, owner/name")
     parser.add_argument("--policy", default="policy/agent-credentials.yaml")
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")
+    parser.add_argument(
+        "--worktree", default=".", help="the checkout whose pushes the check binds"
+    )
+    parser.add_argument("--remote", default="origin", help="the remote pushes go to")
     try:
         args = parser.parse_args(argv)
         policy = _policy(args.policy)
@@ -275,6 +386,10 @@ def main(argv: list[str] | None = None) -> int:
             login=login,
             token=token,
             private_repositories=private,
+            resource_owner=policy.resource_owner,
+        )
+        facts = facts._replace(
+            transport=_push_binding(Path(args.worktree), subject, args.remote)
         )
         verdict = posture.evaluate(policy, facts, utc_timestamp())
     except github.ProbeHadEffect as error:

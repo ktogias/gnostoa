@@ -109,12 +109,78 @@ violation and reconstruct the pre-change evidence against the exact prior
 subject before continuing; do not relabel the reconstructed evidence as
 test-first chronology.
 
-Before the first provider write of a session, run
-`knowledge credential-check --repository <owner/name>` for the repository you work on
-and quote its verdict. It reports whether the agents' token holds exactly the least
-privilege declared in `policy/agent-credentials.yaml` (Decision 0101). On anything but
-`EXACT`, make no provider write until the owner fixes the token or amends the
-declaration. It grants nothing and is not the credential boundary; see
+Before the first provider write of a session, run the agent credential check from
+protected main and quote its verdict. It reports whether the agents' token holds exactly
+the least privilege declared in `policy/agent-credentials.yaml`, and whether pushes use
+that same token (Decision 0101). Its authority is protected main as the provider reports
+it. The wrapper, the `knowledge credential-check` it runs and the declaration all come
+from that exact commit, never from the candidate you work on. Define this helper once in
+the shell session; like the preparation helper, its body runs in a subshell:
+
+```bash
+run_main_credential_check() (
+  repository=$1
+  shift
+
+  PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+  export PATH
+  git_executable="$(command -v git || true)"
+  gh_executable="$(command -v gh || true)"
+  mktemp_executable="$(command -v mktemp || true)"
+  if [ -z "${git_executable}" ] || [ -z "${gh_executable}" ] \
+    || [ -z "${mktemp_executable}" ]; then
+    echo "ERROR: trusted credential-check executables are unavailable" >&2
+    exit 2
+  fi
+
+  # Protected main as the provider reports it, never a local ref.
+  main="$("${gh_executable}" api "repos/${repository}/branches/main" --jq .commit.sha)"
+  if [ "${#main}" -ne 40 ]; then
+    echo "ERROR: protected main could not be read" >&2
+    exit 2
+  fi
+  case "${main}" in
+    *[!0-9a-f]*)
+      echo "ERROR: protected main could not be read" >&2
+      exit 2
+      ;;
+  esac
+  "${git_executable}" -c core.hooksPath=/dev/null fetch --quiet origin "${main}"
+
+  wrapper="$("${mktemp_executable}" /tmp/gnostoa-credential-check-wrapper.XXXXXX)"
+  trap 'rm -f -- "$wrapper"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  if ! (
+    unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+    unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+    export GIT_CONFIG_COUNT=0
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_SYSTEM=/dev/null
+    export GIT_CONFIG_NOSYSTEM=1
+    export GIT_ATTR_NOSYSTEM=1
+    export GIT_NO_REPLACE_OBJECTS=1
+    "${git_executable}" -c core.hooksPath=/dev/null \
+      show "${main}:ci/credential-check"
+  ) > "${wrapper}"; then
+    echo "ERROR: protected main does not provide the credential check" >&2
+    exit 2
+  fi
+  sh "${wrapper}" "${main}" --repository "${repository}" "$@"
+)
+
+run_main_credential_check ktogias/gnostoa
+```
+
+On anything but `EXACT`, make no provider write until the owner fixes the token or the
+push configuration, or amends the declaration through an ordinary change. Bootstrap:
+until protected main first provides `ci/credential-check`, the helper stops with
+"protected main does not provide the credential check". Only then run the candidate's
+own `knowledge credential-check --repository <owner/name>`, and say so with its
+verdict. The check grants nothing and is not the credential boundary; see
 [agent credential check](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#agent-credential-check).
 
 Before choosing a cloud/provider recovery route for candidate preparation or

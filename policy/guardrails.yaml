@@ -446,6 +446,8 @@ guardrails:
       - tools/credential_posture.py
       - tools/credential_posture_github.py
       - tools/credential_check.py
+      - tools/cli.py
+      - ci/credential-check
       - tools/github_rest.py
       - tools/agent_review_paths.py
       - tools/schema_validation.py
@@ -457,6 +459,8 @@ guardrails:
       - tests/test_agent_review_paths.py
       - tests/test_schema_validation.py
       - tests/test_knowledge_common.py
+      - tests/test_credential_push_binding.py
+      - tests/test_credential_check_wrapper.py
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
     applies_to: [kit]

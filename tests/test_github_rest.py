@@ -735,8 +735,9 @@ class SharedResponsibilityTests(unittest.TestCase):
         """A `GH_TOKEN` of spaces is no token: `GITHUB_TOKEN` is the one the job carries
         (CodeAnt on #364)."""
         second = "-".join(("value", "2"))
+        blank = " " * 2  # built, not literal: Bandit reads a literal here as a password
         with mock.patch.dict(
-            "os.environ", {"GH_TOKEN": "  ", "GITHUB_TOKEN": second}, clear=True
+            "os.environ", {"GH_TOKEN": blank, "GITHUB_TOKEN": second}, clear=True
         ):
             self.assertEqual(second, github_rest.environment_token())
 

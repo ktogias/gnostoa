@@ -101,6 +101,12 @@ class Facts(NamedTuple):
     expires_at: str | None
     observations: tuple[Observation, ...]
     scope: tuple[ScopeObservation, ...]
+    # Whether the scope shows the token's selection is not everything its owner has
+    # and will have: a selection of "all" is otherwise indistinguishable.
+    selection_bounded: bool = False
+    # Whether the transport's own credential for writes (a push) is shown to be the
+    # checked token: BOUND, or why not, with its evidence.
+    transport: tuple[str, str] = ("UNKNOWN", "not observed")
 
 
 def _level(value: Any, label: str) -> str:
@@ -272,16 +278,35 @@ def _scope(policy: Policy, facts: Facts) -> tuple[list[str], list[str]]:
             unverified.append(f"scope:{scoped.repository}")
     if facts.subject not in {s.repository for s in facts.scope}:
         unverified.append(f"scope:{facts.subject}")
+    if not facts.selection_bounded:
+        unverified.append("scope:selection")
     return excess, unverified
 
 
-def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
-    """Return the verdict of ``facts`` against ``policy`` at ``now``."""
+class _Judgement(NamedTuple):
+    """What the observed levels establish against the declared bounds."""
+
+    excess: list[str]
+    unverified: list[str]
+    accepted: list[str]
+    deficient: list[str]
+    minimum_unverified: list[str]
+    rows: list[dict[str, Any]]
+    undeclared: list[str]
+
+
+def _states(facts: Facts) -> dict[tuple[str, str], str]:
+    """Return each observed level's state, refusing a malformed observation."""
     states: dict[tuple[str, str], str] = {}
     for observation in facts.observations:
         if observation.state not in STATES or observation.level not in LEVELS[1:]:
             raise ValueError(f"malformed observation {observation!r}")
         states[(observation.capability, observation.level)] = observation.state
+    return states
+
+
+def _judge(policy: Policy, states: dict[tuple[str, str], str]) -> _Judgement:
+    """Judge every capability's observed levels against its declared bound."""
     # An observed capability the policy does not name is held to "none": a grant the
     # declaration did not foresee is excess, never a silent pass.
     observed = set(states)
@@ -290,25 +315,20 @@ def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
     )
     bounds = {c: Bound("none", "none") for c, _ in observed}
     bounds.update(policy.capabilities)
-    excess: list[str] = []
-    unverified: list[str] = []
-    accepted: list[str] = []
-    deficient: list[str] = []
-    minimum_unverified: list[str] = []
-    rows = []
+    judged = _Judgement([], [], [], [], [], [], undeclared)
     for name, bound in sorted(bounds.items()):
         read, write = states.get((name, "read")), states.get((name, "write"))
         certain, possible = _excess(name, bound, read, write)
         missing, unproven = _minimum(name, bound, read, write)
-        excess += certain
+        judged.excess.extend(certain)
         for entry, state in possible:
             if state == "UNMEASURABLE" and entry in policy.accepted_unmeasurable:
-                accepted.append(entry)
+                judged.accepted.append(entry)
             else:
-                unverified.append(entry)
-        deficient += missing
-        minimum_unverified += unproven
-        rows.append(
+                judged.unverified.append(entry)
+        judged.deficient.extend(missing)
+        judged.minimum_unverified.extend(unproven)
+        judged.rows.append(
             {
                 "capability": name,
                 "declared": {"min": bound.minimum, "max": bound.maximum},
@@ -316,9 +336,24 @@ def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
                 "write": write,
             }
         )
+    return judged
+
+
+def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
+    """Return the verdict of ``facts`` against ``policy`` at ``now``."""
+    judged = _judge(policy, _states(facts))
+    excess, unverified = judged.excess, judged.unverified
+    accepted, deficient = judged.accepted, judged.deficient
+    minimum_unverified, rows, undeclared = (
+        judged.minimum_unverified,
+        judged.rows,
+        judged.undeclared,
+    )
     scope_excess, scope_unverified = _scope(policy, facts)
     excess += scope_excess
     unverified += scope_unverified
+    if facts.transport[0] != "BOUND":
+        unverified.append("transport:push")
     within, remaining = _lifetime(policy, facts.expires_at, now)
     found = {
         "CREDENTIAL_KIND_MISMATCH": facts.credential_kind != policy.credential_kind,
@@ -351,4 +386,5 @@ def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
         "undeclared": undeclared,
         "rows": rows,
         "scope": [{"repository": s.repository, "state": s.state} for s in facts.scope],
+        "transport": {"state": facts.transport[0], "evidence": facts.transport[1]},
     }

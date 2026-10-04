@@ -99,6 +99,8 @@ class AgentCredentialRouteTests(unittest.TestCase):
             "tools/credential_posture.py",
             "tools/credential_posture_github.py",
             "tools/credential_check.py",
+            "tools/cli.py",
+            "ci/credential-check",
             # The owners it consumes (#365): a change to one reaches this control.
             "tools/github_rest.py",
             "tools/agent_review_paths.py",
@@ -115,6 +117,8 @@ class AgentCredentialRouteTests(unittest.TestCase):
             "tests/test_agent_review_paths.py",
             "tests/test_schema_validation.py",
             "tests/test_knowledge_common.py",
+            "tests/test_credential_push_binding.py",
+            "tests/test_credential_check_wrapper.py",
         ):
             with self.subTest(test=test):
                 self.assertIn(test, tests)
@@ -129,6 +133,26 @@ class AgentCredentialRouteTests(unittest.TestCase):
         self.assertIn(
             "before the first provider write of a session", _flat(_section()).lower()
         )
+
+    def test_the_router_runs_the_gate_from_protected_main(self) -> None:
+        """The gate's authority is protected main as the provider reports it: the
+        wrapper is retrieved from that exact commit with routing scrubbed and its
+        success checked, never piped into a shell (owner decision 2026-10-05)."""
+        router = AGENTS.read_text(encoding="utf-8")
+        self.assertIn("run_main_credential_check() (", router)
+        self.assertIn("branches/main", router)
+        self.assertIn('show "${main}:ci/credential-check"', router)
+        self.assertNotIn(':ci/credential-check" | sh', router)
+        for scrubbed in ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_NO_REPLACE_OBJECTS=1"):
+            self.assertIn(scrubbed, router.split("run_main_credential_check() (", 1)[1])
+        self.assertIn("run_main_credential_check ktogias/gnostoa", router)
+
+    def test_the_runbook_states_the_bootstrap_and_the_push_binding(self) -> None:
+        section = _flat(_section())
+        self.assertIn("protected main", section)
+        self.assertIn("bootstrap", section.lower())
+        self.assertIn("gh auth setup-git", section)
+        self.assertIn("transport:push", section)
 
     def test_decision_is_indexed(self) -> None:
         self.assertIn(DECISION, INDEX.read_text(encoding="utf-8"))

@@ -170,6 +170,8 @@ def _facts(**overrides: Any) -> Any:
             posture.ScopeObservation("o/r", "GRANTED", "e"),
             posture.ScopeObservation("o/other", "NOT_GRANTED", "e"),
         ),
+        "selection_bounded": True,
+        "transport": ("BOUND", "e"),
     }
     fields.update(overrides)
     return posture.Facts(**fields)
@@ -452,6 +454,7 @@ def _run(
     cwd: pathlib.Path = ROOT,
     listing: dict[str, tuple[list[str], str | None]] | None = None,
     private: frozenset[str] = frozenset(),
+    push: tuple[str, str] | None = None,
 ) -> tuple[int, str, Any]:
     """Run the command over ``answers`` from ``cwd``, naming the declaration."""
     from tools import credential_check
@@ -469,6 +472,9 @@ def _run(
         ),
         mock.patch.object(credential_check, "_transport", return_value=replay),
         mock.patch.object(credential_check, "utc_timestamp", return_value=NOW),
+        mock.patch.object(
+            credential_check, "_push_binding", return_value=push or ("BOUND", "test")
+        ),
         contextlib.redirect_stdout(out),
         contextlib.redirect_stderr(out),
     ):
@@ -633,6 +639,28 @@ class CoreVerdictTests(unittest.TestCase):
                 self.assertIn("scope:o/other", verdict["unverified"])
                 self.assertNotEqual("EXACT", verdict["verdict"])
 
+    def test_an_unbounded_selection_is_unverified(self) -> None:
+        """A token for "All repositories" reaches every current and future repository
+        of its owner. When every repository the owner has is writable, the listing
+        cannot tell that apart from a selection: no refused repository of the owner
+        bounds it (Codex on #364)."""
+        verdict = _verdict(_facts(selection_bounded=False))
+        self.assertEqual("UNVERIFIED", verdict["verdict"])
+        self.assertIn("scope:selection", verdict["unverified"])
+
+    def test_an_unbound_push_credential_is_unverified(self) -> None:
+        """A push authenticates through the transport's own credential, not the token
+        checked here: unless the two are shown to be one, the check proves nothing
+        about pushes (Codex on #364; owner decision 2026-10-05)."""
+        for state in ("UNBOUND", "UNKNOWN"):
+            with self.subTest(state=state):
+                verdict = _verdict(_facts(transport=(state, "why")))
+                self.assertEqual("UNVERIFIED", verdict["verdict"])
+                self.assertIn("transport:push", verdict["unverified"])
+                self.assertEqual(
+                    {"state": state, "evidence": "why"}, verdict["transport"]
+                )
+
     def test_a_subject_outside_the_declaration_is_excess(self) -> None:
         """Checking a repository the declaration does not name cannot come back
         EXACT: its own writability is scope excess (gitar, Codex, CodeAnt, CodeRabbit
@@ -778,6 +806,33 @@ class GitHubAdapterTests(unittest.TestCase):
         )
         self.assertEqual(3, code, output)
         self.assertIn("deployments:read", json.loads(output)["unverified"])
+
+    def test_a_refused_repository_of_the_owner_bounds_the_selection(self) -> None:
+        from tools import credential_posture_github as github
+
+        def observed(answers: Any) -> Any:
+            return github.observe(
+                _Replay(answers),
+                repository=SUBJECT,
+                public=True,
+                environment="claude-review",
+                visible_repositories=VISIBLE,
+                login="ktogias",
+                token=_placeholder_token("fine-grained"),
+                resource_owner="ktogias",
+            )
+
+        self.assertTrue(observed(_calibrated_exact()).selection_bounded)
+        # Every repository of the owner writable: nothing bounds the selection.
+        everything = _calibrated_exact()
+        contents = "contents=write;contents=write,workflows=write"
+        for name in ("ktogias/ai-peaf", "ktogias/elsewhere"):
+            everything[("POST", f"repos/{name}/git/refs")] = (
+                422,
+                contents,
+                "Object does not exist",
+            )
+        self.assertFalse(observed(everything).selection_bounded)
 
     def test_a_read_the_provider_filters_rather_than_refuses_is_unmeasurable(
         self,
@@ -1330,7 +1385,8 @@ class CredentialCheckCliTests(unittest.TestCase):
     def test_gh_auth_token_is_bounded_in_time(self) -> None:
         """A keyring prompt or a stalled credential helper must not hang the check
         that gates every first provider write (CodeRabbit on #364)."""
-        import subprocess  # nosec B404 -- only to build the TimeoutExpired a stall raises
+        # Only to build the TimeoutExpired a stalled gh would raise.
+        import subprocess  # nosec B404
 
         from tools import credential_check, github_rest
         from tools import credential_posture as posture
@@ -1396,6 +1452,13 @@ class CredentialCheckCliTests(unittest.TestCase):
             )
         self.assertEqual(0, code, output)
         self.assertEqual("EXACT", json.loads(output)["verdict"])
+
+    def test_an_unbound_push_binding_exits_three(self) -> None:
+        code, output, _ = _run(_calibrated_exact(), push=("UNBOUND", "an SSH remote"))
+        self.assertEqual(3, code, output)
+        verdict = json.loads(output)
+        self.assertIn("transport:push", verdict["unverified"])
+        self.assertEqual("an SSH remote", verdict["transport"]["evidence"])
 
     def test_the_command_is_registered(self) -> None:
         from tools import cli

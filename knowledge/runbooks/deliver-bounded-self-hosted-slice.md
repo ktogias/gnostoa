@@ -185,10 +185,21 @@ What bounds an agent is what its token can do, and the owner's authority channel
 merge admission holds only while that token cannot approve a pending deployment
 (Decision 0101).
 
-Before the first provider write of a session, run
-`knowledge credential-check --repository <owner/name>` and quote its verdict. It
-probes the token without effect and compares the result with
-`policy/agent-credentials.yaml`:
+Before the first provider write of a session, run the check from protected main
+through `run_main_credential_check` (`AGENTS.md`), and quote its verdict. The check's
+authority is protected main as the provider reports it: `ci/credential-check`,
+retrieved from that exact commit, runs that commit's checker against that commit's
+declaration, so a candidate cannot authorize its own first provider write. Bootstrap:
+until protected main first provides the wrapper, the helper says so, and only then does
+the candidate's own `knowledge credential-check` run, with the exception stated next to
+its verdict.
+
+The check probes the token without effect and compares the result with
+`policy/agent-credentials.yaml`. It also shows that a push uses the same token. A push
+authenticates through Git's own credential, so the push URL must be HTTPS to github.com
+with no credential in it, and Git's credential helpers for it must be exactly the
+trusted `gh` (`gh auth setup-git`), with no extra header. Otherwise `transport:push` is
+unverified and so is the verdict.
 
 - `EXACT`: the token holds the declared grants and no others, within scope and
   lifetime, over every permission the provider documents. A required grant no probe can
@@ -197,7 +208,8 @@ probes the token without effect and compares the result with
   `accepted_unverified`. Neither changes the verdict.
 - `EXCESS`: a grant beyond the declaration, or a writable repository outside it.
 - `DEFICIENT`: a declared grant is missing.
-- `UNVERIFIED`: an excess grant could not be ruled out.
+- `UNVERIFIED`: an excess grant could not be ruled out, the selection could be "all
+  repositories", or a push might use another credential (`transport:push`).
 - `CREDENTIAL_KIND_MISMATCH` or `LIFETIME_EXCEEDED`: the wrong kind of credential, or a
   lifetime beyond the declared one.
 

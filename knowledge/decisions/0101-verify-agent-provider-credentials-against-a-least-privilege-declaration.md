@@ -154,6 +154,9 @@ No tool found verifies a personal account's fine-grained token against a declara
    - **The control:** that holds only when the probe detects the grant on the subject.
      When it does not, a refusal elsewhere proves nothing, and every other
      repository's scope is UNVERIFIED.
+   - **A bounded selection:** a token for "All repositories" reaches every repository
+     its owner has and will have, so the scope must also show a refused repository of
+     the owner. Otherwise the selection is UNVERIFIED (`scope:selection`).
    - **Whose token it is:** a fine-grained token reaches only its resource owner's
      resources, so a writable subject shows whose token it is, provided every declared
      repository belongs to the declared `resource_owner`. A declaration that breaks
@@ -169,10 +172,31 @@ No tool found verifies a personal account's fine-grained token against a declara
    DEFICIENT, then LIFETIME_EXCEEDED, then UNVERIFIED; otherwise EXACT. The command
    exits 0 for EXACT, 1 for the first four, 3 for UNVERIFIED and 2 on an input or tool
    error or a probe the provider accepted.
-9. **Agents run it before the first provider write of a session.** An agent runs
-   `knowledge credential-check` for the repository it works on and quotes the verdict.
-   On anything but EXACT it makes no provider write until the owner resolves it: by
-   fixing the token, or by amending the declaration through an ordinary change.
+9. **Agents run it before the first provider write of a session.** An agent runs the
+   check for the repository it works on, through `run_main_credential_check`, and
+   quotes the verdict. On anything but EXACT it makes no provider write until the owner
+   resolves it: by fixing the token or the push configuration, or by amending the
+   declaration through an ordinary change.
+10. **The gate's authority is protected main** (owner decision, 2026-10-05). The
+    declaration and the checker that judges by it come from the exact protected-main
+    commit the provider reports. `ci/credential-check`, retrieved from that commit, runs
+    that commit's checker against that commit's declaration, so a candidate cannot
+    authorize its own first provider write. The wrapper scrubs caller Git routing and
+    global configuration, as the preparation wrapper does; the repository's own
+    configuration is read. Bootstrap: until protected main first provides the wrapper,
+    the candidate's own check runs, and the exception is stated with its verdict.
+11. **A push uses the checked token, or the verdict says so** (owner decision,
+    2026-10-05). A push authenticates through Git's own credential, not this token. The
+    check therefore reads, without reading any credential, the checkout's push
+    configuration for the subject:
+    - the push URL must be HTTPS to github.com, with no credential in it, after
+      `pushInsteadOf`;
+    - no extra HTTP header may be configured for it;
+    - Git's effective credential helpers for it, folded in order with an empty value
+      resetting them, must be exactly the trusted `gh`, which answers with the token
+      checked here.
+
+    Otherwise `transport:push` is UNVERIFIED.
 
 ## What this does not establish
 
