@@ -109,6 +109,14 @@ violation and reconstruct the pre-change evidence against the exact prior
 subject before continuing; do not relabel the reconstructed evidence as
 test-first chronology.
 
+Before the first provider write of a session, run
+`knowledge credential-check --repository <owner/name>` for the repository you work on
+and quote its verdict. It reports whether the agents' token holds exactly the least
+privilege declared in `policy/agent-credentials.yaml` (Decision 0101). On anything but
+`EXACT`, make no provider write until the owner fixes the token or amends the
+declaration. It grants nothing and is not the credential boundary; see
+[agent credential check](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#agent-credential-check).
+
 Before choosing a cloud/provider recovery route for candidate preparation or
 publication, use the
 [conditional agent execution recovery playbook](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#conditional-agent-execution-recovery-playbook).

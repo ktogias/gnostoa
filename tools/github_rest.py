@@ -103,9 +103,13 @@ class GitHubError(RuntimeError):
         retry_after: float | None = None,
         in_flight: bool = False,
         outcome_unknown: bool = False,
+        accepted_permissions: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
+        # The permission sets the route said it accepts (`X-Accepted-GitHub-Permissions`),
+        # so a refusal can be read as "this token lacks that grant" (Decision 0101).
+        self.accepted_permissions = accepted_permissions
         # When the provider said when to try again, bounded by the policy.
         self.retry_after = retry_after
         # The exchange was abandoned at its bound, not stopped: it may still reach the
@@ -829,7 +833,17 @@ class GitHubRestClient:
         # A server error is the provider failing after it received the request, so a
         # write may have been applied; a 4xx, a rate limit included, refused it.
         reached = write and error.code >= 500
-        return kind(message, status=status, retry_after=hint, outcome_unknown=reached)
+        headers = error.headers
+        accepted = (
+            None if headers is None else headers.get("X-Accepted-GitHub-Permissions")
+        )
+        return kind(
+            message,
+            status=status,
+            retry_after=hint,
+            outcome_unknown=reached,
+            accepted_permissions=None if accepted is None else str(accepted)[:256],
+        )
 
     def _request(
         self,
@@ -919,6 +933,11 @@ class GitHubRestClient:
     def patch(self, url: str, payload: dict[str, Any]) -> Any:
         """PATCH ``payload`` once and return the provider's document."""
         document, _ = self._request("PATCH", url, payload)
+        return document
+
+    def put(self, url: str, payload: dict[str, Any]) -> Any:
+        """PUT ``payload`` once and return the provider's document."""
+        document, _ = self._request("PUT", url, payload)
         return document
 
 

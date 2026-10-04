@@ -177,9 +177,38 @@ Like the checkpoint above, this is review enforcement, not a software gate. The
 conformance tests prove only that the gate is routed. The reviewer checks the table
 against the actual candidate.
 
+### Agent credential check
+
+Agents work as the owner's operating-system user, through the owner's provider
+account, so the provider attributes every write to the owner whichever token made it.
+What bounds an agent is what its token can do, and the owner's authority channel for
+merge admission holds only while that token cannot approve a pending deployment
+(Decision 0101).
+
+Before the first provider write of a session, run
+`knowledge credential-check --repository <owner/name>` and quote its verdict. It
+probes the token without effect and compares the result with
+`policy/agent-credentials.yaml`:
+
+- `EXACT`: the token holds the declared grants and no others, within scope and
+  lifetime. A required grant no probe can measure (`workflows=write`) is listed under
+  `minimum_unverified`; that does not change the verdict.
+- `EXCESS`: a grant beyond the declaration, or a writable repository outside it.
+- `DEFICIENT`: a declared grant is missing.
+- `UNVERIFIED`: an excess grant could not be ruled out.
+- `TOKEN_KIND_MISMATCH` or `LIFETIME_EXCEEDED`: the wrong kind of credential, or a
+  lifetime beyond the declared one.
+
+On anything but `EXACT`, make no provider write until the owner resolves it, by fixing
+the token or by amending the declaration through an ordinary change. The check reports
+effective grants; it grants nothing and is not the credential boundary. An agent on
+the owner's user can still reach the owner's browser session, so agents use no browser
+automation on the owner's profile.
+
 ## Procedure
 
-1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind
+1. **Orient and read back the current subject.** Start through `AGENTS.md`, and run the
+   [agent credential check](#agent-credential-check) before the first provider write; bind
    protected source, provider lifecycle and the active Work Item without replaying
    raw conversations. Before creating another Work Item or PR for the same outcome,
    read provider state for an existing open same-purpose record. Resume it when it
