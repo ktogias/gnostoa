@@ -242,6 +242,15 @@ def repository_name(value: str) -> str:
     return value
 
 
+def repository_key(value: str) -> str:
+    """Return the key that names ``value``'s repository, whatever its case.
+
+    GitHub resolves owner and repository names case-insensitively, so two spellings
+    are one repository; comparisons use this key (CodeAnt on #364).
+    """
+    return repository_name(value).lower()
+
+
 def path_segment(value: str) -> str:
     """Return ``value`` encoded as exactly one path segment, or raise ``ValueError``.
 
@@ -255,8 +264,15 @@ def path_segment(value: str) -> str:
 
 
 def environment_token() -> str:
-    """Return the token a job carries: `GH_TOKEN`, else `GITHUB_TOKEN`, else ""."""
-    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    """Return the token a job carries: `GH_TOKEN`, else `GITHUB_TOKEN`, else "".
+
+    A value of only whitespace is no token, and does not shadow the next.
+    """
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _checked_token(token: str) -> str:

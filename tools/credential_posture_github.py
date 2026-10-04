@@ -412,7 +412,6 @@ PUBLIC_READS = (
     "actions",
     "statuses",
     "deployments",
-    "attestations",
     "metadata",
 )
 # Levels GitHub documents no endpoint for (the permissions page, read 2026-10-04): a
@@ -457,6 +456,9 @@ UNMEASURABLE: dict[tuple[str, str], str] = {
     ("pages", "read"): "a Pages site's private parts are filtered out",
     ("starring", "read"): "private repositories are filtered out of the starred list",
     ("watching", "read"): "private repositories are filtered out of the watched list",
+    # GitHub requires the grant even for a public repository's attestations, and its
+    # route looks the digest up first; the user listing filters (CodeAnt on #364).
+    ("attestations", "read"): "its route looks the digest up before the permission",
 }
 # How a write to another repository is probed: the contents-write probe, aimed there.
 _SCOPE_PROBE = CATALOGUE[0]

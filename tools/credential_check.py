@@ -121,8 +121,12 @@ def _transport(token: str) -> github.Send:
             if error.accepted_permissions is not None:
                 headers[github.ACCEPTED_HEADER] = error.accepted_permissions
             # The client's own judgement of whether a write may have landed travels
-            # with the answer, so the adapter stops on it (Codex on #364).
-            unknown = method != "GET" and error.outcome_unknown
+            # with the answer, so the adapter stops on it (Codex on #364). A refused
+            # redirect is not a refusal of the write, so a redirected write's outcome is
+            # unknown too, though the client reports the redirect as a read error.
+            unknown = method != "GET" and (
+                error.outcome_unknown or isinstance(error, github_rest.UnsafeRedirect)
+            )
             return github.Answer(error.status, headers, str(error), None, unknown)
 
     return send
@@ -137,7 +141,7 @@ def _listed_repository(item: Any) -> tuple[str, bool]:
     name = str(item.get("full_name", "")) if isinstance(item, dict) else ""
     try:
         # A private repository the token can see is one it can read (CodeAnt on #364).
-        return github_rest.repository_name(name), item.get("private") is not False
+        return github_rest.repository_key(name), item.get("private") is not False
     except github_rest.InvalidRepository as error:
         raise posture.PolicyError(
             f"the listing names a repository that cannot be probed safely: {name!r}"
@@ -203,14 +207,16 @@ def _policy(raw: str) -> posture.Policy:
     # A fine-grained token reaches only its resource owner's resources, so the subject
     # proving writable shows whose token it is -- if every declared repository is the
     # declared owner's (CodeAnt on #364).
-    for repository in policy.repositories:
-        owner = github_rest.repository_name(repository).split("/")[0]
-        if owner != policy.resource_owner:
+    declared = tuple(github_rest.repository_key(r) for r in policy.repositories)
+    for repository in declared:
+        owner = repository.split("/")[0]
+        if owner != policy.resource_owner.lower():
             raise posture.PolicyError(
                 f"{repository} is not the declared resource owner's"
                 f" ({policy.resource_owner})"
             )
-    return policy
+    # GitHub resolves names case-insensitively, so every name is compared on its key.
+    return policy._replace(repositories=declared)
 
 
 def _render(verdict: dict[str, Any]) -> str:
@@ -249,21 +255,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")
     try:
         args = parser.parse_args(argv)
-        # The subject must be declared, and every declared repository passed the
-        # shared name rule in ``_policy``: a malformed subject cannot get this far.
         policy = _policy(args.policy)
-        if args.repository not in policy.repositories:
+        subject = github_rest.repository_key(args.repository)
+        if subject not in policy.repositories:
             raise posture.PolicyError(
                 f"the declaration does not list {args.repository}; check a repository"
                 " it lists"
             )
         token = _token()
         send = _transport(token)
-        public, environment, login = _repository_facts(send, args.repository)
+        public, environment, login = _repository_facts(send, subject)
         visible, private = _visible_repositories(send)
         facts = github.observe(
             send,
-            repository=args.repository,
+            repository=subject,
             public=public,
             environment=environment,
             visible_repositories=visible,

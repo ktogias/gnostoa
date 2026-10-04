@@ -126,7 +126,10 @@ No tool found verifies a personal account's fine-grained token against a declara
      - a read whose route answers without the grant but filters its private part out
        rather than refusing it: draft and triage advisories, a Pages site's private
        parts, and the private repositories in a user's starred and watched lists;
-     - a level whose routes look up their target first;
+     - a level whose routes look up their target first, such as attestations
+       read: GitHub requires that grant even for a public repository's
+       attestations, and its route looks the digest up before checking the
+       permission;
      - a level whose routes belong only to organizations.
    - **NOT_APPLICABLE:** a level GitHub documents no endpoint for, and nothing else.
 
@@ -203,5 +206,6 @@ contract is closed, and this Decision does not change it.
 - Live runs against the agents' token on 2026-10-04 matched the calibration row for
   row. The first reported EXCESS for two writable repositories outside the declaration;
   after the owner removed them from the token, EXACT over all 46 permissions, with the
-  accepted unmeasurable levels and `workflows:write` listed: seven, then eleven once
-  four filtered reads stopped counting as public.
+  accepted unmeasurable levels and `workflows:write` listed. There were seven, then
+  eleven once four filtered reads stopped counting as public, then twelve once
+  attestations read did.

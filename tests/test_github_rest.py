@@ -731,6 +731,24 @@ class SharedResponsibilityTests(unittest.TestCase):
             ):
                 self.assertEqual(expected, github_rest.environment_token())
 
+    def test_a_blank_token_does_not_shadow_the_next(self) -> None:
+        """A `GH_TOKEN` of spaces is no token: `GITHUB_TOKEN` is the one the job carries
+        (CodeAnt on #364)."""
+        second = "-".join(("value", "2"))
+        with mock.patch.dict(
+            "os.environ", {"GH_TOKEN": "  ", "GITHUB_TOKEN": second}, clear=True
+        ):
+            self.assertEqual(second, github_rest.environment_token())
+
+    def test_a_repository_key_ignores_case(self) -> None:
+        """GitHub resolves owner and repository names case-insensitively, so names are
+        compared on one key (CodeAnt on #364)."""
+        self.assertEqual(
+            "ktogias/gnostoa", github_rest.repository_key("KTOGIAS/Gnostoa")
+        )
+        with self.assertRaises(github_rest.InvalidRepository):
+            github_rest.repository_key("ktogias/..")
+
     def test_the_client_from_the_environment_reads_through_the_owner(self) -> None:
         with mock.patch.object(
             github_rest, "environment_token", return_value="from-the-owner"

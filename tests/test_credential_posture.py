@@ -750,7 +750,7 @@ class GitHubAdapterTests(unittest.TestCase):
         known, and a read grant there is not moot."""
         exact = _observe(_calibrated_exact())
         widened = _observe(_calibrated())
-        for capability in ("contents", "actions", "deployments", "attestations"):
+        for capability in ("contents", "actions", "deployments", "statuses"):
             with self.subTest(capability=capability):
                 self.assertEqual("PUBLIC", _state(exact, capability, "read"))
                 self.assertEqual("UNMEASURABLE", _state(widened, capability, "read"))
@@ -787,7 +787,15 @@ class GitHubAdapterTests(unittest.TestCase):
         without the grant, leaving the private part out rather than refusing, so no
         probe can tell a grant apart (Codex on #364, calibrated 2026-10-04)."""
         facts = _observe(_calibrated_exact())
-        for capability in ("repository_advisories", "pages", "starring", "watching"):
+        # Attestations too: the repository route looks the digest up before the
+        # permission, and the user route filters (CodeAnt on #364).
+        for capability in (
+            "repository_advisories",
+            "pages",
+            "starring",
+            "watching",
+            "attestations",
+        ):
             with self.subTest(capability=capability):
                 self.assertEqual("UNMEASURABLE", _state(facts, capability, "read"))
 
@@ -1370,6 +1378,25 @@ class CredentialCheckCliTests(unittest.TestCase):
                 token=_placeholder_token("fine-grained"),
             )
 
+    def test_names_differing_only_in_case_are_one_repository(self) -> None:
+        """A declaration, a subject and a listing that spell one repository with
+        different case name one repository, as GitHub resolves it (CodeAnt on #364)."""
+        text = POLICY.read_text(encoding="utf-8").replace(
+            "  - ktogias/gnostoa\n", "  - ktogias/Gnostoa\n", 1
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            declared = pathlib.Path(scratch) / "agent-credentials.yaml"
+            declared.write_text(text, encoding="utf-8")
+            code, output, _ = _run(
+                _calibrated_exact(),
+                "--repository",
+                "KTOGIAS/gnostoa",
+                policy=str(declared),
+                cwd=pathlib.Path(scratch),
+            )
+        self.assertEqual(0, code, output)
+        self.assertEqual("EXACT", json.loads(output)["verdict"])
+
     def test_the_command_is_registered(self) -> None:
         from tools import cli
 
@@ -1407,6 +1434,10 @@ class _Client:
             raise github_rest.GitHubWriteError(
                 "Bad Gateway", status=502, outcome_unknown=True
             )
+        if url.endswith("/redirected"):
+            # The shared client refuses every redirect, and reports it as a read error
+            # whatever the method.
+            raise github_rest.UnsafeRedirect("refusing a redirect")
         return payload
 
     def post(self, url: str, payload: dict[str, Any]) -> Any:
@@ -1465,6 +1496,13 @@ class TransportTests(unittest.TestCase):
         send, _ = _fake_transport()
         self.assertTrue(send("POST", "repos/o/r/unknown", {"a": 1}).outcome_unknown)
         self.assertFalse(send("GET", "repos/o/r/refused", None).outcome_unknown)
+
+    def test_a_redirected_write_is_outcome_unknown(self) -> None:
+        """A redirect is not a refusal: the write reached the provider and its rejection
+        was never established, so it is outcome-unknown, and the check stops on it
+        (Codex on #364)."""
+        send, _ = _fake_transport()
+        self.assertTrue(send("POST", "repos/o/r/redirected", {"a": 1}).outcome_unknown)
 
     def test_an_accepted_write_is_reported_as_accepted(self) -> None:
         send, client = _fake_transport()
@@ -1526,7 +1564,7 @@ class SharedOwnerReuseTests(unittest.TestCase):
         for owner in (
             "environment_token",
             "owner_name",
-            "repository_name",
+            "repository_key",
             "follow_pages",
             "within_root",
             "schema_errors",
