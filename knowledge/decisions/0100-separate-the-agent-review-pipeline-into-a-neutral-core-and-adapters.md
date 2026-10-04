@@ -28,6 +28,9 @@ sources:
   - id: pr-agent
     resource: https://github.com/The-PR-Agent/pr-agent
     title: PR-Agent (MIT); one broad GitProvider base class across many hosts
+  - id: delivered-event-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/356
+    title: Leave the mention trigger with no logic, relaying GitHub's delivered event
 x-project-knowledge:
   id: kit.decision.0100.separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters
   owners:
@@ -126,6 +129,10 @@ No code is copied from either. Inside the repository:
      into the core's report record.
    - Mention tokens, trusted associations, the trigger's identity and the admitted
      events are adapter configuration, not core constants.
+   - Translating GitHub's delivered event into the relay's pointer is the adapter's
+     too: `delivered_pointer` (#356, amending Decision 0096 rules 2-3). The trigger
+     computes nothing. A request's text is composed by one adapter function, for both
+     the delivered event and the re-read, and digested by the core's `request_sha256`.
 5. **One shared GitHub REST client.** `tools/github_rest.py` merges five clients:
    - `ci/review_github_current_state.GitHubRestClient`;
    - `ci/analyzer_readback.GitHubReadClient`;

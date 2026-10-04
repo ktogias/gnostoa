@@ -22,6 +22,12 @@ sources:
   - id: useful-l1
     resource: ./0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
     title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
+  - id: delivered-event-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/356
+    title: Leave the mention trigger with no logic, relaying GitHub's delivered event
+  - id: delivered-event-admission
+    resource: https://github.com/ktogias/gnostoa/issues/356#issuecomment-5975001281
+    title: Owner admission, classification and lineage for #356
 x-project-knowledge:
   id: kit.decision.0096.relay-mention-reviews-through-a-protected-workflow
   owners:
@@ -115,8 +121,10 @@ events whose trigger runs from the default branch.
 
 2. **The admitted triggers move to a workflow that references nothing.** The trigger
    workflow declares `permissions: {}` at both levels and references no secret, so
-   *as committed* it holds no credential, and the relay never depends on anything it
-   says beyond an identifier.
+   *as committed* it holds no credential. It also computes nothing (amended by #356):
+   its one step uploads, through the pinned upload action, the event file GitHub wrote
+   for the run (`github.event_path`). It runs no script and checks out no code, so no
+   rule of admission lives in it.
 
    That is a statement about the committed file, **not a credential boundary**. Both
    admitted events run the trigger from the default branch (rule 13), but anyone who
@@ -124,11 +132,26 @@ events whose trigger runs from the default branch.
    nothing in any one file can prevent it. The credential boundary is set out below,
    under *What the relay does not establish*.
 
-3. **The relay payload is a pointer, never a decision.** The trigger records only the
-   event kind, the id of the comment or issue, and `request_sha256`, a digest of the
-   request text GitHub delivered (rule 4). Admission uses the digest only to refuse,
-   never to admit: one that matches admits exactly what admission re-read, so the
-   payload still decides nothing (CodeRabbit, #340). The privileged job re-reads
+3. **The relay payload is GitHub's delivered event, never a decision.** Amended by
+   #356: the payload was a pointer -- the event kind, the id of the comment or issue,
+   and `request_sha256` -- that the trigger computed in inline code, so the request
+   text's composition and its digest were stated twice, in the trigger and in the
+   adapter. Now the GitHub adapter derives that pointer from the delivered event
+   (`delivered_pointer`). The event kind is inferred from the delivered shape and its
+   action (`created` for a comment, `opened` for an issue), and rule 4 still binds it to
+   the kind GitHub recorded for the run. The ids are taken as delivered. The request
+   text is composed by the same function that composes the re-read, and is digested by
+   the core's `request_sha256`. Admission uses the digest only to refuse, never to
+   admit: one that matches admits exactly what admission re-read, so the payload still
+   decides nothing (CodeRabbit, #340).
+
+   The artifact therefore carries the whole delivered event: the comment or issue, the
+   repository and the sender, as GitHub sent them, retained for one day. On a public
+   repository that is already public. On a private one it is visible to whoever can
+   read the repository's Actions artifacts, the same audience as the item itself. It
+   is read within a bound sized for an event (2 MiB, against about 0.8 MB for two
+   65,536-character bodies at their worst JSON escaping), and the reader's other
+   refusals hold. The privileged job re-reads
    that object from the provider and re-establishes, from the provider's answer alone:
    that it carries the mention, that its author's association is admitted, that the
    Pull Request head is not a fork, and the head and base revisions. This re-validation

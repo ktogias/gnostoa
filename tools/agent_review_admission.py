@@ -163,7 +163,7 @@ def mentions(text: Any, rules: Rules) -> bool:
 
 
 def request_sha256(text: str) -> str:
-    """Return the digest of a request's text, as the trigger records it."""
+    """Return the digest of a request's text: the one digest the relay binds to."""
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
@@ -228,7 +228,7 @@ def _check_requester(request: Request, trigger: Trigger, rules: Rules) -> None:
 def _check_unedited(request: Request, pointer: Mapping[str, Any]) -> None:
     """Refuse a request whose re-read text differs from the text the provider delivered.
 
-    The trigger recorded only identities, so an edit between the event and this re-read
+    A re-read alone records no history, so an edit between the event and this re-read
     changed what was reviewed while every occurrence check still passed. Anyone with
     write access can edit a request. A forged digest can only refuse: one that matches
     admits exactly what was re-read.
@@ -334,8 +334,11 @@ def admit(
 # The relay payload and the request artefacts
 
 
-def read_payload(path: str) -> Any:
+def read_payload(path: str, limit: int = _PAYLOAD_BYTES) -> Any:
     """Read the relay payload as a bounded regular file, refusing anything else.
+
+    ``limit`` is the adapter's: a pointer fits the default, and an adapter that relays
+    the provider's delivered event declares a bound sized for one (#356).
 
     It arrives in an archive extracted inside the job that holds the credentials. The
     pinned extractor is past the zip-slip fix (CVE-2024-42471), but admission does not
@@ -362,9 +365,9 @@ def read_payload(path: str) -> Any:
         os.close(descriptor)
         raise Refused(NOT_A_REGULAR_FILE)
     with os.fdopen(descriptor, "rb") as handle:
-        raw = handle.read(_PAYLOAD_BYTES + 1)
-    if len(raw) > _PAYLOAD_BYTES:
-        raise Refused(f"the relay payload exceeds {_PAYLOAD_BYTES} bytes")
+        raw = handle.read(limit + 1)
+    if len(raw) > limit:
+        raise Refused(f"the relay payload exceeds {limit} bytes")
     return json.loads(raw.decode("utf-8"))
 
 

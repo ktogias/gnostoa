@@ -873,11 +873,6 @@ def _pull_fixture(number: int = 7, *, head_repo: str = "o/r") -> dict[str, Any]:
     }
 
 
-def _request_sha256(text: str) -> str:
-    """The digest the trigger records of the request text GitHub delivered."""
-    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-
-
 _WRAP_NOTE = re.compile(r"\A\[line (\d+) continues on lines (\d+) to (\d+)\]\Z")
 
 
@@ -904,8 +899,50 @@ def _rejoin(lines: list[str]) -> str:
     return "\n".join(out)
 
 
+def _delivered_comment(
+    body: Any, *, comment_id: Any = 1, number: int = 7, action: str = "created"
+) -> dict[str, Any]:
+    """An `issue_comment` event as GitHub writes it to `github.event_path`.
+
+    The trigger relays this file unchanged (Decision 0096 rules 2-3, amended by #356),
+    so it carries what GitHub sends, not what admission needs: the fields the adapter
+    reads, and around them the repository and sender it does not.
+    """
+    return {
+        "action": action,
+        "issue": {"number": number, "title": "the title", "body": "the description"},
+        "comment": {
+            "id": comment_id,
+            "body": body,
+            "user": {"login": "alice"},
+            "author_association": "MEMBER",
+            "issue_url": f"https://api.github.com/repos/o/r/issues/{number}",
+        },
+        "repository": {"full_name": "o/r", "private": False},
+        "sender": {"login": "alice"},
+    }
+
+
+def _delivered_issue(
+    title: Any, body: Any, *, number: int = 9, action: str = "opened"
+) -> dict[str, Any]:
+    """An `issues` event as GitHub writes it to `github.event_path`."""
+    return {
+        "action": action,
+        "issue": {
+            "number": number,
+            "title": title,
+            "body": body,
+            "user": {"login": "alice"},
+            "author_association": "MEMBER",
+        },
+        "repository": {"full_name": "o/r", "private": False},
+        "sender": {"login": "alice"},
+    }
+
+
 def _trigger_fixtures() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
-    """One admissible (payload, responses) pair per admitted trigger."""
+    """One admissible (delivered event, responses) pair per admitted trigger."""
     author = {
         "user": {"login": "alice"},
         "author_association": "MEMBER",
@@ -915,11 +952,7 @@ def _trigger_fixtures() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     }
     return {
         "issue_comment": (
-            {
-                "event_name": "issue_comment",
-                "comment_id": 1,
-                "request_sha256": _request_sha256("@claude review this"),
-            },
+            _delivered_comment("@claude review this"),
             {
                 "repos/o/r/issues/comments/1": {
                     **author,
@@ -930,11 +963,7 @@ def _trigger_fixtures() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
             },
         ),
         "issues": (
-            {
-                "event_name": "issues",
-                "issue_number": 9,
-                "request_sha256": _request_sha256("@claude a question\ndetails"),
-            },
+            _delivered_issue("@claude a question", "details"),
             {
                 "repos/o/r/issues/9": {
                     **author,
@@ -1432,62 +1461,28 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 self.assertTrue(identity["item_number"].isdigit())
 
     def test_what_the_trigger_writes_is_what_admission_admits(self) -> None:
-        """End to end across the relay's two halves. Every other admission test feeds
-        a hand-written payload, and all of them wrote identifiers as integers --
-        while the trigger builds its payload from environment variables, which are
-        strings. So the relay refused every real mention with the suite green. This
-        test runs the trigger's own step, exactly as committed, and admits what it
-        actually wrote.
+        """End to end across the relay's two halves. The trigger used to build its own
+        payload in inline code: identifiers from environment variables, the request
+        text's composition and its digest, all stated a second time beside the
+        adapter's (#356). It now relays the event file GitHub wrote, unchanged, so the
+        artifact *is* the delivered event, and admission derives everything from it.
         """
         trigger = load_yaml(WORKFLOWS / "claude-mention-trigger.yml")
-        env_template = trigger["jobs"]["record"]["steps"][0]["env"]
-        record = _first(
-            step["run"] for step in trigger["jobs"]["record"]["steps"] if "run" in step
-        )
-        events = {
-            "issue_comment": {
-                "EVENT_NAME": "issue_comment",
-                "PULL_NUMBER": "7",
-                "COMMENT_ID": "1",
-            },
-            "issues": {"EVENT_NAME": "issues", "ISSUE_NUMBER": "9"},
-        }
-        self.assertEqual(set(events), set(_trigger_fixtures()))
-        for event, values in events.items():
+        upload = _first(trigger["jobs"]["record"]["steps"])
+        self.assertEqual("${{ github.event_path }}", upload["with"]["path"])
+        for event, (delivered, responses) in _trigger_fixtures().items():
             with self.subTest(event=event), tempfile.TemporaryDirectory() as scratch:
-                # Unset names arrive as empty strings, as GitHub renders a missing field.
-                env = {name: "" for name in env_template}
-                env.update(values)
-                env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
-                # The event as GitHub delivers it: the same object admission re-reads.
-                _, responses = _trigger_fixtures()[event]
-                delivered = (
-                    {"comment": responses["repos/o/r/issues/comments/1"]}
-                    if event == "issue_comment"
-                    else {"issue": responses["repos/o/r/issues/9"]}
-                )
-                event_path = pathlib.Path(scratch) / "event-delivered.json"
-                event_path.write_text(json.dumps(delivered), encoding="utf-8")
-                env["GITHUB_EVENT_PATH"] = str(event_path)
-                # On stdin to an absolute shell, as this file's other step harnesses
-                # do, so the argv is static: the step is the repository's own text.
-                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                    [str(_SH), "-s"],
-                    input=record,
-                    text=True,
-                    cwd=scratch,
-                    env=env,
-                    check=True,
-                    capture_output=True,
-                )
-                payload = json.loads(
-                    (pathlib.Path(scratch) / "relay" / "event.json").read_text("utf-8")
-                )
+                # What the upload carries: GitHub's event file, byte for byte.
+                written = json.dumps(delivered).encode("utf-8")
+                relayed = pathlib.Path(scratch) / "event.json"
+                relayed.write_bytes(written)
+                payload = _load_script(ADMIT_MENTION).read_payload(str(relayed))
+                self.assertEqual(delivered, payload)
                 identity, _ = _admission(responses).admit(
                     "o/r", payload, {**_TRIGGER_FACTS, "event": event}
                 )
                 self.assertTrue(identity["item_number"].isdigit())
-                # What the trigger recorded binds the request: edited before admission
+                # What GitHub delivered binds the request: edited before admission
                 # re-read it, the request is refused. (CodeAnt)
                 edited = json.loads(json.dumps(responses))
                 key = (
@@ -1500,15 +1495,148 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.assertRaisesRegex(module.Refused, "edited after"):
                     module.admit("o/r", payload, {**_TRIGGER_FACTS, "event": event})
 
+    def test_the_trigger_computes_nothing(self) -> None:
+        """Decision 0096 rule 2, amended by #356. The trigger's inline Python chose the
+        request text per event and digested it, so the composition lived in two places
+        and the payload's shape was a contract written in YAML. It now holds one step:
+        the pinned upload of the event file GitHub wrote. No script, no checkout and no
+        environment, so no rule of admission can live in it.
+        """
+        trigger = load_yaml(WORKFLOWS / "claude-mention-trigger.yml")
+        steps = trigger["jobs"]["record"]["steps"]
+        self.assertEqual(1, len(steps), "the trigger does more than relay")
+        upload = steps[0]
+        self.assertNotIn("run", upload)
+        self.assertNotIn("env", upload)
+        self.assertTrue(upload["uses"].startswith("actions/upload-artifact@"))
+        self.assertEqual(
+            {
+                "name": "claude-mention-event",
+                "path": "${{ github.event_path }}",
+                "if-no-files-found": "error",
+                "retention-days": 1,
+            },
+            upload["with"],
+        )
+        raw = (WORKFLOWS / "claude-mention-trigger.yml").read_text(encoding="utf-8")
+        for program in ("python", "sha256", "hashlib", "jq ", "run:"):
+            with self.subTest(program=program):
+                self.assertNotIn(program, raw)
+
+    def test_a_delivered_event_must_be_the_one_the_run_recorded(self) -> None:
+        """The event kind is inferred from what GitHub delivered and bound to what it
+        recorded for the run (Decision 0096 rules 3-4). The trigger admits only a
+        created comment and an opened issue, so a delivered event of any other
+        action, or of neither shape, is refused by its reason rather than read as one.
+        """
+        _, responses = _trigger_fixtures()["issue_comment"]
+        _, issue_responses = _trigger_fixtures()["issues"]
+        module = _admission({**responses, **issue_responses})
+        cases = {
+            "an edited comment": (
+                _delivered_comment("@claude review this", action="edited"),
+                "issue_comment",
+                "not a created comment",
+            ),
+            "an edited issue": (
+                _delivered_issue("@claude a question", "details", action="edited"),
+                "issues",
+                "not an opened issue",
+            ),
+            "a review": (
+                {"action": "submitted", "review": {"id": 1}, "pull_request": {}},
+                "issue_comment",
+                "neither a comment nor an issue",
+            ),
+            # A review comment carries a comment but no issue, and its id is not an
+            # issue comment's: read as one, it would re-read whatever issue comment
+            # holds that id.
+            "a review comment": (
+                {
+                    "action": "created",
+                    "comment": {"id": 1, "body": "@claude review this"},
+                    "pull_request": {"number": 7},
+                },
+                "issue_comment",
+                "neither a comment nor an issue",
+            ),
+            "not an object": ([], "issue_comment", "neither a comment nor an issue"),
+            "an issue relayed for a comment run": (
+                _delivered_issue("@claude a question", "details"),
+                "issue_comment",
+                "the provider recorded",
+            ),
+        }
+        for label, (delivered, recorded, reason) in cases.items():
+            with (
+                self.subTest(case=label),
+                self.assertRaisesRegex(module.Refused, re.escape(reason)),
+            ):
+                module.admit("o/r", delivered, {**_TRIGGER_FACTS, "event": recorded})
+
+    def test_the_delivered_event_is_read_within_an_event_sized_bound(self) -> None:
+        """A pointer fit in 4 KiB; a delivered event carries the comment, the issue,
+        the repository and the sender. GitHub bounds a comment and an issue body at
+        65,536 characters each, about 0.8 MB at their worst JSON escaping, so the
+        event is read within 2 MiB, and past that it is refused, not truncated.
+        """
+        delivered, responses = _trigger_fixtures()["issue_comment"]
+        module = _admission(responses)
+        cases = {
+            "about a megabyte": (900_000, 0),
+            "past the bound": (2 * 1024 * 1024, 1),
+        }
+        for label, (padding, expected) in cases.items():
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as scratch:
+                padded = json.loads(json.dumps(delivered))
+                padded["repository"]["description"] = "x" * padding
+                relayed = pathlib.Path(scratch) / "event.json"
+                relayed.write_text(json.dumps(padded), encoding="utf-8")
+                code, stderr = _run_admission(
+                    module, relayed, pathlib.Path(scratch) / "req"
+                )
+                self.assertEqual(expected, code, stderr)
+                if expected:
+                    self.assertIn("exceeds", stderr)
+
+    def test_the_request_text_and_its_digest_have_one_source(self) -> None:
+        """The composition of an issue's request and the digest of a request were each
+        written twice, in the trigger and beside admission (#356). The digest is the
+        core's alone, and the adapter composes the delivered text with the function it
+        composes the re-read with, so an issue mentioned in its title alone is bound
+        to the same text it is re-read as.
+        """
+        adapter = (ROOT / "tools" / "agent_review_github.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("hashlib", adapter)
+        self.assertIn("def delivered_pointer(", adapter)
+        _, responses = _trigger_fixtures()["issues"]
+        titled = json.loads(json.dumps(responses))
+        titled["repos/o/r/issues/9"].update(
+            {"title": "@claude in the title", "body": ""}
+        )
+        identity, forwarded = _admission(titled).admit(
+            "o/r",
+            _delivered_issue("@claude in the title", ""),
+            {**_TRIGGER_FACTS, "event": "issues"},
+        )
+        self.assertEqual("9", identity["item_number"])
+        self.assertIn("@claude in the title", forwarded["request"])
+
     def test_a_request_edited_after_its_event_is_refused(self) -> None:
         """Admission re-reads the object the trigger named, and the trigger recorded
         only identities, so an edit between the event and that re-read changed the
         request that was reviewed while it still passed every occurrence check
         (CodeAnt). Anyone with write access can edit a comment, and so can an
         installed app holding `issues: write`, so the request answered could differ
-        from the one its trusted author made. The trigger now records a digest of the
-        request text GitHub delivered, and admission refuses a re-read that differs.
-        A forged digest can only refuse: a match admits exactly what was re-read.
+        from the one its trusted author made. Admission digests the request text
+        GitHub delivered (#356: the adapter, from the delivered event) and refuses a
+        re-read that differs. A forged event can only refuse: a match admits exactly
+        what was re-read. A pointer that carries no well-formed digest is refused by
+        the core (tests/test_agent_review_core.py,
+        test_a_pointer_without_a_well_formed_digest_binds_nothing), since the GitHub
+        adapter now always derives one.
         """
         for event, (payload, responses) in _trigger_fixtures().items():
             with self.subTest(event=event):
@@ -1525,12 +1653,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 module = _admission(edited)
                 with self.assertRaisesRegex(module.Refused, "edited after"):
                     module.admit("o/r", payload, trigger)
-                # A payload that recorded no digest binds nothing, and is refused.
-                bare = {k: v for k, v in payload.items() if k != "request_sha256"}
-                module = _admission(responses)
-                for unbound in (bare, {**payload, "request_sha256": "not-a-digest"}):
-                    with self.assertRaisesRegex(module.Refused, "no digest"):
-                        module.admit("o/r", unbound, trigger)
+        # An issue's title is part of its request, so an edit to the title alone is
+        # refused as well.
+        payload, responses = _trigger_fixtures()["issues"]
+        retitled = json.loads(json.dumps(responses))
+        retitled["repos/o/r/issues/9"]["title"] = "@claude a different question"
+        module = _admission(retitled)
+        with self.assertRaisesRegex(module.Refused, "edited after"):
+            module.admit("o/r", payload, {**_TRIGGER_FACTS, "event": "issues"})
 
     def test_the_request_is_forwarded_whole(self) -> None:
         """The reviewer is told `request/request` holds what it was asked, and every
@@ -1683,7 +1813,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "contents": "read",
                 "pull-requests": "read",
                 "issues": "read",
-                # Downloading the relayed event identity from the trigger's run.
+                # Downloading the event the trigger relayed, from its run.
                 "actions": "read",
             },
             job["permissions"],
@@ -2354,7 +2484,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         case-sensitively refused it after the privileged run had started: the
         request silently narrowed and the run went red.
         """
-        payload, responses = _trigger_fixtures()["issue_comment"]
+        _, responses = _trigger_fixtures()["issue_comment"]
         comment = responses["repos/o/r/issues/comments/1"]
         for spelling in ("@Claude review", "@CLAUDE review", "please @claude"):
             with self.subTest(spelling=spelling):
@@ -2362,14 +2492,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 module = _admission(
                     {**responses, "repos/o/r/issues/comments/1": variant}
                 )
-                # The trigger digested this spelling as GitHub delivered it.
-                delivered = {**payload, "request_sha256": _request_sha256(spelling)}
+                # GitHub delivered this spelling, and admission digests it as delivered.
+                delivered = _delivered_comment(spelling)
                 identity, _ = module.admit("o/r", delivered, _TRIGGER_FACTS)
                 self.assertEqual("7", identity["item_number"])
         # And it does not widen past what the filter admits.
         variant = {**comment, "body": "claude, review"}
         module = _admission({**responses, "repos/o/r/issues/comments/1": variant})
-        delivered = {**payload, "request_sha256": _request_sha256("claude, review")}
+        delivered = _delivered_comment("claude, review")
         with self.assertRaisesRegex(module.Refused, "does not carry the mention"):
             module.admit("o/r", delivered, _TRIGGER_FACTS)
 
@@ -2487,7 +2617,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(identifier=bad):
                 module = _admission(responses)
                 with self.assertRaisesRegex(module.Refused, "not a positive integer"):
-                    module.admit("o/r", {**payload, "comment_id": bad}, _TRIGGER_FACTS)
+                    module.admit(
+                        "o/r",
+                        _delivered_comment("@claude", comment_id=bad),
+                        _TRIGGER_FACTS,
+                    )
 
     def test_an_issue_only_request_is_bound_to_the_protected_revision(self) -> None:
         """Decision 0094 rule 13: a request with no Pull Request is answered from the
@@ -2547,7 +2681,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             linked = work / "linked.json"
             linked.symlink_to(real)
             oversize = work / "oversize.json"
-            oversize.write_text(" " * 5000 + json.dumps(payload), encoding="utf-8")
+            # Past the bound sized for a delivered event (#356), by one byte of padding.
+            from tools import agent_review_github as github
+
+            padding = github.DELIVERED_EVENT_BYTES + 1 - len(json.dumps(payload))
+            oversize.write_text(" " * padding + json.dumps(payload), encoding="utf-8")
             directory = work / "directory.json"
             directory.mkdir()
             cases = {
@@ -3085,7 +3223,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.assertRaisesRegex(module.Refused, "not an admitted trigger"):
                     module.admit(
                         "o/r",
-                        {"event_name": event, "pull_number": 7, "comment_id": 1},
+                        _delivered_comment("@claude review this"),
                         {**_TRIGGER_FACTS, "event": event},
                     )
         # And nothing GitHub records only for the review events is passed any more.
