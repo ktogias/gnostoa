@@ -63,7 +63,7 @@ class AgentCredentialRouteTests(unittest.TestCase):
             "EXCESS",
             "DEFICIENT",
             "UNVERIFIED",
-            "TOKEN_KIND_MISMATCH",
+            "CREDENTIAL_KIND_MISMATCH",
             "LIFETIME_EXCEEDED",
         ):
             with self.subTest(verdict=verdict):
@@ -76,8 +76,8 @@ class AgentCredentialRouteTests(unittest.TestCase):
     def test_procedure_step_one_runs_the_check(self) -> None:
         text = RUNBOOK.read_text(encoding="utf-8")
         step = re.search(r"^1\. \*\*Orient.*?(?=^2\. )", text, re.MULTILINE | re.DOTALL)
-        self.assertIsNotNone(step)
-        assert step is not None
+        if step is None:
+            self.fail("the runbook's Procedure has no step 1")
         self.assertIn("agent credential check", _flat(step.group(0)).lower())
 
     def test_guardrail_binds_the_route_tools_declaration_and_tests(self) -> None:
@@ -88,22 +88,47 @@ class AgentCredentialRouteTests(unittest.TestCase):
             (g for g in guardrails if g["id"] == "agent-credential-least-privilege"),
             None,
         )
-        self.assertIsNotNone(guardrail, "no guardrail binds the credential check")
-        assert guardrail is not None
+        if guardrail is None:
+            self.fail("no guardrail binds the credential check")
         for path in (
             "AGENTS.md",
             "knowledge/runbooks/deliver-bounded-self-hosted-slice.md",
             f"knowledge/{DECISION}",
             "policy/agent-credentials.yaml",
+            "schemas/agent-credentials.schema.json",
             "tools/credential_posture.py",
             "tools/credential_posture_github.py",
             "tools/credential_check.py",
+            # The owners it consumes (#365): a change to one reaches this control.
+            "tools/github_rest.py",
+            "tools/agent_review_paths.py",
+            "tools/schema_validation.py",
+            "tools/knowledge_common.py",
         ):
             with self.subTest(implementation=path):
                 self.assertIn(path, guardrail["implementation"])
         tests = " ".join(guardrail["tests"])
-        self.assertIn("tests/test_credential_posture.py", tests)
-        self.assertIn("tests/test_agent_credential_route.py", tests)
+        for test in (
+            "tests/test_credential_posture.py",
+            "tests/test_agent_credential_route.py",
+            "tests/test_github_rest.py",
+            "tests/test_agent_review_paths.py",
+            "tests/test_schema_validation.py",
+            "tests/test_knowledge_common.py",
+        ):
+            with self.subTest(test=test):
+                self.assertIn(test, tests)
+
+    def test_the_decision_and_the_runbook_name_the_same_moment(self) -> None:
+        """The Decision said "at the start of a session", the route "before the first
+        provider write": two operational requirements (CodeAnt on #364). They now say
+        the same."""
+        decision = _flat((ROOT / "knowledge" / DECISION).read_text(encoding="utf-8"))
+        self.assertIn("before the first provider write of a session", decision.lower())
+        self.assertNotIn("at the start of a session", decision.lower())
+        self.assertIn(
+            "before the first provider write of a session", _flat(_section()).lower()
+        )
 
     def test_decision_is_indexed(self) -> None:
         self.assertIn(DECISION, INDEX.read_text(encoding="utf-8"))

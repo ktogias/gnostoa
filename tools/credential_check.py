@@ -2,65 +2,71 @@
 
 Decision 0101 (#362). Composes the GitHub adapter's probes with the provider-neutral
 core, against the least-privilege declaration (``policy/agent-credentials.yaml`` by
-default). It is read-only and non-effecting: every probe is a read, or a write aimed at
-something that cannot exist, or a creation the provider must reject.
+default, read from the working tree). It is read-only and non-effecting: every probe
+is a read, or a write whose body the provider must reject, aimed at a name that does
+not exist; a write the provider accepts stops the check.
 
 Exit status: 0 EXACT; 1 a grant beyond or below the declaration, the wrong kind of
-token, or a lifetime beyond the bound; 3 UNVERIFIED (an excess grant could not be ruled
-out); 2 an input or tool error. The token is read from ``GH_TOKEN`` or ``GITHUB_TOKEN``,
-or else from ``gh auth token``, and is never printed.
+credential, or a lifetime beyond the bound; 3 UNVERIFIED (an excess grant could not be
+ruled out); 2 an input or tool error, or a probe the provider accepted. The token is
+read from ``GH_TOKEN`` or ``GITHUB_TOKEN``, or else from ``gh auth token``, and is
+never printed.
+
+Each responsibility it needs is consumed from its owner (#365): the token, names and
+pages from the shared GitHub client, path confinement from ``agent_review_paths``, the
+declaration's contract from ``schemas/`` through ``schema_validation``.
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
-import os
 import shutil
 import subprocess  # nosec B404 -- `gh auth token`, a fixed argv, no shell
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from tools import agent_review_paths, github_rest
 from tools import credential_posture as posture
 from tools import credential_posture_github as github
-from tools import github_rest
+from tools.knowledge_common import load_yaml, utc_timestamp
+from tools.schema_validation import schema_errors
 
+SCHEMA = "agent-credentials.schema.json"
 _EXIT = {
     "EXACT": 0,
     "EXCESS": 1,
     "DEFICIENT": 1,
-    "TOKEN_KIND_MISMATCH": 1,
+    "CREDENTIAL_KIND_MISMATCH": 1,
     "LIFETIME_EXCEEDED": 1,
     "UNVERIFIED": 3,
 }
 _MAX_REPOSITORY_PAGES = 10
+_REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
 class _ArgumentParser(argparse.ArgumentParser):
+    """An argument error is an input error: exit 2 through ``main``, not argparse."""
+
     def error(self, message: str) -> Any:
+        """Raise ``message`` as a ``PolicyError``."""
         raise posture.PolicyError(message)
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _token() -> str:
     """Return the token the agents' tools use, never printing it."""
-    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
+    value = github_rest.environment_token().strip()
+    if value:
+        return value
     executable = shutil.which("gh")
     if executable is None:
         raise posture.PolicyError(
             "no GH_TOKEN, GITHUB_TOKEN or gh to read a token from"
         )
-    completed = subprocess.run(  # nosec B603 -- fixed argv, resolved executable
+    # The executable is resolved once, so the argv is fixed: no shell, no caller text.
+    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         [executable, "auth", "token"], capture_output=True, text=True, check=False
     )
     value = completed.stdout.strip()
@@ -75,14 +81,22 @@ def _transport(token: str) -> github.Send:
     writers = {"POST": client.post, "PUT": client.put, "PATCH": client.patch}
 
     def send(method: str, path: str, body: Any) -> github.Answer:
-        url = client.url(path)
+        """Send one request; a refusal comes back as an answer, never raised.
+
+        ``path`` is relative to the API root, or a followed page's absolute URL, which
+        must stay on the client's origin.
+        """
         try:
+            if "://" in path:
+                url = github_rest.validate_url(path, client.api_root)
+            else:
+                url = client.url(path)
             if method == "GET":
                 document, headers = client.get(url)
                 return github.Answer(200, headers, "", document)
             document = writers[method](url, body or {})
-            # A non-effecting probe the provider accepted: report it, never hide it.
-            return github.Answer(200, {}, "accepted", document)
+            # A write probe the provider accepted: the adapter stops on it.
+            return github.Answer(201, {}, "accepted", document)
         except github_rest.GitHubError as error:
             headers = {}
             if error.accepted_permissions is not None:
@@ -92,29 +106,45 @@ def _transport(token: str) -> github.Send:
     return send
 
 
-def _owned_repositories(send: github.Send, owner: str) -> tuple[str, ...]:
-    """Return the repositories ``owner`` owns that the token can see."""
-    found: list[str] = []
-    for page in range(1, _MAX_REPOSITORY_PAGES + 1):
-        answer = send(
-            "GET", f"user/repos?affiliation=owner&per_page=100&page={page}", None
-        )
+def _listed_repository(item: Any) -> str:
+    """Return a listed repository's name, or raise if it cannot be probed safely.
+
+    Skipping it would leave a repository the token can see unchecked, where an excess
+    grant could hide, so a name the shared rule refuses stops the check.
+    """
+    name = str(item.get("full_name", "")) if isinstance(item, dict) else ""
+    try:
+        return github_rest.repository_name(name)
+    except github_rest.InvalidRepository as error:
+        raise posture.PolicyError(
+            f"the listing names a repository that cannot be probed safely: {name!r}"
+        ) from error
+
+
+def _visible_repositories(send: github.Send) -> tuple[str, ...]:
+    """Return every repository the token can see, whoever owns it, or raise."""
+
+    def read(url: str) -> tuple[Any, Mapping[str, str]]:
+        """Read one page of the listing, refusing anything but a listed page."""
+        answer = send("GET", url, None)
         if answer.status != 200 or not isinstance(answer.document, list):
             raise posture.PolicyError(f"the repository listing failed: {answer.status}")
-        names = [
-            str(item.get("full_name"))
-            for item in answer.document
-            if isinstance(item, dict)
-            and str(item.get("full_name", "")).startswith(f"{owner}/")
-        ]
-        found += names
-        if len(answer.document) < 100:
-            return tuple(found)
-    raise posture.PolicyError("more owned repositories than the bound allows")
+        return answer.document, answer.headers
+
+    found: list[str] = []
+    for page in github_rest.follow_pages(
+        read,
+        f"{github_rest.API_ROOT}/{_REPOSITORY_LISTING}",
+        max_pages=_MAX_REPOSITORY_PAGES,
+    ):
+        found += map(_listed_repository, page)
+    return tuple(found)
 
 
-def _repository_facts(send: github.Send, repository: str) -> tuple[bool, str | None]:
-    """Return whether ``repository`` is public, and one environment to probe."""
+def _repository_facts(
+    send: github.Send, repository: str
+) -> tuple[bool, str | None, str]:
+    """Return whether ``repository`` is public, one environment to probe, and the login."""
     answer = send("GET", f"repos/{repository}", None)
     if answer.status != 200 or not isinstance(answer.document, dict):
         raise posture.PolicyError(f"the repository {repository} could not be read")
@@ -128,29 +158,47 @@ def _repository_facts(send: github.Send, repository: str) -> tuple[bool, str | N
         for item in environments or []
         if isinstance(item, dict) and item.get("name")
     ]
-    return public, (sorted(names)[0] if names else None)
+    user = send("GET", "user", None)
+    if user.status != 200 or not isinstance(user.document, dict):
+        raise posture.PolicyError("the token's user could not be read")
+    login = github_rest.owner_name(str(user.document.get("login") or ""))
+    return public, (min(names) if names else None), login
+
+
+def _policy(raw: str) -> posture.Policy:
+    """Load the declaration from inside the working tree, against its schema."""
+    path = agent_review_paths.within_root(raw, Path.cwd(), must_exist=True)
+    document = load_yaml(path)
+    errors = schema_errors(document, SCHEMA)
+    if errors:
+        raise posture.PolicyError(
+            f"the policy does not match {SCHEMA}: {'; '.join(errors[:5])}"
+        )
+    return posture.load_policy(document)
 
 
 def _render(verdict: dict[str, Any]) -> str:
-    lines = [f"{'verdict':<22} {verdict['verdict']}"]
-    lines.append(
-        f"{'token kind':<22} {verdict['token_kind']['observed']}"
-        f" (declared {verdict['token_kind']['declared']})"
-    )
-    lifetime = verdict["lifetime"]
-    lines.append(
+    """Return the verdict as text for a person."""
+    kind, lifetime = verdict["credential_kind"], verdict["lifetime"]
+    lines = [
+        f"{'verdict':<22} {verdict['verdict']}",
+        f"{'subject':<22} {verdict['subject']}",
+        f"{'credential kind':<22} {kind['observed']} (declared {kind['declared']})",
         f"{'expires':<22} {lifetime['expires_at']} ({lifetime['remaining_days']} days;"
-        f" at most {lifetime['max_days']})"
-    )
-    for key in (
-        "excess",
-        "deficient",
-        "unverified",
-        "minimum_unverified",
-        "undeclared",
-    ):
-        if verdict[key]:
-            lines.append(f"{key:<22} {', '.join(verdict[key])}")
+        f" at most {lifetime['max_days']})",
+    ]
+    lines += [
+        f"{key:<22} {', '.join(verdict[key])}"
+        for key in (
+            "excess",
+            "deficient",
+            "unverified",
+            "accepted_unverified",
+            "minimum_unverified",
+            "undeclared",
+        )
+        if verdict[key]
+    ]
     lines.append(
         "This check grants nothing; it only reports the token's effective grants."
     )
@@ -165,22 +213,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")
     try:
         args = parser.parse_args(argv)
-        policy = posture.load_policy(
-            yaml.safe_load(Path(args.policy).read_text(encoding="utf-8"))
-        )
+        github_rest.repository_name(args.repository)
+        policy = _policy(args.policy)
+        if args.repository not in policy.repositories:
+            raise posture.PolicyError(
+                f"the declaration does not list {args.repository}; check a repository"
+                " it lists"
+            )
         token = _token()
         send = _transport(token)
-        public, environment = _repository_facts(send, args.repository)
+        public, environment, login = _repository_facts(send, args.repository)
         facts = github.observe(
             send,
             repository=args.repository,
             public=public,
             environment=environment,
-            owned_repositories=_owned_repositories(send, policy.resource_owner),
+            visible_repositories=_visible_repositories(send),
+            login=login,
             token=token,
         )
-        verdict = posture.evaluate(policy, facts, _now())
-    except (posture.PolicyError, OSError, ValueError, yaml.YAMLError) as error:
+        verdict = posture.evaluate(policy, facts, utc_timestamp())
+    except github.ProbeHadEffect as error:
+        print(
+            f"credential-check: {error}; stop and inspect the repository",
+            file=sys.stderr,
+        )
+        return 2
+    except (OSError, ValueError, github_rest.GitHubError) as error:
+        # ValueError covers a malformed subject (InvalidRepository) or declaration
+        # (PolicyError, and the KnowledgeFormatError of a duplicate key or a missing
+        # schema), a path outside the working tree, and a malformed answer.
         print(f"credential-check: {error}", file=sys.stderr)
         return 2
     print(

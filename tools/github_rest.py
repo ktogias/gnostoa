@@ -47,7 +47,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, NamedTuple
 
 API_ROOT = "https://api.github.com"
@@ -153,6 +153,14 @@ class MalformedAnswer(GitHubReadError):
     """A body that could not be decoded, or a `null` one."""
 
 
+class TooManyPages(GitHubReadError):
+    """A paged listing with more pages than its bound: read in part, it is not read."""
+
+
+class InvalidRepository(ValueError):
+    """A repository or owner name that is not safe to place in an API path."""
+
+
 # ---------------------------------------------------------------------------------
 # Origin and credential
 
@@ -202,6 +210,41 @@ def validate_url(url: str, root: str = API_ROOT) -> str:
     ):
         raise OutsideOrigin("GitHub API URL is outside the admitted origin")
     return url
+
+
+# GitHub's owner and repository characters. An owner begins and ends with an
+# alphanumeric; a name may not be `.` or `..`, which a path would read as itself or its
+# parent. The rule is `analyzer_readback`'s, taken as the owner's here (#365).
+_OWNER_SEGMENT = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\Z")
+_REPOSITORY_SEGMENT = re.compile(r"\A[A-Za-z0-9_.-]+\Z")
+
+
+def owner_name(value: str) -> str:
+    """Return ``value`` if it is an owner name safe in an API path, else raise."""
+    if _OWNER_SEGMENT.match(value) is None:
+        raise InvalidRepository("repository owner contains an unsafe path segment")
+    return value
+
+
+def repository_name(value: str) -> str:
+    """Return ``value`` if it is an `owner/name` safe in an API path, else raise.
+
+    Interpolated into `repos/{owner}/{name}/...`, a query, a fragment, a third segment
+    or a `..` would send the request somewhere its caller did not name.
+    """
+    parts = value.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise InvalidRepository("repository must use owner/name form")
+    owner, name = parts
+    owner_name(owner)
+    if name in {".", ".."} or _REPOSITORY_SEGMENT.match(name) is None:
+        raise InvalidRepository("repository name contains an unsafe path segment")
+    return value
+
+
+def environment_token() -> str:
+    """Return the token a job carries: `GH_TOKEN`, else `GITHUB_TOKEN`, else ""."""
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
 
 
 def _checked_token(token: str) -> str:
@@ -704,8 +747,7 @@ class GitHubRestClient:
     @classmethod
     def from_environment(cls, **options: Any) -> GitHubRestClient:
         """Return a client for the job's token, from `GH_TOKEN` or `GITHUB_TOKEN`."""
-        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-        return cls(token, **options)
+        return cls(environment_token(), **options)
 
     def url(self, path: str) -> str:
         """Return the API URL for ``path`` on this client's root."""
@@ -953,6 +995,33 @@ def next_url(headers: Any, root: str = API_ROOT) -> str | None:
     if match is None:
         return None
     return validate_url(match.group(1), root)
+
+
+def follow_pages(
+    read: Callable[[str], tuple[Any, Mapping[str, str]]],
+    url: str,
+    *,
+    max_pages: int,
+    root: str = API_ROOT,
+) -> Iterator[Any]:
+    """Yield each page's document of a paged listing, following its `Link` header.
+
+    ``read`` makes one page's request and returns its document and headers, so any
+    transport can follow a listing through this one loop. Each next link must stay on
+    ``root``'s origin. Past ``max_pages`` it raises ``TooManyPages``: a listing read in
+    part is not read, and its caller must not judge what it did read.
+    """
+    if max_pages < 1:
+        raise ValueError("max_pages must be at least 1")
+    following = url
+    for _ in range(max_pages):
+        document, headers = read(following)
+        yield document
+        named = next_url(headers, root)
+        if named is None:
+            return
+        following = named
+    raise TooManyPages(f"the listing has more than {max_pages} pages")
 
 
 def graphql_errors_indicate_rate_limit(errors: Any) -> bool:

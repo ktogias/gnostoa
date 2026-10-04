@@ -13,25 +13,107 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import re
+import tempfile
 import unittest
 from typing import Any
 from unittest import mock
-
-import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY = ROOT / "policy" / "agent-credentials.yaml"
 NOW = "2026-10-04T12:00:00Z"
 NOT_ACCESSIBLE = "Resource not accessible by personal access token"
+SUBJECT = "ktogias/gnostoa"
+VISIBLE = (SUBJECT, "ktogias/ai-peaf", "ktogias/elsewhere", "someorg/shared")
+# The listing of every repository the token can see, whoever owns it.
+REPOS = "user/repos?per_page=100"
+
+# Every fine-grained personal access token permission GitHub documents for a token
+# whose resource owner is a user, as `X-Accepted-GitHub-Permissions` names them
+# (docs.github.com, "Permissions required for fine-grained personal access tokens",
+# read 2026-10-04): 32 repository permissions and 14 user permissions.
+DOCUMENTED_PERMISSIONS = frozenset(
+    {
+        "actions",
+        "administration",
+        "agent_secrets",
+        "agent_variables",
+        "artifact_metadata",
+        "attestations",
+        "code_quality",
+        "security_events",
+        "codespaces_lifecycle_admin",
+        "codespaces_metadata",
+        "codespaces_secrets",
+        "codespaces",
+        "statuses",
+        "contents",
+        "copilot_agent_settings",
+        "repository_custom_properties",
+        "vulnerability_alerts",
+        "dependabot_secrets",
+        "deployments",
+        "environments",
+        "installation_repositories",
+        "issues",
+        "metadata",
+        "pages",
+        "pull_requests",
+        "repository_creation",
+        "repository_advisories",
+        "secret_scanning_alerts",
+        "secrets",
+        "actions_variables",
+        "repository_hooks",
+        "workflows",
+        "blocking",
+        "codespaces_user_secrets",
+        "emails",
+        "followers",
+        "gpg_keys",
+        "gists",
+        "keys",
+        "interaction_limits",
+        "plan",
+        "private_repository_invitations",
+        "profile",
+        "git_signing_ssh_public_keys",
+        "starring",
+        "watching",
+    }
+)
 
 
-def _policy_document() -> dict[str, Any]:
-    return {
+# The levels for which that page documents no endpoint at all, read the same day. Only
+# these may be NOT_APPLICABLE: a level reachable only through an organization, or
+# answered by a lookup first, is UNMEASURABLE and must be accepted by name.
+UNDOCUMENTED_LEVELS = frozenset(
+    {
+        ("workflows", "read"),
+        ("gists", "read"),
+        ("profile", "read"),
+        ("codespaces_secrets", "read"),
+        ("repository_creation", "read"),
+        ("installation_repositories", "read"),
+        ("repository_custom_properties", "read"),
+        ("code_quality", "write"),
+        ("codespaces_metadata", "write"),
+        ("copilot_agent_settings", "write"),
+        ("plan", "write"),
+        ("metadata", "write"),
+        ("watching", "write"),
+        ("private_repository_invitations", "write"),
+    }
+)
+
+
+def _policy_document(**change: Any) -> dict[str, Any]:
+    document = {
         "id": "test-agent-credentials",
         "version": "1.0",
-        "token_kind": "fine-grained",
+        "credential_kind": "fine-grained",
         "max_lifetime_days": 31,
         "resource_owner": "o",
         "repositories": ["o/r"],
@@ -41,8 +123,11 @@ def _policy_document() -> dict[str, Any]:
             "actions": {"min": "read", "max": "read"},
             "deployments": {"min": "none", "max": "none"},
             "administration": {"min": "none", "max": "none"},
+            "pages": {"min": "none", "max": "none"},
         },
     }
+    document.update(change)
+    return document
 
 
 def _observations(**states: str) -> tuple[Any, ...]:
@@ -63,6 +148,8 @@ def _observations(**states: str) -> tuple[Any, ...]:
         "deployments_read": "PUBLIC",
         "administration_write": "NOT_GRANTED",
         "administration_read": "NOT_GRANTED",
+        "pages_write": "NOT_GRANTED",
+        "pages_read": "PUBLIC",
     }
     base.update(states)
     return tuple(
@@ -75,20 +162,201 @@ def _facts(**overrides: Any) -> Any:
     from tools import credential_posture as posture
 
     fields: dict[str, Any] = {
-        "token_kind": "fine-grained",
+        "subject": "o/r",
+        "credential_kind": "fine-grained",
         "expires_at": "2026-11-03T13:01:27Z",
         "observations": _observations(),
-        "scope": (posture.ScopeObservation("o/other", "NOT_GRANTED", "e"),),
+        "scope": (
+            posture.ScopeObservation("o/r", "GRANTED", "e"),
+            posture.ScopeObservation("o/other", "NOT_GRANTED", "e"),
+        ),
     }
     fields.update(overrides)
     return posture.Facts(**fields)
 
 
-def _verdict(facts: Any) -> dict[str, Any]:
+def _placeholder_token(kind: str, tail: str = "placeholder") -> str:
+    """A token of ``kind``'s shape, built from the adapter's own prefix table: no
+    credential-like literal lives in this file."""
+    from tools import credential_posture_github as github
+
+    prefix = {k: p for p, k in github.CREDENTIAL_PREFIXES}[kind]
+    return prefix + tail
+
+
+def _probe(capability: str) -> Any:
+    """The catalogue's one probe for ``capability``."""
+    from tools import credential_posture_github as github
+
+    probes = [p for p in github.CATALOGUE if p.capability == capability]
+    if len(probes) != 1:
+        raise AssertionError(f"{capability} has {len(probes)} probes")
+    return probes[0]
+
+
+def _verdict(facts: Any, **policy: Any) -> dict[str, Any]:
     """The verdict of ``facts`` against the test policy."""
     from tools import credential_posture as posture
 
-    return posture.evaluate(posture.load_policy(_policy_document()), facts, NOW)
+    return posture.evaluate(posture.load_policy(_policy_document(**policy)), facts, NOW)
+
+
+class _Replay:
+    """A provider that answers each (method, path) from the calibration, and refuses
+    anything else -- so a probe outside the catalogue is a test failure, not a pass."""
+
+    def __init__(
+        self,
+        answers: dict[tuple[str, str], tuple[int, str, str]],
+        listing: dict[str, tuple[list[str], str | None]] | None = None,
+    ) -> None:
+        self.answers = answers
+        # Each page of the repository listing: its names, and the page its `Link`
+        # header names next.
+        self.listing = listing or {REPOS: (list(VISIBLE), None)}
+        self.sent: list[tuple[str, str, Any]] = []
+
+    def __call__(self, method: str, path: str, body: Any) -> Any:
+        from tools import credential_posture_github as github
+        from tools import github_rest
+
+        # A followed page arrives as the absolute URL its `Link` header named.
+        path = path.removeprefix(f"{github_rest.API_ROOT}/")
+        self.sent.append((method, path, body))
+        if (method, path) not in self.answers:
+            raise AssertionError(f"unexpected probe {method} {path}")
+        status, accepted, message = self.answers[(method, path)]
+        headers = {"x-accepted-github-permissions": accepted} if accepted else {}
+        if path == "user":
+            headers["github-authentication-token-expiration"] = (
+                "2026-11-03 13:01:27 UTC"
+            )
+        if path in self.listing:
+            names, following = self.listing[path]
+            if following is not None:
+                headers["link"] = f'<{github_rest.API_ROOT}/{following}>; rel="next"'
+            listed = [{"full_name": name} for name in names]
+            return github.Answer(status, headers, message, listed)
+        document = {
+            "user": {"login": "ktogias"},
+            f"repos/{SUBJECT}": {"private": False},
+            f"repos/{SUBJECT}/environments": {
+                "environments": [{"name": "claude-review"}]
+            },
+        }.get(path)
+        return github.Answer(status, headers, message, document)
+
+
+def _calibrated() -> dict[tuple[str, str], tuple[int, str, str]]:
+    """The answers observed for the agents' token on 2026-10-04 (#362)."""
+    r = f"repos/{SUBJECT}"
+    zero = "0" * 40
+    no = NOT_ACCESSIBLE
+    answers: dict[tuple[str, str], tuple[int, str, str]] = {
+        ("GET", "user"): (200, "", ""),
+        ("GET", r): (200, "metadata=read", ""),
+        ("GET", f"{r}/environments"): (200, "actions=read", ""),
+        ("GET", REPOS): (200, "metadata=read", ""),
+        # Writes the provider must reject whatever the repository holds.
+        ("POST", f"{r}/git/refs"): (
+            422,
+            "contents=write;contents=write,workflows=write",
+            "Object does not exist",
+        ),
+        ("POST", f"{r}/issues"): (422, "issues=write", "Invalid request."),
+        ("POST", f"{r}/pulls"): (422, "pull_requests=write", "Invalid request."),
+        ("POST", f"{r}/statuses/{zero}"): (403, "statuses=write", no),
+        ("POST", f"{r}/actions/workflows/zz-credential-probe.yml/dispatches"): (
+            403,
+            "actions=write",
+            no,
+        ),
+        ("POST", f"{r}/actions/runs/1/pending_deployments"): (
+            403,
+            "deployments=write",
+            no,
+        ),
+        ("PUT", f"{r}/branches/zz-credential-probe/protection"): (
+            403,
+            "administration=write",
+            no,
+        ),
+        ("POST", f"{r}/attestations"): (403, "attestations=write", no),
+        ("POST", f"{r}/security-advisories"): (403, "repository_advisories=write", no),
+        ("POST", f"{r}/pages/deployments"): (403, "pages=write", no),
+        ("POST", "user/repos"): (
+            403,
+            "administration=write;repository_creation=write",
+            no,
+        ),
+        ("POST", "gists"): (403, "gists=write", no),
+        ("PATCH", "user"): (403, "profile=write", no),
+        # Reads that a grant would answer and its absence refuses.
+        ("GET", f"{r}/branches/main/protection"): (403, "administration=read", no),
+        ("GET", f"{r}/actions/secrets"): (403, "secrets=read", no),
+        ("GET", f"{r}/actions/variables"): (403, "actions_variables=read", no),
+        ("GET", f"{r}/hooks"): (403, "repository_hooks=read", no),
+        ("GET", f"{r}/environments/claude-review/secrets"): (
+            403,
+            "environments=read",
+            no,
+        ),
+        ("GET", f"{r}/dependabot/secrets"): (403, "dependabot_secrets=read", no),
+        ("GET", f"{r}/code-scanning/alerts?per_page=1"): (
+            403,
+            "security_events=read",
+            no,
+        ),
+        ("GET", f"{r}/secret-scanning/alerts?per_page=1"): (
+            403,
+            "secret_scanning_alerts=read",
+            no,
+        ),
+        ("GET", f"{r}/dependabot/alerts?per_page=1"): (
+            403,
+            "vulnerability_alerts=read",
+            no,
+        ),
+        ("GET", f"{r}/codespaces?per_page=1"): (403, "codespaces=read", no),
+        ("GET", f"{r}/codespaces/devcontainers?per_page=1"): (
+            403,
+            "codespaces_metadata=read",
+            no,
+        ),
+        ("GET", f"{r}/codespaces/secrets"): (403, "codespaces_secrets=write", no),
+        ("GET", f"{r}/agents/secrets"): (403, "agent_secrets=read", no),
+        ("GET", f"{r}/agents/variables"): (403, "agent_variables=read", no),
+        ("GET", f"{r}/code-quality/findings"): (403, "code_quality=read", no),
+        ("GET", f"{r}/copilot/cloud-agent/configuration"): (
+            403,
+            "copilot_agent_settings=read",
+            no,
+        ),
+        ("GET", f"{r}/invitations"): (
+            403,
+            "administration=read;private_repository_invitations=read",
+            no,
+        ),
+        ("GET", "user/keys"): (403, "keys=read", no),
+        ("GET", "user/ssh_signing_keys"): (403, "git_signing_ssh_public_keys=read", no),
+        ("GET", "user/gpg_keys"): (403, "gpg_keys=read", no),
+        ("GET", "user/emails"): (403, "emails=read", no),
+        ("GET", "user/blocks"): (403, "blocking=read", no),
+        ("GET", "user/codespaces/secrets"): (403, "codespaces_user_secrets=read", no),
+        ("GET", "user/interaction-limits"): (403, "interaction_limits=read", no),
+        ("GET", "user/followers?per_page=1"): (403, "followers=read", no),
+        ("GET", "users/ktogias/settings/billing/usage"): (403, "plan=read", no),
+    }
+    # Scope: the contents-write probe, aimed at every repository the token can see.
+    contents = "contents=write;contents=write,workflows=write"
+    answers[("POST", "repos/ktogias/ai-peaf/git/refs")] = (
+        422,
+        contents,
+        "Object does not exist",
+    )
+    for other in ("ktogias/elsewhere", "someorg/shared"):
+        answers[("POST", f"repos/{other}/git/refs")] = (403, contents, no)
+    return answers
 
 
 def _observe(answers: dict[tuple[str, str], tuple[int, str, str]]) -> Any:
@@ -97,11 +365,12 @@ def _observe(answers: dict[tuple[str, str], tuple[int, str, str]]) -> Any:
 
     return github.observe(
         _Replay(answers),
-        repository="ktogias/gnostoa",
+        repository=SUBJECT,
         public=True,
         environment="claude-review",
-        owned_repositories=("ktogias/gnostoa", "ktogias/ai-peaf", "ktogias/elsewhere"),
-        token="github_pat_" + "x" * 20,
+        visible_repositories=VISIBLE,
+        login="ktogias",
+        token=_placeholder_token("fine-grained"),
     )
 
 
@@ -117,28 +386,45 @@ def _state(facts: Any, capability: str, level: str) -> str:
     return str(states[0])
 
 
-def _run(answers: dict[tuple[str, str], tuple[int, str, str]]) -> tuple[int, str]:
-    """Run the command over ``answers``; the declaration is named, not found by cwd."""
+@contextlib.contextmanager
+def _working_directory(path: pathlib.Path) -> Any:
+    """Run inside ``path``: the declaration is confined to the working tree."""
+    previous = pathlib.Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+def _run(
+    answers: dict[tuple[str, str], tuple[int, str, str]],
+    *arguments: str,
+    policy: str | None = None,
+    cwd: pathlib.Path = ROOT,
+    listing: dict[str, tuple[list[str], str | None]] | None = None,
+) -> tuple[int, str, Any]:
+    """Run the command over ``answers`` from ``cwd``, naming the declaration."""
     from tools import credential_check
 
-    replay = _Replay(answers)
+    replay = _Replay(answers, listing)
     out = io.StringIO()
+    argv = list(arguments) or ["--repository", SUBJECT]
+    argv += ["--policy", policy or str(POLICY), "--json"]
     with (
-        mock.patch.object(credential_check, "_token", return_value="github_pat_SECRET"),
-        mock.patch.object(credential_check, "_transport", return_value=replay),
+        _working_directory(cwd),
         mock.patch.object(
             credential_check,
-            "_owned_repositories",
-            return_value=("ktogias/gnostoa", "ktogias/ai-peaf", "ktogias/elsewhere"),
+            "_token",
+            return_value=_placeholder_token("fine-grained", "SECRETVALUE"),
         ),
-        mock.patch.object(credential_check, "_now", return_value=NOW),
+        mock.patch.object(credential_check, "_transport", return_value=replay),
+        mock.patch.object(credential_check, "utc_timestamp", return_value=NOW),
         contextlib.redirect_stdout(out),
         contextlib.redirect_stderr(out),
     ):
-        code = credential_check.main(
-            ["--repository", "ktogias/gnostoa", "--policy", str(POLICY), "--json"]
-        )
-    return code, out.getvalue()
+        code = credential_check.main(argv)
+    return code, out.getvalue(), replay
 
 
 class CorePolicyTests(unittest.TestCase):
@@ -154,34 +440,37 @@ class CorePolicyTests(unittest.TestCase):
     def test_a_malformed_policy_is_refused(self) -> None:
         from tools import credential_posture as posture
 
-        def broken(**change: Any) -> dict[str, Any]:
-            document = _policy_document()
-            document.update(change)
-            return document
-
         cases = {
-            "an unknown key": broken(extra=1),
-            "a minimum above its maximum": broken(
+            "an unknown key": _policy_document(extra=1),
+            "a minimum above its maximum": _policy_document(
                 capabilities={"contents": {"min": "write", "max": "read"}}
             ),
-            "an unknown level": broken(
+            "an unknown level": _policy_document(
                 capabilities={"contents": {"min": "x", "max": "write"}}
             ),
-            "a lifetime that is not a positive integer": broken(max_lifetime_days=0),
-            "no repositories": broken(repositories=[]),
+            "a lifetime that is not a positive integer": _policy_document(
+                max_lifetime_days=0
+            ),
+            "no repositories": _policy_document(repositories=[]),
+            "an acceptance without a reason": _policy_document(
+                accepted_unmeasurable={"pages:write": ""}
+            ),
+            "an acceptance of no level": _policy_document(
+                accepted_unmeasurable={"pages": "a reason"}
+            ),
         }
         for name, document in cases.items():
             with self.subTest(case=name), self.assertRaises(posture.PolicyError):
                 posture.load_policy(document)
 
-    def test_the_repository_policy_is_valid_and_forbids_deployment_approval(
-        self,
-    ) -> None:
-        """Channel C holds only while the agents' token cannot approve a deployment
-        (#15 5979734602): the committed policy must say so."""
+    def test_the_repository_policy_declares_every_documented_permission(self) -> None:
+        """Exact means exact over every permission the provider can grant: the
+        declaration names each one, and channel C's essence is among them."""
         from tools import credential_posture as posture
+        from tools import knowledge_common
 
-        policy = posture.load_policy(yaml.safe_load(POLICY.read_text(encoding="utf-8")))
+        policy = posture.load_policy(knowledge_common.load_yaml(POLICY))
+        self.assertEqual(DOCUMENTED_PERMISSIONS, set(policy.capabilities))
         for forbidden in ("deployments", "administration", "environments", "secrets"):
             with self.subTest(capability=forbidden):
                 self.assertEqual("none", policy.capabilities[forbidden].maximum)
@@ -239,18 +528,61 @@ class CoreVerdictTests(unittest.TestCase):
         )
         self.assertEqual("UNVERIFIED", verdict["verdict"])
 
+    def test_an_accepted_unmeasurable_level_is_listed_not_failed(self) -> None:
+        """A level no probe can reach can be accepted, with a reason, by the
+        declaration's owner; it is listed, and only an UNMEASURABLE one qualifies --
+        an unanswered probe is never accepted away."""
+        accepted = {"pages:write": "needs administration too, which is refused"}
+        verdict = _verdict(
+            _facts(observations=_observations(pages_write="UNMEASURABLE")),
+            accepted_unmeasurable=accepted,
+        )
+        self.assertEqual("EXACT", verdict["verdict"])
+        self.assertEqual(["pages:write"], verdict["accepted_unverified"])
+        unanswered = _verdict(
+            _facts(observations=_observations(pages_write="UNKNOWN")),
+            accepted_unmeasurable=accepted,
+        )
+        self.assertEqual("UNVERIFIED", unanswered["verdict"])
+
     def test_a_writable_repository_outside_the_scope_is_excess(self) -> None:
         from tools import credential_posture as posture
 
         verdict = _verdict(
-            _facts(scope=(posture.ScopeObservation("o/other", "GRANTED", "e"),))
+            _facts(
+                scope=(
+                    posture.ScopeObservation("o/r", "GRANTED", "e"),
+                    posture.ScopeObservation("o/other", "GRANTED", "e"),
+                )
+            )
         )
         self.assertEqual("EXCESS", verdict["verdict"])
         self.assertIn("scope:o/other", verdict["excess"])
 
-    def test_the_token_kind_and_lifetime_are_part_of_the_verdict(self) -> None:
+    def test_a_subject_outside_the_declaration_is_excess(self) -> None:
+        """Checking a repository the declaration does not name cannot come back
+        EXACT: its own writability is scope excess (gitar, Codex, CodeAnt, CodeRabbit
+        on #364)."""
+        from tools import credential_posture as posture
+
+        verdict = _verdict(
+            _facts(
+                subject="o/undeclared",
+                scope=(
+                    posture.ScopeObservation("o/undeclared", "GRANTED", "e"),
+                    posture.ScopeObservation("o/r", "GRANTED", "e"),
+                ),
+            )
+        )
+        self.assertEqual("EXCESS", verdict["verdict"])
+        self.assertIn("scope:o/undeclared", verdict["excess"])
+
+    def test_the_kind_and_lifetime_are_part_of_the_verdict(self) -> None:
         cases = {
-            "another kind": (_facts(token_kind="oauth"), "TOKEN_KIND_MISMATCH"),
+            "another kind": (
+                _facts(credential_kind="oauth"),
+                "CREDENTIAL_KIND_MISMATCH",
+            ),
             "no expiry": (_facts(expires_at=None), "LIFETIME_EXCEEDED"),
             "a year": (_facts(expires_at="2027-10-04T12:00:00Z"), "LIFETIME_EXCEEDED"),
             "already expired": (
@@ -262,20 +594,6 @@ class CoreVerdictTests(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertEqual(expected, _verdict(facts)["verdict"])
 
-    def test_a_capability_the_policy_does_not_name_is_reported_not_covered(
-        self,
-    ) -> None:
-        """Exact means exact over what was probed: a probe outside the declaration is
-        named, never silently dropped."""
-        from tools import credential_posture as posture
-
-        extra = (
-            *_observations(),
-            posture.Observation("pages", "write", "NOT_GRANTED", "e"),
-        )
-        verdict = _verdict(_facts(observations=extra))
-        self.assertEqual(["pages:write"], verdict["undeclared"])
-
     def test_an_undeclared_grant_is_excess(self) -> None:
         """A grant the declaration did not foresee is held to none: excess, not a
         silent pass."""
@@ -283,129 +601,26 @@ class CoreVerdictTests(unittest.TestCase):
 
         extra = (
             *_observations(),
-            posture.Observation("pages", "write", "GRANTED", "e"),
+            posture.Observation("codespaces", "write", "GRANTED", "e"),
         )
         verdict = _verdict(_facts(observations=extra))
         self.assertEqual("EXCESS", verdict["verdict"])
-        self.assertIn("pages:write", verdict["excess"])
+        self.assertIn("codespaces:write", verdict["excess"])
+        self.assertIn("codespaces:write", verdict["undeclared"])
 
     def test_the_precedence_puts_the_most_dangerous_first(self) -> None:
         verdict = _verdict(
             _facts(
-                token_kind="oauth",
+                credential_kind="oauth",
                 observations=_observations(
                     deployments_write="GRANTED", contents_write="NOT_GRANTED"
                 ),
             )
         )
-        self.assertEqual("TOKEN_KIND_MISMATCH", verdict["verdict"])
+        self.assertEqual("CREDENTIAL_KIND_MISMATCH", verdict["verdict"])
         self.assertEqual(
-            ["TOKEN_KIND_MISMATCH", "EXCESS", "DEFICIENT"], verdict["reasons"]
+            ["CREDENTIAL_KIND_MISMATCH", "EXCESS", "DEFICIENT"], verdict["reasons"]
         )
-
-
-class _Replay:
-    """A provider that answers each (method, path) from the calibration, and refuses
-    anything else -- so a probe outside the catalogue is a test failure, not a pass."""
-
-    def __init__(self, answers: dict[tuple[str, str], tuple[int, str, str]]) -> None:
-        self.answers = answers
-        self.sent: list[tuple[str, str, Any]] = []
-
-    def __call__(self, method: str, path: str, body: Any) -> Any:
-        from tools import credential_posture_github as github
-
-        self.sent.append((method, path, body))
-        if (method, path) not in self.answers:
-            raise AssertionError(f"unexpected probe {method} {path}")
-        status, accepted, message = self.answers[(method, path)]
-        headers = {"x-accepted-github-permissions": accepted} if accepted else {}
-        if path == "user":
-            headers["github-authentication-token-expiration"] = (
-                "2026-11-03 13:01:27 UTC"
-            )
-        document = {
-            "repos/ktogias/gnostoa": {"private": False},
-            "repos/ktogias/gnostoa/environments": {
-                "environments": [{"name": "claude-review"}]
-            },
-        }.get(path)
-        return github.Answer(status, headers, message, document)
-
-
-def _calibrated() -> dict[tuple[str, str], tuple[int, str, str]]:
-    """The answers observed for the agents' token on 2026-10-04 (#362)."""
-    r = "repos/ktogias/gnostoa"
-    zero = "0" * 40
-    no = NOT_ACCESSIBLE
-    return {
-        ("GET", "user"): (200, "", ""),
-        ("GET", f"{r}"): (200, "metadata=read", ""),
-        ("GET", f"{r}/environments"): (200, "actions=read", ""),
-        ("POST", f"{r}/git/refs"): (
-            422,
-            "contents=write;contents=write,workflows=write",
-            "Object does not exist",
-        ),
-        ("POST", f"{r}/issues"): (422, "issues=write", "Invalid request."),
-        ("POST", f"{r}/pulls"): (422, "pull_requests=write", "Validation Failed"),
-        ("POST", f"{r}/statuses/{zero}"): (403, "statuses=write", no),
-        ("POST", f"{r}/actions/workflows/zz-credential-probe.yml/dispatches"): (
-            403,
-            "actions=write",
-            no,
-        ),
-        ("POST", f"{r}/actions/runs/1/pending_deployments"): (
-            403,
-            "deployments=write",
-            no,
-        ),
-        ("PUT", f"{r}/branches/zz-credential-probe/protection"): (
-            403,
-            "administration=write",
-            no,
-        ),
-        ("GET", f"{r}/branches/main/protection"): (403, "administration=read", no),
-        ("GET", f"{r}/actions/secrets"): (403, "secrets=read", no),
-        ("GET", f"{r}/actions/variables"): (403, "actions_variables=read", no),
-        ("GET", f"{r}/hooks"): (403, "repository_hooks=read", no),
-        ("GET", f"{r}/environments/claude-review/secrets"): (
-            403,
-            "environments=read",
-            no,
-        ),
-        ("GET", f"{r}/dependabot/secrets"): (403, "dependabot_secrets=read", no),
-        ("GET", f"{r}/code-scanning/alerts?per_page=1"): (
-            403,
-            "security_events=read",
-            no,
-        ),
-        ("GET", f"{r}/secret-scanning/alerts?per_page=1"): (
-            403,
-            "secret_scanning_alerts=read",
-            no,
-        ),
-        ("GET", f"{r}/dependabot/alerts?per_page=1"): (
-            403,
-            "vulnerability_alerts=read",
-            no,
-        ),
-        ("GET", "user/keys"): (403, "keys=read", no),
-        ("GET", "user/ssh_signing_keys"): (403, "git_signing_ssh_public_keys=read", no),
-        ("GET", "user/gpg_keys"): (403, "gpg_keys=read", no),
-        ("GET", "user/emails"): (403, "emails=read", no),
-        ("POST", "gists"): (403, "gists=write", no),
-        ("POST", "repos/ktogias/ai-peaf/git/refs"): (
-            422,
-            "contents=write;contents=write,workflows=write",
-            "Object does not exist",
-        ),
-        ("POST", "repos/ktogias/elsewhere/git/refs"): (
-            403,
-            "contents=write;contents=write,workflows=write",
-            no,
-        ),
-    }
 
 
 class GitHubAdapterTests(unittest.TestCase):
@@ -413,32 +628,68 @@ class GitHubAdapterTests(unittest.TestCase):
 
     def test_the_calibration_is_read_as_observed(self) -> None:
         facts = _observe(_calibrated())
-        self.assertEqual("fine-grained", facts.token_kind)
+        self.assertEqual(SUBJECT, facts.subject)
+        self.assertEqual("fine-grained", facts.credential_kind)
         self.assertEqual("2026-11-03T13:01:27Z", facts.expires_at)
         for capability, level, state in (
             ("contents", "write", "GRANTED"),
+            ("contents", "read", "PUBLIC"),
             ("issues", "write", "GRANTED"),
             ("pull_requests", "write", "GRANTED"),
             ("workflows", "write", "UNMEASURABLE"),
+            ("workflows", "read", "NOT_APPLICABLE"),
             ("actions", "write", "NOT_GRANTED"),
             ("actions", "read", "PUBLIC"),
-            ("workflows", "read", "NOT_APPLICABLE"),
-            ("deployments", "read", "PUBLIC"),
             ("statuses", "write", "NOT_GRANTED"),
             ("deployments", "write", "NOT_GRANTED"),
+            ("deployments", "read", "PUBLIC"),
             ("administration", "write", "NOT_GRANTED"),
             ("administration", "read", "NOT_GRANTED"),
             ("secrets", "read", "NOT_GRANTED"),
             ("environments", "read", "NOT_GRANTED"),
             ("gists", "write", "NOT_GRANTED"),
+            ("repository_creation", "write", "NOT_GRANTED"),
+            ("private_repository_invitations", "read", "NOT_GRANTED"),
+            ("pages", "write", "NOT_GRANTED"),
+            ("installation_repositories", "write", "UNMEASURABLE"),
+            ("artifact_metadata", "write", "UNMEASURABLE"),
+            ("repository_custom_properties", "read", "NOT_APPLICABLE"),
+            ("watching", "write", "NOT_APPLICABLE"),
             ("git_signing_ssh_public_keys", "read", "NOT_GRANTED"),
         ):
             with self.subTest(capability=capability, level=level):
                 self.assertEqual(state, _state(facts, capability, level))
         self.assertEqual(
-            {"ktogias/ai-peaf": "GRANTED", "ktogias/elsewhere": "NOT_GRANTED"},
+            {
+                SUBJECT: "GRANTED",
+                "ktogias/ai-peaf": "GRANTED",
+                "ktogias/elsewhere": "NOT_GRANTED",
+                "someorg/shared": "NOT_GRANTED",
+            },
             {s.repository: s.state for s in facts.scope},
         )
+
+    def test_every_documented_permission_is_observed_at_both_levels(self) -> None:
+        """Exact covers what the provider can grant, not what was convenient to
+        probe (Codex on #364): every documented permission gets an observation at
+        each level, from a probe or a stated reason."""
+        from tools import credential_posture_github as github
+
+        self.assertEqual(DOCUMENTED_PERMISSIONS, set(github.PERMISSIONS))
+        facts = _observe(_calibrated())
+        observed = {(o.capability, o.level) for o in facts.observations}
+        expected = {
+            (p, level) for p in DOCUMENTED_PERMISSIONS for level in ("read", "write")
+        }
+        self.assertEqual(expected, observed)
+
+    def test_only_an_undocumented_level_is_not_applicable(self) -> None:
+        """NOT_APPLICABLE is moot in the verdict, so it is reserved for a level GitHub
+        documents no endpoint for. One whose endpoints merely sit out of reach is
+        UNMEASURABLE: the declaration's owner has to accept it by name."""
+        from tools import credential_posture_github as github
+
+        self.assertEqual(UNDOCUMENTED_LEVELS, set(github.NOT_APPLICABLE))
 
     def test_a_refusal_or_acceptance_that_names_another_permission_is_unknown(
         self,
@@ -446,7 +697,7 @@ class GitHubAdapterTests(unittest.TestCase):
         """A probe that drifted -- the route now checks something else -- must not be
         read as an answer about the permission it was meant to measure."""
         answers = _calibrated()
-        r = "repos/ktogias/gnostoa"
+        r = f"repos/{SUBJECT}"
         answers[("POST", f"{r}/actions/runs/1/pending_deployments")] = (
             403,
             "actions=write",
@@ -457,9 +708,39 @@ class GitHubAdapterTests(unittest.TestCase):
         self.assertEqual("UNKNOWN", _state(facts, "deployments", "write"))
         self.assertEqual("UNKNOWN", _state(facts, "issues", "write"))
 
+    def test_a_refusal_that_needs_another_grant_too_is_not_a_refusal(self) -> None:
+        """`pages=write,administration=write`: refused because either is missing, so
+        it says nothing about pages alone."""
+        from tools import credential_posture_github as github
+
+        probe = _probe("pages")
+        refused = github.Answer(
+            403,
+            {github.ACCEPTED_HEADER: "pages=write,administration=write"},
+            NOT_ACCESSIBLE,
+        )
+        self.assertEqual("UNMEASURABLE", github.classify(probe, refused)[0])
+        alone = github.Answer(
+            403, {github.ACCEPTED_HEADER: "pages=write"}, NOT_ACCESSIBLE
+        )
+        self.assertEqual("NOT_GRANTED", github.classify(probe, alone)[0])
+
+    def test_a_pass_that_another_grant_alone_explains_is_not_a_grant(self) -> None:
+        """`administration=write;repository_creation=write`: passing proves one of
+        them, not repository creation."""
+        from tools import credential_posture_github as github
+
+        probe = _probe("repository_creation")
+        either = github.Answer(
+            422,
+            {github.ACCEPTED_HEADER: "administration=write;repository_creation=write"},
+            "Validation Failed",
+        )
+        self.assertEqual("UNKNOWN", github.classify(probe, either)[0])
+
     def test_a_provider_failure_is_unknown(self) -> None:
         answers = _calibrated()
-        r = "repos/ktogias/gnostoa"
+        r = f"repos/{SUBJECT}"
         answers[("GET", f"{r}/actions/secrets")] = (502, "secrets=read", "Bad Gateway")
         answers[("GET", f"{r}/hooks")] = (429, "repository_hooks=read", "rate limited")
         facts = _observe(answers)
@@ -470,8 +751,7 @@ class GitHubAdapterTests(unittest.TestCase):
         """A secondary rate limit is also a 403: only GitHub's permission refusal is
         read as "not granted"."""
         answers = _calibrated()
-        r = "repos/ktogias/gnostoa"
-        answers[("POST", f"{r}/actions/runs/1/pending_deployments")] = (
+        answers[("POST", f"repos/{SUBJECT}/actions/runs/1/pending_deployments")] = (
             403,
             "deployments=write",
             "You have exceeded a secondary rate limit",
@@ -483,7 +763,7 @@ class GitHubAdapterTests(unittest.TestCase):
         """A creation probe answered with a lookup failure says nothing about the
         grant: the route may have looked up before checking the permission."""
         answers = _calibrated()
-        answers[("POST", "repos/ktogias/gnostoa/issues")] = (
+        answers[("POST", f"repos/{SUBJECT}/issues")] = (
             404,
             "issues=write",
             "Not Found",
@@ -517,26 +797,41 @@ class GitHubAdapterTests(unittest.TestCase):
                 if 404 in probe.granted_statuses:
                     self.assertTrue(probe.permission_first, probe.id)
 
-    def test_the_token_kind_is_read_from_its_prefix_and_never_kept(self) -> None:
+    def test_a_write_probe_the_provider_accepts_stops_the_check(self) -> None:
+        """Every write probe carries a body the provider must reject. One it accepts
+        broke that assumption and may have changed something: the check stops and
+        says which, rather than reading it as a grant (CodeAnt and Codacy on #364)."""
         from tools import credential_posture_github as github
 
-        for token, kind in (
-            ("github_pat_abc", "fine-grained"),
-            ("ghp_abc", "classic"),
-            ("gho_abc", "oauth"),
-            ("ghs_abc", "app-installation"),
-            ("ghu_abc", "app-user"),
-            ("something", "unknown"),
-        ):
-            with self.subTest(kind=kind):
-                self.assertEqual(kind, github.token_kind(token))
-        facts = _observe(_calibrated())
-        self.assertNotIn("github_pat_", repr(facts))
+        answers = _calibrated()
+        answers[("POST", f"repos/{SUBJECT}/pulls")] = (201, "", "")
+        with self.assertRaisesRegex(github.ProbeHadEffect, "pull-requests-write"):
+            _observe(answers)
 
-    def test_no_probe_can_change_provider_state(self) -> None:
-        """Every write probe aims at something that cannot exist, or carries a body the
-        provider must reject: the answer is the same refusal whether the grant is there
-        or not, and nothing is created, changed or deleted either way."""
+    def test_the_kind_is_read_from_its_prefix_and_never_kept(self) -> None:
+        from tools import credential_posture_github as github
+
+        # Pinned independently of the adapter's table, so a changed table fails here.
+        expected = {
+            "github_pat_": "fine-grained",
+            "ghp_": "classic",
+            "gho_": "oauth",
+            "ghs_": "app-installation",
+            "ghu_": "app-user",
+        }
+        self.assertEqual(expected, dict(github.CREDENTIAL_PREFIXES))
+        for prefix, kind in expected.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(kind, github.credential_kind(prefix + "placeholder"))
+        self.assertEqual("unknown", github.credential_kind("placeholder"))
+        facts = _observe(_calibrated())
+        self.assertNotIn("placeholder", repr(facts))
+
+    def test_every_write_probe_is_rejected_by_construction(self) -> None:
+        """A write probe's safety cannot rest on a name nobody created: a branch,
+        workflow or run that happens to exist would let it act (Codex, CodeAnt on
+        #364). Each carries a body the provider must reject whatever the repository
+        holds, and aims at something that cannot exist as well."""
         from tools import credential_posture_github as github
 
         for probe in github.CATALOGUE:
@@ -544,33 +839,25 @@ class GitHubAdapterTests(unittest.TestCase):
                 self.assertIn(probe.method, {"GET", "POST", "PUT", "PATCH"})
                 if probe.method == "GET":
                     continue
-                path, body = probe.path, json.dumps(probe.body or {})
+                self.assertTrue(probe.rejected_body_reason, probe.id)
+                text = probe.path + json.dumps(probe.body or {})
                 self.assertTrue(
-                    "zz-credential-probe" in path + body
-                    or "0" * 40 in path + body
-                    or "/runs/1/" in path
-                    or probe.rejected_body,
-                    f"{probe.id} does not aim at a non-existent target",
+                    "zz-credential-probe" in text or "0" * 40 in text, probe.id
                 )
-                if probe.rejected_body:
-                    # A creation that the provider must refuse: issues without a title,
-                    # a pull request between branches that do not exist, a gist with
-                    # no files.
-                    self.assertTrue(probe.rejected_body_reason, probe.id)
 
 
 class CredentialCheckCliTests(unittest.TestCase):
     """The command composes the adapter and the core, and never shows the token."""
 
     def test_the_calibrated_token_is_excess_for_its_extra_repository(self) -> None:
-        """The token observed on 2026-10-04 can write ktogias/ai-peaf, which the
+        """The token observed on 2026-10-04 could write ktogias/ai-peaf, which the
         repository policy does not declare: the check says so, exit 1."""
-        code, output = _run(_calibrated())
+        code, output, _ = _run(_calibrated())
         verdict = json.loads(output)
         self.assertEqual(1, code)
         self.assertEqual("EXCESS", verdict["verdict"])
         self.assertEqual(["scope:ktogias/ai-peaf"], verdict["excess"])
-        self.assertNotIn("SECRET", output)
+        self.assertNotIn("SECRETVALUE", output)
 
     def test_without_the_extra_repository_the_token_is_exact(self) -> None:
         answers = _calibrated()
@@ -579,7 +866,7 @@ class CredentialCheckCliTests(unittest.TestCase):
             "contents=write;contents=write,workflows=write",
             NOT_ACCESSIBLE,
         )
-        code, output = _run(answers)
+        code, output, _ = _run(answers)
         self.assertEqual(0, code, output)
         self.assertEqual("EXACT", json.loads(output)["verdict"])
 
@@ -592,17 +879,334 @@ class CredentialCheckCliTests(unittest.TestCase):
             "contents=write;contents=write,workflows=write",
             NOT_ACCESSIBLE,
         )
-        answers[
-            ("POST", "repos/ktogias/gnostoa/actions/runs/1/pending_deployments")
-        ] = (502, "deployments=write", "Bad Gateway")
-        code, output = _run(answers)
+        answers[("POST", f"repos/{SUBJECT}/actions/runs/1/pending_deployments")] = (
+            502,
+            "deployments=write",
+            "Bad Gateway",
+        )
+        code, output, _ = _run(answers)
         self.assertEqual(3, code, output)
         self.assertEqual("UNVERIFIED", json.loads(output)["verdict"])
+
+    def test_a_malformed_repository_is_refused_before_any_request(self) -> None:
+        """The subject is interpolated into request paths: a query, a traversal or a
+        third segment would probe another endpoint (CodeAnt on #364)."""
+        for repository in ("ktogias/gnostoa?x=1", "ktogias/../x", "a/b/c", "nobody"):
+            with self.subTest(repository=repository):
+                code, output, replay = _run(_calibrated(), "--repository", repository)
+                self.assertEqual(2, code, output)
+                self.assertEqual([], replay.sent)
+
+    def test_a_malformed_subject_is_refused_even_when_declared(self) -> None:
+        """The format check does not lean on the declaration: a declaration that lists a
+        name GitHub does not allow still cannot route a probe through it."""
+        malformed = "ktogias/../x"
+        text = POLICY.read_text(encoding="utf-8").replace(
+            "  - ktogias/gnostoa\n", f"  - {malformed}\n", 1
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            declared = pathlib.Path(scratch) / "agent-credentials.yaml"
+            declared.write_text(text, encoding="utf-8")
+            code, output, replay = _run(
+                _calibrated(),
+                "--repository",
+                malformed,
+                policy=str(declared),
+                cwd=pathlib.Path(scratch),
+            )
+        self.assertEqual(2, code, output)
+        self.assertIn("owner/name", output)
+        self.assertEqual([], replay.sent)
+
+    def test_a_subject_the_declaration_does_not_list_is_refused_first(self) -> None:
+        """Checking a repository the declaration does not name is a usage error,
+        refused before any request (Codex, CodeRabbit on #364). The core still counts
+        such a subject's writability as excess, so either guard alone holds."""
+        code, output, replay = _run(_calibrated(), "--repository", "ktogias/ai-peaf")
+        self.assertEqual(2, code, output)
+        self.assertIn("does not list", output)
+        self.assertEqual([], replay.sent)
+
+    def test_a_probe_the_provider_accepts_exits_two(self) -> None:
+        answers = _calibrated()
+        answers[("POST", f"repos/{SUBJECT}/pulls")] = (201, "", "")
+        code, output, _ = _run(answers)
+        self.assertEqual(2, code)
+        self.assertIn("may have had an effect", output)
+
+    def test_a_policy_outside_the_working_tree_is_refused(self) -> None:
+        """The declaration is read from the working tree, never from a path an
+        argument points elsewhere (SonarCloud S8707 on #364)."""
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            tempfile.TemporaryDirectory() as elsewhere,
+        ):
+            outside = pathlib.Path(scratch) / "agent-credentials.yaml"
+            outside.write_text(POLICY.read_text(encoding="utf-8"), encoding="utf-8")
+            code, output, replay = _run(
+                _calibrated(), policy=str(outside), cwd=pathlib.Path(elsewhere)
+            )
+        self.assertEqual(2, code, output)
+        self.assertEqual([], replay.sent)
+
+    def test_a_policy_with_a_duplicate_key_is_refused(self) -> None:
+        """A repeated capability key would silently keep its last value, so a second
+        `deployments: {max: write}` could hide an excess grant (CodeRabbit on #364)."""
+        # Inside `capabilities`, where the repeated key would otherwise win.
+        text = POLICY.read_text(encoding="utf-8").replace(
+            "capabilities:\n",
+            "capabilities:\n  deployments: {min: none, max: write}\n",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            duplicated = pathlib.Path(scratch) / "agent-credentials.yaml"
+            duplicated.write_text(text, encoding="utf-8")
+            code, output, _ = _run(
+                _calibrated(), policy=str(duplicated), cwd=pathlib.Path(scratch)
+            )
+        self.assertEqual(2, code, output)
+        self.assertIn("duplicate", output)
+
+    def test_a_client_that_refuses_the_token_exits_two(self) -> None:
+        """A malformed token is refused by the shared client as it is built: an
+        input error with its exit, not a traceback (CodeAnt on #364)."""
+        from tools import credential_check, github_rest
+
+        out = io.StringIO()
+        with (
+            _working_directory(ROOT),
+            mock.patch.object(credential_check, "_token", return_value="bad token"),
+            mock.patch.object(
+                credential_check,
+                "_transport",
+                side_effect=github_rest.GitHubError("the token is malformed"),
+            ),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+        ):
+            code = credential_check.main(
+                ["--repository", SUBJECT, "--policy", str(POLICY)]
+            )
+        self.assertEqual(2, code)
+        self.assertIn("malformed", out.getvalue())
+
+    def test_scope_covers_every_repository_the_token_can_see(self) -> None:
+        """Not only the resource owner's own: a writable repository of any owner is
+        probed (CodeAnt on #364)."""
+        _, _, replay = _run(_calibrated())
+        probed = {path for method, path, _ in replay.sent if path.endswith("/git/refs")}
+        self.assertEqual({f"repos/{name}/git/refs" for name in VISIBLE}, probed)
+
+    def test_a_listing_of_several_pages_is_followed_by_its_links(self) -> None:
+        answers = _calibrated()
+        second = f"{REPOS}&page=2"
+        answers[("GET", second)] = (200, "metadata=read", "")
+        listing = {
+            REPOS: (list(VISIBLE[:2]), second),
+            second: (list(VISIBLE[2:]), None),
+        }
+        _, _, replay = _run(answers, listing=listing)
+        probed = {path for _, path, _ in replay.sent if path.endswith("/git/refs")}
+        self.assertEqual({f"repos/{name}/git/refs" for name in VISIBLE}, probed)
+
+    def test_a_listed_repository_that_cannot_be_probed_stops_the_check(self) -> None:
+        """Skipping it would leave a repository the token can see unchecked, where an
+        excess grant could hide: the check stops instead (exit 2)."""
+        for listed in (["ktogias/../x"], ["a/b?c=1"], [""]):
+            with self.subTest(listed=listed):
+                code, output, replay = _run(
+                    _calibrated(), listing={REPOS: ([SUBJECT, *listed], None)}
+                )
+                self.assertEqual(2, code, output)
+                self.assertIn("cannot be probed", output)
+                self.assertFalse(
+                    any(path.endswith("/git/refs") for _, path, _ in replay.sent)
+                )
+
+    def test_a_listing_past_its_bound_is_refused_not_read_in_part(self) -> None:
+        """Scope read in part could miss the one writable repository: past the bound
+        the check stops (exit 2) rather than judge what it did read."""
+        answers = _calibrated()
+        listing: dict[str, tuple[list[str], str | None]] = {}
+        page = REPOS
+        for number in range(2, 13):
+            following = f"{REPOS}&page={number}"
+            listing[page] = ([SUBJECT], following)
+            answers[("GET", following)] = (200, "metadata=read", "")
+            page = following
+        listing[page] = ([SUBJECT], None)
+        code, output, replay = _run(answers, listing=listing)
+        self.assertEqual(2, code, output)
+        self.assertIn("pages", output)
+        self.assertFalse(any(path.endswith("/git/refs") for _, path, _ in replay.sent))
+
+    def test_a_declaration_its_schema_refuses_is_refused_with_its_location(
+        self,
+    ) -> None:
+        """The declaration is a public contract (`schemas/agent-credentials.schema.json`):
+        a violation names where it is, before any request."""
+        text = POLICY.read_text(encoding="utf-8").replace(
+            "  contents: {min: write, max: write}",
+            "  contents: {min: write, max: owner}",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            declared = pathlib.Path(scratch) / "agent-credentials.yaml"
+            declared.write_text(text, encoding="utf-8")
+            code, output, replay = _run(
+                _calibrated(), policy=str(declared), cwd=pathlib.Path(scratch)
+            )
+        self.assertEqual(2, code, output)
+        self.assertIn("capabilities.contents.max", output)
+        self.assertEqual([], replay.sent)
 
     def test_the_command_is_registered(self) -> None:
         from tools import cli
 
         self.assertIn("credential-check", cli.COMMANDS)
+
+
+class _Client:
+    """The shared client's surface ``_transport`` uses, recording each request; a
+    request it was not given an answer for fails, like a real refusal."""
+
+    api_root = "https://api.github.com"
+
+    def __init__(self, token: str, **_options: Any) -> None:
+        self.token = token
+        self.requests: list[tuple[str, str]] = []
+
+    def url(self, path: str) -> str:
+        return f"{self.api_root}/{path}"
+
+    def get(self, url: str) -> tuple[Any, dict[str, str]]:
+        from tools import github_rest
+
+        self.requests.append(("GET", url))
+        if url.endswith("/refused"):
+            raise github_rest.GitHubError(
+                NOT_ACCESSIBLE, status=403, accepted_permissions="secrets=read"
+            )
+        return {"ok": True}, {"link": ""}
+
+    def _write(self, method: str, url: str, payload: dict[str, Any]) -> Any:
+        self.requests.append((method, url))
+        return payload
+
+    def post(self, url: str, payload: dict[str, Any]) -> Any:
+        return self._write("POST", url, payload)
+
+    def put(self, url: str, payload: dict[str, Any]) -> Any:
+        return self._write("PUT", url, payload)
+
+    def patch(self, url: str, payload: dict[str, Any]) -> Any:
+        return self._write("PATCH", url, payload)
+
+
+class TransportTests(unittest.TestCase):
+    """``_transport`` turns the shared client's calls into probe answers."""
+
+    def _send(self) -> tuple[Any, _Client]:
+        from tools import credential_check, github_rest
+
+        made: list[_Client] = []
+
+        def build(token: str, **options: Any) -> _Client:
+            made.append(_Client(token, **options))
+            return made[-1]
+
+        with mock.patch.object(github_rest, "GitHubRestClient", side_effect=build):
+            send = credential_check._transport("tok")  # skipcq: PYL-W0212
+        return send, made[0]
+
+    def test_a_path_and_a_followed_page_on_the_origin_are_read(self) -> None:
+        send, client = self._send()
+        self.assertEqual(200, send("GET", "user", None).status)
+        followed = "https://api.github.com/user/repos?per_page=100&page=2"
+        self.assertEqual(200, send("GET", followed, None).status)
+        self.assertEqual(
+            [("GET", "https://api.github.com/user"), ("GET", followed)], client.requests
+        )
+
+    def test_a_followed_page_off_the_origin_is_never_requested(self) -> None:
+        send, client = self._send()
+        answer = send("GET", "https://api.github.com.evil.example/x", None)
+        self.assertNotEqual(200, answer.status)
+        self.assertEqual([], [r for r in client.requests if "evil" in r[1]])
+
+    def test_a_refusal_keeps_its_accepted_permissions(self) -> None:
+        from tools import credential_posture_github as github
+
+        send, _ = self._send()
+        answer = send("GET", "repos/o/r/refused", None)
+        self.assertEqual(403, answer.status)
+        self.assertEqual("secrets=read", answer.headers[github.ACCEPTED_HEADER])
+        self.assertIn(NOT_ACCESSIBLE, answer.message)
+
+    def test_an_accepted_write_is_reported_as_accepted(self) -> None:
+        send, client = self._send()
+        for method in ("POST", "PUT", "PATCH"):
+            with self.subTest(method=method):
+                self.assertEqual(201, send(method, "repos/o/r/x", {"a": 1}).status)
+        self.assertEqual(["POST", "PUT", "PATCH"], [m for m, _ in client.requests])
+
+
+class SharedOwnerReuseTests(unittest.TestCase):
+    """The command consumes the owner of each responsibility it needs (#365).
+
+    Round 2's first draft wrote its own owner/name regex, path confinement, token
+    reader, page loop, timestamp and hand validation beside the owners of each; no
+    analyzer saw it, because none of it was copied text. Until #365 gives the codebase
+    a registry and a checker, this pins the instance.
+    """
+
+    def test_the_command_reuses_every_owner_it_needs(self) -> None:
+        tree = ast.parse(
+            (ROOT / "tools" / "credential_check.py").read_text(encoding="utf-8")
+        )
+        constants = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        imported = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            (node.module or "").split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+        not_again = {
+            "a token read from the environment": bool(
+                {"GH_TOKEN", "GITHUB_TOKEN"} & constants
+            ),
+            "a path confined inline": "is_relative_to" in used,
+            "a name checked by its own regex": "re" in imported,
+            "a page loop of its own": any('rel="next"' in c for c in constants)
+            or "&page=" in "".join(constants),
+            "YAML loaded past the duplicate-key loader": "safe_load" in used,
+            "a clock of its own": "datetime" in imported,
+        }
+        for responsibility, rewritten in not_again.items():
+            with self.subTest(responsibility=responsibility):
+                self.assertFalse(rewritten)
+        for owner in (
+            "environment_token",
+            "owner_name",
+            "repository_name",
+            "follow_pages",
+            "within_root",
+            "schema_errors",
+            "utc_timestamp",
+            "load_yaml",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(owner, used)
 
 
 class SharedClientAcceptedPermissionsTests(unittest.TestCase):
@@ -645,22 +1249,19 @@ class NeutralCoreTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location(
             "gnostoa_neutral_core_guard", ROOT / "tests" / "test_agent_review_core.py"
         )
-        assert spec is not None and spec.loader is not None
+        if spec is None or spec.loader is None:
+            self.fail("the neutral-core guard could not be loaded")
         guard = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(guard)
-        COUPLING = guard.COUPLING
-
         source = (ROOT / "tools" / "credential_posture.py").read_text(encoding="utf-8")
-        self.assertEqual([], COUPLING.findall(source))
+        self.assertEqual([], guard.COUPLING.findall(source))
         imported = {
             node.module.split(".")[0]
-            if isinstance(node, ast.ImportFrom) and node.module
-            else ""
             for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.ImportFrom)
+            if isinstance(node, ast.ImportFrom) and node.module
         }
         self.assertLessEqual(
-            imported, {"__future__", "collections", "datetime", "typing", ""}
+            imported, {"__future__", "collections", "datetime", "typing"}
         )
         self.assertIsNone(
             re.search(r"\bimport (urllib|http|socket|subprocess)\b", source)

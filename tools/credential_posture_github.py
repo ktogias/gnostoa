@@ -1,27 +1,29 @@
 """GitHub's side of the least-privilege check: probes and how their answers are read.
 
 Decision 0101 (#362). GitHub offers no endpoint that lists a fine-grained personal
-access token's permissions, so each permission is measured by a probe, and every probe
-is non-effecting whatever the answer: a read, or a write aimed at something that cannot
-exist, or a creation whose body the provider must reject.
+access token's permissions, so each permission is measured by a probe, and every
+probe is non-effecting by construction: a read, or a write whose body the provider
+must reject whatever the repository holds -- a ref to an object that cannot exist, an
+issue without a title, a deployment review with no valid state -- aimed at a name that
+does not exist as well, so neither safeguard rests on the other.
 
-Two facts calibrated on 2026-10-04 against the agents' token decide how an answer is
-read:
+Calibrated on 2026-10-04 against the agents' token (#362):
 
-- Every answer carries ``X-Accepted-GitHub-Permissions``: the permission sets the route
-  accepts, ``;`` between alternatives and ``,`` within a set. A probe whose route no
-  longer names the permission it was meant to measure has drifted, and says UNKNOWN.
-- A refusal is ``403 Resource not accessible by personal access token``. A grant passes
-  the permission check and the request then fails on its target: 422 for a rejected
-  body, 404 for a missing object. But a lookup can come first: ``PATCH`` on a missing
-  gist answered 404 while ``POST /gists`` answered 403 for the same token. So a 404 is
-  read as a grant only on a route a calibrated refusal showed to check the permission
-  first (``permission_first``); creation routes rejected on their body (422) are read
-  as a grant by construction.
+- Every refusal or rejection carries ``X-Accepted-GitHub-Permissions``: the permission
+  sets the route accepts, ``;`` between alternatives and ``,`` within a set. A probe
+  whose route no longer names its permission has drifted, and says UNKNOWN.
+- A refusal is ``403 Resource not accessible by personal access token``. It says the
+  permission is absent only when one alternative is that permission alone: for
+  ``pages=write,administration=write`` a refusal may be the administration grant's.
+- A grant passes the permission check and the request then fails on its body (422) or,
+  on a route a calibrated refusal showed to check first, on its target (404). A pass
+  proves the permission only when it appears in every alternative. A lookup can come
+  first: ``PATCH`` on a missing gist answered 404 for a token ``POST /gists`` refused.
+- A write probe the provider *accepts* broke the construction above and may have
+  changed something: the check stops (``ProbeHadEffect``) instead of reading it.
 
-Reads of a public repository's data are open to anyone, so their level is PUBLIC, never
-probed. ``workflows`` has no non-effecting probe: changing a workflow file is the only
-thing it grants, so its write level is UNMEASURABLE and listed as such.
+``PERMISSIONS`` is every permission GitHub documents for a token whose resource owner
+is a user; each gets an observation at both levels, from a probe or a stated reason.
 """
 
 from __future__ import annotations
@@ -38,6 +40,10 @@ ACCEPTED_HEADER = "x-accepted-github-permissions"
 EXPIRY_HEADER = "github-authentication-token-expiration"
 _ZERO = "0" * 40
 _PROBE = "zz-credential-probe"
+
+
+class ProbeHadEffect(RuntimeError):
+    """A write probe the provider accepted: it may have changed something."""
 
 
 class Answer(NamedTuple):
@@ -59,14 +65,13 @@ class Probe(NamedTuple):
     capability: str
     level: str
     method: str
-    path: str  # relative to the API root; ``{repository}`` and ``{environment}``
+    path: str  # relative to the API root; ``{repository}``, ``{environment}``, ``{login}``
     body: dict[str, Any] | None
     # The statuses that mean the permission check passed.
     granted_statuses: frozenset[int]
     # A calibrated refusal showed this route checks the permission before the lookup.
     permission_first: bool
-    # A creation the provider must refuse, and why.
-    rejected_body: bool = False
+    # Why the provider must reject this write whatever the repository holds.
     rejected_body_reason: str = ""
 
     @property
@@ -80,12 +85,13 @@ def _write(
     capability: str,
     method: str,
     path: str,
-    body: dict[str, Any] | None,
-    granted: tuple[int, ...],
+    body: dict[str, Any],
+    reason: str,
+    granted: tuple[int, ...] = (422,),
     *,
     permission_first: bool = True,
-    rejected_body_reason: str = "",
 ) -> Probe:
+    """Return a write probe whose body ``reason`` says the provider must reject."""
     return Probe(
         id=pid,
         capability=capability,
@@ -95,16 +101,16 @@ def _write(
         body=body,
         granted_statuses=frozenset(granted),
         permission_first=permission_first,
-        rejected_body=bool(rejected_body_reason),
-        rejected_body_reason=rejected_body_reason,
+        rejected_body_reason=reason,
     )
 
 
-def _read(pid: str, capability: str, path: str) -> Probe:
+def _read(pid: str, capability: str, path: str, level: str = "read") -> Probe:
+    """Return a read probe; a calibrated refusal showed its route checks first."""
     return Probe(
         id=pid,
         capability=capability,
-        level="read",
+        level=level,
         method="GET",
         path=path,
         body=None,
@@ -114,8 +120,59 @@ def _read(pid: str, capability: str, path: str) -> Probe:
 
 
 _REPO = "repos/{repository}"
-# Calibrated on 2026-10-04 (#362): each refusal below was observed as a 403 for a token
-# lacking the permission, so each route checks the permission first.
+# The 32 repository and 14 user permissions GitHub documents (docs.github.com,
+# "Permissions required for fine-grained personal access tokens", read 2026-10-04), by
+# the names `X-Accepted-GitHub-Permissions` gives them.
+PERMISSIONS = (
+    "actions",
+    "administration",
+    "agent_secrets",
+    "agent_variables",
+    "artifact_metadata",
+    "attestations",
+    "code_quality",
+    "security_events",
+    "codespaces_lifecycle_admin",
+    "codespaces_metadata",
+    "codespaces_secrets",
+    "codespaces",
+    "statuses",
+    "contents",
+    "copilot_agent_settings",
+    "repository_custom_properties",
+    "vulnerability_alerts",
+    "dependabot_secrets",
+    "deployments",
+    "environments",
+    "installation_repositories",
+    "issues",
+    "metadata",
+    "pages",
+    "pull_requests",
+    "repository_creation",
+    "repository_advisories",
+    "secret_scanning_alerts",
+    "secrets",
+    "actions_variables",
+    "repository_hooks",
+    "workflows",
+    "blocking",
+    "codespaces_user_secrets",
+    "emails",
+    "followers",
+    "gpg_keys",
+    "gists",
+    "keys",
+    "interaction_limits",
+    "plan",
+    "private_repository_invitations",
+    "profile",
+    "git_signing_ssh_public_keys",
+    "starring",
+    "watching",
+)
+# Each refusal below was observed as a 403 for a token lacking the permission, with
+# the rejected body shown, so each route checks the permission first.
 CATALOGUE: tuple[Probe, ...] = (
     _write(
         "contents-write",
@@ -123,7 +180,7 @@ CATALOGUE: tuple[Probe, ...] = (
         "POST",
         f"{_REPO}/git/refs",
         {"ref": f"refs/heads/{_PROBE}", "sha": _ZERO},
-        (422,),
+        "a ref to an object that cannot exist",
         permission_first=False,
     ),
     _write(
@@ -132,34 +189,33 @@ CATALOGUE: tuple[Probe, ...] = (
         "POST",
         f"{_REPO}/issues",
         {"body": _PROBE},
-        (422,),
+        "an issue without a title",
         permission_first=False,
-        rejected_body_reason="an issue without a title",
     ),
     _write(
         "pull-requests-write",
         "pull_requests",
         "POST",
         f"{_REPO}/pulls",
-        {"title": _PROBE, "head": f"{_PROBE}-none", "base": f"{_PROBE}-none"},
-        (422,),
+        {"title": _PROBE},
+        "a pull request without a head or a base",
         permission_first=False,
-        rejected_body_reason="a pull request between branches that do not exist",
     ),
     _write(
         "statuses-write",
         "statuses",
         "POST",
         f"{_REPO}/statuses/{_ZERO}",
-        {"state": "pending", "context": _PROBE},
-        (422,),
+        {"state": _PROBE, "context": _PROBE},
+        "a status with no valid state, for a commit that cannot exist",
     ),
     _write(
         "actions-write",
         "actions",
         "POST",
         f"{_REPO}/actions/workflows/{_PROBE}.yml/dispatches",
-        {"ref": f"{_PROBE}-none"},
+        {"ref": f"{_PROBE}-none", "inputs": _PROBE},
+        "a dispatch whose inputs are not an object",
         (404, 422),
     ),
     _write(
@@ -167,7 +223,8 @@ CATALOGUE: tuple[Probe, ...] = (
         "deployments",
         "POST",
         f"{_REPO}/actions/runs/1/pending_deployments",
-        {"environment_ids": [1], "state": "rejected", "comment": _PROBE},
+        {"environment_ids": _PROBE, "state": _PROBE, "comment": _PROBE},
+        "a deployment review with no valid state or environment list",
         (404, 422),
     ),
     _write(
@@ -176,12 +233,46 @@ CATALOGUE: tuple[Probe, ...] = (
         "PUT",
         f"{_REPO}/branches/{_PROBE}/protection",
         {
-            "required_status_checks": None,
-            "enforce_admins": False,
-            "required_pull_request_reviews": None,
-            "restrictions": None,
+            "required_status_checks": _PROBE,
+            "enforce_admins": _PROBE,
+            "required_pull_request_reviews": _PROBE,
+            "restrictions": _PROBE,
         },
+        "a protection whose every field has the wrong type",
         (404, 422),
+    ),
+    _write(
+        "attestations-write",
+        "attestations",
+        "POST",
+        f"{_REPO}/attestations",
+        {"bundle": _PROBE},
+        "an attestation whose bundle is not a Sigstore bundle",
+    ),
+    _write(
+        "advisories-write",
+        "repository_advisories",
+        "POST",
+        f"{_REPO}/security-advisories",
+        {_PROBE: True},
+        "an advisory with none of its required fields",
+    ),
+    _write(
+        "pages-write",
+        "pages",
+        "POST",
+        f"{_REPO}/pages/deployments",
+        {"artifact_id": _PROBE, "pages_build_version": 0, "oidc_token": 0},
+        "a Pages deployment whose artifact, build version and token have the wrong type",
+        (404, 422),
+    ),
+    _write(
+        "repository-creation-write",
+        "repository_creation",
+        "POST",
+        "user/repos",
+        {"name": f"{_PROBE} !/"},
+        "a repository name GitHub does not allow",
     ),
     _write(
         "gists-write",
@@ -189,9 +280,16 @@ CATALOGUE: tuple[Probe, ...] = (
         "POST",
         "gists",
         {"files": {}, "public": False, "description": _PROBE},
-        (422,),
+        "a gist with no files",
         permission_first=False,
-        rejected_body_reason="a gist with no files",
+    ),
+    _write(
+        "profile-write",
+        "profile",
+        "PATCH",
+        "user",
+        {"hireable": _PROBE},
+        "a profile field with the wrong type",
     ),
     _read("administration-read", "administration", f"{_REPO}/branches/main/protection"),
     _read("secrets-read", "secrets", f"{_REPO}/actions/secrets"),
@@ -220,12 +318,47 @@ CATALOGUE: tuple[Probe, ...] = (
         "vulnerability_alerts",
         f"{_REPO}/dependabot/alerts?per_page=1",
     ),
+    _read("codespaces-read", "codespaces", f"{_REPO}/codespaces?per_page=1"),
+    _read(
+        "codespaces-metadata-read",
+        "codespaces_metadata",
+        f"{_REPO}/codespaces/devcontainers?per_page=1",
+    ),
+    # Listing a repository's codespaces secrets needs the write level.
+    _read(
+        "codespaces-secrets",
+        "codespaces_secrets",
+        f"{_REPO}/codespaces/secrets",
+        "write",
+    ),
+    _read("agent-secrets-read", "agent_secrets", f"{_REPO}/agents/secrets"),
+    _read("agent-variables-read", "agent_variables", f"{_REPO}/agents/variables"),
+    _read("code-quality-read", "code_quality", f"{_REPO}/code-quality/findings"),
+    _read(
+        "copilot-agent-settings-read",
+        "copilot_agent_settings",
+        f"{_REPO}/copilot/cloud-agent/configuration",
+    ),
+    _read(
+        "invitations-read",
+        "private_repository_invitations",
+        f"{_REPO}/invitations",
+    ),
     _read("ssh-keys-read", "keys", "user/keys"),
     _read("signing-keys-read", "git_signing_ssh_public_keys", "user/ssh_signing_keys"),
     _read("gpg-keys-read", "gpg_keys", "user/gpg_keys"),
     _read("emails-read", "emails", "user/emails"),
+    _read("blocks-read", "blocking", "user/blocks"),
+    _read(
+        "user-codespaces-secrets-read",
+        "codespaces_user_secrets",
+        "user/codespaces/secrets",
+    ),
+    _read("interaction-limits-read", "interaction_limits", "user/interaction-limits"),
+    _read("followers-read", "followers", "user/followers?per_page=1"),
+    _read("plan-read", "plan", "users/{login}/settings/billing/usage"),
 )
-# A public repository's data is readable by anyone, so these reads are PUBLIC.
+# A public repository's data, and a user's public lists, are readable by anyone.
 PUBLIC_READS = (
     "contents",
     "issues",
@@ -233,14 +366,52 @@ PUBLIC_READS = (
     "actions",
     "statuses",
     "deployments",
+    "attestations",
+    "repository_advisories",
+    "pages",
+    "metadata",
+    "starring",
+    "watching",
 )
-# Levels GitHub does not define for the capability.
-NOT_APPLICABLE = (("workflows", "read"), ("gists", "read"))
-# Levels no non-effecting probe can reach.
-UNMEASURABLE = (("workflows", "write"),)
+# Levels GitHub documents no endpoint for (the permissions page, read 2026-10-04): a
+# grant there reaches nothing. Only these are moot; a level whose endpoints are merely
+# out of reach is UNMEASURABLE, for the declaration's owner to accept by name.
+_NO_ENDPOINT = "GitHub documents no endpoint at this level"
+NOT_APPLICABLE: dict[tuple[str, str], str] = {
+    level: _NO_ENDPOINT
+    for level in (
+        ("workflows", "read"),
+        ("gists", "read"),
+        ("profile", "read"),
+        ("codespaces_secrets", "read"),
+        ("repository_creation", "read"),
+        ("installation_repositories", "read"),
+        ("repository_custom_properties", "read"),
+        ("code_quality", "write"),
+        ("codespaces_metadata", "write"),
+        ("copilot_agent_settings", "write"),
+        ("plan", "write"),
+        ("metadata", "write"),
+        ("watching", "write"),
+        ("private_repository_invitations", "write"),
+    )
+}
+_LOOKUP_FIRST = "its routes look up their target before the permission"
+_ORGANIZATION = "every endpoint is an organization's"
+# Levels no non-effecting probe can reach, and why.
+UNMEASURABLE: dict[tuple[str, str], str] = {
+    ("workflows", "write"): "it is checked only on a change to a workflow file",
+    ("codespaces_lifecycle_admin", "read"): _LOOKUP_FIRST,
+    ("codespaces_lifecycle_admin", "write"): _LOOKUP_FIRST,
+    ("installation_repositories", "write"): _LOOKUP_FIRST,
+    ("starring", "write"): _LOOKUP_FIRST,
+    ("repository_custom_properties", "write"): _LOOKUP_FIRST,
+    ("artifact_metadata", "read"): _ORGANIZATION,
+    ("artifact_metadata", "write"): _ORGANIZATION,
+}
 # How a write to another repository is probed: the contents-write probe, aimed there.
 _SCOPE_PROBE = CATALOGUE[0]
-_KINDS = (
+CREDENTIAL_PREFIXES = (
     ("github_pat_", "fine-grained"),
     ("ghp_", "classic"),
     ("gho_", "oauth"),
@@ -250,18 +421,19 @@ _KINDS = (
 _EXPIRY = re.compile(r"\A(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC\Z")
 
 
-def token_kind(token: str) -> str:
+def credential_kind(token: str) -> str:
     """Return the kind of ``token`` from its prefix alone."""
-    for prefix, kind in _KINDS:
+    for prefix, kind in CREDENTIAL_PREFIXES:
         if token.startswith(prefix):
             return kind
     return "unknown"
 
 
-def _accepted_sets(headers: Mapping[str, str]) -> list[set[str]]:
+def _accepted_sets(headers: Mapping[str, str]) -> list[frozenset[str]]:
+    """Return the accepted permission sets: ``;`` between, ``,`` within."""
     raw = str(headers.get(ACCEPTED_HEADER, "") or "")
     return [
-        {part.strip() for part in alternative.split(",") if part.strip()}
+        frozenset(part.strip() for part in alternative.split(",") if part.strip())
         for alternative in raw.split(";")
         if alternative.strip()
     ]
@@ -269,27 +441,60 @@ def _accepted_sets(headers: Mapping[str, str]) -> list[set[str]]:
 
 def classify(probe: Probe, answer: Answer) -> tuple[str, str]:
     """Return the state ``answer`` establishes for ``probe``, and the evidence."""
-    named = any(
-        probe.accepted in alternative for alternative in _accepted_sets(answer.headers)
-    )
     evidence = f"{probe.method} {probe.id}: {answer.status}"
-    if not named:
+    if (
+        probe.method != "GET"
+        and answer.status is not None
+        and 200 <= answer.status < 300
+    ):
+        raise ProbeHadEffect(
+            f"the provider accepted the write probe {probe.id}, which it must reject;"
+            " it may have had an effect"
+        )
+    alternatives = _accepted_sets(answer.headers)
+    if not any(probe.accepted in alternative for alternative in alternatives):
         return "UNKNOWN", f"{evidence}; the route does not name {probe.accepted}"
     if answer.status == 403 and NOT_ACCESSIBLE in answer.message:
-        return "NOT_GRANTED", evidence
+        if frozenset({probe.accepted}) in alternatives:
+            return "NOT_GRANTED", evidence
+        return "UNMEASURABLE", f"{evidence}; refused, but it needs another grant too"
     if answer.status in probe.granted_statuses:
         if answer.status == 404 and not probe.permission_first:
             return "UNKNOWN", f"{evidence}; a lookup may precede the permission check"
-        return "GRANTED", evidence
+        if all(probe.accepted in alternative for alternative in alternatives):
+            return "GRANTED", evidence
+        return "UNKNOWN", f"{evidence}; another grant alone would also pass"
     return "UNKNOWN", evidence
 
 
 def _expiry(headers: Mapping[str, str]) -> str | None:
+    """Return the token's expiry as ISO 8601, or None if it has none."""
     match = _EXPIRY.match(str(headers.get(EXPIRY_HEADER, "") or ""))
     if not match:
         return None
     moment = datetime.datetime.fromisoformat(f"{match.group(1)}T{match.group(2)}+00:00")
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _unprobed(
+    capability: str, level: str, public: bool, probed: set[str]
+) -> Observation:
+    """Return the observation for a level no probe in the catalogue measures."""
+    if level == "read" and capability in PUBLIC_READS:
+        state = "PUBLIC" if public else "UNMEASURABLE"
+        return Observation(capability, level, state, "repository or account visibility")
+    if (capability, level) in NOT_APPLICABLE:
+        return Observation(
+            capability, level, "NOT_APPLICABLE", NOT_APPLICABLE[(capability, level)]
+        )
+    if (capability, level) in UNMEASURABLE:
+        return Observation(
+            capability, level, "UNMEASURABLE", UNMEASURABLE[(capability, level)]
+        )
+    if level == "write" and capability in probed:
+        # A refused read rules a write out: the core reads it so.
+        return Observation(capability, level, "UNMEASURABLE", "implied by the read")
+    return Observation(capability, level, "UNMEASURABLE", "no probe")
 
 
 def observe(
@@ -298,7 +503,8 @@ def observe(
     repository: str,
     public: bool,
     environment: str | None,
-    owned_repositories: tuple[str, ...],
+    visible_repositories: tuple[str, ...],
+    login: str,
     token: str,
 ) -> Facts:
     """Probe the token ``send`` carries and return what the answers establish.
@@ -307,37 +513,31 @@ def observe(
     """
     user = send("GET", "user", None)
     observations: list[Observation] = []
+    measured: set[tuple[str, str]] = set()
+    read_probed: set[str] = set()
     for probe in CATALOGUE:
         if "{environment}" in probe.path and environment is None:
-            observations.append(
-                Observation(
-                    probe.capability, probe.level, "UNMEASURABLE", "no environment"
-                )
-            )
             continue
-        path = probe.path.format(repository=repository, environment=environment)
+        path = probe.path.format(
+            repository=repository, environment=environment, login=login
+        )
         state, evidence = classify(probe, send(probe.method, path, probe.body))
         observations.append(Observation(probe.capability, probe.level, state, evidence))
-    for capability in PUBLIC_READS:
-        state = "PUBLIC" if public else "UNMEASURABLE"
-        observations.append(
-            Observation(capability, "read", state, "repository visibility")
-        )
-    for capability, level in NOT_APPLICABLE:
-        observations.append(
-            Observation(capability, level, "NOT_APPLICABLE", "not defined")
-        )
-    for capability, level in UNMEASURABLE:
-        observations.append(Observation(capability, level, "UNMEASURABLE", "no probe"))
+        measured.add((probe.capability, probe.level))
+        if probe.level == "read":
+            read_probed.add(probe.capability)
+    for capability in PERMISSIONS:
+        for level in ("read", "write"):
+            if (capability, level) not in measured:
+                observations.append(_unprobed(capability, level, public, read_probed))
     scope = []
-    for other in owned_repositories:
-        if other == repository:
-            continue
+    for other in dict.fromkeys((repository, *visible_repositories)):
         path = _SCOPE_PROBE.path.format(repository=other)
         state, evidence = classify(_SCOPE_PROBE, send("POST", path, _SCOPE_PROBE.body))
         scope.append(ScopeObservation(other, state, evidence))
     return Facts(
-        token_kind=token_kind(token),
+        subject=repository,
+        credential_kind=credential_kind(token),
         expires_at=_expiry(user.headers),
         observations=tuple(observations),
         scope=tuple(scope),

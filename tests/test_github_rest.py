@@ -690,6 +690,125 @@ class SharedGitHubClientTests(unittest.TestCase):
             github_rest.next_url({"link": '<https://evil.example/x>; rel="next"'}, root)
 
 
+# The cases a repository segment must survive before it reaches an API path. The
+# accepted ones are GitHub's own shapes, `.github` included; each refused one would
+# route a request somewhere its caller did not name.
+REPOSITORY_ACCEPTED = ("ktogias/gnostoa", "a/b.c", "a-b/x_y.z", "A1/.github", "o/r--x")
+REPOSITORY_REFUSED = (
+    "ktogias/..",
+    "ktogias/.",
+    "../x",
+    "-a/b",
+    "a-/b",
+    "a/b/c",
+    "a",
+    "a/",
+    "/b",
+    "a/b?x=1",
+    "a/b#f",
+    "a b/c",
+    "a/b%2e",
+    "",
+)
+
+
+class SharedResponsibilityTests(unittest.TestCase):
+    """Responsibilities other modules re-implemented now have their owner here (#365)."""
+
+    def test_the_environment_token_is_gh_token_then_github_token(self) -> None:
+        cases = (
+            ({"GH_TOKEN": "a", "GITHUB_TOKEN": "b"}, "a"),
+            ({"GITHUB_TOKEN": "b"}, "b"),
+            ({}, ""),
+        )
+        for environment, expected in cases:
+            with (
+                self.subTest(environment=sorted(environment)),
+                mock.patch.dict("os.environ", environment, clear=True),
+            ):
+                self.assertEqual(expected, github_rest.environment_token())
+
+    def test_the_client_from_the_environment_reads_through_the_owner(self) -> None:
+        with mock.patch.object(
+            github_rest, "environment_token", return_value="from-the-owner"
+        ):
+            client = github_rest.GitHubRestClient.from_environment()
+        self.assertEqual("from-the-owner", client._token)  # skipcq: PYL-W0212
+
+    def test_a_repository_segment_is_safe_to_place_in_an_api_path(self) -> None:
+        for name in REPOSITORY_ACCEPTED:
+            with self.subTest(accepted=name):
+                self.assertEqual(name, github_rest.repository_name(name))
+        for name in REPOSITORY_REFUSED:
+            with (
+                self.subTest(refused=name),
+                self.assertRaises(github_rest.InvalidRepository),
+            ):
+                github_rest.repository_name(name)
+        self.assertTrue(issubclass(github_rest.InvalidRepository, ValueError))
+
+    def test_an_owner_segment_is_the_repository_rule_s_first_half(self) -> None:
+        """A login reaches an API path too (`users/{login}/...`): one rule for both."""
+        for owner in ("ktogias", "A1", "o-r", "x"):
+            with self.subTest(accepted=owner):
+                self.assertEqual(owner, github_rest.owner_name(owner))
+        for owner in ("", "-a", "a-", "a.b", "a_b", "a/b", "..", "a b"):
+            with (
+                self.subTest(refused=owner),
+                self.assertRaises(github_rest.InvalidRepository),
+            ):
+                github_rest.owner_name(owner)
+
+    def test_the_rule_agrees_with_the_analyzer_contract_it_was_taken_from(self) -> None:
+        """One rule, so #365 can converge `analyzer_readback` onto it unchanged."""
+        from tools import analyzer_readback
+
+        for name in REPOSITORY_ACCEPTED + REPOSITORY_REFUSED:
+            with self.subTest(name=name):
+                try:
+                    analyzer_readback.normalize_repository(name)
+                    analyzer = True
+                except analyzer_readback.AnalyzerReadbackError:
+                    analyzer = False
+                try:
+                    github_rest.repository_name(name)
+                    shared = True
+                except github_rest.InvalidRepository:
+                    shared = False
+                self.assertEqual(analyzer, shared)
+
+    def test_pages_are_followed_by_their_links_within_a_bound(self) -> None:
+        root = github_rest.API_ROOT
+        listing = {
+            f"{root}/x?per_page=2": (
+                [1, 2],
+                {"link": f'<{root}/x?page=2>; rel="next"'},
+            ),
+            f"{root}/x?page=2": ([3], {}),
+        }
+        read: list[str] = []
+
+        def page(url: str) -> tuple[Any, dict[str, str]]:
+            read.append(url)
+            return listing[url]
+
+        documents = list(
+            github_rest.follow_pages(page, f"{root}/x?per_page=2", max_pages=2)
+        )
+        self.assertEqual([[1, 2], [3]], documents)
+        self.assertEqual(list(listing), read)
+        # A listing read in part is not read: past its bound it is refused.
+        with self.assertRaises(github_rest.TooManyPages):
+            list(github_rest.follow_pages(page, f"{root}/x?per_page=2", max_pages=1))
+        self.assertTrue(
+            issubclass(github_rest.TooManyPages, github_rest.GitHubReadError)
+        )
+        # A next link off the origin is refused before it is read.
+        listing[f"{root}/y"] = ([0], {"link": '<https://evil.example/x>; rel="next"'})
+        with self.assertRaises(github_rest.GitHubReadError):
+            list(github_rest.follow_pages(page, f"{root}/y", max_pages=3))
+
+
 def _names_the_client(node: ast.AST) -> bool:
     """Return whether an import statement imports the shared client."""
     if isinstance(node, ast.ImportFrom):

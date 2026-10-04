@@ -54,8 +54,8 @@ access token with a declared set of permissions. Nothing checked that the token 
 holds that set, and VF0-A6 had recorded `effective_credential_grants_audited=false`.
 
 GitHub has no endpoint that lists a fine-grained token's permissions for a personal
-account (organizations can review them; a user cannot query their own). Every REST
-answer does carry `X-Accepted-GitHub-Permissions`, the permission sets the route
+account (organizations can review them; a user cannot query their own). A refusal or
+rejection does carry `X-Accepted-GitHub-Permissions`, the permission sets the route
 accepts.
 
 ## Prior-art and reuse disposition
@@ -66,53 +66,78 @@ accepts.
 | know what a route requires | `X-Accepted-GitHub-Permissions` | **reused** as the probe's self-check |
 | workflow token permissions | OpenSSF Scorecard "Token-Permissions" | a different object (a workflow's `GITHUB_TOKEN`), not reused |
 | GitHub transport | `tools/github_rest.py` (Decision 0100) | **extended**: a refusal keeps its accepted permissions, and the client can `put` |
+| token from the environment | `GitHubRestClient.from_environment` | **factored** into `github_rest.environment_token()`, consumed by both; the `gh auth token` fallback is the residual |
+| a name safe in an API path | `analyzer_readback.normalize_repository`'s rule | **extended** into `github_rest.owner_name()` / `repository_name()`, which `github_rest` owns beside `validate_url`; the copies converge under #365 |
+| bounded `Link` pagination | `read_page` + `next_url` | **extended** with `github_rest.follow_pages()`, a loop any transport can drive |
+| path confinement | `agent_review_paths.within` | **extended** with `within_root()`, for a root the caller holds |
+| declaration contract | `schemas/` + `Draft202012Validator`, 9 local helpers | **created** `schemas/agent-credentials.schema.json` and the shared `tools/schema_validation.py`; the loaders converge under #365 |
+| YAML without duplicate keys; timestamp | `knowledge_common.load_yaml`; 9 local `_now()` | **consumed**; **created** `knowledge_common.utc_timestamp()` |
 | neutral-core structure | Decision 0100's guard | **consumed** for the new core |
+
+The first draft of round 2 wrote these again beside their owners; the incident and its
+analysis are #365. The core's own validation of the declaration repeats some of the
+schema on purpose: the neutral core stays usable without `jsonschema`, a distinct trust
+boundary.
 
 No tool found verifies a personal account's fine-grained token against a declaration.
 
 ## Decision
 
-1. **A declaration states the least privilege.** `policy/agent-credentials.yaml` names
-   the token kind, the longest remaining lifetime, the resource owner, the repositories
-   the token may write, and for each capability a `min` and a `max` level among `none`,
-   `read` and `write`. The core validates it before judging anything.
-2. **Each permission is measured by a non-effecting probe.** A probe is a read, a write
-   aimed at something that cannot exist (a zero SHA, a run that does not belong to the
-   repository, a branch or workflow named `zz-credential-probe`), or a creation whose
-   body the provider must reject (an issue without a title, a pull request between
-   branches that do not exist, a gist with no files). Whatever the answer, nothing is
-   created, changed or deleted. A structural test holds every probe to this.
-3. **An answer is read only for the permission it names.** A probe whose route does not
-   name its permission in `X-Accepted-GitHub-Permissions` has drifted and is UNKNOWN. A
-   `403 Resource not accessible by personal access token` is a refusal. A grant is a
-   422 on a rejected body, or a 404 only on a route a calibrated refusal showed to check
-   the permission before its lookup: `PATCH` on a missing gist answered 404 for a token
-   that `POST /gists` refused with 403, so a lookup can come first.
-4. **Some levels are not measurable, and say so.** A public repository's data is
-   readable by anyone, so its `read` level is PUBLIC: a grant there adds nothing.
-   A level the provider does not define (a `read` of `workflows` or `gists`) is
-   NOT_APPLICABLE. `workflows=write` has no non-effecting probe and is UNMEASURABLE.
+1. **A declaration states the least privilege, over everything the provider can
+   grant.** `policy/agent-credentials.yaml` names the credential kind, the longest
+   remaining lifetime, the resource owner, the repositories the token may write, and a
+   `min` and a `max` level (`none`, `read`, `write`) for **every** permission GitHub
+   documents for a user-owned fine-grained token: 32 repository and 14 user
+   permissions. The core validates it before judging anything, and loads it from the
+   working tree only, refusing a repeated key.
+2. **Every probe is non-effecting by construction.** A probe is a read, or a write whose
+   body the provider must reject whatever the repository holds: a ref to an object that
+   cannot exist, an issue without a title, a pull request without a head or a base, a
+   deployment review with no valid state, a protection whose every field has the wrong
+   type. Each also aims at a name that does not exist (`zz-credential-probe`, a zero SHA),
+   so neither safeguard rests on the other. A write the provider *accepts* broke that
+   construction and may have changed something: the check stops, names the probe and
+   exits 2.
+3. **An answer is read only for the permission it names, and only as far as it goes.**
+   Each calibrated refusal or rejection carried `X-Accepted-GitHub-Permissions`, the
+   permission sets the route accepts. A probe whose route does not name its permission has drifted
+   and is UNKNOWN. A `403 Resource not accessible by personal access token` proves the
+   permission absent only when one alternative is that permission alone: for
+   `pages=write,administration=write` it may be the administration grant's. A pass (422
+   on a rejected body, or 404 on a route a calibrated refusal showed to check first)
+   proves the permission only when it is in every alternative. A lookup can come first:
+   `PATCH` on a missing gist answered 404 for a token that `POST /gists` refused.
+4. **Every permission gets an observation at both levels.** From a probe, or from a
+   stated reason: a public repository's data and a user's public lists are PUBLIC; a
+   level GitHub documents no endpoint for is NOT_APPLICABLE, and nothing else is; a
+   level no non-effecting probe can reach, because its routes look their target up
+   first or belong only to organizations, is UNMEASURABLE. A write level whose read is
+   refused is ruled out by the refusal.
 5. **Excess must be disproven; a missing grant need only not be proven.** A grant above
-   `max` is EXCESS. One that no probe could rule out leaves the verdict UNVERIFIED.
-   A grant below `min` is DEFICIENT; one that cannot be confirmed is listed under
-   `minimum_unverified` without failing the verdict, because a missing grant reveals
-   itself when used and an excess one never does. A capability observed but not
-   declared is held to `none`.
-6. **Scope is probed, not assumed.** The contents-write probe is aimed at every other
-   repository the resource owner owns that the token can see. A writable one outside
-   `repositories` is EXCESS.
-7. **The token's kind and lifetime are part of the verdict.** The kind comes from the
-   token's prefix alone; the token is never printed or kept. A token without an expiry,
-   already expired, or with more remaining lifetime than declared is
+   `max` is EXCESS. One no probe could rule out leaves the verdict UNVERIFIED, unless the
+   declaration accepts that UNMEASURABLE level by name, with a reason
+   (`accepted_unmeasurable`); an accepted level rests on the token's configuration, not
+   on a measurement, so it is listed in every verdict, accepting one is the owner's
+   decision, and an unanswered probe is never accepted away. A grant below `min` is DEFICIENT; one that
+   cannot be confirmed is listed under `minimum_unverified` without failing the verdict,
+   because a missing grant reveals itself when used and an excess one never does.
+6. **Scope is probed, and the subject is part of it.** The contents-write probe is aimed
+   at every repository the token can see, whoever owns it, the subject included. A
+   writable repository outside `repositories` is EXCESS. The subject must be an
+   `owner/name` GitHub allows and one `repositories` lists, both checked before any
+   request; the scope rule alone would still keep an undeclared subject from EXACT.
+7. **The credential's kind and lifetime are part of the verdict.** The kind comes from
+   the token's prefix alone; the token is never printed or kept. A token without an
+   expiry, already expired, or with more remaining lifetime than declared is
    LIFETIME_EXCEEDED.
-8. **The verdict and its precedence.** TOKEN_KIND_MISMATCH, then EXCESS, then
+8. **The verdict and its precedence.** CREDENTIAL_KIND_MISMATCH, then EXCESS, then
    DEFICIENT, then LIFETIME_EXCEEDED, then UNVERIFIED; otherwise EXACT. The command
    exits 0 for EXACT, 1 for the first four, 3 for UNVERIFIED and 2 on an input or tool
-   error.
-9. **Agents run it before provider writes.** At the start of a session, and before the
-   first provider write, an agent runs `knowledge credential-check` for the repository
-   it works on and quotes the verdict. On anything but EXACT it makes no provider write
-   until the owner resolves it: by fixing the token, or by amending the declaration.
+   error or a probe the provider accepted.
+9. **Agents run it before the first provider write of a session.** An agent runs
+   `knowledge credential-check` for the repository it works on and quotes the verdict.
+   On anything but EXACT it makes no provider write until the owner resolves it: by
+   fixing the token, or by amending the declaration through an ordinary change.
 
 ## What this does not establish
 
@@ -135,9 +160,15 @@ contract is closed, and this Decision does not change it.
 
 ## Verification
 
-- `tests/test_credential_posture.py`: the policy model, every verdict and its
-  precedence, the GitHub adapter over answers replayed from the 2026-10-04 calibration,
-  the probe rules (drift, provider failure, lookup-first routes, non-effecting shapes),
-  the command, the shared client's accepted permissions, and the neutral core.
-- A live run against the agents' token on 2026-10-04 matched the calibration row for
-  row, and reported EXCESS for two writable repositories outside the declaration.
+- `tests/test_credential_posture.py`: the policy model and its coverage of every
+  documented permission, every verdict and its precedence, accepted unmeasurable levels,
+  the subject inside the scope, the GitHub adapter over answers replayed from the
+  2026-10-04 calibration, the probe rules (drift, provider failure, a refusal that needs
+  another grant too, a pass another grant alone explains, lookup-first routes, a write
+  the provider accepts, construction), the command's input checks (the subject, the
+  declaration's place and duplicate keys, a refused token), the shared client's accepted
+  permissions, and the neutral core.
+- Live runs against the agents' token on 2026-10-04 matched the calibration row for
+  row. The first reported EXCESS for two writable repositories outside the declaration;
+  after the owner removed them from the token, EXACT over all 46 permissions, with the
+  seven accepted unmeasurable levels and `workflows=write` listed.

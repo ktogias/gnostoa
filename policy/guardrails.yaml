@@ -442,14 +442,21 @@ guardrails:
       - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
       - knowledge/decisions/0101-verify-agent-provider-credentials-against-a-least-privilege-declaration.md
       - policy/agent-credentials.yaml
+      - schemas/agent-credentials.schema.json
       - tools/credential_posture.py
       - tools/credential_posture_github.py
       - tools/credential_check.py
       - tools/github_rest.py
+      - tools/agent_review_paths.py
+      - tools/schema_validation.py
+      - tools/knowledge_common.py
     tests:
       - tests/test_credential_posture.py
       - tests/test_agent_credential_route.py
       - tests/test_github_rest.py
+      - tests/test_agent_review_paths.py
+      - tests/test_schema_validation.py
+      - tests/test_knowledge_common.py
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
     applies_to: [kit]

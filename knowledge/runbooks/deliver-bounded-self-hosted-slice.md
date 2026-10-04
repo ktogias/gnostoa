@@ -191,12 +191,14 @@ probes the token without effect and compares the result with
 `policy/agent-credentials.yaml`:
 
 - `EXACT`: the token holds the declared grants and no others, within scope and
-  lifetime. A required grant no probe can measure (`workflows=write`) is listed under
-  `minimum_unverified`; that does not change the verdict.
+  lifetime, over every permission the provider documents. A required grant no probe can
+  measure (`workflows=write`) is listed under `minimum_unverified`, and a level the
+  declaration accepts as unmeasurable under `accepted_unverified`; neither changes the
+  verdict.
 - `EXCESS`: a grant beyond the declaration, or a writable repository outside it.
 - `DEFICIENT`: a declared grant is missing.
 - `UNVERIFIED`: an excess grant could not be ruled out.
-- `TOKEN_KIND_MISMATCH` or `LIFETIME_EXCEEDED`: the wrong kind of credential, or a
+- `CREDENTIAL_KIND_MISMATCH` or `LIFETIME_EXCEEDED`: the wrong kind of credential, or a
   lifetime beyond the declared one.
 
 On anything but `EXACT`, make no provider write until the owner resolves it, by fixing

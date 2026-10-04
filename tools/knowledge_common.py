@@ -4,6 +4,7 @@ import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -80,6 +81,12 @@ KnowledgeLoader.yaml_implicit_resolvers = {
 
 class KnowledgeFormatError(ValueError):
     pass
+
+
+def utc_timestamp() -> str:
+    """Return the current instant in UTC, ISO 8601 to the second with a `Z` (#365)."""
+    moment = datetime.now(UTC).replace(microsecond=0)
+    return moment.isoformat().replace("+00:00", "Z")
 
 
 def toolkit_root() -> Path:
