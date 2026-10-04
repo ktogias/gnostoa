@@ -359,6 +359,17 @@ def _calibrated() -> dict[tuple[str, str], tuple[int, str, str]]:
     return answers
 
 
+def _calibrated_exact() -> dict[tuple[str, str], tuple[int, str, str]]:
+    """The calibration after the owner removed the extra repository from the token."""
+    answers = _calibrated()
+    answers[("POST", "repos/ktogias/ai-peaf/git/refs")] = (
+        403,
+        "contents=write;contents=write,workflows=write",
+        NOT_ACCESSIBLE,
+    )
+    return answers
+
+
 def _observe(answers: dict[tuple[str, str], tuple[int, str, str]]) -> Any:
     """What the adapter establishes from ``answers``."""
     from tools import credential_posture_github as github
@@ -457,6 +468,11 @@ class CorePolicyTests(unittest.TestCase):
             ),
             "an acceptance of no level": _policy_document(
                 accepted_unmeasurable={"pages": "a reason"}
+            ),
+            # Accepting a level of a capability the declaration does not declare would
+            # let an undeclared grant pass as accepted (CodeAnt on #364).
+            "an acceptance of an undeclared capability": _policy_document(
+                accepted_unmeasurable={"codespaces:write": "a reason"}
             ),
         }
         for name, document in cases.items():
@@ -559,6 +575,26 @@ class CoreVerdictTests(unittest.TestCase):
         self.assertEqual("EXCESS", verdict["verdict"])
         self.assertIn("scope:o/other", verdict["excess"])
 
+    def test_scope_counts_only_when_the_subject_proves_the_control_grant(self) -> None:
+        """A token has one repository selection and one set of repository permissions,
+        so one write probe identifies the selection -- but only if it detects the grant
+        on the subject. When it does not, a refusal elsewhere proves nothing, and every
+        other repository's scope is unverified (CodeAnt on #364)."""
+        from tools import credential_posture as posture
+
+        for control in ("NOT_GRANTED", "UNKNOWN"):
+            with self.subTest(control=control):
+                verdict = _verdict(
+                    _facts(
+                        scope=(
+                            posture.ScopeObservation("o/r", control, "e"),
+                            posture.ScopeObservation("o/other", "NOT_GRANTED", "e"),
+                        )
+                    )
+                )
+                self.assertIn("scope:o/other", verdict["unverified"])
+                self.assertNotEqual("EXACT", verdict["verdict"])
+
     def test_a_subject_outside_the_declaration_is_excess(self) -> None:
         """Checking a repository the declaration does not name cannot come back
         EXACT: its own writability is scope excess (gitar, Codex, CodeAnt, CodeRabbit
@@ -627,7 +663,7 @@ class GitHubAdapterTests(unittest.TestCase):
     """Each answer becomes an observation by the rule it was calibrated against."""
 
     def test_the_calibration_is_read_as_observed(self) -> None:
-        facts = _observe(_calibrated())
+        facts = _observe(_calibrated_exact())
         self.assertEqual(SUBJECT, facts.subject)
         self.assertEqual("fine-grained", facts.credential_kind)
         self.assertEqual("2026-11-03T13:01:27Z", facts.expires_at)
@@ -662,12 +698,36 @@ class GitHubAdapterTests(unittest.TestCase):
         self.assertEqual(
             {
                 SUBJECT: "GRANTED",
-                "ktogias/ai-peaf": "GRANTED",
+                "ktogias/ai-peaf": "NOT_GRANTED",
                 "ktogias/elsewhere": "NOT_GRANTED",
                 "someorg/shared": "NOT_GRANTED",
             },
             {s.repository: s.state for s in facts.scope},
         )
+
+    def test_a_read_is_public_only_over_a_proven_public_selection(self) -> None:
+        """A repository read grant reaches only the token's selection, so it adds
+        nothing when the selection is proven to be the public subject alone. With
+        another repository writable -- or the subject not -- the selection is not
+        known, and a read grant there is not moot."""
+        exact = _observe(_calibrated_exact())
+        widened = _observe(_calibrated())
+        for capability in ("contents", "actions", "deployments", "attestations"):
+            with self.subTest(capability=capability):
+                self.assertEqual("PUBLIC", _state(exact, capability, "read"))
+                self.assertEqual("UNMEASURABLE", _state(widened, capability, "read"))
+
+    def test_a_read_the_provider_filters_rather_than_refuses_is_unmeasurable(
+        self,
+    ) -> None:
+        """Draft and triage advisories, a Pages site's builds, and the private
+        repositories in a user's starred and watched lists: each route answers 200
+        without the grant, leaving the private part out rather than refusing, so no
+        probe can tell a grant apart (Codex on #364, calibrated 2026-10-04)."""
+        facts = _observe(_calibrated_exact())
+        for capability in ("repository_advisories", "pages", "starring", "watching"):
+            with self.subTest(capability=capability):
+                self.assertEqual("UNMEASURABLE", _state(facts, capability, "read"))
 
     def test_every_documented_permission_is_observed_at_both_levels(self) -> None:
         """Exact covers what the provider can grant, not what was convenient to
@@ -840,10 +900,66 @@ class GitHubAdapterTests(unittest.TestCase):
                 if probe.method == "GET":
                     continue
                 self.assertTrue(probe.rejected_body_reason, probe.id)
-                text = probe.path + json.dumps(probe.body or {})
-                self.assertTrue(
-                    "zz-credential-probe" in text or "0" * 40 in text, probe.id
+                # Where the route names a target (a branch, workflow, commit or run),
+                # the path names one that cannot exist. A route without one --
+                # `PATCH user`, `POST gists` -- rests on the type violation alone, which
+                # the next test requires of every write (CodeAnt on #364).
+                names_a_target = any(
+                    part in probe.path
+                    for part in ("/branches/", "/workflows/", "/statuses/", "/runs/")
                 )
+                if names_a_target:
+                    self.assertTrue(
+                        "zz-credential-probe" in probe.path
+                        or "0" * 40 in probe.path
+                        or "/runs/1/" in probe.path,
+                        probe.id,
+                    )
+
+    def test_every_write_probe_is_rejected_by_a_construction_no_cleanup_repairs(
+        self,
+    ) -> None:
+        """GitHub cleans up a repository name with disallowed characters instead of
+        rejecting it, so a "bad value" can be accepted after all (gitar on #364).
+
+        A write body therefore rests on one of two constructions, never on a value the
+        provider might normalize:
+        - a documented field given an array or object of a JSON type it does not
+          accept, where a calibrated refusal showed the permission check comes first;
+        - a schema-valid body naming an object that cannot exist (the zero SHA),
+          where the route validates the schema *before* the permission. `git/refs`
+          does: a type-violating ref answered 422 on a repository the token cannot
+          see (calibrated 2026-10-04), which would read every repository as writable.
+        """
+        from tools import credential_posture_github as github
+
+        names: dict[type, str] = {list: "array", dict: "object"}
+        for probe in github.CATALOGUE:
+            if probe.method == "GET":
+                continue
+            with self.subTest(probe=probe.id):
+                field, accepted = probe.type_violation
+                body = probe.body or {}
+                if field:
+                    value = body.get(field)
+                    self.assertIn(type(value), names, f"{field} is not a container")
+                    self.assertNotIn(names[type(value)], accepted)
+                else:
+                    self.assertEqual("0" * 40, body.get(probe.impossible_target))
+                    self.assertFalse(
+                        any(isinstance(v, (list, dict)) for v in body.values()),
+                        "a schema-valid body has no container where a scalar belongs",
+                    )
+
+    def test_the_scope_probe_is_schema_valid(self) -> None:
+        """Scope reads a refusal on every other repository as "not writable". On a
+        route that validates the schema first, only a schema-valid body is refused
+        where the token has no grant."""
+        from tools import credential_posture_github as github
+
+        scope = github._SCOPE_PROBE  # skipcq: PYL-W0212
+        self.assertEqual("", scope.type_violation[0])
+        self.assertEqual("0" * 40, (scope.body or {}).get(scope.impossible_target))
 
 
 class CredentialCheckCliTests(unittest.TestCase):
@@ -1040,6 +1156,23 @@ class CredentialCheckCliTests(unittest.TestCase):
         self.assertIn("pages", output)
         self.assertFalse(any(path.endswith("/git/refs") for _, path, _ in replay.sent))
 
+    def test_a_declared_repository_of_another_owner_is_refused(self) -> None:
+        """A fine-grained token reaches only its resource owner's resources, so the
+        subject proving writable shows the token's owner is the subject's -- provided
+        every declared repository belongs to the declared owner (CodeAnt on #364)."""
+        text = POLICY.read_text(encoding="utf-8").replace(
+            "resource_owner: ktogias", "resource_owner: someone-else", 1
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            declared = pathlib.Path(scratch) / "agent-credentials.yaml"
+            declared.write_text(text, encoding="utf-8")
+            code, output, replay = _run(
+                _calibrated(), policy=str(declared), cwd=pathlib.Path(scratch)
+            )
+        self.assertEqual(2, code, output)
+        self.assertIn("resource owner", output)
+        self.assertEqual([], replay.sent)
+
     def test_a_declaration_its_schema_refuses_is_refused_with_its_location(
         self,
     ) -> None:
@@ -1103,24 +1236,26 @@ class _Client:
         return self._write("PATCH", url, payload)
 
 
+def _fake_transport() -> tuple[Any, _Client]:
+    """``_transport``'s ``send``, built over a recording stand-in for the client."""
+    from tools import credential_check, github_rest
+
+    made: list[_Client] = []
+
+    def build(token: str, **options: Any) -> _Client:
+        made.append(_Client(token, **options))
+        return made[-1]
+
+    with mock.patch.object(github_rest, "GitHubRestClient", side_effect=build):
+        send = credential_check._transport("tok")  # skipcq: PYL-W0212
+    return send, made[0]
+
+
 class TransportTests(unittest.TestCase):
     """``_transport`` turns the shared client's calls into probe answers."""
 
-    def _send(self) -> tuple[Any, _Client]:
-        from tools import credential_check, github_rest
-
-        made: list[_Client] = []
-
-        def build(token: str, **options: Any) -> _Client:
-            made.append(_Client(token, **options))
-            return made[-1]
-
-        with mock.patch.object(github_rest, "GitHubRestClient", side_effect=build):
-            send = credential_check._transport("tok")  # skipcq: PYL-W0212
-        return send, made[0]
-
     def test_a_path_and_a_followed_page_on_the_origin_are_read(self) -> None:
-        send, client = self._send()
+        send, client = _fake_transport()
         self.assertEqual(200, send("GET", "user", None).status)
         followed = "https://api.github.com/user/repos?per_page=100&page=2"
         self.assertEqual(200, send("GET", followed, None).status)
@@ -1129,7 +1264,7 @@ class TransportTests(unittest.TestCase):
         )
 
     def test_a_followed_page_off_the_origin_is_never_requested(self) -> None:
-        send, client = self._send()
+        send, client = _fake_transport()
         answer = send("GET", "https://api.github.com.evil.example/x", None)
         self.assertNotEqual(200, answer.status)
         self.assertEqual([], [r for r in client.requests if "evil" in r[1]])
@@ -1137,14 +1272,14 @@ class TransportTests(unittest.TestCase):
     def test_a_refusal_keeps_its_accepted_permissions(self) -> None:
         from tools import credential_posture_github as github
 
-        send, _ = self._send()
+        send, _ = _fake_transport()
         answer = send("GET", "repos/o/r/refused", None)
         self.assertEqual(403, answer.status)
         self.assertEqual("secrets=read", answer.headers[github.ACCEPTED_HEADER])
         self.assertIn(NOT_ACCESSIBLE, answer.message)
 
     def test_an_accepted_write_is_reported_as_accepted(self) -> None:
-        send, client = self._send()
+        send, client = _fake_transport()
         for method in ("POST", "PUT", "PATCH"):
             with self.subTest(method=method):
                 self.assertEqual(201, send(method, "repos/o/r/x", {"a": 1}).status)

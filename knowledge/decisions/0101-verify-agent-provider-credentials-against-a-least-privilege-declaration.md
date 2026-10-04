@@ -91,13 +91,20 @@ No tool found verifies a personal account's fine-grained token against a declara
    permissions. The core validates it before judging anything, and loads it from the
    working tree only, refusing a repeated key.
 2. **Every probe is non-effecting by construction.** A probe is a read, or a write whose
-   body the provider must reject whatever the repository holds: a ref to an object that
-   cannot exist, an issue without a title, a pull request without a head or a base, a
-   deployment review with no valid state, a protection whose every field has the wrong
-   type. Each also aims at a name that does not exist (`zz-credential-probe`, a zero SHA),
-   so neither safeguard rests on the other. A write the provider *accepts* broke that
-   construction and may have changed something: the check stops, names the probe and
-   exits 2.
+   body the provider must reject whatever the repository holds, by one of two
+   constructions. Neither relies on a value the provider might normalize: GitHub
+   cleans up a repository name with disallowed characters instead of rejecting it.
+   - **A container type violation:** a documented field given an array or object of a
+     JSON type it does not accept. It is used where a calibrated refusal showed the
+     permission is checked first.
+   - **A schema-valid body naming an object that cannot exist** (the zero SHA). It is
+     used where the route validates the schema *before* the permission. `git/refs`
+     does: a type-violating ref answered 422 on a repository the token cannot see,
+     which would read every repository as writable.
+
+   Where a route names a target (a branch, a workflow, a commit), it names one that
+   cannot exist as well. A write the provider *accepts* broke that construction and
+   may have changed something: the check stops, names the probe and exits 2.
 3. **An answer is read only for the permission it names, and only as far as it goes.**
    Each calibrated refusal or rejection carried `X-Accepted-GitHub-Permissions`, the
    permission sets the route accepts. A probe whose route does not name its permission has drifted
@@ -108,24 +115,47 @@ No tool found verifies a personal account's fine-grained token against a declara
    proves the permission only when it is in every alternative. A lookup can come first:
    `PATCH` on a missing gist answered 404 for a token that `POST /gists` refused.
 4. **Every permission gets an observation at both levels.** From a probe, or from a
-   stated reason: a public repository's data and a user's public lists are PUBLIC; a
-   level GitHub documents no endpoint for is NOT_APPLICABLE, and nothing else is; a
-   level no non-effecting probe can reach, because its routes look their target up
-   first or belong only to organizations, is UNMEASURABLE. A write level whose read is
-   refused is ruled out by the refusal.
+   stated reason:
+   - **PUBLIC:** a repository read whose data the provider serves without the grant,
+     and only over a **public selection**. A read grant reaches only the token's
+     selected repositories, so it adds nothing when the subject is public and proven
+     to be the only writable repository. Otherwise it is UNMEASURABLE.
+   - **UNMEASURABLE**, not public:
+     - a read whose route answers without the grant but filters its private part out
+       rather than refusing it: draft and triage advisories, a Pages site's private
+       parts, and the private repositories in a user's starred and watched lists;
+     - a level whose routes look up their target first;
+     - a level whose routes belong only to organizations.
+   - **NOT_APPLICABLE:** a level GitHub documents no endpoint for, and nothing else.
+
+   A write level whose read is refused is ruled out by the refusal.
 5. **Excess must be disproven; a missing grant need only not be proven.** A grant above
    `max` is EXCESS. One no probe could rule out leaves the verdict UNVERIFIED, unless the
    declaration accepts that UNMEASURABLE level by name, with a reason
-   (`accepted_unmeasurable`); an accepted level rests on the token's configuration, not
-   on a measurement, so it is listed in every verdict, accepting one is the owner's
+   (`accepted_unmeasurable`). It must be a level of a capability the declaration
+   declares. An accepted level rests on the token's configuration, not on a
+   measurement, so it is listed in every verdict, accepting one is the owner's
    decision, and an unanswered probe is never accepted away. A grant below `min` is DEFICIENT; one that
    cannot be confirmed is listed under `minimum_unverified` without failing the verdict,
    because a missing grant reveals itself when used and an excess one never does.
-6. **Scope is probed, and the subject is part of it.** The contents-write probe is aimed
-   at every repository the token can see, whoever owns it, the subject included. A
-   writable repository outside `repositories` is EXCESS. The subject must be an
-   `owner/name` GitHub allows and one `repositories` lists, both checked before any
-   request; the scope rule alone would still keep an undeclared subject from EXACT.
+6. **Scope is probed, and the subject is its control.**
+   - **What is probed:** the contents-write probe is aimed at every repository the
+     token can see, whoever owns it, the subject included. A writable repository
+     outside `repositories` is EXCESS.
+   - **Why one probe suffices:** a fine-grained token has one repository selection and
+     one set of repository permissions, as GitHub's own description of a token shows
+     (`repository_selection`, `permissions.repository`). So one write probe tells the
+     selection apart.
+   - **The control:** that holds only when the probe detects the grant on the subject.
+     When it does not, a refusal elsewhere proves nothing, and every other
+     repository's scope is UNVERIFIED.
+   - **Whose token it is:** a fine-grained token reaches only its resource owner's
+     resources, so a writable subject shows whose token it is, provided every declared
+     repository belongs to the declared `resource_owner`. A declaration that breaks
+     this is refused.
+   - **The subject:** it must be an `owner/name` GitHub allows and one `repositories`
+     lists, both checked before any request. The scope rule alone would still keep an
+     undeclared subject from EXACT.
 7. **The credential's kind and lifetime are part of the verdict.** The kind comes from
    the token's prefix alone; the token is never printed or kept. A token without an
    expiry, already expired, or with more remaining lifetime than declared is
@@ -171,4 +201,5 @@ contract is closed, and this Decision does not change it.
 - Live runs against the agents' token on 2026-10-04 matched the calibration row for
   row. The first reported EXCESS for two writable repositories outside the declaration;
   after the owner removed them from the token, EXACT over all 46 permissions, with the
-  seven accepted unmeasurable levels and `workflows=write` listed.
+  accepted unmeasurable levels and `workflows=write` listed: seven, then eleven once
+  four filtered reads stopped counting as public.

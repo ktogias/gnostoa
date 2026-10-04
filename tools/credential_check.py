@@ -174,7 +174,18 @@ def _policy(raw: str) -> posture.Policy:
         raise posture.PolicyError(
             f"the policy does not match {SCHEMA}: {'; '.join(errors[:5])}"
         )
-    return posture.load_policy(document)
+    policy = posture.load_policy(document)
+    # A fine-grained token reaches only its resource owner's resources, so the subject
+    # proving writable shows whose token it is -- if every declared repository is the
+    # declared owner's (CodeAnt on #364).
+    for repository in policy.repositories:
+        owner = github_rest.repository_name(repository).split("/")[0]
+        if owner != policy.resource_owner:
+            raise posture.PolicyError(
+                f"{repository} is not the declared resource owner's"
+                f" ({policy.resource_owner})"
+            )
+    return policy
 
 
 def _render(verdict: dict[str, Any]) -> str:
@@ -213,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")
     try:
         args = parser.parse_args(argv)
-        github_rest.repository_name(args.repository)
+        # The subject must be declared, and every declared repository passed the
+        # shared name rule in ``_policy``: a malformed subject cannot get this far.
         policy = _policy(args.policy)
         if args.repository not in policy.repositories:
             raise posture.PolicyError(

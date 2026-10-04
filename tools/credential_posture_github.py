@@ -73,6 +73,15 @@ class Probe(NamedTuple):
     permission_first: bool
     # Why the provider must reject this write whatever the repository holds.
     rejected_body_reason: str = ""
+    # The documented field the body gives an array or object of a JSON type it does
+    # not accept, and the types it does: request validation refuses that before
+    # acting. A bad *value* is not enough -- GitHub cleans up a repository name with
+    # disallowed characters instead of rejecting it (gitar on #364) -- and a scalar
+    # can be coerced, so the violation is always a container.
+    type_violation: tuple[str, frozenset[str]] = ("", frozenset())
+    # Or, where the route validates the schema before the permission, the field of a
+    # schema-valid body that names an object that cannot exist (the zero SHA).
+    impossible_target: str = ""
 
     @property
     def accepted(self) -> str:
@@ -87,11 +96,21 @@ def _write(
     path: str,
     body: dict[str, Any],
     reason: str,
+    violation: tuple[str, str],
     granted: tuple[int, ...] = (422,),
     *,
     permission_first: bool = True,
 ) -> Probe:
-    """Return a write probe whose body ``reason`` says the provider must reject."""
+    """Return a write probe whose body ``reason`` says the provider must reject.
+
+    ``violation`` names the field the body breaks and the JSON types it accepts, as
+    ``"field", "type|type"``; or, as ``"", "field"``, the schema-valid field that names
+    an object that cannot exist.
+    """
+    field, accepted = violation
+    impossible = "" if field else accepted
+    if impossible:
+        accepted = ""
     return Probe(
         id=pid,
         capability=capability,
@@ -102,6 +121,11 @@ def _write(
         granted_statuses=frozenset(granted),
         permission_first=permission_first,
         rejected_body_reason=reason,
+        type_violation=(
+            field,
+            frozenset(accepted.split("|")) if accepted else frozenset(),
+        ),
+        impossible_target=impossible,
     )
 
 
@@ -179,8 +203,13 @@ CATALOGUE: tuple[Probe, ...] = (
         "contents",
         "POST",
         f"{_REPO}/git/refs",
+        # Schema-valid on purpose: this route validates the schema before the
+        # permission, so a type-violating ref answers 422 even where the token cannot
+        # see the repository (calibrated 2026-10-04) -- the scope probe would read
+        # every repository as writable. The zero SHA names an object that cannot exist.
         {"ref": f"refs/heads/{_PROBE}", "sha": _ZERO},
         "a ref to an object that cannot exist",
+        ("", "sha"),
         permission_first=False,
     ),
     _write(
@@ -188,8 +217,9 @@ CATALOGUE: tuple[Probe, ...] = (
         "issues",
         "POST",
         f"{_REPO}/issues",
-        {"body": _PROBE},
-        "an issue without a title",
+        {"title": [_PROBE], "body": _PROBE},
+        "an issue whose title is neither a string nor a number",
+        ("title", "string|integer"),
         permission_first=False,
     ),
     _write(
@@ -197,8 +227,9 @@ CATALOGUE: tuple[Probe, ...] = (
         "pull_requests",
         "POST",
         f"{_REPO}/pulls",
-        {"title": _PROBE},
-        "a pull request without a head or a base",
+        {"title": _PROBE, "head": [_PROBE], "base": [_PROBE]},
+        "a pull request whose head and base are not branch names",
+        ("head", "string"),
         permission_first=False,
     ),
     _write(
@@ -206,16 +237,18 @@ CATALOGUE: tuple[Probe, ...] = (
         "statuses",
         "POST",
         f"{_REPO}/statuses/{_ZERO}",
-        {"state": _PROBE, "context": _PROBE},
-        "a status with no valid state, for a commit that cannot exist",
+        {"state": [_PROBE], "context": _PROBE},
+        "a status with no state, for a commit that cannot exist",
+        ("state", "string"),
     ),
     _write(
         "actions-write",
         "actions",
         "POST",
         f"{_REPO}/actions/workflows/{_PROBE}.yml/dispatches",
-        {"ref": f"{_PROBE}-none", "inputs": _PROBE},
-        "a dispatch whose inputs are not an object",
+        {"ref": f"{_PROBE}-none", "inputs": [_PROBE]},
+        "a dispatch whose inputs are not an object, of a workflow that cannot exist",
+        ("inputs", "object"),
         (404, 422),
     ),
     _write(
@@ -223,8 +256,9 @@ CATALOGUE: tuple[Probe, ...] = (
         "deployments",
         "POST",
         f"{_REPO}/actions/runs/1/pending_deployments",
-        {"environment_ids": _PROBE, "state": _PROBE, "comment": _PROBE},
-        "a deployment review with no valid state or environment list",
+        {"environment_ids": {_PROBE: 0}, "state": [_PROBE], "comment": _PROBE},
+        "a deployment review whose environment list and state have the wrong type",
+        ("environment_ids", "array"),
         (404, 422),
     ),
     _write(
@@ -233,12 +267,13 @@ CATALOGUE: tuple[Probe, ...] = (
         "PUT",
         f"{_REPO}/branches/{_PROBE}/protection",
         {
-            "required_status_checks": _PROBE,
-            "enforce_admins": _PROBE,
-            "required_pull_request_reviews": _PROBE,
-            "restrictions": _PROBE,
+            "required_status_checks": [_PROBE],
+            "enforce_admins": [_PROBE],
+            "required_pull_request_reviews": [_PROBE],
+            "restrictions": [_PROBE],
         },
-        "a protection whose every field has the wrong type",
+        "a protection whose every field has the wrong type, of a branch that cannot exist",
+        ("enforce_admins", "boolean|null"),
         (404, 422),
     ),
     _write(
@@ -246,24 +281,27 @@ CATALOGUE: tuple[Probe, ...] = (
         "attestations",
         "POST",
         f"{_REPO}/attestations",
-        {"bundle": _PROBE},
-        "an attestation whose bundle is not a Sigstore bundle",
+        {"bundle": [_PROBE]},
+        "an attestation whose bundle is not an object",
+        ("bundle", "object"),
     ),
     _write(
         "advisories-write",
         "repository_advisories",
         "POST",
         f"{_REPO}/security-advisories",
-        {_PROBE: True},
-        "an advisory with none of its required fields",
+        {"summary": [_PROBE], "description": [_PROBE], "vulnerabilities": {_PROBE: 0}},
+        "an advisory whose summary, description and vulnerabilities have the wrong type",
+        ("vulnerabilities", "array|null"),
     ),
     _write(
         "pages-write",
         "pages",
         "POST",
         f"{_REPO}/pages/deployments",
-        {"artifact_id": _PROBE, "pages_build_version": 0, "oidc_token": 0},
-        "a Pages deployment whose artifact, build version and token have the wrong type",
+        {"artifact_id": [_PROBE], "pages_build_version": [_PROBE]},
+        "a Pages deployment whose artifact and build version have the wrong type",
+        ("artifact_id", "integer"),
         (404, 422),
     ),
     _write(
@@ -271,16 +309,18 @@ CATALOGUE: tuple[Probe, ...] = (
         "repository_creation",
         "POST",
         "user/repos",
-        {"name": f"{_PROBE} !/"},
-        "a repository name GitHub does not allow",
+        {"name": [_PROBE], "private": [_PROBE]},
+        "a repository whose name and visibility are not a string and a boolean",
+        ("name", "string"),
     ),
     _write(
         "gists-write",
         "gists",
         "POST",
         "gists",
-        {"files": {}, "public": False, "description": _PROBE},
-        "a gist with no files",
+        {"files": [_PROBE], "public": [_PROBE], "description": _PROBE},
+        "a gist whose files are not an object",
+        ("files", "object"),
         permission_first=False,
     ),
     _write(
@@ -288,8 +328,9 @@ CATALOGUE: tuple[Probe, ...] = (
         "profile",
         "PATCH",
         "user",
-        {"hireable": _PROBE},
+        {"hireable": [_PROBE]},
         "a profile field with the wrong type",
+        ("hireable", "boolean|null"),
     ),
     _read("administration-read", "administration", f"{_REPO}/branches/main/protection"),
     _read("secrets-read", "secrets", f"{_REPO}/actions/secrets"),
@@ -367,19 +408,14 @@ PUBLIC_READS = (
     "statuses",
     "deployments",
     "attestations",
-    "repository_advisories",
-    "pages",
     "metadata",
-    "starring",
-    "watching",
 )
 # Levels GitHub documents no endpoint for (the permissions page, read 2026-10-04): a
 # grant there reaches nothing. Only these are moot; a level whose endpoints are merely
 # out of reach is UNMEASURABLE, for the declaration's owner to accept by name.
 _NO_ENDPOINT = "GitHub documents no endpoint at this level"
-NOT_APPLICABLE: dict[tuple[str, str], str] = {
-    level: _NO_ENDPOINT
-    for level in (
+NOT_APPLICABLE: dict[tuple[str, str], str] = dict.fromkeys(
+    (
         ("workflows", "read"),
         ("gists", "read"),
         ("profile", "read"),
@@ -394,8 +430,9 @@ NOT_APPLICABLE: dict[tuple[str, str], str] = {
         ("metadata", "write"),
         ("watching", "write"),
         ("private_repository_invitations", "write"),
-    )
-}
+    ),
+    _NO_ENDPOINT,
+)
 _LOOKUP_FIRST = "its routes look up their target before the permission"
 _ORGANIZATION = "every endpoint is an organization's"
 # Levels no non-effecting probe can reach, and why.
@@ -408,6 +445,13 @@ UNMEASURABLE: dict[tuple[str, str], str] = {
     ("repository_custom_properties", "write"): _LOOKUP_FIRST,
     ("artifact_metadata", "read"): _ORGANIZATION,
     ("artifact_metadata", "write"): _ORGANIZATION,
+    # Each route answers 200 without the grant, leaving the private part out rather
+    # than refusing, so no probe tells a grant apart (Codex on #364; calibrated
+    # 2026-10-04).
+    ("repository_advisories", "read"): "draft and triage advisories are filtered out",
+    ("pages", "read"): "a Pages site's private parts are filtered out",
+    ("starring", "read"): "private repositories are filtered out of the starred list",
+    ("watching", "read"): "private repositories are filtered out of the watched list",
 }
 # How a write to another repository is probed: the contents-write probe, aimed there.
 _SCOPE_PROBE = CATALOGUE[0]
@@ -477,12 +521,17 @@ def _expiry(headers: Mapping[str, str]) -> str | None:
 
 
 def _unprobed(
-    capability: str, level: str, public: bool, probed: set[str]
+    capability: str, level: str, public_selection: bool, probed: set[str]
 ) -> Observation:
-    """Return the observation for a level no probe in the catalogue measures."""
+    """Return the observation for a level no probe in the catalogue measures.
+
+    A repository read is PUBLIC -- moot -- only over a public selection: a read grant
+    reaches only the token's selected repositories, so it adds nothing when the
+    selection is proven to be the public subject alone.
+    """
     if level == "read" and capability in PUBLIC_READS:
-        state = "PUBLIC" if public else "UNMEASURABLE"
-        return Observation(capability, level, state, "repository or account visibility")
+        state = "PUBLIC" if public_selection else "UNMEASURABLE"
+        return Observation(capability, level, state, "the selection's visibility")
     if (capability, level) in NOT_APPLICABLE:
         return Observation(
             capability, level, "NOT_APPLICABLE", NOT_APPLICABLE[(capability, level)]
@@ -512,6 +561,15 @@ def observe(
     ``token`` is read for its kind only; it is neither kept nor returned.
     """
     user = send("GET", "user", None)
+    # Scope first: whether the selection is the public subject alone decides whether
+    # a repository read grant is moot.
+    scope = []
+    for other in dict.fromkeys((repository, *visible_repositories)):
+        path = _SCOPE_PROBE.path.format(repository=other)
+        state, evidence = classify(_SCOPE_PROBE, send("POST", path, _SCOPE_PROBE.body))
+        scope.append(ScopeObservation(other, state, evidence))
+    writable = {s.repository for s in scope if s.state == "GRANTED"}
+    public_selection = public and writable == {repository}
     observations: list[Observation] = []
     measured: set[tuple[str, str]] = set()
     read_probed: set[str] = set()
@@ -529,12 +587,9 @@ def observe(
     for capability in PERMISSIONS:
         for level in ("read", "write"):
             if (capability, level) not in measured:
-                observations.append(_unprobed(capability, level, public, read_probed))
-    scope = []
-    for other in dict.fromkeys((repository, *visible_repositories)):
-        path = _SCOPE_PROBE.path.format(repository=other)
-        state, evidence = classify(_SCOPE_PROBE, send("POST", path, _SCOPE_PROBE.body))
-        scope.append(ScopeObservation(other, state, evidence))
+                observations.append(
+                    _unprobed(capability, level, public_selection, read_probed)
+                )
     return Facts(
         subject=repository,
         credential_kind=credential_kind(token),

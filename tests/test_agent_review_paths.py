@@ -74,11 +74,13 @@ class WithinRootTests(unittest.TestCase):
                 (root, False),
             )
             for raw, must_exist in cases:
-                with mock.patch.dict(os.environ, {"GNOSTOA_TEST_ROOT": root}):
-                    with self.assertRaises(ValueError) as shared:
-                        agent_review_paths.within(
-                            raw, "GNOSTOA_TEST_ROOT", must_exist=must_exist
-                        )
+                with (
+                    mock.patch.dict(os.environ, {"GNOSTOA_TEST_ROOT": root}),
+                    self.assertRaises(ValueError) as shared,
+                ):
+                    agent_review_paths.within(
+                        raw, "GNOSTOA_TEST_ROOT", must_exist=must_exist
+                    )
                 with self.subTest(raw=raw), self.assertRaises(ValueError) as named:
                     agent_review_paths.within_root(raw, base, must_exist=must_exist)
                 self.assertEqual(

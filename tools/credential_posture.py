@@ -172,14 +172,23 @@ def load_policy(document: Any) -> Policy:
     repositories = checked["repositories"]
     if not isinstance(repositories, list) or not repositories:
         raise PolicyError("repositories is not a non-empty list")
+    bounds = _bounds(checked["capabilities"])
+    accepted = _accepted(checked.get("accepted_unmeasurable"))
+    # Accepting a level of a capability the declaration does not declare would let an
+    # undeclared grant pass as accepted (CodeAnt on #364).
+    undeclared = sorted(k for k in accepted if k.partition(":")[0] not in bounds)
+    if undeclared:
+        raise PolicyError(
+            f"accepted_unmeasurable names undeclared capabilities: {undeclared}"
+        )
     return Policy(
         id=_text(checked["id"], "id"),
         credential_kind=_text(checked["credential_kind"], "credential_kind"),
         max_lifetime_days=lifetime,
         resource_owner=_text(checked["resource_owner"], "resource_owner"),
         repositories=tuple(_text(r, "repository") for r in repositories),
-        capabilities=_bounds(checked["capabilities"]),
-        accepted_unmeasurable=_accepted(checked.get("accepted_unmeasurable")),
+        capabilities=bounds,
+        accepted_unmeasurable=accepted,
     )
 
 
@@ -248,12 +257,18 @@ def _scope(policy: Policy, facts: Facts) -> tuple[list[str], list[str]]:
     """
     excess: list[str] = []
     unverified: list[str] = []
+    # The subject is the control: a token has one selection and one set of repository
+    # permissions, so a probe that detects the grant on the subject tells the
+    # selection apart. When it does not, a refusal elsewhere proves nothing.
+    controlled = any(
+        s.repository == facts.subject and s.state == "GRANTED" for s in facts.scope
+    )
     for scoped in facts.scope:
         if scoped.repository in policy.repositories:
             continue
         if scoped.state == "GRANTED":
             excess.append(f"scope:{scoped.repository}")
-        elif scoped.state != "NOT_GRANTED":
+        elif scoped.state != "NOT_GRANTED" or not controlled:
             unverified.append(f"scope:{scoped.repository}")
     if facts.subject not in {s.repository for s in facts.scope}:
         unverified.append(f"scope:{facts.subject}")
@@ -269,10 +284,11 @@ def evaluate(policy: Policy, facts: Facts, now: str) -> dict[str, Any]:
         states[(observation.capability, observation.level)] = observation.state
     # An observed capability the policy does not name is held to "none": a grant the
     # declaration did not foresee is excess, never a silent pass.
+    observed = set(states)
     undeclared = sorted(
-        f"{c}:{level}" for c, level in states if c not in policy.capabilities
+        f"{c}:{level}" for c, level in observed if c not in policy.capabilities
     )
-    bounds = {c: Bound("none", "none") for c, _ in states}
+    bounds = {c: Bound("none", "none") for c, _ in observed}
     bounds.update(policy.capabilities)
     excess: list[str] = []
     unverified: list[str] = []
