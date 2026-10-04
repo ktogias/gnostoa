@@ -1599,6 +1599,27 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 if expected:
                     self.assertIn("exceeds", stderr)
 
+    def test_the_relay_decision_states_the_event_contract_it_has(self) -> None:
+        """Decision 0096 documents the relay's security and resource boundaries, so a
+        review reads its rules as the contract. #356 amended rules 2-3 and left rule 4
+        saying the trigger records the digest, and rule 7 bounding a 150-byte payload
+        at 4 KiB (Codex on #358). Its wording is pinned to the code's bound."""
+        from tools import agent_review_github as github
+
+        decision = " ".join(
+            (
+                ROOT
+                / "knowledge/decisions/0096-relay-mention-reviews-through-a-protected-workflow.md"
+            )
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertEqual(2 * 1024 * 1024, github.DELIVERED_EVENT_BYTES)
+        self.assertIn("bounded at 2 MiB", decision)
+        for stale in ("4 KiB", "about 150 bytes", "The trigger now records"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, decision)
+
     def test_the_request_text_and_its_digest_have_one_source(self) -> None:
         """The composition of an issue's request and the digest of a request were each
         written twice, in the trigger and beside admission (#356). The digest is the

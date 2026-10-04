@@ -203,11 +203,13 @@ events whose trigger runs from the default branch.
    re-reads the object, and the trigger first recorded only identities, so an edit
    between the event and that re-read changed the request that was reviewed while
    every check above still passed (CodeAnt, #340). Anyone with write access can edit a
-   comment, and so can an app holding `issues: write`. The trigger now records
+   comment, and so can an app holding `issues: write`. The relay therefore binds
    `request_sha256`, a digest of the request text as GitHub delivered it in the event
-   (a comment's body, or an opened issue's title and body). Admission refuses a re-read
-   whose digest differs, or a payload that recorded none. A forged digest can only
-   refuse: one that matches admits exactly what admission re-read. Measured before
+   (a comment's body, or an opened issue's title and body). Since #356 the trigger
+   computes nothing: the GitHub adapter derives the digest from the delivered event,
+   in protected code, with the composition its re-read uses (rule 3). Admission refuses
+   a re-read whose digest differs, or a pointer that carries none. A forged event can
+   only refuse: one whose digest matches admits exactly what admission re-read. Measured before
    relying on it: for 34 unedited comments on this repository, the body the Events API
    delivered was byte-identical to the REST re-read. That is the Events API, not the
    webhook file itself, and none of the 34 held a CRLF; a mismatch there would refuse,
@@ -274,9 +276,11 @@ events whose trigger runs from the default branch.
    the zip-slip fix for CVE-2024-42471 (GHSA-6q32-hq47-5qq3, fixed in 4.1.7), so an
    entry cannot be written outside the download directory. Admission does not rest on
    that alone. It reads the payload without following a link, only as a regular file,
-   and bounded at 4 KiB -- a real payload is about 150 bytes -- so a symlink cannot make
-   it read a file of the candidate's choosing, a FIFO cannot hang it, and a large
-   payload cannot exhaust it. It creates the request directory itself and refuses one
+   and bounded at 2 MiB -- the bound the GitHub adapter declares for a delivered event
+   (#356), which carries the comment, the issue, the repository and the sender, at
+   most about 0.8 MB at its worst JSON escaping -- so a symlink cannot make it read a
+   file of the candidate's choosing, a FIFO cannot hang it, and a large payload cannot
+   exhaust it. It creates the request directory itself and refuses one
    that already exists, so nothing planted in its place can redirect the artefacts.
    Each is tested against its own attack, and each test was seen to fail with its
    control removed. The files are also opened `O_EXCL|O_NOFOLLOW`; that layer is
