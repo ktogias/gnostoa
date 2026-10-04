@@ -579,10 +579,13 @@ def observe(
     visible_repositories: tuple[str, ...],
     login: str,
     token: str,
+    private_repositories: frozenset[str] = frozenset(),
 ) -> Facts:
     """Probe the token ``send`` carries and return what the answers establish.
 
-    ``token`` is read for its kind only; it is neither kept nor returned.
+    ``private_repositories`` are the visible ones the listing marks private: a
+    fine-grained token sees a private repository only in its selection. ``token`` is
+    read for its kind only; it is neither kept nor returned.
     """
     user = send("GET", "user", None)
     # Scope first: whether the selection is the public subject alone decides whether
@@ -593,7 +596,11 @@ def observe(
         state, evidence = classify(_SCOPE_PROBE, send("POST", path, _SCOPE_PROBE.body))
         scope.append(ScopeObservation(other, state, evidence))
     writable = {s.repository for s in scope if s.state == "GRANTED"}
-    public_selection = public and writable == {repository}
+    # A repository read grant is moot only if every repository it reaches is public:
+    # none visible is private, and none but the public subject is writable.
+    public_selection = (
+        public and writable == {repository} and not private_repositories - {repository}
+    )
     observations: list[Observation] = []
     measured: set[tuple[str, str]] = set()
     read_probed: set[str] = set()

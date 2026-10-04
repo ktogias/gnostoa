@@ -201,6 +201,26 @@ def _verdict(facts: Any, **policy: Any) -> dict[str, Any]:
     return posture.evaluate(posture.load_policy(_policy_document(**policy)), facts, NOW)
 
 
+_UNEXPECTED = object()
+
+
+def _catalogue_bodies() -> dict[tuple[str, str], Any]:
+    """Each write route the check may send to, with the body it must carry."""
+    from tools import credential_posture_github as github
+
+    bodies: dict[tuple[str, str], Any] = {}
+    for probe in github.CATALOGUE:
+        if probe.method != "GET":
+            path = probe.path.format(
+                repository=SUBJECT, environment="", login="ktogias"
+            )
+            bodies[(probe.method, path)] = probe.body
+    scope = github._SCOPE_PROBE  # skipcq: PYL-W0212
+    for name in VISIBLE:
+        bodies[("POST", scope.path.format(repository=name))] = scope.body
+    return bodies
+
+
 class _Replay:
     """A provider that answers each (method, path) from the calibration, and refuses
     anything else -- so a probe outside the catalogue is a test failure, not a pass."""
@@ -209,8 +229,10 @@ class _Replay:
         self,
         answers: dict[tuple[str, str], tuple[int, str, str]],
         listing: dict[str, tuple[list[str], str | None]] | None = None,
+        private: frozenset[str] = frozenset(),
     ) -> None:
         self.answers = answers
+        self.private = private
         # Each page of the repository listing: its names, and the page its `Link`
         # header names next.
         self.listing = listing or {REPOS: (list(VISIBLE), None)}
@@ -223,6 +245,15 @@ class _Replay:
         # A followed page arrives as the absolute URL its `Link` header named.
         path = path.removeprefix(f"{github_rest.API_ROOT}/")
         self.sent.append((method, path, body))
+        # A write is answered only if it carries the catalogue's body for its route:
+        # the provider would treat any other body differently, so neither does this
+        # double (CodeAnt on #364).
+        if method != "GET" and body != _catalogue_bodies().get(
+            (method, path), _UNEXPECTED
+        ):
+            raise AssertionError(
+                f"{method} {path} sent {body!r}, not its catalogue body"
+            )
         if (method, path) not in self.answers:
             raise AssertionError(f"unexpected probe {method} {path}")
         status, accepted, message = self.answers[(method, path)]
@@ -239,7 +270,9 @@ class _Replay:
             names, following = self.listing[path]
             if following is not None:
                 headers["link"] = f'<{github_rest.API_ROOT}/{following}>; rel="next"'
-            listed = [{"full_name": name} for name in names]
+            listed = [
+                {"full_name": name, "private": name in self.private} for name in names
+            ]
             return github.Answer(status, headers, message, listed)
         document = {
             "user": {"login": "ktogias"},
@@ -418,11 +451,12 @@ def _run(
     policy: str | None = None,
     cwd: pathlib.Path = ROOT,
     listing: dict[str, tuple[list[str], str | None]] | None = None,
+    private: frozenset[str] = frozenset(),
 ) -> tuple[int, str, Any]:
     """Run the command over ``answers`` from ``cwd``, naming the declaration."""
     from tools import credential_check
 
-    replay = _Replay(answers, listing)
+    replay = _Replay(answers, listing, private)
     out = io.StringIO()
     argv = list(arguments) or ["--repository", SUBJECT]
     argv += ["--policy", policy or str(POLICY), "--json"]
@@ -720,6 +754,30 @@ class GitHubAdapterTests(unittest.TestCase):
             with self.subTest(capability=capability):
                 self.assertEqual("PUBLIC", _state(exact, capability, "read"))
                 self.assertEqual("UNMEASURABLE", _state(widened, capability, "read"))
+
+    def test_a_visible_private_repository_makes_repository_reads_count(self) -> None:
+        """A fine-grained token sees a private repository only when it is in the
+        selection, so one in the listing is a repository the token can read: with it,
+        a repository read grant is not moot, whether or not the write probe got
+        through (CodeAnt on #364)."""
+        from tools import credential_posture_github as github
+
+        facts = github.observe(
+            _Replay(_calibrated_exact()),
+            repository=SUBJECT,
+            public=True,
+            environment="claude-review",
+            visible_repositories=VISIBLE,
+            login="ktogias",
+            token=_placeholder_token("fine-grained"),
+            private_repositories=frozenset({"ktogias/elsewhere"}),
+        )
+        self.assertEqual("UNMEASURABLE", _state(facts, "deployments", "read"))
+        code, output, _ = _run(
+            _calibrated_exact(), private=frozenset({"ktogias/elsewhere"})
+        )
+        self.assertEqual(3, code, output)
+        self.assertIn("deployments:read", json.loads(output)["unverified"])
 
     def test_a_read_the_provider_filters_rather_than_refuses_is_unmeasurable(
         self,
@@ -1264,7 +1322,7 @@ class CredentialCheckCliTests(unittest.TestCase):
     def test_gh_auth_token_is_bounded_in_time(self) -> None:
         """A keyring prompt or a stalled credential helper must not hang the check
         that gates every first provider write (CodeRabbit on #364)."""
-        import subprocess
+        import subprocess  # nosec B404 -- only to build the TimeoutExpired a stall raises
 
         from tools import credential_check, github_rest
         from tools import credential_posture as posture

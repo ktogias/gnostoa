@@ -128,7 +128,7 @@ def _transport(token: str) -> github.Send:
     return send
 
 
-def _listed_repository(item: Any) -> str:
+def _listed_repository(item: Any) -> tuple[str, bool]:
     """Return a listed repository's name, or raise if it cannot be probed safely.
 
     Skipping it would leave a repository the token can see unchecked, where an excess
@@ -136,15 +136,16 @@ def _listed_repository(item: Any) -> str:
     """
     name = str(item.get("full_name", "")) if isinstance(item, dict) else ""
     try:
-        return github_rest.repository_name(name)
+        # A private repository the token can see is one it can read (CodeAnt on #364).
+        return github_rest.repository_name(name), item.get("private") is not False
     except github_rest.InvalidRepository as error:
         raise posture.PolicyError(
             f"the listing names a repository that cannot be probed safely: {name!r}"
         ) from error
 
 
-def _visible_repositories(send: github.Send) -> tuple[str, ...]:
-    """Return every repository the token can see, whoever owns it, or raise."""
+def _visible_repositories(send: github.Send) -> tuple[tuple[str, ...], frozenset[str]]:
+    """Return every repository the token can see, and those not public, or raise."""
 
     def read(url: str) -> tuple[Any, Mapping[str, str]]:
         """Read one page of the listing, refusing anything but a listed page."""
@@ -153,14 +154,15 @@ def _visible_repositories(send: github.Send) -> tuple[str, ...]:
             raise posture.PolicyError(f"the repository listing failed: {answer.status}")
         return answer.document, answer.headers
 
-    found: list[str] = []
+    found: list[tuple[str, bool]] = []
     for page in github_rest.follow_pages(
         read,
         f"{github_rest.API_ROOT}/{_REPOSITORY_LISTING}",
         max_pages=_MAX_REPOSITORY_PAGES,
     ):
         found += map(_listed_repository, page)
-    return tuple(found)
+    names = tuple(name for name, _ in found)
+    return names, frozenset(name for name, private in found if private)
 
 
 def _repository_facts(
@@ -258,14 +260,16 @@ def main(argv: list[str] | None = None) -> int:
         token = _token()
         send = _transport(token)
         public, environment, login = _repository_facts(send, args.repository)
+        visible, private = _visible_repositories(send)
         facts = github.observe(
             send,
             repository=args.repository,
             public=public,
             environment=environment,
-            visible_repositories=_visible_repositories(send),
+            visible_repositories=visible,
             login=login,
             token=token,
+            private_repositories=private,
         )
         verdict = posture.evaluate(policy, facts, utc_timestamp())
     except github.ProbeHadEffect as error:

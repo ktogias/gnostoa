@@ -91,6 +91,26 @@ class TrustedExecutableWritersTests(unittest.TestCase):
             with self.subTest(file=oct(file_mode), directory=oct(dir_mode)):
                 self.assertIsNone(_found(file_mode, dir_mode))
 
+    def test_a_symlink_in_a_directory_others_can_change_is_refused(self) -> None:
+        """Whoever can change the link's own directory chooses which binary runs, even
+        when every binary it could point to is trusted (Codex on #364)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            safe = pathlib.Path(scratch) / "safe"
+            safe.mkdir()
+            target = safe / "gh"
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            target.chmod(0o755)
+            links = pathlib.Path(scratch) / "links"
+            links.mkdir()
+            link = links / "gh"
+            os.symlink(target, link)
+            links.chmod(0o777)
+            try:
+                with mock.patch.object(shutil, "which", return_value=str(link)):
+                    self.assertIsNone(knowledge_common.trusted_executable("gh"))
+            finally:
+                links.chmod(0o755)
+
     def test_a_symlink_is_judged_where_it_points(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
             open_dir = pathlib.Path(scratch) / "open"

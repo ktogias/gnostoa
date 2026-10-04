@@ -102,15 +102,19 @@ def _writable_only_by_owner(path: str) -> bool:
 def trusted_executable(name: str) -> str | None:
     """Return ``name`` resolved from the trusted system directories, or None.
 
-    Found is not trusted yet: the file it really is -- a symlink resolved -- and its
-    directory must be changeable by no one but root or the caller. `/opt/homebrew/bin`
+    Found is not trusted yet: the file it really is -- a symlink resolved -- its
+    directory, and the directory it was found in must be changeable by no one but root
+    or the caller. `/opt/homebrew/bin`
     belongs to a user, not to root (CodeAnt on #364).
     """
     found = shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
     if found is None:
         return None
     real = os.path.realpath(found)
-    if _writable_only_by_owner(real) and _writable_only_by_owner(os.path.dirname(real)):
+    # The file it really is and its directory, and the directory the name was found
+    # in: whoever can change that one chooses which binary runs (Codex on #364).
+    checked = (real, os.path.dirname(real), os.path.dirname(os.path.abspath(found)))
+    if all(_writable_only_by_owner(path) for path in checked):
         return real
     return None
 

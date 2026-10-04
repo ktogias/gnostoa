@@ -118,8 +118,10 @@ No tool found verifies a personal account's fine-grained token against a declara
    stated reason:
    - **PUBLIC:** a repository read whose data the provider serves without the grant,
      and only over a **public selection**. A read grant reaches only the token's
-     selected repositories, so it adds nothing when the subject is public and proven
-     to be the only writable repository. Otherwise it is UNMEASURABLE.
+     selected repositories, so it adds nothing when the subject is public, proven to be
+     the only writable repository, and no private repository is visible to the token.
+     A fine-grained token sees a private repository only inside its selection.
+     Otherwise it is UNMEASURABLE.
    - **UNMEASURABLE**, not public:
      - a read whose route answers without the grant but filters its private part out
        rather than refusing it: draft and triage advisories, a Pages site's private
