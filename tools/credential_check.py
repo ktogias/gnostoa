@@ -48,6 +48,7 @@ _EXIT = {
     "UNVERIFIED": 3,
 }
 _MAX_REPOSITORY_PAGES = 10
+_GH_TIMEOUT_SECONDS = 30
 _REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
@@ -73,9 +74,20 @@ def _token() -> str:
             f" ({TRUSTED_EXECUTABLE_PATH}) to read a token from"
         )
     # The executable is resolved once, so the argv is fixed: no shell, no caller text.
-    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        [executable, "auth", "token"], capture_output=True, text=True, check=False
-    )
+    try:
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [executable, "auth", "token"],
+            capture_output=True,
+            text=True,
+            check=False,
+            # A keyring prompt or a stalled helper must not hang the check that gates
+            # every first provider write (CodeRabbit on #364).
+            timeout=_GH_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise posture.PolicyError(
+            f"gh auth token timed out after {_GH_TIMEOUT_SECONDS} seconds"
+        ) from error
     value = completed.stdout.strip()
     if completed.returncode != 0 or not value:
         raise posture.PolicyError("gh auth token gave no token")

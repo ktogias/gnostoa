@@ -176,7 +176,7 @@ the owner's operating-system user can still reach the owner's browser session, s
 agent that drove the browser could act as the owner. Agents therefore use no browser
 automation on the owner's profile, and the target is a separate operating-system user
 for agents. The check also does not attribute any write: it says what a token could do,
-not who did what. A required grant it cannot measure (`workflows=write`) is listed, not
+not who did what. A required grant it cannot measure (`workflows:write`) is listed, not
 proven.
 
 ## Consequences
@@ -201,5 +201,5 @@ contract is closed, and this Decision does not change it.
 - Live runs against the agents' token on 2026-10-04 matched the calibration row for
   row. The first reported EXCESS for two writable repositories outside the declaration;
   after the owner removed them from the token, EXACT over all 46 permissions, with the
-  accepted unmeasurable levels and `workflows=write` listed: seven, then eleven once
+  accepted unmeasurable levels and `workflows:write` listed: seven, then eleven once
   four filtered reads stopped counting as public.

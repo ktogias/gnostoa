@@ -242,6 +242,18 @@ def repository_name(value: str) -> str:
     return value
 
 
+def path_segment(value: str) -> str:
+    """Return ``value`` encoded as exactly one path segment, or raise ``ValueError``.
+
+    For a name the provider supplies, such as an environment's: a slash, query or
+    fragment cannot address another endpoint, and `.` or `..`, which quoting leaves
+    alone, are refused because a path would read them as itself or its parent.
+    """
+    if value in {"", ".", ".."}:
+        raise ValueError(f"{value!r} cannot be a path segment")
+    return urllib.parse.quote(value, safe="")
+
+
 def environment_token() -> str:
     """Return the token a job carries: `GH_TOKEN`, else `GITHUB_TOKEN`, else ""."""
     return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""

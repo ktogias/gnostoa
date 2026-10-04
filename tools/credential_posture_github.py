@@ -34,6 +34,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
 from tools.credential_posture import Facts, Observation, ScopeObservation
+from tools.github_rest import path_segment
 
 NOT_ACCESSIBLE = "Resource not accessible by personal access token"
 ACCEPTED_HEADER = "x-accepted-github-permissions"
@@ -487,23 +488,41 @@ def _accepted_sets(headers: Mapping[str, str]) -> list[frozenset[str]]:
     ]
 
 
-def classify(probe: Probe, answer: Answer) -> tuple[str, str]:
-    """Return the state ``answer`` establishes for ``probe``, and the evidence."""
-    evidence = f"{probe.method} {probe.id}: {answer.status}"
-    if probe.method != "GET" and answer.outcome_unknown:
+def _stop_on_effect(probe: Probe, answer: Answer) -> None:
+    """Raise ``ProbeHadEffect`` for a write the provider may have applied.
+
+    One it accepted broke the construction its body rests on; one whose outcome the
+    shared client reports unknown may have landed. Neither is read as a grant.
+    """
+    if probe.method == "GET":
+        return
+    if answer.outcome_unknown:
         raise ProbeHadEffect(
             f"the write probe {probe.id} reached the provider and its outcome is"
             " unknown; it may have had an effect"
         )
-    if (
-        probe.method != "GET"
-        and answer.status is not None
-        and 200 <= answer.status < 300
-    ):
+    if answer.status is not None and 200 <= answer.status < 300:
         raise ProbeHadEffect(
             f"the provider accepted the write probe {probe.id}, which it must reject;"
             " it may have had an effect"
         )
+
+
+def _passed(
+    probe: Probe, answer: Answer, alternatives: list[frozenset[str]], evidence: str
+) -> tuple[str, str]:
+    """Read an answer that passed the permission check: a rejected body or target."""
+    if answer.status == 404 and not probe.permission_first:
+        return "UNKNOWN", f"{evidence}; a lookup may precede the permission check"
+    if all(probe.accepted in alternative for alternative in alternatives):
+        return "GRANTED", evidence
+    return "UNKNOWN", f"{evidence}; another grant alone would also pass"
+
+
+def classify(probe: Probe, answer: Answer) -> tuple[str, str]:
+    """Return the state ``answer`` establishes for ``probe``, and the evidence."""
+    _stop_on_effect(probe, answer)
+    evidence = f"{probe.method} {probe.id}: {answer.status}"
     alternatives = _accepted_sets(answer.headers)
     if not any(probe.accepted in alternative for alternative in alternatives):
         return "UNKNOWN", f"{evidence}; the route does not name {probe.accepted}"
@@ -512,11 +531,7 @@ def classify(probe: Probe, answer: Answer) -> tuple[str, str]:
             return "NOT_GRANTED", evidence
         return "UNMEASURABLE", f"{evidence}; refused, but it needs another grant too"
     if answer.status in probe.granted_statuses:
-        if answer.status == 404 and not probe.permission_first:
-            return "UNKNOWN", f"{evidence}; a lookup may precede the permission check"
-        if all(probe.accepted in alternative for alternative in alternatives):
-            return "GRANTED", evidence
-        return "UNKNOWN", f"{evidence}; another grant alone would also pass"
+        return _passed(probe, answer, alternatives, evidence)
     return "UNKNOWN", evidence
 
 
@@ -586,7 +601,9 @@ def observe(
         if "{environment}" in probe.path and environment is None:
             continue
         path = probe.path.format(
-            repository=repository, environment=environment, login=login
+            repository=repository,
+            environment=environment and path_segment(environment),
+            login=login,
         )
         state, evidence = classify(probe, send(probe.method, path, probe.body))
         observations.append(Observation(probe.capability, probe.level, state, evidence))

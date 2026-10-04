@@ -1261,6 +1261,57 @@ class CredentialCheckCliTests(unittest.TestCase):
             credential_check._token()  # skipcq: PYL-W0212
         trusted.assert_called_once_with("gh")
 
+    def test_gh_auth_token_is_bounded_in_time(self) -> None:
+        """A keyring prompt or a stalled credential helper must not hang the check
+        that gates every first provider write (CodeRabbit on #364)."""
+        import subprocess
+
+        from tools import credential_check, github_rest
+        from tools import credential_posture as posture
+
+        stall = subprocess.TimeoutExpired(["gh", "auth", "token"], 30)
+        with (
+            mock.patch.object(github_rest, "environment_token", return_value=""),
+            mock.patch.object(
+                credential_check, "trusted_executable", return_value="/usr/bin/gh"
+            ),
+            mock.patch.object(subprocess, "run", side_effect=stall) as run,
+            self.assertRaisesRegex(posture.PolicyError, "timed out"),
+        ):
+            credential_check._token()  # skipcq: PYL-W0212
+        self.assertGreater(run.call_args.kwargs["timeout"], 0)
+
+    def test_an_environment_name_is_one_encoded_path_segment(self) -> None:
+        """The provider names the environment; its name is one segment of the probe's
+        path, whatever it contains (CodeAnt on #364)."""
+        from tools import credential_posture_github as github
+
+        answers = _calibrated_exact()
+        r = f"repos/{SUBJECT}"
+        answers[("GET", f"{r}/environments/a%2Fb%3Fx/secrets")] = answers.pop(
+            ("GET", f"{r}/environments/claude-review/secrets")
+        )
+        facts = github.observe(
+            _Replay(answers),
+            repository=SUBJECT,
+            public=True,
+            environment="a/b?x",
+            visible_repositories=VISIBLE,
+            login="ktogias",
+            token=_placeholder_token("fine-grained"),
+        )
+        self.assertEqual("NOT_GRANTED", _state(facts, "environments", "read"))
+        with self.assertRaises(ValueError):
+            github.observe(
+                _Replay(answers),
+                repository=SUBJECT,
+                public=True,
+                environment="..",
+                visible_repositories=VISIBLE,
+                login="ktogias",
+                token=_placeholder_token("fine-grained"),
+            )
+
     def test_the_command_is_registered(self) -> None:
         from tools import cli
 
@@ -1365,6 +1416,28 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(["POST", "PUT", "PATCH"], [m for m, _ in client.requests])
 
 
+def _source_facts(path: pathlib.Path) -> tuple[set[str], set[str], set[str]]:
+    """The string literals, names and attributes used, and top modules imported."""
+    nodes = list(ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
+    constants = {
+        n.value
+        for n in nodes
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+    used = {n.attr for n in nodes if isinstance(n, ast.Attribute)}
+    used |= {n.id for n in nodes if isinstance(n, ast.Name)}
+    imported = {
+        a.name.split(".")[0]
+        for n in nodes
+        if isinstance(n, ast.Import)
+        for a in n.names
+    }
+    imported |= {
+        (n.module or "").split(".")[0] for n in nodes if isinstance(n, ast.ImportFrom)
+    }
+    return constants, used, imported
+
+
 class SharedOwnerReuseTests(unittest.TestCase):
     """The command consumes the owner of each responsibility it needs (#365).
 
@@ -1375,26 +1448,9 @@ class SharedOwnerReuseTests(unittest.TestCase):
     """
 
     def test_the_command_reuses_every_owner_it_needs(self) -> None:
-        tree = ast.parse(
-            (ROOT / "tools" / "credential_check.py").read_text(encoding="utf-8")
+        constants, used, imported = _source_facts(
+            ROOT / "tools" / "credential_check.py"
         )
-        constants = {
-            node.value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)
-        }
-        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-        imported = {
-            alias.name.split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        } | {
-            (node.module or "").split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        }
         not_again = {
             "a token read from the environment": bool(
                 {"GH_TOKEN", "GITHUB_TOKEN"} & constants

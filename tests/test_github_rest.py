@@ -780,6 +780,25 @@ class SharedResponsibilityTests(unittest.TestCase):
                     shared = False
                 self.assertEqual(analyzer, shared)
 
+    def test_a_path_segment_is_encoded_and_never_climbs(self) -> None:
+        """A provider-supplied name placed in a path -- an environment's -- is one
+        segment: a slash, query or fragment cannot address another endpoint, and `..`
+        cannot climb, since quoting leaves dots alone (CodeAnt on #364)."""
+        cases = {
+            "claude-review": "claude-review",
+            "a/b": "a%2Fb",
+            "x?y=1": "x%3Fy%3D1",
+            "f#g": "f%23g",
+            "with space": "with%20space",
+            "100%": "100%25",
+        }
+        for raw, encoded in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(encoded, github_rest.path_segment(raw))
+        for refused in ("", ".", ".."):
+            with self.subTest(refused=refused), self.assertRaises(ValueError):
+                github_rest.path_segment(refused)
+
     def test_pages_are_followed_by_their_links_within_a_bound(self) -> None:
         root = github_rest.API_ROOT
         listing = {

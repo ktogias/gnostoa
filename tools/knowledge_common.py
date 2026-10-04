@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -84,16 +85,34 @@ class KnowledgeFormatError(ValueError):
     pass
 
 
-# The root-owned system directories a host tool is resolved from -- never the caller's
-# `PATH`, where a shadowed executable would run. The same list as the preparation
+# The system directories a host tool is resolved from -- never the caller's `PATH`,
+# where a shadowed executable would run. The same list as the preparation
 # wrapper's (`ci/prepare-candidate`), which is shell and cannot import this; a test
 # holds the two equal. Not `os.defpath`, which omits `/usr/local/bin`.
 TRUSTED_EXECUTABLE_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 
 
+def _writable_only_by_owner(path: str) -> bool:
+    """Return whether only root or the caller owns ``path`` and may change it."""
+    mode = os.stat(path)
+    owners = {0, os.getuid()}
+    return mode.st_uid in owners and not mode.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+
+
 def trusted_executable(name: str) -> str | None:
-    """Return ``name`` resolved from the trusted system directories, or None."""
-    return shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
+    """Return ``name`` resolved from the trusted system directories, or None.
+
+    Found is not trusted yet: the file it really is -- a symlink resolved -- and its
+    directory must be changeable by no one but root or the caller. `/opt/homebrew/bin`
+    belongs to a user, not to root (CodeAnt on #364).
+    """
+    found = shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
+    if found is None:
+        return None
+    real = os.path.realpath(found)
+    if _writable_only_by_owner(real) and _writable_only_by_owner(os.path.dirname(real)):
+        return real
+    return None
 
 
 def utc_timestamp() -> str:

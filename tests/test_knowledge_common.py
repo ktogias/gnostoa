@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import datetime
+import os
 import pathlib
 import re
 import shutil
+import tempfile
 import unittest
 from unittest import mock
 
@@ -41,11 +43,69 @@ class TrustedExecutableTests(unittest.TestCase):
         self.assertEqual(declared.group(1), knowledge_common.TRUSTED_EXECUTABLE_PATH)
 
     def test_the_caller_s_path_is_never_searched(self) -> None:
-        with mock.patch.object(shutil, "which", return_value="/x/gh") as which:
-            self.assertEqual("/x/gh", knowledge_common.trusted_executable("gh"))
+        with tempfile.TemporaryDirectory() as scratch:
+            tool = pathlib.Path(scratch) / "gh"
+            tool.write_text("#!/bin/sh\n", encoding="utf-8")
+            tool.chmod(0o755)
+            pathlib.Path(scratch).chmod(0o755)
+            with mock.patch.object(shutil, "which", return_value=str(tool)) as which:
+                self.assertEqual(
+                    str(tool.resolve()), knowledge_common.trusted_executable("gh")
+                )
         which.assert_called_once_with(
             "gh", path=knowledge_common.TRUSTED_EXECUTABLE_PATH
         )
+
+
+def _found(file_mode: int, dir_mode: int) -> str | None:
+    """What the lookup trusts for a ``gh`` with these modes, in a fresh directory."""
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = pathlib.Path(scratch) / "bin"
+        directory.mkdir()
+        tool = directory / "gh"
+        tool.write_text("#!/bin/sh\n", encoding="utf-8")
+        tool.chmod(file_mode)
+        directory.chmod(dir_mode)
+        try:
+            with mock.patch.object(shutil, "which", return_value=str(tool)):
+                return knowledge_common.trusted_executable("gh")
+        finally:
+            directory.chmod(0o755)
+
+
+class TrustedExecutableWritersTests(unittest.TestCase):
+    """A found executable is trusted only if no one but root or the caller can change
+    it or its directory: `/opt/homebrew/bin` belongs to a user, not to root, and a
+    symlink resolves to where the file really is (CodeAnt on #364)."""
+
+    def test_an_executable_only_its_owner_can_change_is_trusted(self) -> None:
+        self.assertIsNotNone(_found(0o755, 0o755))
+
+    def test_an_executable_others_can_change_is_refused(self) -> None:
+        for file_mode, dir_mode in (
+            (0o775, 0o755),
+            (0o757, 0o755),
+            (0o755, 0o775),
+            (0o755, 0o777),
+        ):
+            with self.subTest(file=oct(file_mode), directory=oct(dir_mode)):
+                self.assertIsNone(_found(file_mode, dir_mode))
+
+    def test_a_symlink_is_judged_where_it_points(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            open_dir = pathlib.Path(scratch) / "open"
+            open_dir.mkdir()
+            target = open_dir / "gh"
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            target.chmod(0o755)
+            open_dir.chmod(0o777)
+            link = pathlib.Path(scratch) / "gh"
+            os.symlink(target, link)
+            try:
+                with mock.patch.object(shutil, "which", return_value=str(link)):
+                    self.assertIsNone(knowledge_common.trusted_executable("gh"))
+            finally:
+                open_dir.chmod(0o755)
 
 
 if __name__ == "__main__":
