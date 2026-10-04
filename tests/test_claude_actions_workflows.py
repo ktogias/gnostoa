@@ -2616,12 +2616,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for bad in ("1/../../x", True, -1, 1.5, None):
             with self.subTest(identifier=bad):
                 module = _admission(responses)
+                # Built first, so only `admit` can raise the refusal asserted.
+                delivered = _delivered_comment("@claude", comment_id=bad)
                 with self.assertRaisesRegex(module.Refused, "not a positive integer"):
-                    module.admit(
-                        "o/r",
-                        _delivered_comment("@claude", comment_id=bad),
-                        _TRIGGER_FACTS,
-                    )
+                    module.admit("o/r", delivered, _TRIGGER_FACTS)
 
     def test_an_issue_only_request_is_bound_to_the_protected_revision(self) -> None:
         """Decision 0094 rule 13: a request with no Pull Request is answered from the
@@ -3217,15 +3215,13 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         condition = str(trigger["jobs"]["record"]["if"])
         self.assertNotIn("pull_request_review", condition)
         # Admission refuses either review event, whatever the payload claims.
+        delivered = _delivered_comment("@claude review this")
         for event in ("pull_request_review", "pull_request_review_comment"):
             with self.subTest(event=event):
                 module = _admission({})
+                recorded = {**_TRIGGER_FACTS, "event": event}
                 with self.assertRaisesRegex(module.Refused, "not an admitted trigger"):
-                    module.admit(
-                        "o/r",
-                        _delivered_comment("@claude review this"),
-                        {**_TRIGGER_FACTS, "event": event},
-                    )
+                    module.admit("o/r", delivered, recorded)
         # And nothing GitHub records only for the review events is passed any more.
         admit = _first(
             step

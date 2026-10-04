@@ -472,23 +472,17 @@ class SecondProviderAdmissionTests(unittest.TestCase):
             },
             "not a string": {**pointer, "request_sha256": 7},
         }
+        # Built before each refusal is asserted, so only `admit` can raise it.
+        trigger, rules = _forge_trigger({}), _forge_rules()
         for name, relayed in unbound.items():
             with (
                 self.subTest(case=name),
                 self.assertRaisesRegex(admission.Refused, "no digest"),
             ):
-                admission.admit(
-                    source,
-                    _FORGE_REPOSITORY,
-                    relayed,
-                    _forge_trigger({}),
-                    _forge_rules(),
-                )
+                admission.admit(source, _FORGE_REPOSITORY, relayed, trigger, rules)
         # The well-formed digest of the delivered text is admitted, so the refusals
         # above are about the digest alone.
-        admission.admit(
-            source, _FORGE_REPOSITORY, pointer, _forge_trigger({}), _forge_rules()
-        )
+        admission.admit(source, _FORGE_REPOSITORY, pointer, trigger, rules)
 
     def test_an_untrusted_item_authors_text_is_withheld(self) -> None:
         """The requester is trusted; the item's author is not, so its text is not
@@ -739,6 +733,7 @@ class PayloadBoundTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as scratch:
             path = pathlib.Path(scratch) / "event.json"
+            relayed = str(path)
             for size, limit, refused in (
                 (4096, None, False),
                 (4097, None, True),
@@ -752,11 +747,11 @@ class PayloadBoundTests(unittest.TestCase):
                     kwargs = {} if limit is None else {"limit": limit}
                     if refused:
                         with self.assertRaisesRegex(admission.Refused, "exceeds"):
-                            admission.read_payload(str(path), **kwargs)
+                            admission.read_payload(relayed, **kwargs)
                     else:
                         self.assertEqual(
                             size - 9,
-                            len(admission.read_payload(str(path), **kwargs)["x"]),
+                            len(admission.read_payload(relayed, **kwargs)["x"]),
                         )
 
 
