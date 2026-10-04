@@ -4,12 +4,13 @@ import contextlib
 import http.client
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import traceback
 import unittest
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -63,9 +64,8 @@ def _github_urls() -> dict[str, str]:
 
 def _deepsource_fake() -> Any:
     class Reader:
-        def graphql(
-            self, query: str, variables: Mapping[str, Any]
-        ) -> Mapping[str, Any]:
+        @staticmethod
+        def graphql(query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
             if "AnalyzerRun" in query:
                 return {
                     "data": {
@@ -125,7 +125,8 @@ def _deepsource_fake() -> Any:
 
 
 class _CodacyReader:
-    def get(self, url: str) -> Mapping[str, Any]:
+    @staticmethod
+    def get(url: str) -> Mapping[str, Any]:
         if url.endswith("/pull-requests/312"):
             return {
                 "isUpToStandards": True,
@@ -142,12 +143,19 @@ class _CodacyReader:
         raise AssertionError(f"unexpected Codacy URL: {url}")
 
 
+# A client factory, the call that drives it, and the error it must fail with: typed, so
+# each invocation is a typed call rather than an untyped lambda's (DeepSource TYP-061).
+_InvokeCase = tuple[Callable[[str], Any], Callable[[Any], Any], type[Exception]]
+
+
 class AnalyzerTransportCredentialTests(unittest.TestCase):
     def test_github_redirect_preserves_same_origin_credentials(self) -> None:
         client = runner.GitHubReadClient("synthetic-transport-value")
         handlers = [
             handler
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             for handler in client._opener.handlers
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             if isinstance(handler, runner._GitHubRedirectHandler)
         ]
         self.assertEqual(1, len(handlers))
@@ -173,6 +181,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 )
 
     def test_github_redirect_refuses_unsafe_origins(self) -> None:
+        # skipcq: PYL-W0212 -- white-box test of the runner's internals
         handler = runner._GitHubRedirectHandler()
         request = urllib.request.Request("https://api.github.com/start")
         request.add_unredirected_header(
@@ -199,15 +208,24 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 super().__init__(b"x" * (response_limit + 1))
                 self.headers: dict[str, str] = {}
                 self.requested_read_size: int | None = None
+                self.consumed = 0
 
-            def read(self, size: int = -1) -> bytes:
+            def read(self, size: int | None = -1) -> bytes:
                 self.requested_read_size = size
-                return super().read(size)
+                chunk = super().read(size)
+                self.consumed += len(chunk)
+                return chunk
+
+            def read1(self, size: int | None = -1) -> bytes:
+                chunk = super().read1(size)
+                self.consumed += len(chunk)
+                return chunk
 
         client = runner.GitHubReadClient("test-token")
         response = _OversizedResponse()
         with (
             patch.object(runner, "_MAX_RESPONSE_BYTES", response_limit),
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             patch.object(client._opener, "open", return_value=response) as open_request,
             self.assertRaisesRegex(
                 runner.RunnerError,
@@ -216,11 +234,14 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
         ):
             client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
 
-        self.assertEqual(response_limit + 1, response.requested_read_size)
+        # Refused, and read no further than one receive past the bound: the shared
+        # client reads in single receives (Decision 0100), so the property held here
+        # is the bound on what was read, not the size of one call.
+        self.assertLessEqual(response.consumed, response_limit + 65536)
         open_request.assert_called_once()
 
     def test_malformed_credentials_do_not_echo_through_real_http_headers(self) -> None:
-        cases = (
+        cases: tuple[_InvokeCase, ...] = (
             (
                 runner.GitHubReadClient,
                 lambda c: c.get(
@@ -231,6 +252,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
             (
                 runner.analyzer_deepsource.DeepSourceGraphQLClient,
                 lambda c: c.graphql(
+                    # skipcq: PYL-W0212 -- white-box test of the runner's internals
                     runner.analyzer_deepsource._RUN_QUERY,
                     {"runUid": RUN_UID, "cursor": None},
                 ),
@@ -288,18 +310,21 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 "x\u2603y",
                 "x\ud800y",
             ):
-                with self.subTest(client=factory.__name__, value=repr(value)):
-                    with patch("urllib.request.build_opener") as opener:
-                        with self.assertRaises(error_type) as caught:
-                            factory(value)
-                        self.assertNotIn(repr(value), str(caught.exception))
-                        opener.assert_not_called()
+                with (
+                    self.subTest(client=factory.__name__, value=repr(value)),
+                    patch("urllib.request.build_opener") as opener,
+                ):
+                    with self.assertRaises(error_type) as caught:
+                        factory(value)
+                    self.assertNotIn(repr(value), str(caught.exception))
+                    opener.assert_not_called()
             value = "aZ0._~+/=-!"
             client = factory(value)
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             self.assertEqual(value, client._token)
 
     def test_transport_value_errors_have_bounded_non_secret_diagnostics(self) -> None:
-        cases = (
+        cases: tuple[_InvokeCase, ...] = (
             (
                 runner.GitHubReadClient,
                 lambda c: c.get("https://api.github.com/start"),
@@ -308,7 +333,9 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
             (
                 runner.analyzer_deepsource.DeepSourceGraphQLClient,
                 lambda c: c.graphql(
-                    runner.analyzer_deepsource._RUN_QUERY, {"runUid": RUN_UID}
+                    # skipcq: PYL-W0212 -- white-box test of the runner's internals
+                    runner.analyzer_deepsource._RUN_QUERY,
+                    {"runUid": RUN_UID},
                 ),
                 runner.analyzer_deepsource.ProviderReadFailure,
             ),
@@ -323,7 +350,10 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 value = "synthetic-transport-credential"
                 client = factory(value)
                 with patch.object(
-                    client._opener, "open", side_effect=ValueError("header " + value)
+                    # skipcq: PYL-W0212 -- white-box test of the runner's internals
+                    client._opener,
+                    "open",
+                    side_effect=ValueError("header " + value),
                 ):
                     try:
                         invoke(client)
@@ -457,7 +487,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     "synthetic-optional-credential",
                     serialized + stderr.getvalue() + stdout.getvalue(),
                 )
-                document = runner.json.loads(serialized)
+                document = json.loads(serialized)
                 self.assertEqual("BOUND", document["subject_binding"])
                 readbacks = {
                     item["provider"]: item
@@ -492,7 +522,8 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     {"body": "x" * 45_000, "id": comment_id}
                     for comment_id in range(start, stop)
                 ]
-                response_size = len(runner.json.dumps(comments).encode("utf-8"))
+                response_size = len(json.dumps(comments).encode("utf-8"))
+                # skipcq: PYL-W0212 -- the runner's own bound, read by this white-box stub
                 if response_size > runner._MAX_RESPONSE_BYTES:
                     raise runner.RunnerError("GitHub API response exceeds bounded size")
                 headers: dict[str, str] = {}
@@ -503,6 +534,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 return comments, headers
 
         client = _BoundedReviewCommentPages()
+        # skipcq: PYL-W0212 -- white-box test of the runner's internals
         comments = runner._review_comments(client, "ktogias/gnostoa", 312)
 
         self.assertEqual(list(range(total_comments)), [item["id"] for item in comments])
@@ -518,16 +550,19 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         client = runner.GitHubReadClient("test-token")
 
         class _IncompleteReadOpener:
-            def open(self, *_args: object, **_kwargs: object) -> object:
+            @staticmethod
+            def open(*_args: object, **_kwargs: object) -> object:
                 raise http.client.IncompleteRead(b"")
 
+        # skipcq: PYL-W0212 -- white-box test of the runner's internals
         client._opener = _IncompleteReadOpener()  # type: ignore[assignment]
         with self.assertRaisesRegex(runner.RunnerError, "GitHub API unavailable"):
             client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
 
     def test_repository_segments_reject_path_and_query_injection(self) -> None:
         class _NoNetwork:
-            def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+            @staticmethod
+            def get(url: str) -> tuple[Any, Mapping[str, str]]:
                 raise AssertionError(f"network must not be reached: {url}")
 
         for repository in (
@@ -577,6 +612,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_deepsource_comment_projection_retains_original_commit_identity(
         self,
     ) -> None:
+        # skipcq: PYL-W0212 -- white-box test of the runner's internals
         projected = runner._deepsource_comments(
             [
                 {
@@ -782,6 +818,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
 
     def test_secret_sentinel_is_rejected_before_output(self) -> None:
         with self.assertRaisesRegex(runner.RunnerError, "credential bytes"):
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             runner._assert_secret_free(
                 canonical_json({"value": "prefix-super-secret-suffix"}),
                 ["super-secret"],
@@ -790,8 +827,10 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_output_is_create_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "readback.json"
+            # skipcq: PYL-W0212 -- white-box test of the runner's internals
             runner._write_create_only(output, "{}")
             with self.assertRaisesRegex(runner.RunnerError, "already exists"):
+                # skipcq: PYL-W0212 -- white-box test of the runner's internals
                 runner._write_create_only(output, "{}")
 
     def test_guardrail_owns_all_analyzer_readback_surfaces(self) -> None:

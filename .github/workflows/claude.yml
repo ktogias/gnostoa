@@ -57,12 +57,30 @@ jobs:
     # declaration scopes nothing. (CodeAnt)
     environment: claude-review
     timeout-minutes: 60
+    # The identities the posting jobs act on, from admission's own outputs -- never from
+    # the reviewer's handoff, which the model wrote (Decision 0098).
+    outputs:
+      item_number: ${{ steps.admit.outputs.item_number }}
+      pull_number: ${{ steps.admit.outputs.pull_number }}
+      head_sha: ${{ steps.admit.outputs.head_sha }}
+      review_outcome: ${{ steps.claude.outcome }}
+      # The attempt that wrote the report. Artifacts are immutable within a run, so each
+      # attempt hands over under its own name; rerunning only a posting job reuses this
+      # output and so still finds the report its reviewing job produced.
+      report_attempt: ${{ github.run_attempt }}
+      # The report artifact's id, empty when nothing was handed over. A posting job
+      # that cannot find a report this names failed to receive it, which is not a
+      # review that never finished (Codex on #353).
+      report_artifact: ${{ steps.handoff.outputs.artifact-id }}
+    # Read-only, and no `id-token`: with it the pinned action exchanged OIDC for a
+    # Claude GitHub App token with contents, pull-request and issue *write*, and agent
+    # mode wrote that token into the checkout's .git/config, where the reviewer could
+    # read it (#352). The action is given this job's own token instead (below).
     permissions:
       contents: read
       pull-requests: read
       issues: read
-      id-token: write # OIDC exchange for the Claude GitHub App token
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read # Downloading the relayed event identity from the trigger's run
     steps:
 
       # The reviewed candidate is never materialised as a working tree in this job.
@@ -123,6 +141,9 @@ jobs:
       - name: Admit the relayed mention from the provider
         id: admit
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
@@ -140,6 +161,9 @@ jobs:
 
       - name: Collect review context
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           # Item type is keyed on the resolved pull number, never on head/base
@@ -149,324 +173,19 @@ jobs:
           HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
           CONTEXT_DIR: ${{ github.workspace }}/.gnostoa-review-context
           MAX_BYTES: "524288"
-        run: |
-          set -eu
-          rm -rf "${CONTEXT_DIR}"
-          mkdir -p "${CONTEXT_DIR}"
-          # The request as admission re-read it from the provider (Decision 0096).
-          # Copied in here, after the directory is reset, and before the no-Pull-
-          # Request exit, so every request carries its own text. The reviewer's Read
-          # tool is denied runner.temp, so it has to live under the context directory.
-          # `cp -R` of a directory admission just wrote: regular files only, no
-          # candidate-controlled path component.
-          cp -R "${RUNNER_TEMP}/claude-request" "${CONTEXT_DIR}/request"
-          if [ -z "${PULL_NUMBER}" ]; then
-            printf 'No Pull Request: this request concerns the issue itself.\n' \
-              > "${CONTEXT_DIR}/README"
-            exit 0
-          fi
-          # The comparison is asked of the provider rather than computed from a
-          # local candidate tree, so the change can be described without the
-          # candidate's files, modes or symlinks ever existing on this runner. The
-          # two revisions come from the trusted resolver, never from the payload.
-          comparison="repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
-          # A persistent failure still stops: there is nothing to review without the
-          # comparison, and a silent partial context would be worse than a red check.
-          api_to_file() {
-            api_target=$1
-            shift
-            api_attempt=1
-            while :; do
-              if gh api "$@" > "${api_target}.attempt" 2>"${api_target}.err"; then
-                mv "${api_target}.attempt" "${api_target}"
-                rm -f "${api_target}.err"
-                return 0
-              fi
-              rm -f "${api_target}.attempt"
-              if [ "${api_attempt}" -ge 3 ]; then
-                cat "${api_target}.err" >&2
-                rm -f "${api_target}.err"
-                return 1
-              fi
-              sleep "$(( api_attempt * ${RETRY_SLEEP:-5} ))"
-              api_attempt=$(( api_attempt + 1 ))
-            done
-          }
-          # One request for the comparison; the committed script derives every
-          # file-level artefact from this payload.
-          api_to_file "${CONTEXT_DIR}/comparison.json" "${comparison}"
-          # Commits *are* paginated, at 250 per page, so ask for every page. The
-          # subject is candidate-controlled text and commits.log is line-oriented like
-          # every other artefact here, so it is carried base64-encoded and rendered by
-          # the committed script, which escapes it the same way it escapes a pathname.
-          # Splitting only on "\n" left a Unicode line separator intact, and a subject
-          # could then add a standalone fake commit or a fake provider-cap notice.
-          # `--paginate` follows pagination links but does not itself page this
-          # endpoint: the compare API returns its default 250 commits unless per_page
-          # is given, so a larger comparison silently lost every later subject while
-          # the cap notice said only that some were missing.
-          api_to_file "${CONTEXT_DIR}/commits.b64" --paginate \
-            -X GET -F per_page=100 "${comparison}" \
-            --jq '.commits[]? | "\(.sha[0:9]) \(.commit.message | split("\n")[0] | @base64)"'
-          # The provider caps the commits it returns. Say so rather than letting the
-          # reviewer read a short list as a complete one.
-          api_to_file "${CONTEXT_DIR}/total_commits" "${comparison}" \
-            --jq '.total_commits // 0'
-          total_commits="$(cat "${CONTEXT_DIR}/total_commits")"
-          rm -f "${CONTEXT_DIR}/total_commits"
-          # One committed script turns that single payload into diff.stat, the
-          # no-patch listing, and base/ -- the base revision of the changed files it
-          # could fetch, as provider-supplied bytes with no tree, modes or symlinks;
-          # base.manifest names the rest with their reasons, for the paths the
-          # provider listed -- a capped comparison never sends the later ones,
-          # and the manifest says so rather than implying it has them. The
-          # checkout is the default branch rather than this Pull Request's base, so
-          # without base/ unchanged code read from disk could come from a revision the
-          # candidate never saw. Keeping this in Python also spares the step an
-          # external jq.
-          # Guarded, because this runs before the unified diff is requested: letting
-          # the collector's failure end the step would take diff.full with it and leave
-          # the reviewer nothing at all rather than a degraded context. Every escape
-          # inside the collector has been closed one at a time, and the step should not
-          # depend on having found them all. The failure is named in base.manifest,
-          # which is where the reviewer is told to look for what base/ lacks.
-          base_context=collected
-          commits_log_made=no
-          collector_status=0
-          python3 .github/review-context/build_review_context.py \
-            "${CONTEXT_DIR}" "${REPOSITORY}" "${MAX_BYTES}" || collector_status=$?
-          if [ "${collector_status}" -eq 3 ]; then
-            # Decision 0094 rule 37: the collection finished, but the comparison
-            # could not be read, so no changed file was named. base.manifest says why,
-            # and an empty fallback diff below must not be called an empty change.
-            base_context=unlisted
-          elif [ "${collector_status}" -ne 0 ]; then
-            base_context=failed
-            # Missing only. The collector writes commits.log, diff.stat, no-patch.txt,
-            # assembled.diff and the base/ bytes *before* the per-file fetch loop,
-            # which is where a late failure is most likely -- so by then each of them
-            # is already correct. Creating them unconditionally destroyed exactly the
-            # degraded context this guard exists to preserve: the commit log was
-            # emptied and the count below then blamed a provider cap that never
-            # happened, and a refused diff would have moved an emptied assembled.diff
-            # over per-file patches that existed.
-            mkdir -p "${CONTEXT_DIR}/base"
-            [ -e "${CONTEXT_DIR}/diff.stat" ] || : > "${CONTEXT_DIR}/diff.stat"
-            [ -e "${CONTEXT_DIR}/no-patch.txt" ] || : > "${CONTEXT_DIR}/no-patch.txt"
-            [ -e "${CONTEXT_DIR}/assembled.diff" ] || \
-              : > "${CONTEXT_DIR}/assembled.diff"
-            if [ ! -e "${CONTEXT_DIR}/commits.log" ]; then
-              : > "${CONTEXT_DIR}/commits.log"
-              commits_log_made=yes
-            fi
-            # Appended, never written over: base.manifest is the last thing the
-            # collector writes, so if it is here the accounting in it is real and
-            # states what base/ actually holds. The notice says the collection did not
-            # finish; it does not claim base/ is empty, because the bytes fetched
-            # before the failure are still there and are still worth reading.
-            # A file staged but never renamed into place is not content. The writer
-            # removes its own staging file in a `finally`, which a hard stop does not
-            # honour, so keeping base/ would keep an unfinished file among the
-            # complete ones under a name nothing explains.
-            #
-            # Recursive, because the writer stages beside its destination
-            # (`mkstemp(dir=destination.parent)`), so a changed file in a
-            # subdirectory stages in that subdirectory -- and most changed files are
-            # in one. A top-level sweep left exactly the common case behind.
-            #
-            # The writer stages outside base/, in .base-staging, so the sweep removes
-            # that directory whole and never looks inside base/. It used to match the
-            # writer's name shape there, and no name can be told apart from a real
-            # file: a rename lets the candidate choose one in exactly that shape, which
-            # was then deleted while Written: still counted it. The path is a literal
-            # built here, never a candidate-supplied word.
-            rm -rf "${CONTEXT_DIR}/.base-staging"
-            # Describes the retained set; deliberately does not enumerate it. A
-            # pathname is candidate-controlled and this artefact is read line by
-            # line, so listing base/ in shell -- where the collector's quoting does
-            # not apply -- would let a newline in a name forge a manifest record.
-            # The reviewer can list base/ directly.
-            printf 'provider-error base-context: the collection did not finish, so\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'base/ holds only the subset fetched before it stopped. Each file\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'present is complete, because each is renamed into place whole,\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'but the set is partial and this manifest does not name which\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'paths were expected. A changed file absent from base/ is not\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'examined: its absence is this failure, not the base revision.\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'The step log carries the reason.\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-          fi
-          # Counted after the script has rendered the log, so the count is of records
-          # the reviewer will actually read -- records, not physical lines: a subject
-          # longer than the reader's line is wrapped onto lines beginning with ">",
-          # and counting those as commits hid a real truncation. (gitar, Codex)
-          listed_commits="$(grep -cv '^>' "${CONTEXT_DIR}/commits.log" || true)"
-          if [ "${commits_log_made}" = yes ]; then
-            # The zero is this step's, not the provider's. Publishing it through the
-            # cap notice reported a truncation the provider never performed.
-            printf '[commit log unavailable: the base-context collection failed]\n' \
-              >> "${CONTEXT_DIR}/commits.log"
-          elif [ "${total_commits}" -gt "${listed_commits}" ]; then
-            printf '[provider listed %s of %s commits]\n' \
-              "${listed_commits}" "${total_commits}" >> "${CONTEXT_DIR}/commits.log"
-          fi
-
-          # The provider can refuse the diff of a very large comparison. Failing the
-          # step would reproduce the large-Pull-Request failure this Decision exists to
-          # remove -- but continuing with no changed content at all would let a review
-          # complete without seeing the change. So the per-file patches the builder
-          # assembled from the comparison are used instead, and the reviewer is told.
-          # Retried before the fallback is accepted. A transient 5xx here is not a
-          # refusal, and treating it as one silently downgrades the review to hunks
-          # with no surrounding context.
-          # Only an actual refusal may reach the fallback. After the retry, every
-          # persistent failure used to enter it, so an authentication error, a
-          # permission error or an outage was published as "the provider refused the
-          # diff" -- an incomplete review presented as a complete one. The provider
-          # answers 406 when a comparison's diff is too large to generate, so that is
-          # the one status the fallback accepts; anything else stops the step. This
-          # fails closed: an unrecognised message is an error, not a refusal.
-          # Whether the 406 fallback was taken: the only thing that establishes a
-          # refusal. The empty-diff branch below reads this, not the collector's
-          # status, which fails or reads nothing for reasons of its own.
-          diff_refused=0
-          if ! api_to_file "${CONTEXT_DIR}/diff.full" "${comparison}" \
-            -H "Accept: application/vnd.github.v3.diff" \
-            2> "${CONTEXT_DIR}/diff.err"; then
-            # gh's structured status suffix, `gh: <message> (HTTP <status>)`, read
-            # from gh 2.82.1; matching "http 406" anywhere let a different status
-            # whose message mentioned 406 read as a refusal. (CodeAnt)
-            if ! grep -qE '\(HTTP 406\)$' "${CONTEXT_DIR}/diff.err"; then
-              echo "ERROR: the unified diff request failed and was not a refusal:" >&2
-              cat "${CONTEXT_DIR}/diff.err" >&2
-              exit 1
-            fi
-            rm -f "${CONTEXT_DIR}/diff.err"
-            diff_refused=1
-            mv "${CONTEXT_DIR}/assembled.diff" "${CONTEXT_DIR}/diff.full"
-            printf 'NOTE: the provider refused the unified diff for this comparison.\n' \
-              > "${CONTEXT_DIR}/patches-source"
-            printf 'These hunks come from the per-file patches instead, so context\n' \
-              >> "${CONTEXT_DIR}/patches-source"
-            printf 'outside each hunk is absent and capped files may be missing.\n' \
-              >> "${CONTEXT_DIR}/patches-source"
-            # The comparison's entries carry no mode fields, so a file whose content
-            # and executable bit both changed shows only its content hunks here.
-            printf 'Per-file hunks carry no file modes: a mode change, such as a script\n' \
-              >> "${CONTEXT_DIR}/patches-source"
-            printf 'losing its executable bit, cannot be seen; report modes as not examined.\n' \
-              >> "${CONTEXT_DIR}/patches-source"
-            # No "partial" notice after a failed collection (Decision 0094 rule 29,
-            # superseded). The collector writes assembled.diff whole or not at all,
-            # before its per-file loop: present, it is complete, and calling it
-            # partial told the reviewer that hunks it had were missing. An absent one
-            # is the zero-byte branch below, which states its own condition.
-          fi
-          rm -f "${CONTEXT_DIR}/diff.err"
-          rm -f "${CONTEXT_DIR}/assembled.diff"
-          full_bytes="$(wc -c < "${CONTEXT_DIR}/diff.full")"
-          # The inverse contradiction: a comparison read with no files beside a
-          # unified diff that is not empty. The diff is published -- its hunks are
-          # the provider's -- but base.manifest promises to name every gap, and it
-          # named none for the files the diff shows. (Codex)
-          if [ "${full_bytes}" -gt 0 ] && [ "${base_context}" = collected ] \
-            && [ ! -s "${CONTEXT_DIR}/diff.stat" ]; then
-            printf 'provider-error changed-content: the comparison listed no files, but\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'the unified diff is not empty: the files it shows have no base bytes\n' \
-              >> "${CONTEXT_DIR}/base.manifest"
-            printf 'and no entry above.\n' >> "${CONTEXT_DIR}/base.manifest"
-          fi
-          if [ "${full_bytes}" -eq 0 ] && [ "${diff_refused}" -eq 0 ] \
-            && [ "${base_context}" = collected ] \
-            && [ ! -s "${CONTEXT_DIR}/diff.stat" ]; then
-            # "No changes" needs all three (Decision 0094 rules 37 and 38): the
-            # provider's own unified diff, empty; a comparison that was read; and a
-            # file list that was empty. A Pull Request whose head already reaches its
-            # base still gets every artefact the prompt names, so the prompt and the
-            # context agree.
-            printf 'No changes between base and head for this Pull Request.\n' \
-              > "${CONTEXT_DIR}/diff.patch"
-          elif [ "${full_bytes}" -eq 0 ]; then
-            # Empty, and not an established empty change; each way here is stated as
-            # what it is. The refusal is read from the 406 itself. Inferred from the
-            # collector's status, it was put on an empty diff the provider had
-            # returned, and that empty diff was then called "No changes" over a
-            # comparison that was unread, unchecked or listing files. (Codex)
-            printf 'provider-error changed-content: ' > "${CONTEXT_DIR}/diff.patch"
-            if [ "${diff_refused}" -eq 1 ]; then
-              printf 'the provider refused the unified diff,\n' \
-                >> "${CONTEXT_DIR}/diff.patch"
-              if [ "${base_context}" = collected ]; then
-                printf 'and the per-file patches carried no hunks. Each changed file\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'without hunks is listed in no-patch.txt and classified in\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'base.manifest.\n' >> "${CONTEXT_DIR}/diff.patch"
-              elif [ "${base_context}" = failed ]; then
-                printf 'and the per-file patches were unavailable because the base\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'context collection failed.\n' >> "${CONTEXT_DIR}/diff.patch"
-              else
-                printf 'and the per-file patches were unavailable because the\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'comparison could not be read.\n' >> "${CONTEXT_DIR}/diff.patch"
-              fi
-            else
-              printf 'the provider returned an empty unified diff,\n' \
-                >> "${CONTEXT_DIR}/diff.patch"
-              if [ "${base_context}" = collected ]; then
-                printf 'but its comparison listed changed files (diff.stat): the two\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'answers contradict.\n' >> "${CONTEXT_DIR}/diff.patch"
-              elif [ "${base_context}" = failed ]; then
-                printf 'but the base context collection failed, so the comparison was\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'not checked for changed files.\n' >> "${CONTEXT_DIR}/diff.patch"
-              else
-                printf 'but the comparison could not be read, so it was not checked\n' \
-                  >> "${CONTEXT_DIR}/diff.patch"
-                printf 'for changed files.\n' >> "${CONTEXT_DIR}/diff.patch"
-              fi
-            fi
-            printf 'No changed content is present here. Treat every changed file as\n' \
-              >> "${CONTEXT_DIR}/diff.patch"
-            printf 'not examined.\n' >> "${CONTEXT_DIR}/diff.patch"
-          else
-            # diff.patch is bounded on purpose: an unbounded diff would reintroduce
-            # the context exhaustion this Decision exists to remove. Every hunk this
-            # collection retained is also written as fixed-size parts, because the
-            # reviewer has no git with which to recover a deletion that falls past the
-            # cutoff, and the checkout -- the workflow revision, not the base -- holds
-            # no reliable pre-change bytes. On the provider's 406 the retained hunks
-            # are per-file ones, which can omit files; patches-source says so.
-            # Line boundaries are preferred, but a single line longer than the bound
-            # must still be cut, and GNU coreutils' record mode cuts such a record by
-            # bytes -- halving a multibyte character and leaving two parts a text
-            # reader cannot decode. The chunker is encoding-aware instead. It is a
-            # committed script, so it comes from the default branch like this workflow
-            # does, and the suite exercises it directly rather than by extraction.
-            # The chunker writes diff.patch and its bound notice as well, because
-            # only it knows how many parts wrapping actually produced. Deciding here
-            # from the pre-wrap byte count missed a diff that fitted the bound until
-            # wrapping pushed it past.
-            python3 .github/review-context/chunk_diff.py \
-              "${CONTEXT_DIR}" "${MAX_BYTES}"
-          fi
-          rm -f "${CONTEXT_DIR}/diff.full" "${CONTEXT_DIR}/comparison.json"
-
+        # One committed entrypoint over the neutral context core (Decision 0100): the
+        # rules the inline shell held -- the guarded collector, the commit-count notice,
+        # the refusal-only fallback and the empty-diff verdicts -- are the core's.
+        run: python3 .github/review-context/collect_context.py
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          additional_permissions: |
-            actions: read
+          # This job's read-only token, so the action skips its OIDC exchange for a
+          # write-capable App token (src/github/token.ts: OVERRIDE_GITHUB_TOKEN). Its
+          # permission check passes with it: measured, HTTP 200 and `admin` (#352).
+          github_token: ${{ github.token }}
           # Decision 0094: supplying `prompt` selects agent mode, which fetches no
           # GitHub data. Tag mode instead retrieves every comment and review with
           # no cap, which exhausted the request on a large Pull Request. Every
@@ -506,6 +225,7 @@ jobs:
                   "Glob(//home/**/_diag/**)",
                   "Read(**/event.json)", "Grep(**/event.json)",
                   "Glob(**/event.json)",
+                  "Read(**/.git/**)", "Grep(**/.git/**)", "Glob(**/.git/**)",
                   "Read(//run/**)", "Grep(//run/**)", "Glob(//run/**)",
                   "Read(//var/run/**)", "Grep(//var/run/**)", "Glob(//var/run/**)",
                   "Read(//tmp/**)", "Grep(//tmp/**)", "Glob(//tmp/**)"
@@ -514,7 +234,7 @@ jobs:
             }
           claude_args: >-
             --max-turns 40
-            --allowedTools "Read,Grep,Glob,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
+            --allowedTools "Read,Grep,Glob"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
@@ -579,6 +299,9 @@ jobs:
       - name: Publish the review report
         if: always()
         env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         # The protected checkout is the first step, but it can itself fail, leaving no
         # publisher on disk. The fallback is a fixed notice that executes nothing from
@@ -592,4 +315,122 @@ jobs:
             exit 0
           fi
           python3 .github/review-context/publish_report.py \
-            "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}"
+            "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}" \
+            "${RUNNER_TEMP}/claude-review-report"
+
+      # Handed to the posting jobs (Decision 0098), only once admission resolved an item:
+      # a refused request is not answered in the thread.
+      - name: Hand the report to the posting job
+        id: handoff
+        if: always() && steps.admit.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claude-review-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/claude-review-report
+          if-no-files-found: ignore
+          # As long as GitHub lets a job be rerun: a posting job that did not receive
+          # the report refuses and asks for a rerun, which needs the artifact to still
+          # exist (gitar on #353).
+          retention-days: 30
+
+  # Decision 0098: a finished review is posted into the thread it was asked in, from a
+  # job that runs no model, names no environment and no secret, and holds one write
+  # scope for one kind of item. It checks out the protected revision without
+  # credentials and posts with a repository-owned script, as github-actions[bot]. A
+  # comment made with GITHUB_TOKEN starts no workflow run, so a posted review cannot
+  # re-trigger the relay; and its author association is not one admission admits.
+  post-to-pull-request:
+    needs: claude
+    if: >-
+      always()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.claude.outputs.item_number != ''
+      && needs.claude.outputs.pull_number != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the protected workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      # Absent when the reviewer job ended before handing anything over; the script
+      # then posts a notice that the review did not complete.
+      - name: Download the review report
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: claude-review-report-${{ needs.claude.outputs.report_attempt }}
+          path: ${{ runner.temp }}/claude-review-report
+      - name: Post the review to the Pull Request
+        env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ITEM_NUMBER: ${{ needs.claude.outputs.item_number }}
+          HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
+          REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The delivery is the report's: its marker carries the report's attempt, so
+          # rerunning only this job after an uncertain create finds that comment rather
+          # than posting the review again (Codex on #353). Its read-back starts where
+          # the run did, which a rerun keeps.
+          RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
+          DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
+          REPORT_ARTIFACT: ${{ needs.claude.outputs.report_artifact }}
+          # The download's own outcome: the pinned action extracts into the path before
+          # its download completes, so a present directory proves nothing (Codex).
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+        run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"
+
+  post-to-issue:
+    needs: claude
+    if: >-
+      always()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.claude.outputs.item_number != ''
+      && needs.claude.outputs.pull_number == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout the protected workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Download the review report
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: claude-review-report-${{ needs.claude.outputs.report_attempt }}
+          path: ${{ runner.temp }}/claude-review-report
+      - name: Post the review to the issue
+        env:
+          # The pipeline's core and adapters live in tools/ of this protected checkout
+          # (Decision 0100).
+          PYTHONPATH: ${{ github.workspace }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ITEM_NUMBER: ${{ needs.claude.outputs.item_number }}
+          HEAD_SHA: ${{ needs.claude.outputs.head_sha }}
+          REVIEW_OUTCOME: ${{ needs.claude.outputs.review_outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The delivery is the report's: its marker carries the report's attempt, so
+          # rerunning only this job after an uncertain create finds that comment rather
+          # than posting the review again (Codex on #353). Its read-back starts where
+          # the run did, which a rerun keeps.
+          RUN_ATTEMPT: ${{ needs.claude.outputs.report_attempt }}
+          DELIVERY_SINCE: ${{ github.event.workflow_run.created_at }}
+          REPORT_ARTIFACT: ${{ needs.claude.outputs.report_artifact }}
+          # The download's own outcome: the pinned action extracts into the path before
+          # its download completes, so a present directory proves nothing (Codex).
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+        run: python3 .github/review-context/post_report.py "${RUNNER_TEMP}/claude-review-report"

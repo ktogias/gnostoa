@@ -582,6 +582,7 @@ guardrails:
       - tools/review_reconcile.py
       - ci/review_github_current_state.py
       - .github/workflows/review-current-state.yml
+      - tools/github_rest.py
     tests:
       - tests/test_review_reconcile_l1.py
       - tests/test_review_reconcile_l1_followups.py
@@ -589,6 +590,7 @@ guardrails:
       - tests/test_review_reconcile_l1_thread_state.py
       - tests/test_review_reconcile_l1_render_compat.py
       - tests/test_review_reconcile_l1_full_review_followups.py
+      - tests/test_github_rest.py
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
@@ -602,9 +604,11 @@ guardrails:
       - tools/analyzer_codacy.py
       - ci/analyzer_readback.py
       - .github/workflows/analyzer-readback.yml
+      - tools/github_rest.py
     tests:
       - tests/test_analyzer_readback.py
       - tests/test_analyzer_readback_runner.py
+      - tests/test_github_rest.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
@@ -693,8 +697,20 @@ guardrails:
       - .github/review-context/chunk_diff.py
       - .github/review-context/build_review_context.py
       - .github/review-context/publish_report.py
-      - .github/review-context/review_context_paths.py
+      - tools/agent_review_model.py
+      - tools/agent_review_paths.py
+      - tools/agent_review_admission.py
+      - tools/agent_review_context.py
+      - tools/agent_review_base.py
+      - tools/agent_review_diff.py
+      - tools/agent_review_report.py
+      - tools/agent_review_delivery.py
+      - tools/agent_review_claude_code.py
+      - tools/agent_review_github.py
+      - tools/github_rest.py
       - .github/review-context/admit_mention.py
+      - .github/review-context/collect_context.py
+      - .github/review-context/post_report.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
@@ -707,6 +723,8 @@ guardrails:
       - knowledge/decisions/0094-bound-claude-review-context.md
       - knowledge/decisions/0096-relay-mention-reviews-through-a-protected-workflow.md
       - knowledge/decisions/0097-scope-the-claude-credential-to-the-protected-branch.md
+      - knowledge/decisions/0098-post-claude-reviews-from-a-least-privilege-job.md
+      - knowledge/decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:
@@ -726,6 +744,8 @@ guardrails:
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
       - tests/test_claude_actions_workflows.py
+      - tests/test_agent_review_core.py
+      - tests/test_github_rest.py
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact

@@ -86,6 +86,10 @@ Terms. It is only executed in CI and is neither copied nor redistributed.
 4. Keep the workflow token read-only plus `id-token: write` and `actions: read`
    where CI results are read. Adding write scopes would widen `GITHUB_TOKEN`
    without affecting the App token.
+   *Revised by Decision 0098:* the App token was the write capability that mattered.
+   The reviewer job now passes its own read-only token and has no `id-token`, so no
+   App token is obtained. `GITHUB_TOKEN` write is admitted only in the posting jobs,
+   which run no model and hold no secret.
 5. Run the automatic review only for same-repository, non-draft PRs. Keep one
    review per PR with `cancel-in-progress`, and give the job a timeout.
    *Withdrawn by Decision 0097*, with the automatic review it governed. Once the
@@ -126,6 +130,7 @@ that test.
   Decision 0097 they are on-demand mention reviews only; the automatic review is
   withdrawn.
 - The App token remains write-capable by upstream design. Containment relies on
-  the actor check and the association gate. *Historical:* the single-tool
+  the actor check and the association gate. *Superseded by Decision 0098:* no App
+  token is obtained, because the action is given the job's read-only token. *Historical:* the single-tool
   `--allowedTools` restriction applied to the automatic review, withdrawn by
   Decision 0097.

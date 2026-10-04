@@ -429,12 +429,12 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                adapter.urllib.request,
+                urllib.request,
                 "build_opener",
                 return_value=opener,
             ) as build_opener,
             mock.patch.object(
-                adapter.urllib.request,
+                urllib.request,
                 "urlopen",
                 side_effect=AssertionError("unguarded urlopen must not be used"),
             ),
@@ -1025,6 +1025,66 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("ProviderWriteError:HTTP_403", logged)
         self.assertIn("PR #2: UPDATED", logged)
 
+    def test_an_abandoned_publication_is_reported_unknown_not_failed(self) -> None:
+        """A write abandoned at its bound may still land. Translated under this
+        adapter's names it kept no such fact, so the entry was reported as not
+        published (CodeAnt on #353). It is now reported as of unknown outcome."""
+        fixtures = _fixtures()
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
+        adapter = fixtures._adapter()
+        # skipcq: PYL-W0212 -- the translation itself is under test
+        translated = adapter._translated(
+            adapter.github_rest.GitHubWriteError("timed out", in_flight=True)
+        )
+        self.assertIsInstance(translated, adapter.ProviderWriteError)
+        self.assertTrue(translated.in_flight)
+        with (
+            mock.patch.object(
+                adapter, "_load_payload", return_value=[{"pull_number": 1}]
+            ),
+            mock.patch.object(adapter, "publish_entry", side_effect=[translated]),
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print"),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+        self.assertEqual(1, code)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #1: PUBLICATION_OUTCOME_UNKNOWN", rendered)
+        self.assertNotIn("PUBLICATION_ENTRY_UNAVAILABLE", rendered)
+
+    def test_a_publication_the_provider_may_have_applied_is_reported_unknown(
+        self,
+    ) -> None:
+        """A write that reached the provider without a refusal may have been applied.
+        L1's own pre-write refusals are not: they say nothing was sent (CodeAnt)."""
+        fixtures = _fixtures()
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
+        adapter = fixtures._adapter()
+        # skipcq: PYL-W0212 -- the translation itself is under test
+        reached = adapter._translated(
+            adapter.github_rest.GitHubWriteError("HTTP 502", outcome_unknown=True)
+        )
+        self.assertTrue(reached.outcome_unknown)
+        unsent = adapter.ProviderWriteError("publication payload is malformed")
+        for error, reason in (
+            (reached, "PUBLICATION_OUTCOME_UNKNOWN"),
+            (unsent, "PUBLICATION_ENTRY_UNAVAILABLE"),
+        ):
+            with self.subTest(reason=reason):
+                # skipcq: PYL-W0212 -- the result of a failed entry is under test
+                result = adapter._failed_publication({"pull_number": 1}, error)
+                self.assertEqual(reason, result["reason"])
+
     def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()
@@ -1070,6 +1130,49 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         )
         self.assertIn("PR #1: STALE_HEAD", logged)
         self.assertIn("PR #2: SUPERSEDED_PROJECTION", logged)
+
+    def test_collect_mode_summary_failure_cannot_replace_success(self) -> None:
+        """The payload was written, then an unwritable step summary failed the whole
+        collection; publish mode already survived the same failure (CodeAnt on #353).
+        """
+        fixtures = _fixtures()
+        adapter = fixtures.adapter_fixture()
+        entry = {"pull_number": 1, "collection_status": "AVAILABLE"}
+        with (
+            mock.patch.object(adapter, "_collect_entry", return_value=entry),
+            mock.patch.object(adapter, "_write_payload") as write_payload,
+            mock.patch.object(
+                adapter,
+                "_summary",
+                side_effect=OSError("sensitive summary path detail"),
+            ),
+            mock.patch("builtins.print") as print_line,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "collect",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--pull-number",
+                    "1",
+                    "--output",
+                    "unused.json",
+                    "--run-id",
+                    "1",
+                    "--run-attempt",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(0, code)
+        write_payload.assert_called_once()
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("STEP_SUMMARY_UNAVAILABLE (OSError)", logged)
+        self.assertNotIn("sensitive summary path detail", logged)
 
     def test_publish_mode_summary_failure_cannot_replace_success(self) -> None:
         fixtures = _fixtures()

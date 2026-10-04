@@ -1,17 +1,16 @@
-"""The one path-confinement check the review-context scripts share.
+"""The one path-confinement check the agent review pipeline shares (Decision 0100).
 
-Each script takes its paths from ``.github/workflows/claude.yml``, which is trusted --
-but a value that reaches a file read or write is worth checking where it is used, not
-where it was set, and the check costs nothing.
+Every path a pipeline step reads or writes comes from its composition, which is
+trusted -- but a value that reaches a file read or write is worth checking where it is
+used, not where it was set, and the check costs nothing.
 
 It lives in one module because the check has been wrong twice: an earlier version
 accepted a leading dash, and another accepted an empty argument, which resolves to the
 working directory and would then satisfy every remaining check. Both had to be fixed in
 three places. A second copy is a second chance to fix one and miss another.
 
-Each script is run as ``python3 .github/review-context/<name>.py``, so the directory
-holding all of them is what Python puts first on its own search path; the import needs
-no path manipulation and does not consult the caller's ``PATH``.
+Provider- and CI-neutral: the root a path must stay inside is named by its caller, as
+an environment variable, so the core never assumes one runner's layout.
 """
 
 from __future__ import annotations
@@ -21,14 +20,13 @@ import pathlib
 
 
 def within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
-    """Resolve ``raw`` and refuse anything outside the runner area it belongs to.
+    """Resolve ``raw`` and refuse anything outside the area it belongs to.
 
     When the environment names the root, the resolved path must sit inside it;
     otherwise it must at least be absolute with an existing parent, which is what a
     local test run gives. Passing an empty ``root_variable`` asks for the second
-    treatment deliberately -- the publisher's summary path is not pinned to a root,
-    because refusing the report over an assumption about the runner's layout would lose
-    the review.
+    treatment deliberately -- a summary path is not pinned to a root, because refusing
+    the report over an assumption about the runner's layout would lose the review.
     """
     if not raw or not raw.strip():
         # An empty argument resolves to the working directory, which is a real path and
