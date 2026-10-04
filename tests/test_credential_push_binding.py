@@ -119,6 +119,39 @@ class PushBindingTests(unittest.TestCase):
         )
         self.assertEqual("UNBOUND", self._binding()[0])
 
+    def test_every_push_url_must_be_bound(self) -> None:
+        """Git pushes to every configured push URL, and `get-url --push` alone names
+        only the first: a bound HTTPS URL followed by an SSH one is not bound (Codex on
+        #364)."""
+        self._bind_gh()
+        self._git(
+            "remote", "set-url", "--push", "origin", f"https://github.com/{SUBJECT}.git"
+        )
+        self._git(
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            f"git@github.com:{SUBJECT}.git",
+        )
+        self.assertEqual("UNBOUND", self._binding()[0])
+
+    def test_two_bound_push_urls_are_bound(self) -> None:
+        self._bind_gh()
+        self._git(
+            "remote", "set-url", "--push", "origin", f"https://github.com/{SUBJECT}.git"
+        )
+        self._git(
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            f"https://github.com/{SUBJECT}",
+        )
+        self.assertEqual("BOUND", self._binding()[0])
+
     def test_a_push_rewritten_to_ssh_is_unbound(self) -> None:
         self._bind_gh()
         self._git("config", "url.git@github.com:.pushInsteadOf", "https://github.com/")
@@ -177,6 +210,46 @@ class PushBindingTests(unittest.TestCase):
         self._bind_gh()
         self._git("config", "--add", "credential.https://*.github.com.helper", "store")
         self.assertEqual("UNKNOWN", self._binding()[0])
+
+    def test_a_later_git_read_that_fails_is_unknown(self) -> None:
+        """Every git read after the push URL fails closed: a header read that errors is
+        not "no header", and a stalled read is not a traceback (gitar on #364)."""
+        self._bind_gh()
+        real = credential_check._git  # skipcq: PYL-W0212
+
+        def failing(read: str, failure: int | BaseException) -> object:
+            def git(worktree: pathlib.Path, *arguments: str) -> object:
+                if read in arguments:
+                    if isinstance(failure, BaseException):
+                        raise failure
+                    return subprocess.CompletedProcess(arguments, failure, "", "")
+                return real(worktree, *arguments)
+
+            return git
+
+        failures = (128, subprocess.TimeoutExpired(["git"], 30), OSError("gone"))
+        for read in ("--get-urlmatch", "--get-regexp"):
+            for failure in failures:
+                with (
+                    self.subTest(read=read, failure=repr(failure)),
+                    mock.patch.object(
+                        credential_check, "_git", side_effect=failing(read, failure)
+                    ),
+                ):
+                    self.assertEqual("UNKNOWN", self._binding()[0])
+
+    def test_a_push_url_on_another_port_is_unbound(self) -> None:
+        """A port-scoped header or helper would escape the lookup, and the push would
+        not reach GitHub's own service (CodeAnt on #364)."""
+        self._bind_gh()
+        self._git(
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            f"https://github.com:8443/{SUBJECT}.git",
+        )
+        self.assertEqual("UNBOUND", self._binding()[0])
 
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")

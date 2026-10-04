@@ -121,6 +121,12 @@ the shell session; like the preparation helper, its body runs in a subshell:
 run_main_credential_check() (
   repository=$1
   shift
+  case "${repository}" in
+    */*/* | *[!A-Za-z0-9._/-]* | -* | "")
+      echo "ERROR: the repository must be owner/name" >&2
+      exit 2
+      ;;
+  esac
 
   PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
   export PATH
@@ -145,8 +151,6 @@ run_main_credential_check() (
       exit 2
       ;;
   esac
-  "${git_executable}" -c core.hooksPath=/dev/null fetch --quiet origin "${main}"
-
   wrapper="$("${mktemp_executable}" /tmp/gnostoa-credential-check-wrapper.XXXXXX)"
   trap 'rm -f -- "$wrapper"' EXIT
   trap 'exit 130' INT
@@ -163,8 +167,13 @@ run_main_credential_check() (
     export GIT_CONFIG_NOSYSTEM=1
     export GIT_ATTR_NOSYSTEM=1
     export GIT_NO_REPLACE_OBJECTS=1
-    "${git_executable}" -c core.hooksPath=/dev/null \
-      show "${main}:ci/credential-check"
+    # From an explicit HTTPS URL, every other transport refused, so neither a hostile
+    # remote nor an `insteadOf` can run a command first; the exact SHA fixes the bytes.
+    "${git_executable}" -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+      -c protocol.allow=never -c protocol.https.allow=always \
+      fetch --quiet "https://github.com/${repository}.git" "${main}" >/dev/null \
+      && "${git_executable}" -c core.hooksPath=/dev/null \
+        show "${main}:ci/credential-check"
   ) > "${wrapper}"; then
     echo "ERROR: protected main does not provide the credential check" >&2
     exit 2

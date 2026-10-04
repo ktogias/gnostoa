@@ -29,6 +29,7 @@ import argparse, json, os, sys
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy")
+    parser.add_argument("--worktree")
     known, _ = parser.parse_known_args(argv)
     policy = known.policy
     print(json.dumps({
@@ -37,6 +38,7 @@ def main(argv):
         "argv": argv,
         "policy": open(policy, encoding="utf-8").read() if policy else None,
         "kit": os.environ.get("KNOWLEDGE_KIT_ROOT"),
+        "worktree": known.worktree,
     }))
     return 0
 """
@@ -147,6 +149,18 @@ class CredentialCheckWrapperTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual(
             "authority-declaration\\n", json.loads(completed.stdout)["policy"]
+        )
+
+    def test_a_caller_cannot_point_the_push_binding_at_another_checkout(self) -> None:
+        """The checkout the wrapper runs in is the one whose pushes are bound, whatever
+        the caller passes (gitar on #364)."""
+        completed = self._run(
+            self.authority, "--repository", "o/r", "--worktree", "/elsewhere"
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        worktree = json.loads(completed.stdout)["worktree"]
+        self.assertEqual(
+            str(self.root.resolve()), str(pathlib.Path(worktree).resolve())
         )
 
     def test_an_authority_that_is_not_an_exact_commit_is_refused(self) -> None:

@@ -173,6 +173,10 @@ def load_policy(document: Any) -> Policy:
     """Return ``document`` as a validated policy, or raise ``PolicyError``."""
     checked = _checked_keys(document)
     lifetime = checked["max_lifetime_days"]
+    # An integral float such as 31.0 is an integer to JSON Schema, and so to this check
+    # (CodeAnt on #364).
+    if isinstance(lifetime, float) and lifetime.is_integer():
+        lifetime = int(lifetime)
     if isinstance(lifetime, bool) or not isinstance(lifetime, int) or lifetime <= 0:
         raise PolicyError("max_lifetime_days is not a positive integer")
     repositories = checked["repositories"]

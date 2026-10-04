@@ -523,6 +523,21 @@ class CorePolicyTests(unittest.TestCase):
             with self.subTest(case=name), self.assertRaises(posture.PolicyError):
                 posture.load_policy(document)
 
+    def test_the_schema_and_the_checker_agree(self) -> None:
+        """A declaration the schema accepts, the checker accepts, and the reverse:
+        blank strings are refused by both, an integral lifetime of `31.0` is accepted by
+        both (CodeAnt on #364)."""
+        from tools import credential_posture as posture
+        from tools.schema_validation import schema_errors
+
+        blank = _policy_document(id=" ")
+        self.assertTrue(schema_errors(blank, "agent-credentials.schema.json"))
+        with self.assertRaises(posture.PolicyError):
+            posture.load_policy(blank)
+        integral = _policy_document(max_lifetime_days=31.0)
+        self.assertEqual([], schema_errors(integral, "agent-credentials.schema.json"))
+        self.assertEqual(31, posture.load_policy(integral).max_lifetime_days)
+
     def test_the_repository_policy_declares_every_documented_permission(self) -> None:
         """Exact means exact over every permission the provider can grant: the
         declaration names each one, and channel C's essence is among them."""
@@ -1423,15 +1438,16 @@ class CredentialCheckCliTests(unittest.TestCase):
             token=_placeholder_token("fine-grained"),
         )
         self.assertEqual("NOT_GRANTED", _state(facts, "environments", "read"))
+        replay, token = _Replay(answers), _placeholder_token("fine-grained")
         with self.assertRaises(ValueError):
             github.observe(
-                _Replay(answers),
+                replay,
                 repository=SUBJECT,
                 public=True,
                 environment="..",
                 visible_repositories=VISIBLE,
                 login="ktogias",
-                token=_placeholder_token("fine-grained"),
+                token=token,
             )
 
     def test_names_differing_only_in_case_are_one_repository(self) -> None:
@@ -1459,6 +1475,23 @@ class CredentialCheckCliTests(unittest.TestCase):
         verdict = json.loads(output)
         self.assertIn("transport:push", verdict["unverified"])
         self.assertEqual("an SSH remote", verdict["transport"]["evidence"])
+
+    def test_git_arguments_cannot_become_options(self) -> None:
+        """The remote and the worktree reach a git command line: a remote that is not
+        a remote name, or a worktree that is not an existing directory, is refused
+        before any request (SonarCloud S8705 on #364)."""
+        for arguments in (
+            ("--remote", "--upload-pack=touch x"),
+            ("--remote", "-x"),
+            ("--remote", "a b"),
+            ("--worktree", "/nonexistent/checkout"),
+        ):
+            with self.subTest(arguments=arguments):
+                code, output, replay = _run(
+                    _calibrated_exact(), "--repository", SUBJECT, *arguments
+                )
+                self.assertEqual(2, code, output)
+                self.assertEqual([], replay.sent)
 
     def test_the_command_is_registered(self) -> None:
         from tools import cli

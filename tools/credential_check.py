@@ -282,48 +282,95 @@ def _is_trusted_gh(helper: str) -> bool:
     )
 
 
-def _push_binding(worktree: Path, subject: str, remote: str) -> tuple[str, str]:
-    """Whether a push of ``subject`` from ``worktree`` uses the checked token.
+def _git_arguments(worktree: str, remote: str) -> tuple[Path, str]:
+    """Return the worktree and remote as values git cannot read as options, or raise.
 
-    It does when the push URL is HTTPS to github.com with no credential in it, no extra
-    header is configured for it, and Git's effective credential helpers for it are
-    exactly the trusted gh, which answers with the token this check read. Only
-    configuration is read, never a credential (Codex on #364).
+    Both reach a git command line (SonarCloud S8705 on #364): the worktree as an
+    existing directory's absolute path, the remote as a plain remote name.
     """
+    resolved = Path(worktree).resolve()
+    if not resolved.is_dir():
+        raise posture.PolicyError(f"the worktree {worktree!r} is not a directory")
+    plain = remote[:1].isalnum() and all(c.isalnum() or c in "._-" for c in remote)
+    if not plain:
+        raise posture.PolicyError(f"{remote!r} is not a remote name")
+    return resolved, remote
+
+
+def _pushed_target(pushed: str, subject: str) -> tuple[str | None, str]:
+    """Return the github.com URL a push to ``pushed`` reaches for ``subject``, or None
+    and why it is not one."""
+    url = urllib.parse.urlsplit(pushed)
     try:
-        pushed = _git(worktree, "remote", "get-url", "--push", remote)
-    except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
-        return "UNKNOWN", f"git could not be read: {error}"
-    if pushed.returncode != 0:
-        return "UNKNOWN", f"no push URL for the remote {remote!r}"
-    url = urllib.parse.urlsplit(pushed.stdout.strip())
+        port = url.port
+    except ValueError:
+        return None, "a push URL has a malformed port"
     if url.scheme != "https" or (url.hostname or "").lower() != "github.com":
-        return "UNBOUND", "the push URL is not HTTPS to github.com"
+        return None, "a push URL is not HTTPS to github.com"
+    # Another port would escape a port-scoped header or helper, and not reach GitHub's
+    # own service (CodeAnt on #364).
+    if port not in (None, 443):
+        return None, "a push URL names a port other than HTTPS's"
     if url.username or url.password:
-        return "UNBOUND", "the push URL carries a credential of its own"
+        return None, "a push URL carries a credential of its own"
     path = url.path.strip("/").removesuffix(".git")
     try:
         named = github_rest.repository_key(path)
     except github_rest.InvalidRepository:
-        return "UNBOUND", "the push URL names no repository"
+        return None, "a push URL names no repository"
     if named != subject:
-        return "UNBOUND", f"the push URL names {named}, not {subject}"
-    target = f"https://github.com/{path}"
-    header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+        return None, f"a push URL names {named}, not {subject}"
+    return f"https://github.com/{path}", ""
+
+
+def _url_binding(worktree: Path, pushed: str, subject: str) -> tuple[str, str]:
+    """Whether a push to the URL ``pushed`` uses the checked token."""
+    target, why = _pushed_target(pushed, subject)
+    if target is None:
+        return "UNBOUND", why
+    try:
+        header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+        helpers = _effective_helpers(worktree, target)
+    except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
+        # Every read after the push URL fails closed too (gitar on #364).
+        return "UNKNOWN", f"git could not be read: {error}"
+    if header.returncode not in (0, 1):
+        return "UNKNOWN", "the extra HTTP headers for a push URL could not be read"
     if header.returncode == 0 and header.stdout.strip():
-        return "UNBOUND", "an extra HTTP header is configured for the push URL"
-    helpers = _effective_helpers(worktree, target)
+        return "UNBOUND", "an extra HTTP header is configured for a push URL"
     if helpers is None:
-        return (
-            "UNKNOWN",
-            "Git's credential helpers for the push URL could not be judged",
-        )
+        return "UNKNOWN", "Git's credential helpers for a push URL could not be judged"
     if len(helpers) != 1 or not _is_trusted_gh(helpers[0]):
         return "UNBOUND", (
-            "Git's credential helpers for the push URL are not exactly the trusted gh"
+            "Git's credential helpers for a push URL are not exactly the trusted gh"
             f" ({len(helpers)} configured)"
         )
     return "BOUND", "HTTPS push through the trusted gh's credential helper"
+
+
+def _push_binding(worktree: Path, subject: str, remote: str) -> tuple[str, str]:
+    """Whether a push of ``subject`` from ``worktree`` uses the checked token.
+
+    It does when every push URL Git would push to is HTTPS to github.com with no
+    credential in it, no extra header is configured for it, and Git's effective
+    credential helpers for it are exactly the trusted gh, which answers with the token
+    this check read. Only configuration is read, never a credential (Codex on #364).
+    """
+    try:
+        pushed = _git(worktree, "remote", "get-url", "--push", "--all", remote)
+    except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
+        return "UNKNOWN", f"git could not be read: {error}"
+    urls = pushed.stdout.split() if pushed.returncode == 0 else []
+    if not urls:
+        return "UNKNOWN", f"no push URL for the remote {remote!r}"
+    # Git pushes to every configured push URL, not only the first (Codex on #364).
+    for url in urls:
+        state, evidence = _url_binding(worktree, url, subject)
+        if state != "BOUND":
+            return state, evidence
+    return "BOUND", (
+        f"every push URL ({len(urls)}) goes through the trusted gh's credential helper"
+    )
 
 
 def _render(verdict: dict[str, Any]) -> str:
@@ -366,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remote", default="origin", help="the remote pushes go to")
     try:
         args = parser.parse_args(argv)
+        worktree, remote = _git_arguments(args.worktree, args.remote)
         policy = _policy(args.policy)
         subject = github_rest.repository_key(args.repository)
         if subject not in policy.repositories:
@@ -388,9 +436,7 @@ def main(argv: list[str] | None = None) -> int:
             private_repositories=private,
             resource_owner=policy.resource_owner,
         )
-        facts = facts._replace(
-            transport=_push_binding(Path(args.worktree), subject, args.remote)
-        )
+        facts = facts._replace(transport=_push_binding(worktree, subject, remote))
         verdict = posture.evaluate(policy, facts, utc_timestamp())
     except github.ProbeHadEffect as error:
         print(

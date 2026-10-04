@@ -143,8 +143,20 @@ class AgentCredentialRouteTests(unittest.TestCase):
         self.assertIn("branches/main", router)
         self.assertIn('show "${main}:ci/credential-check"', router)
         self.assertNotIn(':ci/credential-check" | sh', router)
+        helper = router.split("run_main_credential_check() (", 1)[1].split("\n)\n", 1)[
+            0
+        ]
         for scrubbed in ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_NO_REPLACE_OBJECTS=1"):
-            self.assertIn(scrubbed, router.split("run_main_credential_check() (", 1)[1])
+            self.assertIn(scrubbed, helper)
+        # The fetch runs inside the scrubbed block, from an explicit HTTPS URL, with
+        # every other transport refused: a hostile remote or `insteadOf` cannot run an
+        # `ext::` command before the authority is retrieved (CodeAnt on #364).
+        scrubbed_block = helper.split("if ! (", 1)[1].split(") > ", 1)[0]
+        self.assertIn("fetch --quiet", scrubbed_block)
+        self.assertIn('"https://github.com/${repository}.git"', scrubbed_block)
+        for option in ("-c protocol.allow=never", "-c protocol.https.allow=always"):
+            self.assertIn(option, scrubbed_block)
+        self.assertNotIn("fetch --quiet origin", helper)
         self.assertIn("run_main_credential_check ktogias/gnostoa", router)
 
     def test_the_runbook_states_the_bootstrap_and_the_push_binding(self) -> None:
