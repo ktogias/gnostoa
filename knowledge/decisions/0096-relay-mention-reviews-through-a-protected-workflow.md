@@ -22,6 +22,12 @@ sources:
   - id: useful-l1
     resource: ./0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
     title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
+  - id: delivered-event-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/356
+    title: Leave the mention trigger with no logic, relaying GitHub's delivered event
+  - id: delivered-event-admission
+    resource: https://github.com/ktogias/gnostoa/issues/356#issuecomment-5975001281
+    title: Owner admission, classification and lineage for #356
 x-project-knowledge:
   id: kit.decision.0096.relay-mention-reviews-through-a-protected-workflow
   owners:
@@ -115,8 +121,10 @@ events whose trigger runs from the default branch.
 
 2. **The admitted triggers move to a workflow that references nothing.** The trigger
    workflow declares `permissions: {}` at both levels and references no secret, so
-   *as committed* it holds no credential, and the relay never depends on anything it
-   says beyond an identifier.
+   *as committed* it holds no credential. It also computes nothing (amended by #356):
+   its one step uploads, through the pinned upload action, the event file GitHub wrote
+   for the run (`github.event_path`). It runs no script and checks out no code, so no
+   rule of admission lives in it.
 
    That is a statement about the committed file, **not a credential boundary**. Both
    admitted events run the trigger from the default branch (rule 13), but anyone who
@@ -124,11 +132,26 @@ events whose trigger runs from the default branch.
    nothing in any one file can prevent it. The credential boundary is set out below,
    under *What the relay does not establish*.
 
-3. **The relay payload is a pointer, never a decision.** The trigger records only the
-   event kind, the id of the comment or issue, and `request_sha256`, a digest of the
-   request text GitHub delivered (rule 4). Admission uses the digest only to refuse,
-   never to admit: one that matches admits exactly what admission re-read, so the
-   payload still decides nothing (CodeRabbit, #340). The privileged job re-reads
+3. **The relay payload is GitHub's delivered event, never a decision.** Amended by
+   #356: the payload was a pointer -- the event kind, the id of the comment or issue,
+   and `request_sha256` -- that the trigger computed in inline code, so the request
+   text's composition and its digest were stated twice, in the trigger and in the
+   adapter. Now the GitHub adapter derives that pointer from the delivered event
+   (`delivered_pointer`). The event kind is inferred from the delivered shape and its
+   action (`created` for a comment, `opened` for an issue), and rule 4 still binds it to
+   the kind GitHub recorded for the run. The ids are taken as delivered. The request
+   text is composed by the same function that composes the re-read, and is digested by
+   the core's `request_sha256`. Admission uses the digest only to refuse, never to
+   admit: one that matches admits exactly what admission re-read, so the payload still
+   decides nothing (CodeRabbit, #340).
+
+   The artifact therefore carries the whole delivered event: the comment or issue, the
+   repository and the sender, as GitHub sent them, retained for one day. On a public
+   repository that is already public. On a private one it is visible to whoever can
+   read the repository's Actions artifacts, the same audience as the item itself. It
+   is read within a bound sized for an event (2 MiB, against about 0.8 MB for two
+   65,536-character bodies at their worst JSON escaping), and the reader's other
+   refusals hold. The privileged job re-reads
    that object from the provider and re-establishes, from the provider's answer alone:
    that it carries the mention, that its author's association is admitted, that the
    Pull Request head is not a fork, and the head and base revisions. This re-validation
@@ -180,11 +203,13 @@ events whose trigger runs from the default branch.
    re-reads the object, and the trigger first recorded only identities, so an edit
    between the event and that re-read changed the request that was reviewed while
    every check above still passed (CodeAnt, #340). Anyone with write access can edit a
-   comment, and so can an app holding `issues: write`. The trigger now records
+   comment, and so can an app holding `issues: write`. The relay therefore binds
    `request_sha256`, a digest of the request text as GitHub delivered it in the event
-   (a comment's body, or an opened issue's title and body). Admission refuses a re-read
-   whose digest differs, or a payload that recorded none. A forged digest can only
-   refuse: one that matches admits exactly what admission re-read. Measured before
+   (a comment's body, or an opened issue's title and body). Since #356 the trigger
+   computes nothing: the GitHub adapter derives the digest from the delivered event,
+   in protected code, with the composition its re-read uses (rule 3). Admission refuses
+   a re-read whose digest differs, or a pointer that carries none. A forged event can
+   only refuse: one whose digest matches admits exactly what admission re-read. Measured before
    relying on it: for 34 unedited comments on this repository, the body the Events API
    delivered was byte-identical to the REST re-read. That is the Events API, not the
    webhook file itself, and none of the 34 held a CRLF; a mismatch there would refuse,
@@ -251,9 +276,11 @@ events whose trigger runs from the default branch.
    the zip-slip fix for CVE-2024-42471 (GHSA-6q32-hq47-5qq3, fixed in 4.1.7), so an
    entry cannot be written outside the download directory. Admission does not rest on
    that alone. It reads the payload without following a link, only as a regular file,
-   and bounded at 4 KiB -- a real payload is about 150 bytes -- so a symlink cannot make
-   it read a file of the candidate's choosing, a FIFO cannot hang it, and a large
-   payload cannot exhaust it. It creates the request directory itself and refuses one
+   and bounded at 2 MiB -- the bound the GitHub adapter declares for a delivered event
+   (#356), which carries the comment, the issue, the repository and the sender, at
+   most about 0.8 MB at its worst JSON escaping -- so a symlink cannot make it read a
+   file of the candidate's choosing, a FIFO cannot hang it, and a large payload cannot
+   exhaust it. It creates the request directory itself and refuses one
    that already exists, so nothing planted in its place can redirect the artefacts.
    Each is tested against its own attack, and each test was seen to fail with its
    control removed. The files are also opened `O_EXCL|O_NOFOLLOW`; that layer is

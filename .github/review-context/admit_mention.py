@@ -2,8 +2,8 @@
 
 Decisions 0096 and 0100. The mention reviewer runs from a `workflow_run` relay so that
 no admitted trigger can supply the workflow or the scripts it executes. The relay hands
-over a payload produced by a workflow a candidate can supply, so that payload is a
-*pointer* and nothing more.
+over the event GitHub delivered to the trigger, unchanged (#356), and that event is
+never a decision: it names the object to re-read and binds the text that was asked.
 
 Every rule -- binding to the run, the requester's trust, the digest, the occurrence
 window, the fork check and the withholding of untrusted text -- is the neutral core's
@@ -54,7 +54,11 @@ RULES = admission.Rules(
 )
 
 Refused = admission.Refused
-read_payload = admission.read_payload
+
+
+def read_payload(path: str) -> Any:
+    """Read the relayed event within the bound GitHub's delivered events need."""
+    return admission.read_payload(path, limit=github.DELIVERED_EVENT_BYTES)
 
 
 def _policy() -> github_rest.Policy:
@@ -93,7 +97,7 @@ def provider_get(path: str) -> Any:
 
 
 def admit(
-    repository: str, payload: dict[str, Any], trigger: dict[str, Any]
+    repository: str, payload: Any, trigger: dict[str, Any]
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Return the admitted step outputs and the text to forward, or raise ``Refused``.
 
@@ -109,7 +113,8 @@ def admit(
         created_at=str(trigger.get("created_at") or ""),
         revision=str(trigger.get("revision") or ""),
     )
-    admitted = admission.admit(source, repository, payload, recorded, RULES)
+    pointer = github.delivered_pointer(payload)
+    admitted = admission.admit(source, repository, pointer, recorded, RULES)
     return github.step_outputs(admitted.subject), admitted.forwarded
 
 

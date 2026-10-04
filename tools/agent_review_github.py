@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from tools import github_rest
-from tools.agent_review_admission import Refused, Request, Revisions
+from tools.agent_review_admission import Refused, Request, Revisions, request_sha256
 from tools.agent_review_base import (
     BaseRecord,
     ChangedFile,
@@ -223,6 +223,59 @@ def _login(value: Any) -> str:
     return login if isinstance(login, str) else ""
 
 
+def comment_request_text(comment: Mapping[str, Any]) -> str:
+    """Return a comment's request text: its body, as GitHub sends it."""
+    return str(comment.get("body") or "")
+
+
+def issue_request_text(title: Any, body: Any) -> str:
+    """Return an opened issue's request text: its title, then its body.
+
+    The issues trigger admits a mention in the title, so the title is part of the
+    request. One function composes both the delivered text and the re-read, so the
+    two cannot drift apart (#356).
+    """
+    return f"{title or ''}\n{body or ''}"
+
+
+# A delivered event carries a comment and an issue at 65,536 characters each, about
+# 0.8 MB at their worst JSON escaping, around the repository and the sender.
+DELIVERED_EVENT_BYTES = 2 * 1024 * 1024
+
+
+def delivered_pointer(delivered: Any) -> dict[str, Any]:
+    """Return the relay pointer for the event GitHub delivered to the trigger.
+
+    Decision 0096 rules 2-3, amended by #356: the trigger relays the event file
+    unchanged and computes nothing, so its kind, its ids and the digest of its request
+    text are derived here. The kind is inferred from the delivered shape and its
+    action, and the core still binds it to the kind GitHub recorded for the run. The
+    ids are taken as delivered and validated before they reach a URL. The text is
+    composed as the re-read is, and digested by the core.
+    """
+    event = delivered if isinstance(delivered, dict) else {}
+    comment, issue = event.get("comment"), event.get("issue")
+    if isinstance(comment, dict) and isinstance(issue, dict):
+        if event.get("action") != "created":
+            raise Refused("the delivered event is not a created comment")
+        return {
+            "event_name": "issue_comment",
+            "comment_id": comment.get("id"),
+            "request_sha256": request_sha256(comment_request_text(comment)),
+        }
+    if comment is None and isinstance(issue, dict):
+        if event.get("action") != "opened":
+            raise Refused("the delivered event is not an opened issue")
+        return {
+            "event_name": "issues",
+            "issue_number": issue.get("number"),
+            "request_sha256": request_sha256(
+                issue_request_text(issue.get("title"), issue.get("body"))
+            ),
+        }
+    raise Refused("the delivered event is neither a comment nor an issue")
+
+
 def _change(number: int, item: Mapping[str, Any]) -> Ref | None:
     """Return the item's Pull Request, which on GitHub shares the issue's number."""
     if isinstance(item.get("pull_request"), dict):
@@ -268,7 +321,7 @@ class IssueRequests:
         return Request(
             author=_login(comment),
             association=comment.get("author_association"),
-            mention_text=str(comment.get("body") or ""),
+            mention_text=comment_request_text(comment),
             item=Ref(ITEM_KIND, str(number)),
             change_request=_change(number, item),
             occurred_at=str(comment.get("created_at") or ""),
@@ -282,20 +335,19 @@ class IssueRequests:
         """Re-read an opened issue, which is itself the request."""
         number = _identifier(pointer.get("issue_number"), "issue_number")
         issue = _mapping(self.read(f"{self.root}/issues/{number}"), "issue")
-        title = str(issue.get("title") or "")
-        body = str(issue.get("body") or "")
+        text = issue_request_text(issue.get("title"), issue.get("body"))
         return Request(
             author=_login(issue),
             association=issue.get("author_association"),
             # The issues trigger admits the mention in the title as well.
-            mention_text=f"{title}\n{body}",
+            mention_text=text,
             item=Ref(ITEM_KIND, str(number)),
             change_request=_change(number, issue),
             occurred_at=str(issue.get("created_at") or ""),
             # The issue *is* the request, and its mention may be in the title alone,
             # so the request artefact carries both. Forwarding only the body would
             # leave the file the reviewer is told to read first without the ask.
-            request_text=f"{title}\n{body}",
+            request_text=text,
             title=issue.get("title"),
             body=issue.get("body"),
             item_association=issue.get("author_association"),

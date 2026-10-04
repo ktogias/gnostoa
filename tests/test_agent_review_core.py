@@ -454,6 +454,36 @@ class SecondProviderAdmissionTests(unittest.TestCase):
                     _forge_rules(),
                 )
 
+    def test_a_pointer_without_a_well_formed_digest_binds_nothing(self) -> None:
+        """A relay that records no digest, or one that is not a SHA-256 hex digest,
+        cannot bind the re-read to what was delivered, so the core refuses it. The
+        GitHub adapter now always derives one (#356), so this is held here, by the
+        provider-neutral core, rather than through a GitHub event."""
+        from tools import agent_review_admission as admission
+
+        source, pointer = _forge_case()
+        unbound = {
+            "absent": {k: v for k, v in pointer.items() if k != "request_sha256"},
+            "not hex": {**pointer, "request_sha256": "not-a-digest"},
+            "too short": {**pointer, "request_sha256": "a" * 63},
+            "upper-case hex": {
+                **pointer,
+                "request_sha256": pointer["request_sha256"].upper(),
+            },
+            "not a string": {**pointer, "request_sha256": 7},
+        }
+        # Built before each refusal is asserted, so only `admit` can raise it.
+        trigger, rules = _forge_trigger({}), _forge_rules()
+        for name, relayed in unbound.items():
+            with (
+                self.subTest(case=name),
+                self.assertRaisesRegex(admission.Refused, "no digest"),
+            ):
+                admission.admit(source, _FORGE_REPOSITORY, relayed, trigger, rules)
+        # The well-formed digest of the delivered text is admitted, so the refusals
+        # above are about the digest alone.
+        admission.admit(source, _FORGE_REPOSITORY, pointer, trigger, rules)
+
     def test_an_untrusted_item_authors_text_is_withheld(self) -> None:
         """The requester is trusted; the item's author is not, so its text is not
         forwarded, and the withholding is stated rather than silent."""
@@ -691,6 +721,38 @@ class SecondProviderContextTests(unittest.TestCase):
         for body in (b"{not json", b"[]", b'{"total_commits": "5"}'):
             with self.subTest(body=body), self.assertRaises(context.Unavailable):
                 context.total_commits(body)
+
+
+class PayloadBoundTests(unittest.TestCase):
+    """The relay payload is read within the bound its adapter declares (#356)."""
+
+    def test_the_bound_is_the_callers_and_is_exact(self) -> None:
+        """A pointer fits the default 4 KiB. An adapter that relays a delivered event
+        declares a larger bound; at it the payload is read, one byte past it refused."""
+        from tools import agent_review_admission as admission
+
+        with tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(scratch) / "event.json"
+            relayed = str(path)
+            for size, limit, refused in (
+                (4096, None, False),
+                (4097, None, True),
+                (10_000, 10_000, False),
+                (10_001, 10_000, True),
+            ):
+                with self.subTest(size=size, limit=limit):
+                    document = '{"x": "' + "y" * (size - 9) + '"}'
+                    path.write_text(document, encoding="utf-8")
+                    self.assertEqual(size, path.stat().st_size)
+                    kwargs = {} if limit is None else {"limit": limit}
+                    if refused:
+                        with self.assertRaisesRegex(admission.Refused, "exceeds"):
+                            admission.read_payload(relayed, **kwargs)
+                    else:
+                        self.assertEqual(
+                            size - 9,
+                            len(admission.read_payload(relayed, **kwargs)["x"]),
+                        )
 
 
 class ThinContextEntrypointTests(unittest.TestCase):

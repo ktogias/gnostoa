@@ -80,7 +80,7 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
-      actions: read # Downloading the relayed event identity from the trigger's run
+      actions: read # Downloading the event the trigger relayed, from its run
     steps:
 
       # The reviewed candidate is never materialised as a working tree in this job.
@@ -123,7 +123,7 @@ jobs:
       # and extracting a candidate-produced archive into the workspace would let it
       # land beside the committed scripts this job is about to run. runner.temp is
       # outside the checkout and is also denied to the reviewer's Read tool.
-      - name: Download the relayed event identity
+      - name: Download the event the trigger relayed
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: claude-mention-event
@@ -131,8 +131,10 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      # Decision 0096 rule 3: the relay named an object; this re-reads it from the
-      # provider and decides from that answer alone -- the mention, the author's
+      # Decision 0096 rule 3: the relay carries the event GitHub delivered (#356); the
+      # GitHub adapter derives from it the object to re-read and the digest of the
+      # request, and this re-reads that object from the provider and decides from that
+      # answer alone -- the mention, the author's
       # association, that the head is not a fork, and the head and base revisions.
       # The TRIGGER_* values are recorded by GitHub on the workflow_run event, so they
       # are the facts a candidate cannot forge, and admission binds the payload to
