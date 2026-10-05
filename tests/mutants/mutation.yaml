@@ -168,3 +168,25 @@ mutants:
       except NotImplementedError as exc:
           # A full disk is no verdict on the tests (CodeAnt on #374).
           return f"the copy failed: {exc}"
+  - name: copied Git metadata may route outside
+    path: tools/mutation.py
+    find: |
+      if routing is not None:
+          raise CopyRefused(f"the copy's Git metadata routes outside it: {routing}")
+    replace: pass
+  - name: an included configuration is trusted
+    path: tools/mutation.py
+    find: r"^\s*(?:worktree\s*(?:=|$)|\[\s*include(?:if)?\b)"
+    replace: r"^\s*worktree\s*(?:=|$)"
+  - name: a file that is not UTF-8 is raised
+    path: tools/mutation.py
+    find: |
+      except UnicodeDecodeError as exc:
+          # Tables name UTF-8 files; another encoding is reported, not raised (CodeAnt
+          # on #374).
+          reason = f"cannot read {mutant.path} as UTF-8: {exc.reason}"
+          return Outcome(mutant.name, "NOT FOUND", reason)
+    replace: |
+      except NotImplementedError as exc:
+          reason = f"cannot read {mutant.path} as UTF-8: {exc}"
+          return Outcome(mutant.name, "NOT FOUND", reason)

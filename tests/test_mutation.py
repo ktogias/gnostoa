@@ -178,6 +178,34 @@ class TableTests(unittest.TestCase):
                     mutation.load_table(path)
 
 
+class EncodingTests(unittest.TestCase):
+    def test_a_file_that_is_not_utf_8_is_reported_not_raised(self) -> None:
+        # A declared Latin-1 file aborted `check` and `run` (CodeAnt on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "pkg" / "legacy.py").write_bytes(
+                b"# -*- coding: latin-1 -*-\nname = '\xe9t\xe9'\nvalue = 2\n"
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: legacy\n    path: pkg/legacy.py\n"
+                    "    find: 'value = 2'\n    replace: 'value = 3'\n",
+                )
+            )
+            try:
+                problems = mutation.check(root, table)
+                (outcome,) = mutation.run(root, table, jobs=1)
+            except UnicodeDecodeError as exc:
+                self.fail(f"raised {exc!r}")
+            self.assertEqual(
+                ["legacy: NOT FOUND"], [p.split(" (")[0] for p in problems]
+            )
+            self.assertEqual("NOT FOUND", outcome.status)
+            self.assertIn("UTF-8", outcome.detail)
+
+
 class CheckTests(unittest.TestCase):
     def test_check_reports_each_anchor_that_does_not_apply(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
@@ -721,6 +749,55 @@ class CopyTests(unittest.TestCase):
             )
             (outcome,) = mutation.run(root, table, jobs=1)
             self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_git_metadata_that_routes_outside_refuses_the_copy(self) -> None:
+        # Git in the copy took its work tree from the copied configuration (Codex on
+        # #374), and `git clean` there removed files outside the copy.
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git is not installed")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for route in ("worktree", "include"):
+            with self.subTest(route), tempfile.TemporaryDirectory() as scratch:
+                base = pathlib.Path(scratch)
+                root = _project(base)
+                outside = base / "outside"
+                outside.mkdir()
+                marker = outside / "keep.txt"
+                marker.write_text("keep\n", encoding="utf-8")
+                (root / "tests" / "test_clean.py").write_text(
+                    "import subprocess\nimport unittest\n\n\n"
+                    "class C(unittest.TestCase):\n"
+                    "    def test_clean(self):\n"
+                    "        subprocess.run(['git', 'clean', '-fdq'], check=True)\n",
+                    encoding="utf-8",
+                )
+                for command in (["init", "-q"], ["add", "-A"]):
+                    subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                        [git, *command], cwd=root, env=clean, check=True
+                    )
+                if route == "worktree":
+                    setting = f"[core]\n\tworktree = {outside}\n"
+                else:
+                    included = base / "included.cfg"
+                    included.write_text(
+                        f"[core]\n\tworktree = {outside}\n", encoding="utf-8"
+                    )
+                    setting = f"[include]\n\tpath = {included}\n"
+                with (root / ".git" / "config").open("a", encoding="utf-8") as config:
+                    config.write(setting)
+                table = mutation.load_table(
+                    _table(
+                        base,
+                        "  - name: double triples\n    path: pkg/m.py\n"
+                        "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                        tests="[tests.test_clean, tests.test_m]",
+                    )
+                )
+                (outcome,) = mutation.run(root, table, jobs=1)
+                self.assertTrue(marker.exists(), "git in the copy cleaned outside it")
+                self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+                self.assertIn("Git metadata", outcome.detail)
 
     def test_a_git_file_is_never_copied(self) -> None:
         # A `.git` file points at metadata that other worktrees share.

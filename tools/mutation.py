@@ -15,12 +15,23 @@ link is followed". Tables of them live with the code they guard, as
   the tests' whole process group.
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
-- What the tests do stays in their copy. A copy holding a link that resolves outside
-  it is refused, and output beyond a limit ends the tests, as a timeout does. The
-  output is measured every `_POLL_SECONDS`, so a fast writer can pass the limit by
-  what it writes in one interval before it is stopped.
+- What the tests do stays in their copy.
+  - A copy holding a link that resolves outside it is refused. So is one whose Git
+    metadata names a work tree, includes a configuration from elsewhere or shares
+    another repository's directory.
+  - Output beyond a limit ends the tests, as a timeout does. The output is measured
+    every `_POLL_SECONDS`, so a fast writer can pass the limit by what it writes in
+    one interval before it is stopped.
 - A copy that fails, or tests that cannot start, credit nothing: the mutant is
   `NOT RUN`.
+
+What this does not do:
+- It does not sandbox the tests. They run as the caller, with the caller's file-system
+  access, as they do in place under `ci/verify`. The runner keeps its own writes, and
+  Git, inside the copy. To bound what the tests can reach, run it as the publication
+  flow does, in a container with the root mounted read-only (CodeAnt on #374).
+- It runs on POSIX only. It starts the tests in a new session and ends their process
+  group, which Windows has no equivalent of.
 
 Anchors survive reformatting:
 
@@ -343,6 +354,11 @@ def _mutated(root: Path, mutant: Mutant) -> str | Outcome:
         return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
     try:
         text = (root / mutant.path).read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # Tables name UTF-8 files; another encoding is reported, not raised (CodeAnt
+        # on #374).
+        reason = f"cannot read {mutant.path} as UTF-8: {exc.reason}"
+        return Outcome(mutant.name, "NOT FOUND", reason)
     except OSError as exc:
         return Outcome(mutant.name, "NOT FOUND", f"cannot read {mutant.path}: {exc}")
     try:
@@ -433,12 +449,16 @@ def _wait(
 
 
 def _copy(root: Path, scratch: str) -> Path:
-    """An isolated copy of ``root``, or `CopyRefused` when a link in it leads out."""
+    """An isolated copy of ``root``, or `CopyRefused` when a link in it, or its Git
+    metadata, leads out."""
     work = Path(scratch) / "w"
     shutil.copytree(root, work, ignore=_ignored, symlinks=True)
     escaping = _escaping_link(work)
     if escaping is not None:
         raise CopyRefused(f"the link {escaping} resolves outside the copy")
+    routing = _routing_git(work)
+    if routing is not None:
+        raise CopyRefused(f"the copy's Git metadata routes outside it: {routing}")
     return work
 
 
@@ -458,6 +478,37 @@ def _escaping_link(work: Path) -> str | None:
                 target = os.path.realpath(path)
                 if os.path.commonpath([base, target]) != base:
                     return os.path.relpath(path, work)
+    return None
+
+
+# What in a copied `.git` makes Git work on another tree: a work tree named in its
+# configuration, a configuration included from elsewhere, a per-worktree
+# configuration, or a common directory shared with another repository.
+_ROUTING_LINE = re.compile(r"^\s*(?:worktree\s*(?:=|$)|\[\s*include(?:if)?\b)", re.I)
+_ROUTING_FILES = ("commondir", "config.worktree")
+
+
+def _routing_git(work: Path) -> str | None:
+    """How a `.git` directory in ``work`` routes Git outside the copy, if it does.
+
+    A copy keeps the repository's `.git`, and Git run inside the copy reads its
+    configuration. A `core.worktree` there, or one an `include` brings, made Git work
+    on another tree, such as the original (Codex on #374). Such a copy is refused.
+    """
+    for directory, directories, _files in os.walk(work):
+        if ".git" not in directories:
+            continue
+        git_dir = Path(directory) / ".git"
+        for name in _ROUTING_FILES:
+            if (git_dir / name).exists():
+                return f"{git_dir.relative_to(work) / name} exists"
+        config = git_dir / "config"
+        if config.is_file():
+            text = config.read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if _ROUTING_LINE.match(line):
+                    where = config.relative_to(work)
+                    return f"{where} has {line.strip()!r}"
     return None
 
 

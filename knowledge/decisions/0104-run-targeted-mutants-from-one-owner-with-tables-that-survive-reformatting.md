@@ -67,6 +67,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
      - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy. A table path with a backslash or a colon is refused when the table loads, because a path checked as POSIX would be read natively elsewhere.
      - **What the tests do stays in the copy.**
        - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
+       - A copy whose Git metadata names a work tree, includes a configuration from elsewhere or shares another repository's directory is refused, since Git in it would work on another tree.
        - Output beyond 16 MiB stops the tests, as a timeout does. It is measured after every wait, so tests that pass the limit and exit within one poll are caught too.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
      - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
@@ -123,6 +124,10 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 6, on `4068c40`.**
+    - Codex: the copied `.git` could route Git outside the copy, through a `core.worktree`, an `include`, a `config.worktree` or a `commondir`. On `4068c40` a test's `git clean` removed a file outside the copy. Such a copy is now refused. A test failed first.
+    - CodeAnt: a file that is not UTF-8 aborted `check` and `run`. It is now reported as `NOT FOUND`. A test failed first.
+    - Two boundaries are stated: the runner does not sandbox the tests, which run as the caller, so the publication flow runs it with the root mounted read-only; and it runs on POSIX only.
   - **Round 5, on `2c156a9`.**
     - CodeAnt: a missing `--root` crashed with a traceback, and a failed copy escaped `run`. Now the first is a usage error, exit 2, and the second credits nothing (`NOT RUN`). Each has a test that failed first.
     - SonarCloud: the module-name pattern uses `\w` under `re.ASCII`, and an exception test has one call that can raise.
