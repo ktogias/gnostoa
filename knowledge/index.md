@@ -109,6 +109,7 @@ inherited, copied or loaded by adopting projects.
 - [Route the architecture-inheritance entrance gate from source](decisions/0099-route-the-architecture-inheritance-gate-from-source.md)
 - [Separate the agent review pipeline into a provider- and agent-neutral core and adapters](decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md)
 - [Run the regression and smoke suites beside extended, behind the same regression gate](decisions/0103-run-the-regression-and-smoke-suites-beside-extended-behind-the-regression-gate.md)
+- [Run targeted mutants from one owner, with tables that survive reformatting](decisions/0104-run-targeted-mutants-from-one-owner-with-tables-that-survive-reformatting.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

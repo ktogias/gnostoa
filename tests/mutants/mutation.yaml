@@ -1,0 +1,67 @@
+# The targeted mutants that guard the mutation owner itself (Decision 0104, #373).
+# Run: knowledge mutants --table tests/mutants/mutation.yaml --jobs 3
+id: mutation
+tests: [tests.test_mutation]
+mutants:
+  - name: a missing anchor is accepted
+    path: tools/mutation.py
+    find: |
+      if not spans:
+          raise AnchorError("NOT FOUND", "the anchor matches nowhere")
+    replace: pass
+  - name: an ambiguous anchor is accepted
+    path: tools/mutation.py
+    find: |
+      if len(spans) > 1:
+          raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
+    replace: pass
+  - name: a survivor counts as killed
+    path: tools/mutation.py
+    find: return 0 if killed == len(outcomes) else 1
+    replace: return 0
+  - name: passing tests are a kill
+    path: tools/mutation.py
+    find: |
+      if completed.returncode == 0:
+          return Outcome(mutant.name, "SURVIVED", "the tests passed")
+    replace: pass
+  - name: a timeout is a survivor
+    path: tools/mutation.py
+    find: 'Outcome(mutant.name, "KILLED", f"timed out after {timeout:g} s")'
+    replace: 'Outcome(mutant.name, "SURVIVED", "")'
+  - name: the original tree is mutated
+    path: tools/mutation.py
+    find: |
+      work = Path(scratch) / "w"
+      shutil.copytree(root, work, ignore=_IGNORED, symlinks=True)
+    replace: work = root
+  - name: a statement keeps no indentation
+    path: tools/mutation.py
+    find: replacement = ("\n" + indent).join(lines)
+    replace: replacement = "\n".join(lines)
+  - name: an anchor that does not parse is never found
+    path: tools/mutation.py
+    find: spans, statements = _token_spans(text, find), False
+    replace: spans, statements = [], False
+  - name: a path that climbs is accepted
+    path: tools/mutation.py
+    find: |
+      if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+          raise refuse(f"{where}: path must stay inside the root: {item['path']!r}")
+    replace: pass
+  - name: a broken mutant is not invalid
+    path: tools/mutation.py
+    find: |
+      if broken:
+          problems.append(f"{mutant.name}: INVALID ({broken})")
+    replace: pass
+  - name: workers are ignored
+    path: tools/mutation.py
+    find: max(1, jobs)
+    replace: "1"
+  - name: a repeated mutant name is accepted
+    path: tools/mutation.py
+    find: |
+      if repeated:
+          raise refuse(f"mutant names used twice: {repeated}")
+    replace: pass
