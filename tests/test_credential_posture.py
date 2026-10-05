@@ -1717,10 +1717,17 @@ class NeutralCoreTests(unittest.TestCase):
         spec.loader.exec_module(guard)
         source = (ROOT / "tools" / "credential_posture.py").read_text(encoding="utf-8")
         self.assertEqual([], guard.COUPLING.findall(source))
+        # Both forms: a plain `import requests` would otherwise pass (CodeAnt on #364).
+        nodes = list(ast.walk(ast.parse(source)))
         imported = {
             node.module.split(".")[0]
-            for node in ast.walk(ast.parse(source))
+            for node in nodes
             if isinstance(node, ast.ImportFrom) and node.module
+        } | {
+            alias.name.split(".")[0]
+            for node in nodes
+            if isinstance(node, ast.Import)
+            for alias in node.names
         }
         self.assertLessEqual(
             imported, {"__future__", "collections", "datetime", "typing"}

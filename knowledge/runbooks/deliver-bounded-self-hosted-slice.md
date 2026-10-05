@@ -196,7 +196,7 @@ its verdict.
 
 The check probes the token without effect and compares the result with
 `policy/agent-credentials.yaml`. It also shows that a push uses the same token. A push
-authenticates through Git's own credential, so the push URL must be HTTPS to github.com
+authenticates through Git's own credential, so every push URL a push could reach (every remote's, and any that push routing names) must be HTTPS to github.com
 with no credential in it, and Git's credential helpers for it must be exactly the
 trusted `gh` (`gh auth setup-git`), with no extra header. Otherwise `transport:push` is
 unverified and so is the verdict.

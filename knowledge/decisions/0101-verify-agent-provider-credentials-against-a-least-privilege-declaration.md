@@ -188,7 +188,11 @@ No tool found verifies a personal account's fine-grained token against a declara
 11. **A push uses the checked token, or the verdict says so** (owner decision,
     2026-10-05). A push authenticates through Git's own credential, not this token. The
     check therefore reads, without reading any credential, the checkout's push
-    configuration for the subject:
+    configuration for every destination a push could reach: every remote's push URLs,
+    and every URL that `branch.<name>.pushRemote`, `remote.pushDefault` or
+    `branch.<name>.remote` names directly. Git chooses among these, not only
+    `origin`. The names come from git's own answer, never from a caller. For each
+    destination:
     - the push URL must be HTTPS to github.com, with no credential in it, after
       `pushInsteadOf`;
     - no extra HTTP header may be configured for it;

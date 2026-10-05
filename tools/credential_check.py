@@ -53,6 +53,9 @@ _EXIT = {
 _MAX_REPOSITORY_PAGES = 10
 _GH_TIMEOUT_SECONDS = 30
 _GIT_TIMEOUT_SECONDS = 30
+# Where a bare `git push` may go: `branch.<name>.pushRemote`, then `remote.pushDefault`,
+# then `branch.<name>.remote` (Codex on #364).
+_PUSH_ROUTING = r"^(remote\.pushdefault|branch\..*\.(pushremote|remote))$"
 _REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
@@ -224,14 +227,18 @@ def _policy(raw: str) -> posture.Policy:
 
 
 def _git(worktree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Run the trusted git in ``worktree``, reading what a push there would read."""
+    """Run the trusted git in ``worktree``, reading what a push there would read.
+
+    The worktree is git's working directory, never an argument.
+    """
     executable = trusted_executable("git")
     if executable is None:
         raise posture.PolicyError(
             f"no git in the trusted directories ({TRUSTED_EXECUTABLE_PATH})"
         )
     return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        [executable, "-C", str(worktree), *arguments],
+        [executable, *arguments],
+        cwd=worktree,
         capture_output=True,
         text=True,
         check=False,
@@ -282,19 +289,12 @@ def _is_trusted_gh(helper: str) -> bool:
     )
 
 
-def _git_arguments(worktree: str, remote: str) -> tuple[Path, str]:
-    """Return the worktree and remote as values git cannot read as options, or raise.
-
-    Both reach a git command line (SonarCloud S8705 on #364): the worktree as an
-    existing directory's absolute path, the remote as a plain remote name.
-    """
+def _checkout(worktree: str) -> Path:
+    """Return the checkout whose pushes are bound, as an existing directory, or raise."""
     resolved = Path(worktree).resolve()
     if not resolved.is_dir():
         raise posture.PolicyError(f"the worktree {worktree!r} is not a directory")
-    plain = remote[:1].isalnum() and all(c.isalnum() or c in "._-" for c in remote)
-    if not plain:
-        raise posture.PolicyError(f"{remote!r} is not a remote name")
-    return resolved, remote
+    return resolved
 
 
 def _pushed_target(pushed: str, subject: str) -> tuple[str | None, str]:
@@ -313,13 +313,15 @@ def _pushed_target(pushed: str, subject: str) -> tuple[str | None, str]:
         return None, "a push URL names a port other than HTTPS's"
     if url.username or url.password:
         return None, "a push URL carries a credential of its own"
-    path = url.path.strip("/").removesuffix(".git")
+    path = url.path.strip("/")
     try:
-        named = github_rest.repository_key(path)
+        named = github_rest.repository_key(path.removesuffix(".git"))
     except github_rest.InvalidRepository:
         return None, "a push URL names no repository"
     if named != subject:
         return None, f"a push URL names {named}, not {subject}"
+    # Git looks configuration up by the URL it pushes to, `.git` and all (CodeAnt on
+    # #364).
     return f"https://github.com/{path}", ""
 
 
@@ -348,28 +350,61 @@ def _url_binding(worktree: Path, pushed: str, subject: str) -> tuple[str, str]:
     return "BOUND", "HTTPS push through the trusted gh's credential helper"
 
 
-def _push_binding(worktree: Path, subject: str, remote: str) -> tuple[str, str]:
-    """Whether a push of ``subject`` from ``worktree`` uses the checked token.
+def _push_destinations(worktree: Path) -> tuple[list[str], list[str]] | None:
+    """Every remote, and every URL push routing names directly, a push could reach.
 
-    It does when every push URL Git would push to is HTTPS to github.com with no
-    credential in it, no extra header is configured for it, and Git's effective
-    credential helpers for it are exactly the trusted gh, which answers with the token
-    this check read. Only configuration is read, never a credential (Codex on #364).
+    The names are git's own answer, never a caller's value (SonarCloud S8705 on #364);
+    `.`, a branch's local upstream, is no remote.
+    """
+    listed = _git(worktree, "remote")
+    routed = _git(worktree, "config", "--null", "--get-regexp", _PUSH_ROUTING)
+    if listed.returncode != 0 or routed.returncode not in (0, 1):
+        return None
+    remotes = listed.stdout.split()
+    urls = []
+    for entry in filter(None, routed.stdout.split("\0")):
+        value = entry.partition("\n")[2]
+        if value and value != "." and value not in remotes:
+            urls.append(value)
+    return remotes, urls
+
+
+def _push_binding(worktree: Path, subject: str) -> tuple[str, str]:
+    """Whether every push of ``subject`` from ``worktree`` uses the checked token.
+
+    A bare push may go to any remote push routing selects, so every remote's push URLs,
+    and every URL routing names directly, must be HTTPS to github.com for the subject
+    with no credential in them, no extra header configured, and Git's effective
+    credential helpers exactly the trusted gh, which answers with the token this check
+    read. Only configuration is read, never a credential (Codex on #364).
     """
     try:
-        pushed = _git(worktree, "remote", "get-url", "--push", "--all", remote)
+        destinations = _push_destinations(worktree)
+        if destinations is None:
+            return "UNKNOWN", "Git's remotes and push routing could not be read"
+        remotes, urls = destinations
+        for remote in remotes:
+            if remote.startswith("-"):
+                return "UNKNOWN", "a remote's name could be read as an option"
+            pushed = _git(worktree, "remote", "get-url", "--push", "--all", remote)
+            if pushed.returncode != 0:
+                return (
+                    "UNKNOWN",
+                    f"the push URLs of the remote {remote!r} could not be read",
+                )
+            # Git pushes to every configured push URL, not only the first.
+            urls += pushed.stdout.split()
     except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
         return "UNKNOWN", f"git could not be read: {error}"
-    urls = pushed.stdout.split() if pushed.returncode == 0 else []
     if not urls:
-        return "UNKNOWN", f"no push URL for the remote {remote!r}"
-    # Git pushes to every configured push URL, not only the first (Codex on #364).
+        return "UNKNOWN", "the checkout has no remote to push to"
     for url in urls:
         state, evidence = _url_binding(worktree, url, subject)
         if state != "BOUND":
             return state, evidence
     return "BOUND", (
-        f"every push URL ({len(urls)}) goes through the trusted gh's credential helper"
+        f"every push URL ({len(urls)}, from {len(remotes)} remotes and push routing)"
+        " goes through the trusted gh's credential helper"
     )
 
 
@@ -410,10 +445,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--worktree", default=".", help="the checkout whose pushes the check binds"
     )
-    parser.add_argument("--remote", default="origin", help="the remote pushes go to")
     try:
         args = parser.parse_args(argv)
-        worktree, remote = _git_arguments(args.worktree, args.remote)
+        worktree = _checkout(args.worktree)
         policy = _policy(args.policy)
         subject = github_rest.repository_key(args.repository)
         if subject not in policy.repositories:
@@ -436,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
             private_repositories=private,
             resource_owner=policy.resource_owner,
         )
-        facts = facts._replace(transport=_push_binding(worktree, subject, remote))
+        facts = facts._replace(transport=_push_binding(worktree, subject))
         verdict = posture.evaluate(policy, facts, utc_timestamp())
     except github.ProbeHadEffect as error:
         print(
