@@ -132,8 +132,8 @@ run_main_credential_check() (
   export PATH
   # `command -v` names a shell function or alias rather than a path, and a name runs
   # it, so only an absolute path is run; and only one no one but root or the caller can
-  # replace: the file it really is, its directory and the directory it was found in, as
-  # `knowledge_common.trusted_executable` requires (CodeAnt on #364).
+  # replace: every link on the way, by the directory it is in, and the file it really is,
+  # as `knowledge_common.trusted_path` requires (CodeAnt on #364).
   # The validators come from the system directories alone, so none is found where the
   # rule below would refuse it and then vouches for itself (gitar on #364).
   ls_executable="$(PATH=/usr/bin:/bin; command -v ls || true)"
@@ -180,9 +180,25 @@ run_main_credential_check() (
       /*:/*) ;;
       *) return 1 ;;
     esac
-    real="$("${readlink_executable}" -f -- "$1" 2>/dev/null)" || return 1
-    owned "${real}" && owned "${real%/*}" && owned "${1%/*}" || return 1
-    printf '%s\n' "$1"
+    # Every link on the way is judged by the directory it is in, since whoever can
+    # change that directory can repoint it (gitar on #364); then the file it really is.
+    hop="$1"
+    hops=0
+    while owned "${hop%/*}"; do
+      if [ ! -L "${hop}" ]; then
+        owned "${hop}" || return 1
+        printf '%s\n' "$1"
+        return 0
+      fi
+      hops=$((hops + 1))
+      [ "${hops}" -le 40 ] || return 1
+      link="$("${readlink_executable}" -- "${hop}" 2>/dev/null)" || return 1
+      case "${link}" in
+        /*) hop="${link}" ;;
+        *) hop="${hop%/*}/${link}" ;;
+      esac
+    done
+    return 1
   }
   trusted() {
     checked "$(command -v "$1" || true)"
@@ -204,9 +220,17 @@ run_main_credential_check() (
     exit 2
   fi
 
-  # Protected main as the provider reports it, never a local ref.
-  main="$("${gh_executable}" api --hostname github.com \
-    "repos/${repository}/branches/main" --jq .commit.sha)"
+  # Protected main as the provider reports it, never a local ref. The same read shows
+  # the branch protected, or main is no authority (CodeAnt on #364).
+  branch="$("${gh_executable}" api --hostname github.com \
+    "repos/${repository}/branches/main" --jq '"\(.protected) \(.commit.sha)"')" \
+    || branch=""
+  protected="${branch%% *}"
+  main="${branch#* }"
+  if [ "${protected}" != true ]; then
+    echo "ERROR: main is not protected, so it is no authority" >&2
+    exit 2
+  fi
   if [ "${#main}" -ne 40 ]; then
     echo "ERROR: protected main could not be read" >&2
     exit 2

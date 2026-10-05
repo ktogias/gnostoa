@@ -99,19 +99,32 @@ def _writable_only_by_owner(path: str) -> bool:
     return mode.st_uid in owners and not mode.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
 
 
+# As many links as a path may pass through before it is refused, as `SYMLOOP_MAX` bounds.
+_MAX_LINKS = 40
+
+
 def trusted_path(found: str) -> str | None:
     """Return the file the absolute path ``found`` really is, if no one can replace it.
 
-    The file it really is -- a symlink resolved -- its directory, and the directory
-    ``found`` is in must be changeable by no one but root or the caller: whoever can
-    change that last one repoints ``found`` and chooses what runs (Codex on #364).
+    Every link on the way is judged by the directory it is in, since whoever can change
+    that directory can repoint the link (Codex and gitar on #364). The file it really
+    is must be changeable by no one but root or the caller too.
     """
     if not os.path.isabs(found):
         return None
-    real = os.path.realpath(found)
-    checked = (real, os.path.dirname(real), os.path.dirname(found))
+    hop = found
     try:
-        if all(_writable_only_by_owner(path) for path in checked):
+        for _ in range(_MAX_LINKS + 1):
+            if not _writable_only_by_owner(os.path.dirname(hop)):
+                return None
+            if not os.path.islink(hop):
+                break
+            hop = os.path.join(os.path.dirname(hop), os.readlink(hop))
+        else:
+            return None
+        # The last hop's directory, judged above, is the one the file really is in.
+        real = os.path.realpath(hop)
+        if _writable_only_by_owner(real):
             return real
     except OSError:
         return None

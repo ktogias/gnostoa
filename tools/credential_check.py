@@ -58,6 +58,8 @@ _GIT_TIMEOUT_SECONDS = 30
 # then `branch.<name>.remote` (Codex on #364).
 _PUSH_ROUTING = r"^(remote\.pushdefault|branch\..*\.(pushremote|remote))$"
 _URL_REWRITES = r"^url\..*\.(pushinsteadof|insteadof)$"
+# The variables that point git at a repository other than the one it runs in.
+_REPOSITORY_ROUTING = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 _REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
@@ -434,6 +436,12 @@ def _push_binding(worktree: Path, subject: str) -> tuple[str, str]:
         return (
             "UNBOUND",
             "GIT_EXEC_PATH is set, so it chooses the transport a push runs",
+        )
+    routed = [name for name in _REPOSITORY_ROUTING if os.environ.get(name)]
+    if routed:
+        # Git would read another repository than the checkout named (CodeAnt on #364).
+        return "UNKNOWN", (
+            f"{', '.join(routed)} routes git to a repository other than the checkout"
         )
     try:
         destinations = _push_destinations(worktree)

@@ -183,7 +183,8 @@ No tool found verifies a personal account's fine-grained token against a declara
 10. **The gate's authority is protected main** (owner decision, 2026-10-05). The
     declaration and the checker that judges by it come from the exact protected-main
     commit github.com reports; the read is pinned to github.com, the host the commit is
-    fetched from, so `GH_HOST` cannot name it. `ci/credential-check`, retrieved from that commit, runs
+    fetched from, so `GH_HOST` cannot name it, and the same read must show the branch
+    protected, or main is no authority. `ci/credential-check`, retrieved from that commit, runs
     that commit's checker against that commit's declaration, so a candidate cannot
     authorize its own first provider write. The wrapper scrubs caller Git routing and
     global configuration, as the preparation wrapper does; the repository's own
@@ -198,10 +199,9 @@ No tool found verifies a personal account's fine-grained token against a declara
     directory and a fetch's proxy and certificate settings pass. Every executable either script
     runs is an absolute path, from the fixed trusted directories, that no one but
     root or the caller can replace, as `knowledge_common.trusted_executable`
-    requires; a shell function named like one never runs. The validators that rule
-    runs (`ls`, `readlink`, `id`) come from `/usr/bin` and `/bin` alone, so none
-    vouches for itself. Where `readlink -f` is unavailable, as on macOS before 12.3,
-    every executable is refused: the check fails closed. Both trust the shell they
+    requires, every link on the way judged by the directory it is in; a shell function
+    named like one never runs. The validators that rule runs (`ls`, `readlink`, `id`)
+    come from `/usr/bin` and `/bin` alone, so none vouches for itself. Both trust the shell they
     run in: a function shadowing a builtin, or a preloaded library, is control of
     that shell, outside this check. Bootstrap: until protected main first provides the wrapper,
     the candidate's own check runs, and the exception is stated with its verdict.
@@ -217,7 +217,9 @@ No tool found verifies a personal account's fine-grained token against a declara
       `pushInsteadOf`; a URL that push routing names directly is the raw value, so
       with any rewrite rule configured it is not judged;
     - no extra HTTP header may be configured for it, and `GIT_EXEC_PATH` must be
-      unset in the session, since it chooses the transport a push runs;
+      unset in the session, since it chooses the transport a push runs; with
+      `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` set, git reads another repository
+      than the checkout, which is then not judged;
     - Git's effective credential helpers for it, folded in order with an empty value
       resetting them, must be exactly the trusted `gh`, through a path no one can
       repoint (`knowledge_common.trusted_path`), which answers with the token

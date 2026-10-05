@@ -284,11 +284,11 @@ class TrustedResolutionTests(unittest.TestCase):
     @staticmethod
     @staticmethod
     def _trusted(
-        source: pathlib.Path, path: str, then: str = ""
+        source: pathlib.Path, path: str, then: str = "", command: str = "trusted git"
     ) -> subprocess.CompletedProcess[str]:
         block = _resolution(source.read_text(encoding="utf-8"))
         return subprocess.run(  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-            ["sh", "-c", f"{block}\n{then}trusted git"],
+            ["sh", "-c", f"{block}\n{then}{command}"],
             env={"PATH": path},
             capture_output=True,
             text=True,
@@ -354,6 +354,37 @@ class TrustedResolutionTests(unittest.TestCase):
                     self.assertEqual("", completed.stdout)
                 found.chmod(0o755)
                 planted.unlink()
+                # A link in the middle of a chain is judged by its own directory too
+                # (gitar on #364).
+                shared = pathlib.Path(scratch) / "shared"
+                shared.mkdir()
+                real = elsewhere / "git"
+                fake.rename(real)
+                (shared / "git").symlink_to(real)
+                fake.symlink_to(shared / "git")
+                with self.subTest(source=name, case="a chain through a safe chain"):
+                    completed = self._trusted(source, path)
+                    self.assertEqual(0, completed.returncode, completed.stderr)
+                shared.chmod(0o775)
+                with self.subTest(
+                    source=name, case="a chain through a shared directory"
+                ):
+                    completed = self._trusted(source, path)
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)
+                shared.chmod(0o755)
+                fake.unlink()
+                fake.symlink_to(shared / "loop")
+                (shared / "loop").symlink_to(fake)
+                # A loop is never found by name, which needs an executable: judge the
+                # path itself.
+                with self.subTest(source=name, case="a link loop"):
+                    completed = self._trusted(source, path, command=f'checked "{fake}"')
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)
+                fake.unlink()
+                (shared / "loop").unlink()
+                real.rename(fake)
                 target = elsewhere / "git"
                 fake.rename(target)
                 fake.symlink_to(target)

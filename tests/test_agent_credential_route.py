@@ -146,6 +146,10 @@ class AgentCredentialRouteTests(unittest.TestCase):
         # The provider read is pinned to the host the fetch uses: `GH_HOST` must not
         # let another server name the authority (CodeAnt on #364).
         self.assertIn("api --hostname github.com", router)
+        # The authority is protected main: the same read that names its commit must
+        # show the branch protected, or no wrapper is fetched (CodeAnt on #364).
+        self.assertIn("(.protected)", router)
+        self.assertIn('[ "${protected}" != true ]', router)
         self.assertIn('show "${main}:ci/credential-check"', router)
         self.assertNotIn(':ci/credential-check" | sh', router)
         helper = router.split("run_main_credential_check() (", 1)[1].split("\n)\n", 1)[

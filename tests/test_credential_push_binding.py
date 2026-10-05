@@ -457,6 +457,25 @@ class PushBindingTests(unittest.TestCase):
         links.chmod(0o755)
         self.assertEqual("BOUND", self._binding()[0])
 
+    def test_routing_git_elsewhere_is_not_judged_as_the_checkout(self) -> None:
+        """With `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` set, git reads another
+        repository than the checkout this check names: its push is not judged as the
+        checkout's (CodeAnt on #364)."""
+        self._bind_gh()
+        # A real repository, so git reads it: the checkout's own, routed by name.
+        routed = {
+            "GIT_DIR": self.worktree / ".git",
+            "GIT_WORK_TREE": self.worktree,
+            "GIT_COMMON_DIR": self.worktree / ".git",
+        }
+        for variable, value in routed.items():
+            with self.subTest(variable=variable):
+                self.environment[variable] = str(value)
+                state, evidence = self._binding()
+                del self.environment[variable]
+                self.assertEqual("UNKNOWN", state)
+                self.assertIn(variable, evidence)
+
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")
         self.assertEqual("UNKNOWN", self._binding()[0])

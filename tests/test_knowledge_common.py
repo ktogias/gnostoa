@@ -152,6 +152,33 @@ class TrustedPathTests(unittest.TestCase):
                     self.assertIsNone(knowledge_common.trusted_path(str(link)))
                     changed.chmod(0o755)
 
+    def test_every_link_in_a_chain_is_judged_by_its_own_directory(self) -> None:
+        """A link in the middle of a chain can be repointed by whoever can change the
+        directory it is in, though its first and last hops are safe (gitar on #364)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            for name in ("safe", "shared", "real"):
+                (base / name).mkdir()
+            target = base / "real" / "tool"
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            target.chmod(0o755)
+            (base / "shared" / "tool").symlink_to(target)
+            (base / "safe" / "tool").symlink_to(base / "shared" / "tool")
+            first = str(base / "safe" / "tool")
+            self.assertEqual(
+                str(target.resolve()), knowledge_common.trusted_path(first)
+            )
+            (base / "shared").chmod(0o775)
+            self.assertIsNone(knowledge_common.trusted_path(first))
+            (base / "shared").chmod(0o755)
+
+    def test_a_link_loop_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            (base / "a").symlink_to(base / "b")
+            (base / "b").symlink_to(base / "a")
+            self.assertIsNone(knowledge_common.trusted_path(str(base / "a")))
+
     def test_a_relative_or_missing_path_is_not_trusted(self) -> None:
         self.assertIsNone(knowledge_common.trusted_path("gh"))
         self.assertIsNone(knowledge_common.trusted_path("/nonexistent/gnostoa/gh"))
