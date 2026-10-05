@@ -7,13 +7,17 @@ broke their anchors silently. These tests define the owner that replaces them.
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
+import subprocess
 import tempfile
 import textwrap
 import threading
 import time
 import unittest
 from unittest import mock
+
+import yaml
 
 from tools import mutation
 from tools.knowledge_common import KnowledgeFormatError
@@ -49,6 +53,19 @@ def _table(
         f"id: fixture\ntests: {tests}\nmutants:\n{mutants}", encoding="utf-8"
     )
     return path
+
+
+def _alive(pid: int) -> bool:
+    """Whether ``pid`` runs: a killed child an init never reaped is a zombie."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return True
+    return stat.rpartition(")")[2].split()[0] != "Z"
 
 
 class PythonAnchorTests(unittest.TestCase):
@@ -239,7 +256,10 @@ class RunTests(unittest.TestCase):
                 for i in range(3)
             )
             table = mutation.load_table(_table(base, mutants))
-            with mock.patch.object(mutation, "_run_one", one):
+            with (
+                mock.patch.object(mutation, "_run_one", one),
+                mock.patch.object(mutation, "_baseline", return_value=None),
+            ):
                 mutation.run(root, table, jobs=3)
         self.assertEqual(3, peak)
 
@@ -285,6 +305,210 @@ class CommandTests(unittest.TestCase):
                 1,
                 mutation.main(["--root", str(root), "--table", str(stale), "--check"]),
             )
+
+
+class SoundnessTests(unittest.TestCase):
+    """A kill must mean the tests caught the mutant (Codex and CodeAnt on #374)."""
+
+    def test_tests_that_already_fail_kill_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n"
+                    "  - name: nowhere\n    path: pkg/m.py\n"
+                    "    find: 'x * 9'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_misspelled]",
+                )
+            )
+            outcomes = mutation.run(root, table, jobs=1)
+            self.assertEqual(["NOT RUN", "NOT FOUND"], [o.status for o in outcomes])
+            self.assertIn("the unmutated tests fail", outcomes[0].detail)
+            self.assertEqual(
+                1,
+                mutation.main(
+                    ["--root", str(root), "--table", str(base / "table.yaml")]
+                ),
+            )
+
+    def test_a_symlinked_target_is_never_written_through(self) -> None:
+        for linked, target in (
+            ("file", "pkg/linked.py"),
+            ("directory", "out/linked.py"),
+        ):
+            with self.subTest(linked), tempfile.TemporaryDirectory() as scratch:
+                base = pathlib.Path(scratch)
+                root = _project(base)
+                (base / "elsewhere").mkdir()
+                outside = base / "elsewhere" / "linked.py"
+                outside.write_text("value = 2\n", encoding="utf-8")
+                if linked == "file":
+                    (root / "pkg" / "linked.py").symlink_to(outside)
+                else:
+                    (root / "out").symlink_to(base / "elsewhere")
+                table = mutation.load_table(
+                    _table(
+                        base,
+                        f"  - name: through a link\n    path: {target}\n"
+                        "    find: 'value = 2'\n    replace: 'value = 3'\n",
+                    )
+                )
+                (outcome,) = mutation.run(root, table, jobs=1)
+                self.assertEqual("value = 2\n", outside.read_text(encoding="utf-8"))
+                self.assertEqual("REFUSED", outcome.status)
+                self.assertIn("through a link: REFUSED", mutation.check(root, table)[0])
+
+    def test_a_timeout_ends_the_tests_child_processes_too(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            pid_file = base / "child.pid"
+            spawn = (
+                "import subprocess, sys, time\n"
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+                f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+                "while True:\n"
+                "    time.sleep(0.1)\n"
+            )
+            table_path = base / "table.yaml"
+            table_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "id": "fixture",
+                        "tests": ["tests.test_m"],
+                        "mutants": [
+                            {
+                                "name": "wait spawns and hangs",
+                                "path": "pkg/m.py",
+                                "find": "return None",
+                                "replace": spawn,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (outcome,) = mutation.run(
+                root, mutation.load_table(table_path), jobs=1, timeout=3
+            )
+            self.assertEqual("KILLED", outcome.status)
+            pid = int(pid_file.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 5
+            while _alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(_alive(pid), "the tests' child outlived the timeout")
+
+    def test_a_timeout_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            path = _table(
+                base,
+                "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+            )
+            with self.assertRaises(ValueError):
+                mutation.run(root, mutation.load_table(path), timeout=0)
+            self.assertEqual(
+                2,
+                mutation.main(
+                    ["--root", str(root), "--table", str(path), "--timeout", "0"]
+                ),
+            )
+
+
+class CopyTests(unittest.TestCase):
+    """A copy is faithful: its tests see the repository they would see in place."""
+
+    def test_tests_that_read_git_see_the_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "tests" / "test_git.py").write_text(
+                "import subprocess\nimport unittest\n\n\n"
+                "class G(unittest.TestCase):\n"
+                "    def test_tracked(self):\n"
+                "        subprocess.run(\n"
+                "            ['git', 'ls-files', '--error-unmatch', 'pkg/m.py'],\n"
+                "            check=True, capture_output=True,\n"
+                "        )\n",
+                encoding="utf-8",
+            )
+            clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            for command in (["init", "-q"], ["add", "-A"]):
+                subprocess.run(["git", *command], cwd=root, env=clean, check=True)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_git, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+            self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_a_git_file_is_never_copied(self) -> None:
+        # A `.git` file points at metadata that other worktrees share.
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / ".git").write_text(f"gitdir: {base / 'shared'}\n", encoding="utf-8")
+            (root / "tests" / "test_no_git.py").write_text(
+                "import pathlib\nimport unittest\n\n\n"
+                "class N(unittest.TestCase):\n"
+                "    def test_no_git(self):\n"
+                "        self.assertFalse(pathlib.Path('.git').exists())\n",
+                encoding="utf-8",
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_no_git, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+            self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+
+class AnchorShapeTests(unittest.TestCase):
+    def test_a_decorated_definition_is_replaced_with_its_decorator(self) -> None:
+        source = "@cache\ndef f():\n    return 1\n"
+        mutated = mutation.apply(
+            source,
+            "@cache\ndef f():\n    return 1\n",
+            "def f():\n    return 2\n",
+            python=True,
+        )
+        self.assertEqual("def f():\n    return 2\n", mutated)
+
+    def test_a_token_anchor_keeps_the_document_s_indentation(self) -> None:
+        source = "jobs:\n  smoke:\n    name: smoke\n    needs: [policy]\n"
+        mutated = mutation.apply(
+            source,
+            "  smoke:\n    name: smoke\n    needs: [policy]\n",
+            "  smoke:\n    name: smoke\n    needs: [policy, extended]\n",
+            python=False,
+        )
+        self.assertEqual(
+            {"jobs": {"smoke": {"name": "smoke", "needs": ["policy", "extended"]}}},
+            yaml.safe_load(mutated),
+        )
+        self.assertEqual(
+            "jobs:\n  smoke:\n    name: smoke\n    needs: [policy, extended]\n",
+            mutated,
+        )
+        reflowed = mutation.apply(
+            "jobs:\n    smoke:\n        name: smoke\n        needs: [policy]\n",
+            "  smoke:\n    name: smoke\n    needs: [policy]\n",
+            "  smoke:\n    name: smoke\n    needs: [policy, extended]\n",
+            python=False,
+        )
+        self.assertEqual(yaml.safe_load(mutated), yaml.safe_load(reflowed))
 
 
 class ReindentTests(unittest.TestCase):

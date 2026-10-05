@@ -58,15 +58,22 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
 
 1. **One owner, `tools/mutation.py`, exposed as `knowledge mutants`.** It loads a mutant table and either checks it (`--check`) or runs it.
    - **Check:** every anchor must apply exactly once, and every mutated Python file must still compile.
-   - **Run:** each mutant is applied in an isolated copy of the root, without `.git` or caches. The table's tests run with a scrubbed environment and a timeout, in parallel workers (`--jobs`). The result is reported as `KILLED`, `SURVIVED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
+   - **Run:**
+     - **The baseline comes first.** The table's tests first run unmutated, in an isolated copy. Only if they pass does a failure say anything about a mutant. Otherwise every mutant is `NOT RUN`.
+     - **One copy per mutant.** Each mutant is applied in its own isolated copy of the root.
+     - **The copy is faithful.** It keeps the repository's own `.git` directory, so tests that read Git see what they would see in place. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share.
+     - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy.
+     - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
+     - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
 2. **Anchors survive reformatting.**
    - In a Python file, an anchor that parses is located by AST:
      - a single expression, matched among the file's expressions;
      - a statement or a run of consecutive statements, matched within one block.
 
-     Whitespace, line breaks, comments and trailing commas do not matter. A statement replacement is re-indented to the matched statement's indentation.
+     Whitespace, line breaks, comments and trailing commas do not matter. A decorated definition's statement includes its decorators.
    - An anchor that does not parse, and any non-Python file, is located by token sequence: runs of word characters and single punctuation marks, with whitespace ignored.
    - An anchor that matches nowhere is `NOT FOUND`. One that matches more than once is `AMBIGUOUS`.
+   - A replacement is dedented. Its later lines keep their indentation relative to its first line, starting from the indentation of the line where the match starts. It therefore fits a reflowed file whose structure follows relative indentation, as YAML's does. It keeps the table's indentation width, not the file's.
 3. **Tables are data, kept with the code they guard**, as `tests/mutants/*.yaml`. Each table names:
    - its id;
    - the unittest modules that must kill its mutants;
@@ -91,7 +98,22 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - a timeout;
   - parallel workers;
   - table validation.
-- **After the change,** those tests pass. The verification-workflow table checks clean, and all nine of its mutants are killed.
+- **After the change,** those tests pass. The verification-workflow table checks clean, and all nine of its mutants are reported killed.
+- **Review of `8ad4b4b`, round 2.** Codex and CodeAnt found seven defects in the first version:
+  - test failures were credited without a clean baseline, so a misspelled or unimportable test module killed every mutant;
+  - a path through a symbolic link was written through, to a file outside the copy;
+  - a timeout ended the test runner but not its children;
+  - a timeout of zero or less was accepted;
+  - a decorated definition was matched without its decorators;
+  - a token-sequence replacement doubled the document's indentation.
+
+  Each has a test that failed first, on the unchanged runner, and a mutant in `tests/mutants/mutation.yaml`.
+- **The nine round-1 kills were not evidence.** The new baseline then failed on the verification-workflow table itself. Two `tests.test_tools` tests read Git metadata (`git ls-files`, and the tracked-file scope), and a copy without `.git` fails them. So on `8ad4b4b` every one of the nine mutants was "killed" by those two errors, not by its own change.
+  - The copy now keeps the repository's `.git` directory, with a test that failed first.
+  - With that copy, all nine are killed for their own reasons.
+- **The scratch runners this owner replaces had the same defect.** They also copied without `.git`. Each of their test sets was run unmutated in such a copy, on its current subject:
+  - #371's set failed, the same two errors, so the nine mutants of Decision 0103's gate were never evidenced before this change;
+  - every other set passed: #356 and the review-admission sets, #362/#364's credential sets, `github_rest`, and #368's set.
 
 ## Consequences
 

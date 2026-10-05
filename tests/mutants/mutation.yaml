@@ -22,7 +22,7 @@ mutants:
   - name: passing tests are a kill
     path: tools/mutation.py
     find: |
-      if completed.returncode == 0:
+      if status == 0:
           return Outcome(mutant.name, "SURVIVED", "the tests passed")
     replace: pass
   - name: a timeout is a survivor
@@ -33,12 +33,20 @@ mutants:
     path: tools/mutation.py
     find: |
       work = Path(scratch) / "w"
-      shutil.copytree(root, work, ignore=_IGNORED, symlinks=True)
+      shutil.copytree(root, work, ignore=_ignored, symlinks=True)
     replace: work = root
   - name: a statement keeps no indentation
     path: tools/mutation.py
-    find: replacement = ("\n" + indent).join(lines)
-    replace: replacement = "\n".join(lines)
+    find: '("\n" + indent).join(lines)'
+    replace: '"\n".join(lines)'
+  - name: a replacement is not dedented
+    path: tools/mutation.py
+    find: lines = textwrap.dedent(replace).strip("\n").splitlines()
+    replace: lines = replace.strip("\n").splitlines()
+  - name: decorators are left behind
+    path: tools/mutation.py
+    find: line = decorators[0].lineno if decorators else first.lineno
+    replace: line = first.lineno
   - name: an anchor that does not parse is never found
     path: tools/mutation.py
     find: spans, statements = _token_spans(text, find), False
@@ -65,3 +73,52 @@ mutants:
       if repeated:
           raise refuse(f"mutant names used twice: {repeated}")
     replace: pass
+  - name: a failing baseline is ignored
+    path: tools/mutation.py
+    find: failure = baseline.result()
+    replace: failure = None
+  - name: a failing baseline passes
+    path: tools/mutation.py
+    find: |
+      return None if status == 0 else f"the unmutated tests fail: {last}"
+    replace: return None
+  - name: a failing baseline hides a static problem
+    path: tools/mutation.py
+    find: |
+      Outcome(o.name, "NOT RUN", failure) if o.status in {"KILLED", "SURVIVED"} else o
+    replace: Outcome(o.name, "NOT RUN", failure)
+  - name: a run writes through a link
+    path: tools/mutation.py
+    find: |
+      if linked is not None:
+          return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
+    replace: pass
+  - name: a check accepts a link
+    path: tools/mutation.py
+    find: |
+      if linked is not None:
+          problems.append(f"{mutant.name}: REFUSED ({linked} is a symbolic link)")
+          continue
+    replace: pass
+  - name: only the file itself is checked for a link
+    path: tools/mutation.py
+    find: current = current / part
+    replace: current = root / relative
+  - name: a timeout ends only the leader
+    path: tools/mutation.py
+    find: os.killpg(process.pid, signal.SIGKILL)
+    replace: process.kill()
+  - name: a non-positive timeout is accepted
+    path: tools/mutation.py
+    find: |
+      if not (math.isfinite(timeout) and timeout > 0):
+          raise ValueError(f"timeout must be a positive number of seconds: {timeout!r}")
+    replace: pass
+  - name: a copy drops the repository's metadata
+    path: tools/mutation.py
+    find: (os.path.islink(git) or not os.path.isdir(git))
+    replace: "True"
+  - name: a copy keeps a shared metadata pointer
+    path: tools/mutation.py
+    find: (os.path.islink(git) or not os.path.isdir(git))
+    replace: os.path.islink(git)
