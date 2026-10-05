@@ -1518,21 +1518,36 @@ class CredentialCheckCliTests(unittest.TestCase):
         self.assertEqual("an SSH remote", verdict["transport"]["evidence"])
 
     def test_git_arguments_cannot_become_options(self) -> None:
-        """The remote and the worktree reach a git command line: a remote that is not
-        a remote name, or a worktree that is not an existing directory, is refused
-        before any request (SonarCloud S8705 on #364)."""
-        for arguments in (
-            ("--remote", "--upload-pack=touch x"),
-            ("--remote", "-x"),
-            ("--remote", "a b"),
-            ("--worktree", "/nonexistent/checkout"),
-        ):
+        """The worktree is git's working directory: one that is not an existing
+        directory is refused before any request (SonarCloud S8705 on #364). The remote
+        is no caller value at all (`test_no_caller_input_reaches_a_git_argument`)."""
+        for arguments in (("--worktree", "/nonexistent/checkout"),):
             with self.subTest(arguments=arguments):
                 code, output, replay = _run(
                     _calibrated_exact(), "--repository", SUBJECT, *arguments
                 )
                 self.assertEqual(2, code, output)
                 self.assertEqual([], replay.sent)
+
+    def test_a_failed_user_read_is_an_error_not_an_expiry(self) -> None:
+        """The probes read the token's user for its expiry: a failed read has no expiry
+        header, and must not stand as a lifetime that exceeds the bound (CodeAnt on
+        #364)."""
+        from tools import credential_posture as posture
+        from tools import credential_posture_github as github
+
+        answers = _calibrated_exact()
+        answers[("GET", "user")] = (502, "", "")
+        with self.assertRaises(posture.PolicyError):
+            github.observe(
+                _Replay(answers),
+                repository=SUBJECT,
+                public=True,
+                environment=None,
+                visible_repositories=tuple(VISIBLE),
+                login="ktogias",
+                token="github_pat_x",
+            )
 
     def test_help_is_not_a_verdict(self) -> None:
         """Only EXACT exits 0: a gate whose caller passes `--help` must not report

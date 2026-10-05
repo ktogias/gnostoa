@@ -180,6 +180,10 @@ class AgentCredentialRouteTests(unittest.TestCase):
         ):
             self.assertIn(isolated, fetch)
         self.assertIn('--template="${metadata}/template"', retrieval)
+        # Its temporaries are judged as executables are, before anything is written to
+        # them (CodeAnt on #364).
+        self.assertIn('checked "${wrapper}"', helper)
+        self.assertIn('checked "${metadata}" directory', helper)
         self.assertNotIn("fetch --quiet origin", helper)
         self.assertIn("run_main_credential_check ktogias/gnostoa", router)
 
@@ -224,6 +228,31 @@ class AgentCredentialRouteTests(unittest.TestCase):
                     self.assertRegex(
                         completed.stderr, rf"not a trusted executable path:.*\b{name}\b"
                     )
+
+    def test_the_session_s_git_must_be_the_trusted_git(self) -> None:
+        """The push that follows runs in this session, by name: if the session finds
+        another git than the one the check inspects with, a push may run that one
+        instead (Codex on #364), so the helper stops before any provider read."""
+        router = AGENTS.read_text(encoding="utf-8")
+        start = router.index("run_main_credential_check() (")
+        helper = router[start : router.index("\n)\n", start) + 3]
+        with tempfile.TemporaryDirectory() as scratch:
+            other = pathlib.Path(scratch) / "bin"
+            other.mkdir()
+            (other / "git").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (other / "git").chmod(0o755)
+            completed = subprocess.run(  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                ["bash", "-c", f"{helper}\nrun_main_credential_check ktogias/gnostoa"],
+                cwd=scratch,
+                env={"PATH": f"{other}:/usr/local/bin:/usr/bin:/bin", "HOME": scratch},
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+        self.assertEqual(2, completed.returncode, completed.stderr)
+        self.assertIn("this session's git", completed.stderr)
+        self.assertNotIn("main", completed.stderr)
 
     def test_the_runbook_states_the_bootstrap_and_the_push_binding(self) -> None:
         section = _flat(_section())

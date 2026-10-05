@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
-from tools.credential_posture import Facts, Observation, ScopeObservation
+from tools.credential_posture import Facts, Observation, PolicyError, ScopeObservation
 from tools.github_rest import path_segment
 
 NOT_ACCESSIBLE = "Resource not accessible by personal access token"
@@ -622,6 +622,15 @@ def _selection_bounded(scope: list[ScopeObservation], resource_owner: str) -> bo
     return bounded
 
 
+def read_user(send: Send) -> Answer:
+    """Return the token's user, or raise: a failed read has no expiry header, and must
+    not stand as a lifetime past the bound (CodeAnt on #364)."""
+    user = send("GET", "user", None)
+    if user.status != 200 or not isinstance(user.document, dict):
+        raise PolicyError("the token's user could not be read")
+    return user
+
+
 def observe(
     send: Send,
     *,
@@ -640,7 +649,7 @@ def observe(
     fine-grained token sees a private repository only in its selection. ``token`` is
     read for its kind only; it is neither kept nor returned.
     """
-    user = send("GET", "user", None)
+    user = read_user(send)
     # Scope first: whether the selection is the public subject alone decides whether
     # a repository read grant is moot.
     scope = _scope_observations(send, repository, visible_repositories)

@@ -58,6 +58,21 @@ _GIT_TIMEOUT_SECONDS = 30
 # then `branch.<name>.remote` (Codex on #364).
 _PUSH_ROUTING = r"^(remote\.pushdefault|branch\..*\.(pushremote|remote))$"
 _URL_REWRITES = r"^url\..*\.(pushinsteadof|insteadof)$"
+# The settings for a push URL that change where its token goes: another credential, or a
+# certificate authority of its own, which may trust a server that is not GitHub, such as
+# an intercepting proxy, and may be legitimate (CodeAnt on #364).
+_HTTP_SETTINGS = (
+    ("http.extraheader", "UNBOUND", "an extra HTTP header is configured"),
+    ("http.sslcainfo", "UNKNOWN", "a certificate authority of its own is configured"),
+    ("http.sslcapath", "UNKNOWN", "a certificate authority of its own is configured"),
+)
+# The variables that name a certificate authority of their own for every push.
+_CERTIFICATE_AUTHORITIES = (
+    "GIT_SSL_CAINFO",
+    "GIT_SSL_CAPATH",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+)
 # The variables that point git at a repository other than the one it runs in.
 _REPOSITORY_ROUTING = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 _REPOSITORY_LISTING = "user/repos?per_page=100"
@@ -206,9 +221,7 @@ def _repository_facts(
         for item in environments or []
         if isinstance(item, dict) and item.get("name")
     ]
-    user = send("GET", "user", None)
-    if user.status != 200 or not isinstance(user.document, dict):
-        raise posture.PolicyError("the token's user could not be read")
+    user = github.read_user(send)
     login = github_rest.owner_name(str(user.document.get("login") or ""))
     return public, (min(names) if names else None), login
 
@@ -408,6 +421,12 @@ def _session_judgement() -> tuple[str, str] | None:
             "GIT_SSL_NO_VERIFY turns TLS verification off, so the token may reach"
             " another server"
         )
+    authorities = [name for name in _CERTIFICATE_AUTHORITIES if os.environ.get(name)]
+    if authorities:
+        return "UNKNOWN", (
+            f"{', '.join(authorities)} names a certificate authority of its own, which"
+            " decides which server the token reaches"
+        )
     routed = [name for name in _REPOSITORY_ROUTING if os.environ.get(name)]
     if routed:
         # Git would read another repository than the checkout named (CodeAnt on #364).
@@ -423,16 +442,17 @@ def _http_judgement(worktree: Path, target: str) -> tuple[str, str] | None:
     An extra header is another credential; with TLS verification off, git sends the
     checked token to whichever server answers (CodeAnt on #364).
     """
-    header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+    for key, state, meaning in _HTTP_SETTINGS:
+        read = _git(worktree, "config", "--get-urlmatch", key, target)
+        if read.returncode not in (0, 1):
+            return "UNKNOWN", f"{key} for a push URL could not be read"
+        if read.returncode == 0 and read.stdout.strip():
+            return state, f"{meaning} for a push URL ({key})"
     verify = _git(
         worktree, "config", "--bool", "--get-urlmatch", "http.sslverify", target
     )
-    if header.returncode not in (0, 1):
-        return "UNKNOWN", "the extra HTTP headers for a push URL could not be read"
     if verify.returncode not in (0, 1):
         return "UNKNOWN", "TLS verification for a push URL could not be read"
-    if header.returncode == 0 and header.stdout.strip():
-        return "UNBOUND", "an extra HTTP header is configured for a push URL"
     if verify.returncode == 0 and verify.stdout.strip() == "false":
         return "UNBOUND", (
             "TLS verification is off for a push URL, so the token may reach another"

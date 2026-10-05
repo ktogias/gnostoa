@@ -165,6 +165,24 @@ class CredentialCheckWrapperTests(unittest.TestCase):
         hit.chmod(0o755)
         return hit
 
+    def test_a_temporary_directory_others_can_change_is_refused(self) -> None:
+        """Whoever can change `TMPDIR` can replace the extracted tree, and Python would
+        run their checker (CodeAnt on #364): the work directory is judged by the rule
+        every executable is, before anything is extracted into it."""
+        shared = pathlib.Path(self.scratch.name) / "shared-tmp"
+        shared.mkdir()
+        shared.chmod(0o777)
+        completed = self._run(
+            self.authority, "--repository", "o/r", extra={"TMPDIR": str(shared)}
+        )
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        self.assertEqual("", completed.stdout)
+        shared.chmod(0o1777)
+        completed = self._run(
+            self.authority, "--repository", "o/r", extra={"TMPDIR": str(shared)}
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_tar_options_from_the_caller_never_reach_the_extraction(self) -> None:
         """GNU tar takes `TAR_OPTIONS` before its own arguments, and a checkpoint
         action can rewrite the extracted checker before Python imports it (Codex on

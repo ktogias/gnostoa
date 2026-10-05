@@ -128,6 +128,8 @@ run_main_credential_check() (
       ;;
   esac
 
+  # The git a push in this session will run, before the search path is fixed.
+  session_git="$(command -v git || true)"
   PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
   export PATH
   # `command -v` names a shell function or alias rather than a path, and a name runs
@@ -226,7 +228,9 @@ run_main_credential_check() (
         return 0
       fi
     done
-    return 1
+    # A directory at the end, only when one is asked for.
+    [ "${2:-}" = directory ] && [ -n "${current}" ] || return 1
+    printf '%s\n' "$1"
   }
   trusted() {
     checked "$(command -v "$1" || true)"
@@ -236,6 +240,15 @@ run_main_credential_check() (
   checked "${readlink_executable}" >/dev/null || unresolved="${unresolved} readlink"
   checked "${id_executable}" >/dev/null || unresolved="${unresolved} id"
   git_executable="$(trusted git)" || unresolved="${unresolved} git"
+  # The push that follows runs in this session, by name: the git it finds there must be
+  # the trusted git, through a path no one else can repoint, or a push may run another
+  # (Codex on #364).
+  if [ -n "${git_executable}" ] && ! { [ "${session_git}" -ef "${git_executable}" ] \
+    && checked "${session_git}" >/dev/null; }; then
+    echo "ERROR: this session's git (${session_git:-none}) is not the trusted" \
+      "${git_executable}, so a push may not be the one checked" >&2
+    exit 2
+  fi
   gh_executable="$(trusted gh)" || unresolved="${unresolved} gh"
   mktemp_executable="$(trusted mktemp)" || unresolved="${unresolved} mktemp"
   mkdir_executable="$(trusted mkdir)" || unresolved="${unresolved} mkdir"
@@ -275,6 +288,11 @@ run_main_credential_check() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
+  if ! checked "${wrapper}" >/dev/null || ! checked "${metadata}" directory >/dev/null
+  then
+    echo "ERROR: another user could change this check's temporary files" >&2
+    exit 2
+  fi
   status=0
   (
     # The checkout's own configuration is never read: its `insteadOf` could redirect

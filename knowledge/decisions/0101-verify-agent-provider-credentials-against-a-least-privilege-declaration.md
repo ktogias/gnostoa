@@ -202,8 +202,12 @@ No tool found verifies a personal account's fine-grained token against a declara
     path is walked one component at a time and no link is followed before it is
     judged, so every component, a link included, is root's or the caller's, every
     directory on the way is writable by no one else unless it is sticky, and the file
-    at the end is writable by no one else. A shell function named like an executable
-    never runs. The validators that rule runs (`ls`, `readlink`, `id`)
+    at the end is writable by no one else. The scripts' temporary files and directories
+    are judged by the same rule before anything is written to them, so whoever can
+    change `TMPDIR` cannot replace the extracted tree. A shell function named like an
+    executable never runs. The push that follows runs in the caller's session, by
+    name, so the helper refuses a session whose `git` is not the trusted one, through
+    a path no one else can repoint. The validators that rule runs (`ls`, `readlink`, `id`)
     come from `/usr/bin` and `/bin` alone, so none vouches for itself. Both trust the shell they
     run in: a function shadowing a builtin, or a preloaded library, is control of
     that shell, outside this check. Bootstrap: until protected main first provides the wrapper,
@@ -221,7 +225,10 @@ No tool found verifies a personal account's fine-grained token against a declara
       with any rewrite rule configured it is not judged;
     - no extra HTTP header may be configured for it, nor TLS verification turned off
       (`http.sslVerify`, `GIT_SSL_NO_VERIFY`), since then the token may reach another
-      server; `GIT_EXEC_PATH` must be unset in the session, since it chooses the
+      server; a certificate authority of its own (`http.sslCAInfo`,
+      `http.sslCAPath`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`, `SSL_CERT_FILE`,
+      `SSL_CERT_DIR`) may trust an intercepting proxy, and may be legitimate, so it is
+      not judged; `GIT_EXEC_PATH` must be unset in the session, since it chooses the
       transport a push runs; with
       `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` set, git reads another repository
       than the checkout, which is then not judged;

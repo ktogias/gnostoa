@@ -489,6 +489,30 @@ class PushBindingTests(unittest.TestCase):
         self.environment["GIT_SSL_NO_VERIFY"] = "1"
         self.assertEqual("UNBOUND", self._binding()[0])
 
+    def test_a_certificate_authority_of_its_own_is_not_judged(self) -> None:
+        """A certificate authority of the push URL's own may trust a server that is not
+        GitHub, an intercepting proxy, and that server gets the token (CodeAnt on #364).
+        It may be legitimate, so it is not judged rather than refused."""
+        self._bind_gh()
+        bundle = pathlib.Path(self.scratch.name) / "ca.pem"
+        self._git("config", "http.https://github.com/.sslCAInfo", str(bundle))
+        state, evidence = self._binding()
+        self.assertEqual("UNKNOWN", state)
+        self.assertIn("certificate", evidence)
+        self._git("config", "--unset-all", "http.https://github.com/.sslCAInfo")
+        for variable in (
+            "GIT_SSL_CAINFO",
+            "GIT_SSL_CAPATH",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+        ):
+            with self.subTest(variable=variable):
+                self.environment[variable] = str(bundle)
+                state, evidence = self._binding()
+                del self.environment[variable]
+                self.assertEqual("UNKNOWN", state)
+                self.assertIn(variable, evidence)
+
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")
         self.assertEqual("UNKNOWN", self._binding()[0])
