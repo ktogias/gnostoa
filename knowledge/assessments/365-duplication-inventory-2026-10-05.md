@@ -147,7 +147,7 @@ monotonic constraints.
 | Pattern | Copies |
 |---|---|
 | `review_current._kill_and_reap` and `security_scan._terminate_and_reap` | exact clone |
-| process-group kill | in `candidate_prepare` |
+| process-group kill | in `candidate_prepare`; #374's second round adds one to `tools/mutation.py`, because no owner exists yet |
 | subprocess launches | 20 modules |
 
 Many launches are legitimate, but timeout, output-bound and reap handling are written
