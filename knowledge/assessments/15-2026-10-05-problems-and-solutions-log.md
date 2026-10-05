@@ -206,10 +206,12 @@ section C. Its findings remain evidence until a separate Work Item admits them.
 ## E7. Other duplicated responsibilities
 
 See the [duplication inventory](365-duplication-inventory-2026-10-05.md). It found
-eight families. The most urgent is strict JSON parsing, a security boundary with five
-or six identical copies. The others are the HTTP and analyzer clients, canonical JSON
-and digests, schema validation, bounded process execution, policy loading, the CI
-smoke harness, the experiment helpers and test fixtures. None is admitted yet.
+eight families of production code. The most urgent is strict JSON parsing, a security
+boundary: duplicate-key rejection is used in nine modules, six of them with identical
+bodies. The others are the HTTP and analyzer clients, canonical JSON and digests,
+schema validation, bounded process execution, policy loading, the CI smoke harness,
+and the experiment and capsule helpers. Repeated test fixtures are recorded
+separately, not as a ninth family. None is admitted yet.
 
 ## E8. Agent process slips, each with its fix
 

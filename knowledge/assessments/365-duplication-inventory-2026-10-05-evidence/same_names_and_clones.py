@@ -1,9 +1,13 @@
 """Detectors A and B of the 2026-10-05 duplication inventory (#365).
 
-Run: python same_names_and_clones.py <root>, where <root> is an extracted
+Run: python same_names_and_clones.py <root> [--counts], where <root> is an extracted
 `git archive 4618e1b`. With CPython 3.14.7 it prints, byte for byte, the JSON recorded
 in same-names-and-clones.json. Under 3.12 the similarity ratios differ, because
 `ast.dump`'s format changed in 3.13; the clone groups do not.
+
+The JSON lists at most 45 same-name groups, 30 clone groups and 40 near clones. With
+`--counts` it prints instead how many there are in all, as recorded in
+same-names-and-clones-counts.json (Codex on #375).
 
 - A: top-level functions with one name in two or more modules, with the best and
   mean similarity of their normalized bodies.
@@ -19,6 +23,7 @@ decorators and a leading docstring, so only the shape remains.
 import ast
 import collections
 import difflib
+import itertools
 import json
 import pathlib
 import sys
@@ -93,9 +98,8 @@ def same_names(functions: list[Function]) -> list[Any]:
         if len(modules) < 2:
             continue
         sims = [
-            difflib.SequenceMatcher(None, group[i][4], group[j][4]).ratio()
-            for i in range(len(group))
-            for j in range(i + 1, len(group))
+            difflib.SequenceMatcher(None, a[4], b[4]).ratio()
+            for a, b in itertools.combinations(group, 2)
         ]
         rows.append(
             (
@@ -129,24 +133,33 @@ def near_clones(functions: list[Function]) -> list[Any]:
     """Detector B'."""
     big = [f for f in functions if f[2] >= 8]
     rows: list[Any] = []
-    for i in range(len(big)):
-        for j in range(i + 1, len(big)):
-            a, b = big[i], big[j]
-            if a[0] == b[0] or a[4] == b[4]:
-                continue
-            if abs(len(a[4]) - len(b[4])) > 0.15 * max(len(a[4]), len(b[4])):
-                continue
-            if difflib.SequenceMatcher(None, a[4], b[4]).quick_ratio() < 0.9:
-                continue
-            r = difflib.SequenceMatcher(None, a[4], b[4]).ratio()
-            if r >= 0.9:
-                rows.append((round(r, 2), a[2], f"{a[0]}::{a[1]}", f"{b[0]}::{b[1]}"))
+    for a, b in itertools.combinations(big, 2):
+        if a[0] == b[0] or a[4] == b[4]:
+            continue
+        if abs(len(a[4]) - len(b[4])) > 0.15 * max(len(a[4]), len(b[4])):
+            continue
+        if difflib.SequenceMatcher(None, a[4], b[4]).quick_ratio() < 0.9:
+            continue
+        r = difflib.SequenceMatcher(None, a[4], b[4]).ratio()
+        if r >= 0.9:
+            rows.append((round(r, 2), a[2], f"{a[0]}::{a[1]}", f"{b[0]}::{b[1]}"))
     rows.sort(key=lambda r: (-r[0], -r[1]))
     return rows
 
 
 def main() -> None:
     functions = functions_of(pathlib.Path(sys.argv[1]))
+    if sys.argv[2:] == ["--counts"]:
+        names = same_names(functions)
+        counts = {
+            "functions": len(functions),
+            "same_name_groups": len(names),
+            "same_name_groups_at_least_0_90_similar": sum(r[2] >= 0.9 for r in names),
+            "exact_clone_groups": len(exact_clones(functions)),
+            "near_clone_pairs": len(near_clones(functions)),
+        }
+        print(json.dumps(counts, indent=1))
+        return
     print(
         json.dumps(
             {

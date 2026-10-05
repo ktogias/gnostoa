@@ -50,10 +50,15 @@ is admitted separately, through its own Work Item and Decision.
   `tools/`, `ci/`, `tasks/` and `.github/`, 45,435 lines and 1,219 top-level
   functions. Tests are noted separately.
 - **Claim boundary:** the detectors find code that is the *same shape*, has the
-  *same name*, or matches a *responsibility's line pattern*. Every count below names
-  its detector, because they measure different things. Detector C counts the modules
-  using a responsibility in any shape. Detectors A and B count helpers that share a
-  name or a body. Detector A or B's count is therefore a subset of C's, never the total.
+  *same name*, or matches one of a *fixed set of line patterns*. Every count below
+  names its detector, because they measure different things:
+  - Detector C counts the modules with a line matching one of its 15 patterns, in
+    `responsibility_signatures.py`, whatever shape surrounds that line. A
+    responsibility it has no pattern for, such as F5's policy loading, has no C count.
+  - Detectors A and B count helpers that share a name or a body.
+  - Where both count the same responsibility, as for strict JSON, the A or B count is
+    the mechanically mergeable part. Neither count is a complete inventory of a
+    responsibility.
 - **What no detector sees:** a responsibility implemented twice in shapes that share
   no name, no body and no line pattern. #365 records why the review analyzers missed
   such cases.
@@ -64,7 +69,7 @@ is admitted separately, through its own Work Item and Decision.
 
 | Detector | What it finds | Result |
 |---|---|---|
-| A. Same helper name | top-level functions with one name in two or more modules, compared by normalized AST | 30 names in 2–39 modules |
+| A. Same helper name | top-level functions with one name in two or more modules, compared by normalized AST | 77 names in 2–39 modules, 31 of them with a best pair similarity of 0.90 or more |
 | B. Structural clones | identical function bodies with identifiers, constants, docstrings and annotations removed (≥ 5 statements); near clones at ≥ 0.90 similarity (≥ 8 statements) | 12 exact clone groups; 3 near clones |
 | C. Responsibility signatures | lines that perform one responsibility, counted per module | 15 signatures |
 | D. Textual duplicates | `pylint` 3.3.9 `duplicate-code` (R0801), ≥ 10 similar lines, imports, docstrings and comments ignored | 11 blocks |
@@ -85,6 +90,12 @@ Two outputs are gzip-compressed, because their exact bytes end lines with spaces
 with a blank line, which the repository's whitespace check refuses; `gzip -dc` restores
 them. [`index.json`](365-duplication-inventory-2026-10-05-evidence/index.json) records each output's SHA-256, of the uncompressed
 bytes where compressed, with its script and interpreter.
+
+The JSON output lists at most 45 same-name groups, 30 clone groups and 40 near clones.
+How many there are in all, recorded by the same script with `--counts`, is in
+[`same-names-and-clones-counts.json`](365-duplication-inventory-2026-10-05-evidence/same-names-and-clones-counts.json):
+1,219 functions, 77 same-name groups (31 at 0.90 or more), 12 exact clone groups and 3
+near-clone pairs (Codex and CodeRabbit on #375).
 
 **Reproduced on 2026-10-06** from a fresh archive:
 - **A and B:** byte-identical on CPython 3.14.7. Under 3.12 the similarity ratios differ, because `ast.dump`'s format changed in 3.13, though the clone groups do not.
@@ -121,9 +132,9 @@ keys, finite numbers, depth and RFC 3339. It would be registered with signatures
 such as `object_pairs_hook` and `parse_constant`, and the existing copies counted as
 debt that converges under #365.
 
-### F2. Schema validation: owner already exists
+### F2. Schema validation: owner proposed in #369
 
-`Draft202012Validator` appears in 11 modules, on 28 lines. Detector A finds `_schema`
+`Draft202012Validator` appears in 11 modules, on 28 lines. On `4618e1b` no owner exists yet. Detector A finds `_schema`
 in 6 modules and `_schema_errors` in 3. #369 adds the owner,
 `tools/schema_validation.py`, and counts these copies as debt for #365.
 
@@ -208,19 +219,18 @@ There are also 12- to 14-line blocks shared with `tools/review_outer`.
 **Proposal:** a shared smoke harness module, for example `ci/lib/smoke.py`. It needs
 care, because smoke scripts are evidence routes.
 
-### F8. Experiment package helpers
+### F8. Experiment and capsule helpers
 
 | Helper | Copies |
 |---|---|
-| `_same_object` | 4 |
-| `_normalized_mode` | 2, exact |
-| `assert_visible_directory` | 2, exact |
-| `_emit` | 3 |
+| `_same_object` | 4 (A): 3 in `tools/experiment/` (`capture`, `handoff`, `packaging`), 1 in `tools/capsule/effect_claim` |
+| `_normalized_mode` | 2, exact (B): `tools/experiment/handoff`, `tools/experiment/packaging` |
+| `assert_visible_directory` | 2, exact (B): `tools/experiment/capture`, `tools/experiment/handoff` |
+| `_emit` | 3 (A): `tools/experiment/handoff`, `tools/experiment/packaging`, `tools/capsule/cli` |
 
-All are in `tools/experiment/`.
-
-**Proposal:** one shared module inside `tools/experiment/`. Low priority, since it is
-within one package.
+**Proposal:** one shared module for both packages, since `tools/capsule/` holds a copy of
+`_same_object` and of `_emit` too (CodeRabbit on #375). Low priority, since every copy
+is in these two packages.
 
 ### F9. Already being consolidated
 
@@ -266,7 +276,7 @@ touched.
 5. **F6, bounded process execution.**
 6. **F5, policy loading.**
 7. **F7, the CI smoke harness.**
-8. **F8, experiment helpers.**
+8. **F8, experiment and capsule helpers.**
 9. **Test support modules,** when touched.
 
 Each family follows the same route as #368 and #374:
