@@ -124,6 +124,8 @@ inherited, copied or loaded by adopting projects.
 - [Issue 15 useful L1 current-state reconciliation execution plan](assessments/15-useful-l1-current-state-reconciliation-execution-plan.md)
 - [Issue 15 provider-abstraction retrospective and root-cause analysis](assessments/15-provider-abstraction-retrospective.md)
 - [Issue 15 review-pipeline abstraction recurrence retrospective and root-cause analysis](assessments/15-review-pipeline-abstraction-recurrence-rca.md)
+- [Problems and solutions of 2026-10-05, recorded for later reflection and evaluation](assessments/15-2026-10-05-problems-and-solutions-log.md)
+- [Duplicated responsibilities in production code on 2026-10-05, measured, with proposals](assessments/365-duplication-inventory-2026-10-05.md)
 - [Issues 309/313 analyzer-readback RED-first execution contract](assessments/309-313-analyzer-readback-red-contract.md)
 - [B2/P1 streamlined self-hosting measurements](assessments/b2-p1-streamlined-self-hosting-measurements.md)
 - [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
