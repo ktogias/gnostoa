@@ -166,38 +166,13 @@ jobs:
           python ci/release_smoke.py \
             --output-dir "${RUNNER_TEMP}/gnostoa-distributions"
 
-  regression:
-    name: regression
-    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended]
-    if: always()
+  # Decision 0103: the regression suite runs beside extended; the gate named
+  # `regression` below asserts it with every other prerequisite.
+  regression-suite:
+    name: regression-suite
+    needs: [policy]
     runs-on: ubuntu-latest
     steps:
-      - name: Assert successful prerequisites
-        env:
-          POLICY_RESULT: ${{ needs.policy.result }}
-          SECURITY_FAST_RESULT: ${{ needs.security-fast.result }}
-          FAST_RESULT: ${{ needs.fast.result }}
-          PYTHON_COMPATIBILITY_RESULT: ${{ needs.python-compatibility.result }}
-          EXTENDED_ROUTE_RESULT: ${{ needs.extended-route.result }}
-          EXTENDED_DECISION: ${{ needs.extended-route.outputs.decision }}
-          EXTENDED_RESULT: ${{ needs.extended.result }}
-        run: |
-          test "${POLICY_RESULT}" = success
-          test "${SECURITY_FAST_RESULT}" = success
-          test "${FAST_RESULT}" = success
-          test "${PYTHON_COMPATIBILITY_RESULT}" = success
-          test "${EXTENDED_ROUTE_RESULT}" = success
-          case "${EXTENDED_DECISION}" in
-            RUN)
-              test "${EXTENDED_RESULT}" = success
-              ;;
-            NOT_APPLICABLE)
-              test "${EXTENDED_RESULT}" = skipped
-              ;;
-            *)
-              exit 1
-              ;;
-          esac
       # actions/checkout v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -216,9 +191,46 @@ jobs:
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify regression'
 
+  regression:
+    name: regression
+    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended, regression-suite, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert successful prerequisites
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          SECURITY_FAST_RESULT: ${{ needs.security-fast.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          PYTHON_COMPATIBILITY_RESULT: ${{ needs.python-compatibility.result }}
+          EXTENDED_ROUTE_RESULT: ${{ needs.extended-route.result }}
+          EXTENDED_DECISION: ${{ needs.extended-route.outputs.decision }}
+          EXTENDED_RESULT: ${{ needs.extended.result }}
+          REGRESSION_SUITE_RESULT: ${{ needs.regression-suite.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: |
+          test "${POLICY_RESULT}" = success
+          test "${SECURITY_FAST_RESULT}" = success
+          test "${FAST_RESULT}" = success
+          test "${PYTHON_COMPATIBILITY_RESULT}" = success
+          test "${REGRESSION_SUITE_RESULT}" = success
+          test "${SMOKE_RESULT}" = success
+          test "${EXTENDED_ROUTE_RESULT}" = success
+          case "${EXTENDED_DECISION}" in
+            RUN)
+              test "${EXTENDED_RESULT}" = success
+              ;;
+            NOT_APPLICABLE)
+              test "${EXTENDED_RESULT}" = skipped
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+
   smoke:
     name: smoke
-    needs: regression
+    needs: [policy]
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v6.0.2
