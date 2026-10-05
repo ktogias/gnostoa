@@ -156,7 +156,9 @@ No tool found verifies a personal account's fine-grained token against a declara
      repository's scope is UNVERIFIED.
    - **A bounded selection:** a token for "All repositories" reaches every repository
      its owner has and will have, so the scope must also show a refused repository of
-     the owner. Otherwise the selection is UNVERIFIED (`scope:selection`).
+     the owner, under the same control: a refused subject means the permission is
+     missing, not that the selection is narrow. Otherwise the selection is UNVERIFIED
+     (`scope:selection`).
    - **Whose token it is:** a fine-grained token reaches only its resource owner's
      resources, so a writable subject shows whose token it is, provided every declared
      repository belongs to the declared `resource_owner`. A declaration that breaks
@@ -171,7 +173,8 @@ No tool found verifies a personal account's fine-grained token against a declara
 8. **The verdict and its precedence.** CREDENTIAL_KIND_MISMATCH, then EXCESS, then
    DEFICIENT, then LIFETIME_EXCEEDED, then UNVERIFIED; otherwise EXACT. The command
    exits 0 for EXACT, 1 for the first four, 3 for UNVERIFIED and 2 on an input or tool
-   error or a probe the provider accepted.
+   error or a probe the provider accepted. Only EXACT exits 0: a help request is no
+   verdict and exits 2.
 9. **Agents run it before the first provider write of a session.** An agent runs the
    check for the repository it works on, through `run_main_credential_check`, and
    quotes the verdict. On anything but EXACT it makes no provider write until the owner
@@ -179,7 +182,8 @@ No tool found verifies a personal account's fine-grained token against a declara
    declaration through an ordinary change.
 10. **The gate's authority is protected main** (owner decision, 2026-10-05). The
     declaration and the checker that judges by it come from the exact protected-main
-    commit the provider reports. `ci/credential-check`, retrieved from that commit, runs
+    commit github.com reports; the read is pinned to github.com, the host the commit is
+    fetched from, so `GH_HOST` cannot name it. `ci/credential-check`, retrieved from that commit, runs
     that commit's checker against that commit's declaration, so a candidate cannot
     authorize its own first provider write. The wrapper scrubs caller Git routing and
     global configuration, as the preparation wrapper does; the repository's own
@@ -194,11 +198,14 @@ No tool found verifies a personal account's fine-grained token against a declara
     `origin`. The names come from git's own answer, never from a caller. For each
     destination:
     - the push URL must be HTTPS to github.com, with no credential in it, after
-      `pushInsteadOf`;
+      `pushInsteadOf`; a URL that push routing names directly is the raw value, so
+      with any rewrite rule configured it is not judged;
     - no extra HTTP header may be configured for it;
     - Git's effective credential helpers for it, folded in order with an empty value
       resetting them, must be exactly the trusted `gh`, which answers with the token
-      checked here.
+      checked here. Git, not the check, decides which credential contexts apply, so a
+      context in another case, with a default port or percent-encoded matches as it
+      does for a push; a context Git cannot normalize is not judged.
 
     Otherwise `transport:push` is UNVERIFIED.
 

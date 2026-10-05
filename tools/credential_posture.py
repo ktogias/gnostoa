@@ -282,7 +282,9 @@ def _scope(policy: Policy, facts: Facts) -> tuple[list[str], list[str]]:
             unverified.append(f"scope:{scoped.repository}")
     if facts.subject not in {s.repository for s in facts.scope}:
         unverified.append(f"scope:{facts.subject}")
-    if not facts.selection_bounded:
+    # The same control bounds the selection: a refused subject means the permission is
+    # missing, not that the selection is narrow (CodeAnt on #364).
+    if not (facts.selection_bounded and controlled):
         unverified.append("scope:selection")
     return excess, unverified
 

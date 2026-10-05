@@ -141,6 +141,9 @@ class AgentCredentialRouteTests(unittest.TestCase):
         router = AGENTS.read_text(encoding="utf-8")
         self.assertIn("run_main_credential_check() (", router)
         self.assertIn("branches/main", router)
+        # The provider read is pinned to the host the fetch uses: `GH_HOST` must not
+        # let another server name the authority (CodeAnt on #364).
+        self.assertIn("api --hostname github.com", router)
         self.assertIn('show "${main}:ci/credential-check"', router)
         self.assertNotIn(':ci/credential-check" | sh', router)
         helper = router.split("run_main_credential_check() (", 1)[1].split("\n)\n", 1)[

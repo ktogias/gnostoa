@@ -56,6 +56,7 @@ _GIT_TIMEOUT_SECONDS = 30
 # Where a bare `git push` may go: `branch.<name>.pushRemote`, then `remote.pushDefault`,
 # then `branch.<name>.remote` (Codex on #364).
 _PUSH_ROUTING = r"^(remote\.pushdefault|branch\..*\.(pushremote|remote))$"
+_URL_REWRITES = r"^url\..*\.(pushinsteadof|insteadof)$"
 _REPOSITORY_LISTING = "user/repos?per_page=100"
 
 
@@ -65,6 +66,12 @@ class _ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> Any:
         """Raise ``message`` as a ``PolicyError``."""
         raise posture.PolicyError(message)
+
+    def exit(self, status: int = 0, message: str | None = None) -> Any:
+        """Exit, never with 0: only EXACT does, so help is not a verdict (CodeAnt on #364)."""
+        if message:
+            sys.stderr.write(message)
+        raise SystemExit(status or 2)
 
 
 def _token() -> str:
@@ -226,7 +233,9 @@ def _policy(raw: str) -> posture.Policy:
     return policy._replace(repositories=declared)
 
 
-def _git(worktree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _git(
+    worktree: Path, *arguments: str, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run the trusted git in ``worktree``, reading what a push there would read.
 
     The worktree is git's working directory, never an argument.
@@ -239,6 +248,7 @@ def _git(worktree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         [executable, *arguments],
         cwd=worktree,
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -246,15 +256,44 @@ def _git(worktree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _applies(key: str, target: str) -> bool | None:
-    """Whether credential config ``key`` applies to ``target``; None if not judged."""
+def _matches(worktree: Path, context: str, url: str) -> int:
+    """Git's own answer whether credential ``context`` applies to ``url``: 0 if it
+    does, 1 if not, anything else if git cannot say."""
+    # A subsection escapes `\` and `"`, so the probe holds the context exactly.
+    quoted = context.replace("\\", "\\\\").replace('"', '\\"')
+    probe = f'[credential "{quoted}"]\n\thelper = matched\n'
+    return _git(
+        worktree,
+        "config",
+        "--file",
+        "-",
+        "--get-urlmatch",
+        "credential.helper",
+        url,
+        stdin=probe,
+    ).returncode
+
+
+def _applies(worktree: Path, key: str, target: str) -> bool | None:
+    """Whether credential config ``key`` applies to ``target``; None if not judged.
+
+    Git matches a context after normalizing it (scheme and host in any case, a default
+    port, percent-encoding), so git, not this check, decides (Codex and CodeAnt on
+    #364).
+    """
     if key == "credential.helper":
         return True
-    pattern = key.removeprefix("credential.").removesuffix(".helper").rstrip("/")
-    if "*" in pattern or not pattern.startswith(("https://", "http://")):
-        # A wildcard or a scheme-less context is not judged here: fail closed.
+    context = key.removeprefix("credential.").removesuffix(".helper")
+    if context.startswith("-"):
+        # Never an option on git's command line.
         return None
-    return target == pattern or target.startswith(f"{pattern}/")
+    if _matches(worktree, context, context) != 0:
+        # Git cannot normalize it as a URL (a wildcard, a scheme-less or partial
+        # context), yet a push may match it, by rules this check does not model: fail
+        # closed.
+        return None
+    applies = _matches(worktree, context, target)
+    return None if applies not in (0, 1) else applies == 0
 
 
 def _effective_helpers(worktree: Path, target: str) -> list[str] | None:
@@ -267,7 +306,7 @@ def _effective_helpers(worktree: Path, target: str) -> list[str] | None:
     helpers: list[str] = []
     for entry in filter(None, listed.stdout.split("\0")):
         key, _, value = entry.partition("\n")
-        applies = _applies(key, target)
+        applies = _applies(worktree, key, target)
         if applies is None:
             return None
         if applies:
@@ -350,8 +389,9 @@ def _url_binding(worktree: Path, pushed: str, subject: str) -> tuple[str, str]:
     return "BOUND", "HTTPS push through the trusted gh's credential helper"
 
 
-def _push_destinations(worktree: Path) -> tuple[list[str], list[str]] | None:
-    """Every remote, and every URL push routing names directly, a push could reach.
+def _push_destinations(worktree: Path) -> tuple[list[str], list[str]] | str:
+    """Every remote, and every URL push routing names directly, a push could reach;
+    or why they cannot be judged.
 
     The names are git's own answer, never a caller's value (SonarCloud S8705 on #364);
     `.`, a branch's local upstream, is no remote.
@@ -359,13 +399,19 @@ def _push_destinations(worktree: Path) -> tuple[list[str], list[str]] | None:
     listed = _git(worktree, "remote")
     routed = _git(worktree, "config", "--null", "--get-regexp", _PUSH_ROUTING)
     if listed.returncode != 0 or routed.returncode not in (0, 1):
-        return None
+        return "Git's remotes and push routing could not be read"
     remotes = listed.stdout.split()
     urls = []
     for entry in filter(None, routed.stdout.split("\0")):
         value = entry.partition("\n")[2]
         if value and value != "." and value not in remotes:
             urls.append(value)
+    if urls:
+        # A remote's URLs come back already rewritten; a routed URL is the raw value,
+        # which a rewrite rule could send elsewhere (gitar on #364).
+        rewrites = _git(worktree, "config", "--get-regexp", _URL_REWRITES)
+        if rewrites.returncode not in (0, 1) or rewrites.stdout.strip():
+            return "a push-routed URL could be rewritten by insteadOf or pushInsteadOf"
     return remotes, urls
 
 
@@ -380,8 +426,8 @@ def _push_binding(worktree: Path, subject: str) -> tuple[str, str]:
     """
     try:
         destinations = _push_destinations(worktree)
-        if destinations is None:
-            return "UNKNOWN", "Git's remotes and push routing could not be read"
+        if isinstance(destinations, str):
+            return "UNKNOWN", destinations
         remotes, urls = destinations
         for remote in remotes:
             if remote.startswith("-"):

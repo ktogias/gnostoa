@@ -140,7 +140,8 @@ run_main_credential_check() (
   fi
 
   # Protected main as the provider reports it, never a local ref.
-  main="$("${gh_executable}" api "repos/${repository}/branches/main" --jq .commit.sha)"
+  main="$("${gh_executable}" api --hostname github.com \
+    "repos/${repository}/branches/main" --jq .commit.sha)"
   if [ "${#main}" -ne 40 ]; then
     echo "ERROR: protected main could not be read" >&2
     exit 2

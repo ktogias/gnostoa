@@ -16,6 +16,7 @@ import subprocess  # nosec B404
 import tempfile
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from tools import credential_check
@@ -214,30 +215,58 @@ class PushBindingTests(unittest.TestCase):
 
     def test_a_later_git_read_that_fails_is_unknown(self) -> None:
         """Every git read after the push URL fails closed: a header read that errors is
-        not "no header", and a stalled read is not a traceback (gitar on #364)."""
+        not "no header", and a stalled read is not a traceback (gitar on #364). Each
+        read fails alone, so a later read cannot mask the one under test."""
         self._bind_gh()
         real = credential_check._git  # skipcq: PYL-W0212
+        target = f"https://github.com/{SUBJECT}.git"
+        routing = credential_check._PUSH_ROUTING  # skipcq: PYL-W0212
+        reads = {
+            "the push routing": lambda a: routing in a,
+            "the header": lambda a: "http.extraheader" in a,
+            "the helper listing": lambda a: r"^credential\..*helper$" in a,
+            "a context's normalization": lambda a: "--file" in a and a[-1] != target,
+            "a context's match": lambda a: "--file" in a and a[-1] == target,
+        }
 
-        def failing(read: str, failure: int | BaseException) -> object:
-            def git(worktree: pathlib.Path, *arguments: str) -> object:
-                if read in arguments:
+        def failing(read: Any, failure: int | BaseException) -> object:
+            def git(
+                worktree: pathlib.Path, *arguments: str, stdin: str | None = None
+            ) -> object:
+                if read(arguments):
                     if isinstance(failure, BaseException):
                         raise failure
                     return SimpleNamespace(returncode=failure, stdout="", stderr="")
-                return real(worktree, *arguments)
+                return real(worktree, *arguments, stdin=stdin)
 
             return git
 
         failures = (128, subprocess.TimeoutExpired(["git"], 30), OSError("gone"))
-        for read in ("--get-urlmatch", "--get-regexp"):
+        for name, read in reads.items():
             for failure in failures:
                 with (
-                    self.subTest(read=read, failure=repr(failure)),
+                    self.subTest(read=name, failure=repr(failure)),
                     mock.patch.object(
                         credential_check, "_git", side_effect=failing(read, failure)
                     ),
                 ):
                     self.assertEqual("UNKNOWN", self._binding()[0])
+
+    def test_a_scheme_less_helper_context_is_not_judged(self) -> None:
+        """Git matches `github.com` to a push as a partial URL, by rules this check does
+        not model: it applies, so it must not read as not applying."""
+        self._bind_gh()
+        self._git("config", "--add", "credential.github.com.helper", "store")
+        self.assertEqual("UNKNOWN", self._binding()[0])
+
+    def test_a_context_that_needs_quoting_is_judged(self) -> None:
+        """The probe holds the context exactly, quoted as git's syntax requires, so a
+        context with a quote is judged rather than misread."""
+        self._bind_gh()
+        self._git(
+            "config", "--add", 'credential.https://github.com/other"x.helper', "store"
+        )
+        self.assertEqual("BOUND", self._binding()[0])
 
     def test_a_push_url_on_another_port_is_unbound(self) -> None:
         """A port-scoped header or helper would escape the lookup, and the push would
@@ -331,15 +360,70 @@ class PushBindingTests(unittest.TestCase):
         real = credential_check._git  # skipcq: PYL-W0212
         seen: list[tuple[str, ...]] = []
 
-        def spy(worktree: pathlib.Path, *arguments: str) -> object:
+        def spy(
+            worktree: pathlib.Path, *arguments: str, stdin: str | None = None
+        ) -> object:
             seen.append(arguments)
-            return real(worktree, *arguments)
+            return real(worktree, *arguments, stdin=stdin)
 
         with mock.patch.object(credential_check, "_git", side_effect=spy):
             state, evidence = self._binding()
         self.assertEqual("UNKNOWN", state)
         self.assertIn("option", evidence)
         self.assertFalse(any("-evil" in arguments for arguments in seen))
+
+    def test_a_routed_url_a_rewrite_could_change_is_not_judged(self) -> None:
+        """A remote's URLs come back from git already rewritten, but a URL that push
+        routing names directly is the raw value: with any `insteadOf` or
+        `pushInsteadOf` configured, git could push it somewhere else (gitar on #364)."""
+        self._bind_gh()
+        # Origin's own URL differs in case, so only the routed URL matches the rewrite
+        # (git's prefixes are case-sensitive; GitHub's names are not).
+        self._git(
+            "remote", "set-url", "origin", "https://github.com/KTOGIAS/gnostoa.git"
+        )
+        routed = f"https://github.com/{SUBJECT}"
+        self._git("config", "remote.pushDefault", routed)
+        self.assertEqual("BOUND", self._binding()[0])
+        self._git("config", f"url.git@github.com:{SUBJECT}.pushInsteadOf", routed)
+        self.assertNotEqual("BOUND", self._binding()[0])
+
+    def test_a_context_git_normalizes_is_found(self) -> None:
+        """Git normalizes a credential context before matching it: a host in another
+        case, a default port, a percent-encoded path all apply to the push, so a helper
+        or an empty reset under one must not be missed (Codex and CodeAnt on #364)."""
+        # Git matches a path at a segment boundary: the owner segment applies to
+        # `<owner>/<name>.git`.
+        owner = SUBJECT.partition("/")[0]
+        encoded = f"{owner[:-1]}%{ord(owner[-1]):02X}"
+        for context, values in (
+            ("https://GITHUB.COM", ("store",)),
+            ("https://github.com:443", ("store",)),
+            (f"https://github.com/{encoded}", ("store",)),
+            # Codex's case: the reset drops the trusted gh, another helper follows.
+            ("https://GITHUB.COM", ("", "store")),
+        ):
+            key = f"credential.{context}.helper"
+            with self.subTest(context=context, values=values):
+                self._bind_gh()
+                for value in values:
+                    self._git("config", "--add", key, value)
+                try:
+                    self.assertEqual("UNBOUND", self._binding()[0])
+                finally:
+                    self._git("config", "--unset-all", key)
+                    self._git(
+                        "config", "--unset-all", "credential.https://github.com.helper"
+                    )
+
+    def test_a_context_git_cannot_normalize_is_not_judged(self) -> None:
+        """Git matches a context it cannot normalize as a partial URL, by rules this
+        check does not model: such a context is not judged, so it fails closed."""
+        self._bind_gh()
+        self._git(
+            "config", "--add", "credential.https://github.com/%zz.helper", "store"
+        )
+        self.assertEqual("UNKNOWN", self._binding()[0])
 
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")

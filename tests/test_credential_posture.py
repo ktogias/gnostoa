@@ -663,6 +663,20 @@ class CoreVerdictTests(unittest.TestCase):
         self.assertEqual("UNVERIFIED", verdict["verdict"])
         self.assertIn("scope:selection", verdict["unverified"])
 
+    def test_a_refusal_without_the_control_does_not_bound_the_selection(self) -> None:
+        """A refusal proves the selection narrower only when the subject shows the
+        permission is granted; a refused subject means the permission is missing, and
+        it must not stand in as the bounding refusal itself (CodeAnt on #364)."""
+        from tools import credential_posture as posture
+
+        verdict = _verdict(
+            _facts(
+                scope=(posture.ScopeObservation("o/r", "NOT_GRANTED", "e"),),
+                selection_bounded=True,
+            )
+        )
+        self.assertIn("scope:selection", verdict["unverified"])
+
     def test_an_unbound_push_credential_is_unverified(self) -> None:
         """A push authenticates through the transport's own credential, not the token
         checked here: unless the two are shown to be one, the check proves nothing
@@ -1492,6 +1506,22 @@ class CredentialCheckCliTests(unittest.TestCase):
                 )
                 self.assertEqual(2, code, output)
                 self.assertEqual([], replay.sent)
+
+    def test_help_is_not_a_verdict(self) -> None:
+        """Only EXACT exits 0: a gate whose caller passes `--help` must not report
+        success without judging the token (CodeAnt on #364)."""
+        from tools import credential_check
+
+        out = io.StringIO()
+        with (
+            mock.patch.object(credential_check, "_transport") as transport,
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            credential_check.main(["--repository", SUBJECT, "--help"])
+        self.assertEqual(2, stopped.exception.code)
+        transport.assert_not_called()
 
     def test_the_command_is_registered(self) -> None:
         from tools import cli
