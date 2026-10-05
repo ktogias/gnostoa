@@ -16,6 +16,7 @@ import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from tools import check_runtime_lock as runtime_lock_module
@@ -55,7 +56,9 @@ _PROTECTED_JOB_SUITES = {
     "policy": "policy",
     "security-fast": "security-fast",
     "fast": "fast",
-    "regression": "regression",
+    # The regression suite runs in its own job; `regression` is the aggregate gate
+    # that asserts it (Decision 0103).
+    "regression-suite": "regression",
     "smoke": "smoke",
     "extended": "extended",
     "branch-advisory-policy": "policy",
@@ -67,6 +70,7 @@ _VERIFICATION_JOB_PROFILES = frozenset(
         "security-fast",
         "fast",
         "python-compatibility",
+        "regression-suite",
         "regression",
         "smoke",
         "extended-route",
@@ -92,6 +96,7 @@ _PROTECTED_JOB_KEYS = {
     "security-fast": frozenset({"name", "runs-on", "timeout-minutes", "steps"}),
     "fast": frozenset({"name", "runs-on", "steps"}),
     "python-compatibility": frozenset({"name", "runs-on", "strategy", "steps"}),
+    "regression-suite": frozenset({"name", "needs", "runs-on", "steps"}),
     "regression": frozenset({"name", "needs", "if", "runs-on", "steps"}),
     "smoke": frozenset({"name", "needs", "runs-on", "steps"}),
     "extended-route": frozenset(
@@ -108,6 +113,7 @@ _PROTECTED_JOB_NEEDS = {
     "security-fast": (),
     "fast": (),
     "python-compatibility": (),
+    "regression-suite": ("policy",),
     "regression": (
         "policy",
         "security-fast",
@@ -115,8 +121,10 @@ _PROTECTED_JOB_NEEDS = {
         "python-compatibility",
         "extended-route",
         "extended",
+        "regression-suite",
+        "smoke",
     ),
-    "smoke": ("regression",),
+    "smoke": ("policy",),
     "extended-route": (),
     "extended": ("policy", "extended-route"),
     "branch-advisory-policy": (),
@@ -147,7 +155,10 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     "security-fast": "c9815924f74df13b2cfa955de1ee724821331525eaa9dde671c2a2fdb60ba690",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "fast": "04d8ee084f1640ddf6fa495ab7cfae88384615eee7b3e90d7e4831972b82bf78",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "python-compatibility": "73c95ccf140298e0752c7362d6fa6b3165146789e0a9286342ba10bb95c3a121",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "regression": "bd3442b7343c7b6f478e9f1a02f6febad5f80f3e3ccc05c937ccd926d92a1da0",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    # Decision 0103: the suite's steps are the former regression job's after its
+    # assertion; the gate's one step is that assertion, with two more results.
+    "regression-suite": "1b36d5d2086758692a13b9f6c4c1506f7f4d5de9575b6d68c437c0ae035609a9",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "regression": "485b7a341e434bdc2e6b4178268b9ef4397bbed9b834d801b1e65455b4f82415",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended-route": "27ed1f35eb9984d3ad3e9fdf42873bb8b2c9b8bf86df8743c9ee6c3cb8da7106",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0bd52547e3e739aea968487808e533d5d5355075f8c08c81a9191f2372d4d3f3",  # pragma: allowlist secret -- reviewed workflow-structure digest
@@ -550,6 +561,65 @@ class PublicationBaselineTests(unittest.TestCase):
 
         self.assertEqual(len(ids), len(set(ids)))
 
+    def _assert_every_suite_runs_in_its_bound_job(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Each suite runs, blocking, in its job, and a poisoned environment or an
+        untrusted prerequisite breaks the binding (Decision 0103 binds the
+        regression suite to `regression-suite`)."""
+        suite_jobs = {
+            suite: suite
+            for suite in ("policy", "security-fast", "fast", "smoke", "extended")
+        }
+        suite_jobs["regression"] = "regression-suite"
+        for suite, job in suite_jobs.items():
+            self.assertTrue(
+                _workflow_has_blocking_verification_suite(
+                    workflow_document,
+                    job,
+                    suite,
+                ),
+                f"{job} job does not invoke its shared verification suite",
+            )
+        # The gate named `regression` runs no suite of its own (Decision 0103).
+        self.assertFalse(
+            _workflow_has_blocking_verification_suite(
+                workflow_document, "regression", "regression"
+            )
+        )
+        for suite, job in suite_jobs.items():
+            with self.subTest(suite=suite, mutation="preceding environment poison"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][job]["steps"].insert(
+                    0,
+                    {
+                        "name": "Poison the verification environment",
+                        "run": (
+                            'echo "GNOSTOA_CI_IMAGE=attacker-controlled:latest" '
+                            '>> "${GITHUB_ENV}"'
+                        ),
+                    },
+                )
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        job,
+                        suite,
+                    )
+                )
+            with self.subTest(suite=suite, mutation="untrusted prerequisite"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][job]["needs"] = [
+                    "attacker-controlled-prerequisite"
+                ]
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        job,
+                        suite,
+                    )
+                )
+
     def test_github_provider_surface_is_active_and_owned(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "verification.yml"
         codeowners_path = ROOT / ".github" / "CODEOWNERS"
@@ -609,61 +679,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
-        for suite in (
-            "policy",
-            "security-fast",
-            "fast",
-            "regression",
-            "smoke",
-            "extended",
-        ):
-            self.assertTrue(
-                _workflow_has_blocking_verification_suite(
-                    workflow_document,
-                    suite,
-                    suite,
-                ),
-                f"{suite} job does not invoke its shared verification suite",
-            )
-        for suite in (
-            "policy",
-            "security-fast",
-            "fast",
-            "regression",
-            "smoke",
-            "extended",
-        ):
-            with self.subTest(suite=suite, mutation="preceding environment poison"):
-                mutated_workflow = copy.deepcopy(workflow_document)
-                mutated_workflow["jobs"][suite]["steps"].insert(
-                    0,
-                    {
-                        "name": "Poison the verification environment",
-                        "run": (
-                            'echo "GNOSTOA_CI_IMAGE=attacker-controlled:latest" '
-                            '>> "${GITHUB_ENV}"'
-                        ),
-                    },
-                )
-                self.assertFalse(
-                    _workflow_has_blocking_verification_suite(
-                        mutated_workflow,
-                        suite,
-                        suite,
-                    )
-                )
-            with self.subTest(suite=suite, mutation="untrusted prerequisite"):
-                mutated_workflow = copy.deepcopy(workflow_document)
-                mutated_workflow["jobs"][suite]["needs"] = [
-                    "attacker-controlled-prerequisite"
-                ]
-                self.assertFalse(
-                    _workflow_has_blocking_verification_suite(
-                        mutated_workflow,
-                        suite,
-                        suite,
-                    )
-                )
+        self._assert_every_suite_runs_in_its_bound_job(workflow_document)
         renamed_workflow = copy.deepcopy(workflow_document)
         renamed_workflow["jobs"]["security-fast"]["name"] = "spoofed-context"
         self.assertFalse(
@@ -872,7 +888,7 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertIn('python-version: ["3.11", "3.12"]', workflow)
         self.assertIn(
             "needs: [policy, security-fast, fast, python-compatibility, "
-            "extended-route, extended]",
+            "extended-route, extended, regression-suite, smoke]",
             workflow,
         )
         self.assertIn("./ci/verify fast", workflow)
@@ -2981,6 +2997,8 @@ class ContinuousIntegrationTests(unittest.TestCase):
                 "python-compatibility",
                 "extended-route",
                 "extended",
+                "regression-suite",
+                "smoke",
             ],
             regression["needs"],
         )
@@ -3004,20 +3022,90 @@ class ContinuousIntegrationTests(unittest.TestCase):
                 "EXTENDED_ROUTE_RESULT": "${{ needs.extended-route.result }}",
                 "EXTENDED_DECISION": "${{ needs.extended-route.outputs.decision }}",
                 "EXTENDED_RESULT": "${{ needs.extended.result }}",
+                "REGRESSION_SUITE_RESULT": "${{ needs.regression-suite.result }}",
+                "SMOKE_RESULT": "${{ needs.smoke.result }}",
             },
             assertion["env"],
         )
+        # The gate is the job's only step: it checks out and builds nothing.
+        self.assertEqual([assertion], regression["steps"])
         for result in (
             "POLICY_RESULT",
             "SECURITY_FAST_RESULT",
             "FAST_RESULT",
             "PYTHON_COMPATIBILITY_RESULT",
+            "REGRESSION_SUITE_RESULT",
+            "SMOKE_RESULT",
             "EXTENDED_ROUTE_RESULT",
         ):
             self.assertIn(f'test "${{{result}}}" = success', assertion["run"])
         self.assertIn('case "${EXTENDED_DECISION}" in', assertion["run"])
         self.assertIn('test "${EXTENDED_RESULT}" = success', assertion["run"])
         self.assertIn('test "${EXTENDED_RESULT}" = skipped', assertion["run"])
+
+    def test_the_regression_gate_passes_only_when_every_prerequisite_passed(
+        self,
+    ) -> None:
+        """The gate's own script, run: it exits zero only for the accepted results
+        (Decisions 0043, 0082 and 0103)."""
+        workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
+        (assertion,) = [
+            step
+            for step in workflow["jobs"]["regression"]["steps"]
+            if step.get("name") == "Assert successful prerequisites"
+        ]
+        results = [name for name in assertion["env"] if name.endswith("_RESULT")]
+        self.assertIn("SMOKE_RESULT", results)
+        self.assertIn("REGRESSION_SUITE_RESULT", results)
+
+        def exit_code(values: dict[str, str]) -> int:
+            completed = subprocess.run(  # nosec B603 B607
+                ["sh", "-ec", assertion["run"]],
+                env={"PATH": "/usr/bin:/bin", **values},
+                capture_output=True,
+                check=False,
+            )
+            return completed.returncode
+
+        passing = {name: "success" for name in results}
+        self.assertEqual(0, exit_code({**passing, "EXTENDED_DECISION": "RUN"}))
+        self.assertEqual(
+            0,
+            exit_code(
+                {
+                    **passing,
+                    "EXTENDED_DECISION": "NOT_APPLICABLE",
+                    "EXTENDED_RESULT": "skipped",
+                }
+            ),
+        )
+        for name in results:
+            for outcome in ("failure", "cancelled", "skipped"):
+                if name == "EXTENDED_RESULT" and outcome == "skipped":
+                    continue
+                with self.subTest(result=name, outcome=outcome):
+                    self.assertNotEqual(
+                        0,
+                        exit_code(
+                            {**passing, name: outcome, "EXTENDED_DECISION": "RUN"}
+                        ),
+                    )
+        for decision, extended in (
+            ("NOT_APPLICABLE", "success"),
+            ("RUN", "skipped"),
+            ("", "success"),
+        ):
+            with self.subTest(decision=decision, extended=extended):
+                self.assertNotEqual(
+                    0,
+                    exit_code(
+                        {
+                            **passing,
+                            "EXTENDED_DECISION": decision,
+                            "EXTENDED_RESULT": extended,
+                        }
+                    ),
+                )
 
     def test_generic_ci_policy_is_authoritative_and_tiered(self) -> None:
         module = importlib.import_module("tools.check_ci_policy")

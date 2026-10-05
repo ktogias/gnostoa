@@ -1076,7 +1076,7 @@ class ProviderSecurityGateTests(unittest.TestCase):
         self.assertIn("./ci/verify security-fast", workflow)
         self.assertIn(
             "needs: [policy, security-fast, fast, python-compatibility, "
-            "extended-route, extended]",
+            "extended-route, extended, regression-suite, smoke]",
             workflow,
         )
         self.assertIn('test "${SECURITY_FAST_RESULT}" = success', workflow)
