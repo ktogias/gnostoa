@@ -108,6 +108,7 @@ inherited, copied or loaded by adopting projects.
 - [Post Claude reviews from a least-privilege job, and keep write credentials out of the reviewer](decisions/0098-post-claude-reviews-from-a-least-privilege-job.md)
 - [Route the architecture-inheritance entrance gate from source](decisions/0099-route-the-architecture-inheritance-gate-from-source.md)
 - [Separate the agent review pipeline into a provider- and agent-neutral core and adapters](decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md)
+- [Verify agent provider credentials against a least-privilege declaration](decisions/0101-verify-agent-provider-credentials-against-a-least-privilege-declaration.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

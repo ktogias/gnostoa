@@ -429,6 +429,38 @@ guardrails:
       - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_runbook_carries_the_gate_inside_the_prior_art_checkpoint
       - tests/test_architecture_inheritance_gate.py::ArchitectureInheritanceGateTests.test_runbook_names_when_the_table_is_revisited
 
+  - id: agent-credential-least-privilege
+    title: Agents verify their provider token holds exactly its declared least privilege before provider writes
+    applies_to:
+      - kit
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/deliver-bounded-self-hosted-slice.md#agent-credential-check
+    implementation:
+      - AGENTS.md
+      - knowledge/index.md
+      - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
+      - knowledge/decisions/0101-verify-agent-provider-credentials-against-a-least-privilege-declaration.md
+      - policy/agent-credentials.yaml
+      - schemas/agent-credentials.schema.json
+      - tools/credential_posture.py
+      - tools/credential_posture_github.py
+      - tools/credential_check.py
+      - tools/cli.py
+      - ci/credential-check
+      - tools/github_rest.py
+      - tools/agent_review_paths.py
+      - tools/schema_validation.py
+      - tools/knowledge_common.py
+    tests:
+      - tests/test_credential_posture.py
+      - tests/test_agent_credential_route.py
+      - tests/test_github_rest.py
+      - tests/test_agent_review_paths.py
+      - tests/test_schema_validation.py
+      - tests/test_knowledge_common.py
+      - tests/test_credential_push_binding.py
+      - tests/test_credential_check_wrapper.py
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
     applies_to: [kit]

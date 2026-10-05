@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -80,6 +83,108 @@ KnowledgeLoader.yaml_implicit_resolvers = {
 
 class KnowledgeFormatError(ValueError):
     pass
+
+
+# The system directories a host tool is resolved from -- never the caller's `PATH`,
+# where a shadowed executable would run. The same list as the preparation
+# wrapper's (`ci/prepare-candidate`), which is shell and cannot import this; a test
+# holds the two equal. Not `os.defpath`, which omits `/usr/local/bin`.
+TRUSTED_EXECUTABLE_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+
+# As many links as a path may pass through before it is refused, as `SYMLOOP_MAX` bounds.
+_MAX_LINKS = 40
+
+
+def _theirs(held: os.stat_result) -> bool:
+    """Return whether root or the caller owns what ``held`` describes."""
+    return held.st_uid in {0, os.getuid()}
+
+
+def _closed(held: os.stat_result, *, sticky: bool) -> bool:
+    """Return whether no one else may write it; a sticky directory, as `/tmp` is, lets
+    no one but an entry's owner replace the entry."""
+    if not held.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return True
+    return sticky and bool(held.st_mode & stat.S_ISVTX)
+
+
+def trusted_path(found: str) -> str | None:
+    """Return the file the absolute path ``found`` really is, if no one can replace it.
+
+    The path is walked one component at a time and no link is followed before it is
+    judged (Codex, CodeAnt and gitar on #364). Every component, a link included, must be
+    root's or the caller's; every directory on the way, as it really is, writable by no
+    one else unless it is sticky; and the file at the end writable by no one else.
+    Whoever can change any of them can replace what ``found`` names.
+    """
+    if not os.path.isabs(found):
+        return None
+    try:
+        return _walk(found)
+    except OSError:
+        return None
+
+
+def _parts(path: str) -> list[str]:
+    """Return the components of ``path``, as a walk reads them."""
+    return [part for part in path.split("/") if part]
+
+
+def _follow(entry: str, current: str, pending: list[str]) -> tuple[str, list[str]]:
+    """Return where the link ``entry`` leads: from the root if its target is absolute,
+    from the directory it is in otherwise, its target's components read first."""
+    target = os.readlink(entry)
+    start = "/" if target.startswith("/") else current
+    return start, _parts(target) + pending
+
+
+def _walk(found: str) -> str | None:
+    """Resolve ``found`` as `trusted_path` describes, or return None."""
+    root = os.lstat("/")
+    if not _theirs(root) or not _closed(root, sticky=True):
+        return None
+    current, pending, links = "/", _parts(found), 0
+    while pending:
+        name = pending.pop(0)
+        if name in {".", ".."}:
+            current = current if name == "." else os.path.dirname(current)
+            continue
+        entry = os.path.join(current, name)
+        held = os.lstat(entry)
+        if not _theirs(held):
+            return None
+        if stat.S_ISLNK(held.st_mode):
+            links += 1
+            if links > _MAX_LINKS:
+                return None
+            current, pending = _follow(entry, current, pending)
+            continue
+        if not stat.S_ISDIR(held.st_mode):
+            # The file at the end, writable by no one else; a file on the way is no path.
+            return entry if not pending and _closed(held, sticky=False) else None
+        if not _closed(held, sticky=True):
+            return None
+        current = entry
+    return None
+
+
+def trusted_executable(name: str) -> str | None:
+    """Return ``name`` resolved from the trusted system directories, or None.
+
+    Found is not trusted yet: it must be a `trusted_path`. `/opt/homebrew/bin` belongs
+    to a user, not to root (CodeAnt on #364).
+    """
+    found = shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
+    if found is None:
+        return None
+    return trusted_path(os.path.abspath(found))
+
+
+def utc_timestamp() -> str:
+    """Return the current instant in UTC, ISO 8601 to the second with a `Z` (#365)."""
+    moment = datetime.now(UTC).replace(microsecond=0)
+    return moment.isoformat().replace("+00:00", "Z")
 
 
 def toolkit_root() -> Path:

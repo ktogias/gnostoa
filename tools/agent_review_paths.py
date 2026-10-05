@@ -9,8 +9,10 @@ accepted a leading dash, and another accepted an empty argument, which resolves 
 working directory and would then satisfy every remaining check. Both had to be fixed in
 three places. A second copy is a second chance to fix one and miss another.
 
-Provider- and CI-neutral: the root a path must stay inside is named by its caller, as
-an environment variable, so the core never assumes one runner's layout.
+Provider- and CI-neutral: the root a path must stay inside is named by its caller -- as
+an environment variable (``within``), so the core never assumes one runner's layout, or
+as a directory it already holds (``within_root``). Commands outside the review pipeline
+use it too: the credential check confines its declaration to the working tree (#365).
 """
 
 from __future__ import annotations
@@ -19,15 +21,8 @@ import os
 import pathlib
 
 
-def within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
-    """Resolve ``raw`` and refuse anything outside the area it belongs to.
-
-    When the environment names the root, the resolved path must sit inside it;
-    otherwise it must at least be absolute with an existing parent, which is what a
-    local test run gives. Passing an empty ``root_variable`` asks for the second
-    treatment deliberately -- a summary path is not pinned to a root, because refusing
-    the report over an assumption about the runner's layout would lose the review.
-    """
+def _checked(raw: str, *, must_exist: bool) -> pathlib.Path:
+    """Resolve ``raw``, refusing the degenerate inputs every confinement refuses."""
     if not raw or not raw.strip():
         # An empty argument resolves to the working directory, which is a real path and
         # would sail through every check below. A degenerate input is a reason to stop.
@@ -41,9 +36,34 @@ def within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
         # A file is expected here; a directory would fail later with a confusing error
         # or, worse, silently name something writable.
         raise ValueError(f"refusing a directory where a file is expected: {raw!r}")
+    return path
+
+
+def within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
+    """Resolve ``raw`` and refuse anything outside the area it belongs to.
+
+    When the environment names the root, the resolved path must sit inside it;
+    otherwise it must at least be absolute with an existing parent, which is what a
+    local test run gives. Passing an empty ``root_variable`` asks for the second
+    treatment deliberately -- a summary path is not pinned to a root, because refusing
+    the report over an assumption about the runner's layout would lose the review.
+    """
+    path = _checked(raw, must_exist=must_exist)
     root = os.environ.get(root_variable)
     if root:
         resolved_root = pathlib.Path(root).resolve()
         if not path.is_relative_to(resolved_root):
             raise ValueError(f"refusing {raw!r}: outside {root_variable}")
+    return path
+
+
+def within_root(raw: str, root: pathlib.Path, *, must_exist: bool) -> pathlib.Path:
+    """Resolve ``raw`` and refuse anything outside ``root``, a directory its caller holds.
+
+    The same checks as ``within``, for a command whose root is not named by its
+    environment -- the credential check's working tree (#365).
+    """
+    path = _checked(raw, must_exist=must_exist)
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError(f"refusing {raw!r}: outside {root}")
     return path

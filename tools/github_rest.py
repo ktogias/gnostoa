@@ -47,7 +47,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, NamedTuple
 
 API_ROOT = "https://api.github.com"
@@ -103,9 +103,13 @@ class GitHubError(RuntimeError):
         retry_after: float | None = None,
         in_flight: bool = False,
         outcome_unknown: bool = False,
+        accepted_permissions: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
+        # The permission sets the route said it accepts (`X-Accepted-GitHub-Permissions`),
+        # so a refusal can be read as "this token lacks that grant" (Decision 0101).
+        self.accepted_permissions = accepted_permissions
         # When the provider said when to try again, bounded by the policy.
         self.retry_after = retry_after
         # The exchange was abandoned at its bound, not stopped: it may still reach the
@@ -147,6 +151,14 @@ class ResponseTooLarge(GitHubReadError):
 
 class MalformedAnswer(GitHubReadError):
     """A body that could not be decoded, or a `null` one."""
+
+
+class TooManyPages(GitHubReadError):
+    """A paged listing with more pages than its bound: read in part, it is not read."""
+
+
+class InvalidRepository(ValueError):
+    """A repository or owner name that is not safe to place in an API path."""
 
 
 # ---------------------------------------------------------------------------------
@@ -198,6 +210,69 @@ def validate_url(url: str, root: str = API_ROOT) -> str:
     ):
         raise OutsideOrigin("GitHub API URL is outside the admitted origin")
     return url
+
+
+# GitHub's owner and repository characters. An owner begins and ends with an
+# alphanumeric; a name may not be `.` or `..`, which a path would read as itself or its
+# parent. The rule is `analyzer_readback`'s, taken as the owner's here (#365).
+_OWNER_SEGMENT = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\Z")
+_REPOSITORY_SEGMENT = re.compile(r"\A[A-Za-z0-9_.-]+\Z")
+
+
+def owner_name(value: str) -> str:
+    """Return ``value`` if it is an owner name safe in an API path, else raise."""
+    if _OWNER_SEGMENT.match(value) is None:
+        raise InvalidRepository("repository owner contains an unsafe path segment")
+    return value
+
+
+def repository_name(value: str) -> str:
+    """Return ``value`` if it is an `owner/name` safe in an API path, else raise.
+
+    Interpolated into `repos/{owner}/{name}/...`, a query, a fragment, a third segment
+    or a `..` would send the request somewhere its caller did not name.
+    """
+    parts = value.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise InvalidRepository("repository must use owner/name form")
+    owner, name = parts
+    owner_name(owner)
+    if name in {".", ".."} or _REPOSITORY_SEGMENT.match(name) is None:
+        raise InvalidRepository("repository name contains an unsafe path segment")
+    return value
+
+
+def repository_key(value: str) -> str:
+    """Return the key that names ``value``'s repository, whatever its case.
+
+    GitHub resolves owner and repository names case-insensitively, so two spellings
+    are one repository; comparisons use this key (CodeAnt on #364).
+    """
+    return repository_name(value).lower()
+
+
+def path_segment(value: str) -> str:
+    """Return ``value`` encoded as exactly one path segment, or raise ``ValueError``.
+
+    For a name the provider supplies, such as an environment's: a slash, query or
+    fragment cannot address another endpoint, and `.` or `..`, which quoting leaves
+    alone, are refused because a path would read them as itself or its parent.
+    """
+    if value in {"", ".", ".."}:
+        raise ValueError(f"{value!r} cannot be a path segment")
+    return urllib.parse.quote(value, safe="")
+
+
+def environment_token() -> str:
+    """Return the token a job carries: `GH_TOKEN`, else `GITHUB_TOKEN`, else "".
+
+    A value of only whitespace is no token, and does not shadow the next.
+    """
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _checked_token(token: str) -> str:
@@ -700,8 +775,7 @@ class GitHubRestClient:
     @classmethod
     def from_environment(cls, **options: Any) -> GitHubRestClient:
         """Return a client for the job's token, from `GH_TOKEN` or `GITHUB_TOKEN`."""
-        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-        return cls(token, **options)
+        return cls(environment_token(), **options)
 
     def url(self, path: str) -> str:
         """Return the API URL for ``path`` on this client's root."""
@@ -829,7 +903,17 @@ class GitHubRestClient:
         # A server error is the provider failing after it received the request, so a
         # write may have been applied; a 4xx, a rate limit included, refused it.
         reached = write and error.code >= 500
-        return kind(message, status=status, retry_after=hint, outcome_unknown=reached)
+        headers = error.headers
+        accepted = (
+            None if headers is None else headers.get("X-Accepted-GitHub-Permissions")
+        )
+        return kind(
+            message,
+            status=status,
+            retry_after=hint,
+            outcome_unknown=reached,
+            accepted_permissions=None if accepted is None else str(accepted)[:256],
+        )
 
     def _request(
         self,
@@ -921,8 +1005,15 @@ class GitHubRestClient:
         document, _ = self._request("PATCH", url, payload)
         return document
 
+    def put(self, url: str, payload: dict[str, Any]) -> Any:
+        """PUT ``payload`` once and return the provider's document."""
+        document, _ = self._request("PUT", url, payload)
+        return document
+
 
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+# Any `rel` that includes `next`, however the link's parameters are ordered.
+_NAMES_A_NEXT_PAGE = re.compile(r'\brel\s*=\s*"?[^",;]*\bnext\b', re.IGNORECASE)
 
 
 def next_url(headers: Any, root: str = API_ROOT) -> str | None:
@@ -934,6 +1025,38 @@ def next_url(headers: Any, root: str = API_ROOT) -> str | None:
     if match is None:
         return None
     return validate_url(match.group(1), root)
+
+
+def follow_pages(
+    read: Callable[[str], tuple[Any, Mapping[str, str]]],
+    url: str,
+    *,
+    max_pages: int,
+    root: str = API_ROOT,
+) -> Iterator[Any]:
+    """Yield each page's document of a paged listing, following its `Link` header.
+
+    ``read`` makes one page's request and returns its document and headers, so any
+    transport can follow a listing through this one loop. Each next link must stay on
+    ``root``'s origin. Past ``max_pages`` it raises ``TooManyPages``: a listing read in
+    part is not read, and its caller must not judge what it did read.
+    """
+    if max_pages < 1:
+        raise ValueError("max_pages must be at least 1")
+    following = url
+    for _ in range(max_pages):
+        document, headers = read(following)
+        yield document
+        named = next_url(headers, root)
+        if named is None:
+            # A next page named but not read is no end: a listing cut short would hide
+            # what it did not read (CodeAnt on #364).
+            link = headers.get("link") if headers else None
+            if link and _NAMES_A_NEXT_PAGE.search(str(link)):
+                raise MalformedAnswer("a next page the Link header names was not read")
+            return
+        following = named
+    raise TooManyPages(f"the listing has more than {max_pages} pages")
 
 
 def graphql_errors_indicate_rate_limit(errors: Any) -> bool:

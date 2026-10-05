@@ -12,6 +12,7 @@ from . import (
     check_ci_policy,
     check_guardrails,
     check_runtime_lock,
+    credential_check,
     review_check,
     self_check,
     task_envelope,
@@ -46,6 +47,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "surface-digest": (
         "compute the deterministic toolkit public-surface digest",
         check_runtime_lock.surface_digest_main,
+    ),
+    "credential-check": (
+        "verify an agent token holds exactly its declared least privilege",
+        credential_check.main,
     ),
     "review-check": (
         "evaluate advisory semantic-review assurance over retained evidence",

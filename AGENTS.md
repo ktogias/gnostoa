@@ -109,6 +109,238 @@ violation and reconstruct the pre-change evidence against the exact prior
 subject before continuing; do not relabel the reconstructed evidence as
 test-first chronology.
 
+Before the first provider write of a session, run the agent credential check from
+protected main and quote its verdict. It reports whether the agents' token holds exactly
+the least privilege declared in `policy/agent-credentials.yaml`, and whether pushes use
+that same token (Decision 0101). Its authority is protected main as the provider reports
+it. The wrapper, the `knowledge credential-check` it runs and the declaration all come
+from that exact commit, never from the candidate you work on. Define this helper once in
+the shell session; like the preparation helper, its body runs in a subshell:
+
+```bash
+run_main_credential_check() (
+  repository=$1
+  shift
+  case "${repository}" in
+    */*/* | *[!A-Za-z0-9._/-]* | -* | "")
+      echo "ERROR: the repository must be owner/name" >&2
+      exit 2
+      ;;
+  esac
+
+  # The git a push in this session will run, before the search path is fixed.
+  session_git="$(command -v git || true)"
+  PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+  export PATH
+  # `command -v` names a shell function or alias rather than a path, and a name runs
+  # it, so only an absolute path is run; and only one no one but root or the caller can
+  # replace: every link on the way, by the directory it is in, and the file it really is,
+  # as `knowledge_common.trusted_path` requires (CodeAnt on #364).
+  # The validators come from the system directories alone, so none is found where the
+  # rule below would refuse it and then vouches for itself (gitar on #364).
+  ls_executable="$(PATH=/usr/bin:/bin; command -v ls || true)"
+  readlink_executable="$(PATH=/usr/bin:/bin; command -v readlink || true)"
+  id_executable="$(PATH=/usr/bin:/bin; command -v id || true)"
+  caller=""
+  case "${id_executable}" in
+    /*) caller="$("${id_executable}" -u)" ;;
+  esac
+  owned() {
+    case "${ls_executable}" in
+      /*) ;;
+      *) return 1 ;;
+    esac
+    # A sticky directory, as `/tmp` is, lets no one but an entry's owner replace it; a
+    # link's own mode means nothing, only whose it is.
+    sticky="${2:-}"
+    listing="$("${ls_executable}" -ldn -- "$1" 2>/dev/null)" || return 1
+    # The mode, the link count and the numeric owner.
+    set -- ${listing}
+    [ "$#" -ge 3 ] || return 1
+    case "${sticky}:$1" in
+      link:* | directory:?????????[tT]*) ;;
+      *:?????w* | *:????????w*) return 1 ;;
+    esac
+    [ "$3" = 0 ] || [ "$3" = "${caller}" ]
+  }
+  # What runs Git or tar inherits no environment: `GIT_EXEC_PATH` alone chooses the
+  # transport a fetch runs, and `TAR_OPTIONS` adds options to tar (Codex on #364). Only
+  # the search path, the home directory and the proxy and certificate settings a fetch
+  # may need pass, beside what each step names.
+  isolated() {
+    "${env_executable}" -i PATH="${PATH}" HOME="${HOME:-/}" \
+      ${http_proxy+"http_proxy=${http_proxy}"} \
+      ${https_proxy+"https_proxy=${https_proxy}"} \
+      ${HTTPS_PROXY+"HTTPS_PROXY=${HTTPS_PROXY}"} \
+      ${all_proxy+"all_proxy=${all_proxy}"} \
+      ${ALL_PROXY+"ALL_PROXY=${ALL_PROXY}"} \
+      ${no_proxy+"no_proxy=${no_proxy}"} \
+      ${NO_PROXY+"NO_PROXY=${NO_PROXY}"} \
+      ${SSL_CERT_FILE+"SSL_CERT_FILE=${SSL_CERT_FILE}"} \
+      ${SSL_CERT_DIR+"SSL_CERT_DIR=${SSL_CERT_DIR}"} \
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+      GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 "$@"
+  }
+  checked() {
+    case "$1:${readlink_executable}" in
+      /*:/*) ;;
+      *) return 1 ;;
+    esac
+    # One component at a time, no link followed before it is judged (Codex, CodeAnt and
+    # gitar on #364): every component root's or the caller's, every directory on the way
+    # writable by no one else unless sticky, and the file at the end by no one else.
+    owned / directory || return 1
+    current=""
+    rest="${1#/}"
+    hops=0
+    while [ -n "${rest}" ]; do
+      name="${rest%%/*}"
+      case "${rest}" in
+        */*) rest="${rest#*/}" ;;
+        *) rest="" ;;
+      esac
+      case "${name}" in
+        "" | .) continue ;;
+        ..)
+          current="${current%/*}"
+          continue
+          ;;
+      esac
+      entry="${current}/${name}"
+      if [ -L "${entry}" ]; then
+        owned "${entry}" link || return 1
+        hops=$((hops + 1))
+        [ "${hops}" -le 40 ] || return 1
+        link="$("${readlink_executable}" -- "${entry}" 2>/dev/null)" || return 1
+        case "${link}" in
+          /*)
+            current=""
+            link="${link#/}"
+            ;;
+        esac
+        rest="${link}${rest:+/${rest}}"
+      elif [ -d "${entry}" ]; then
+        owned "${entry}" directory || return 1
+        current="${entry}"
+      else
+        [ -z "${rest}" ] && owned "${entry}" || return 1
+        printf '%s\n' "$1"
+        return 0
+      fi
+    done
+    # A directory at the end, only when one is asked for.
+    [ "${2:-}" = directory ] && [ -n "${current}" ] || return 1
+    printf '%s\n' "$1"
+  }
+  trusted() {
+    checked "$(command -v "$1" || true)"
+  }
+  unresolved=""
+  checked "${ls_executable}" >/dev/null || unresolved="${unresolved} ls"
+  checked "${readlink_executable}" >/dev/null || unresolved="${unresolved} readlink"
+  checked "${id_executable}" >/dev/null || unresolved="${unresolved} id"
+  git_executable="$(trusted git)" || unresolved="${unresolved} git"
+  # The push that follows runs in this session, by name: the git it finds there must be
+  # the trusted git, through a path no one else can repoint, or a push may run another
+  # (Codex on #364).
+  if [ -n "${git_executable}" ] && ! { [ "${session_git}" -ef "${git_executable}" ] \
+    && checked "${session_git}" >/dev/null; }; then
+    echo "ERROR: this session's git (${session_git:-none}) is not the trusted" \
+      "${git_executable}, so a push may not be the one checked" >&2
+    exit 2
+  fi
+  gh_executable="$(trusted gh)" || unresolved="${unresolved} gh"
+  mktemp_executable="$(trusted mktemp)" || unresolved="${unresolved} mktemp"
+  mkdir_executable="$(trusted mkdir)" || unresolved="${unresolved} mkdir"
+  rm_executable="$(trusted rm)" || unresolved="${unresolved} rm"
+  env_executable="$(trusted env)" || unresolved="${unresolved} env"
+  sh_executable="$(trusted sh)" || unresolved="${unresolved} sh"
+  if [ -n "${unresolved}" ]; then
+    echo "ERROR: trusted credential-check executables are unavailable" \
+      "(not a trusted executable path:${unresolved})" >&2
+    exit 2
+  fi
+
+  # Protected main as the provider reports it, never a local ref. The same read shows
+  # the branch protected, or main is no authority (CodeAnt on #364).
+  branch="$("${gh_executable}" api --hostname github.com \
+    "repos/${repository}/branches/main" --jq '"\(.protected) \(.commit.sha)"')" \
+    || branch=""
+  protected="${branch%% *}"
+  main="${branch#* }"
+  if [ "${protected}" != true ]; then
+    echo "ERROR: main is not protected, so it is no authority" >&2
+    exit 2
+  fi
+  if [ "${#main}" -ne 40 ]; then
+    echo "ERROR: protected main could not be read" >&2
+    exit 2
+  fi
+  case "${main}" in
+    *[!0-9a-f]*)
+      echo "ERROR: protected main could not be read" >&2
+      exit 2
+      ;;
+  esac
+  wrapper="$("${mktemp_executable}" /tmp/gnostoa-credential-check-wrapper.XXXXXX)"
+  metadata="$("${mktemp_executable}" -d /tmp/gnostoa-credential-check-git.XXXXXX)"
+  trap '"$rm_executable" -f -- "$wrapper"; "$rm_executable" -rf -- "$metadata"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  if ! checked "${wrapper}" >/dev/null || ! checked "${metadata}" directory >/dev/null
+  then
+    echo "ERROR: another user could change this check's temporary files" >&2
+    exit 2
+  fi
+  status=0
+  (
+    # The checkout's own configuration is never read: its `insteadOf` could redirect
+    # the fetch and its credential helper could run a command first (CodeAnt on
+    # #364). Disposable metadata with an empty template, bound to the checkout's
+    # object store, as preparation binds it; the exact SHA fixes the bytes.
+    common="$(isolated "${git_executable}" rev-parse --path-format=absolute \
+      --git-common-dir)" \
+      && objects="${common}/objects" \
+      && "${mkdir_executable}" "${metadata}/template" \
+      && isolated "${git_executable}" init --quiet --bare \
+        --template="${metadata}/template" "${metadata}/git" >/dev/null \
+      && printf '%s\n' "${objects}" > "${metadata}/git/objects/info/alternates" \
+      || exit 3
+    # From an explicit HTTPS URL, every other transport refused.
+    isolated GIT_DIR="${metadata}/git" GIT_OBJECT_DIRECTORY="${objects}" \
+      "${git_executable}" -c core.hooksPath=/dev/null \
+      -c protocol.allow=never -c protocol.https.allow=always \
+      fetch --quiet "https://github.com/${repository}.git" "${main}" >/dev/null \
+      || exit 3
+    isolated GIT_DIR="${metadata}/git" GIT_OBJECT_DIRECTORY="${objects}" \
+      "${git_executable}" show "${main}:ci/credential-check" || exit 4
+  ) > "${wrapper}" || status=$?
+  case "${status}" in
+    0) ;;
+    4)
+      echo "ERROR: protected main does not provide the credential check" >&2
+      exit 2
+      ;;
+    *)
+      echo "ERROR: protected main could not be fetched" >&2
+      exit 2
+      ;;
+  esac
+  "${sh_executable}" "${wrapper}" "${main}" --repository "${repository}" "$@"
+)
+
+run_main_credential_check ktogias/gnostoa
+```
+
+On anything but `EXACT`, make no provider write until the owner fixes the token or the
+push configuration, or amends the declaration through an ordinary change. Bootstrap:
+until protected main first provides `ci/credential-check`, the helper stops with
+"protected main does not provide the credential check". Only then run the candidate's
+own `knowledge credential-check --repository <owner/name>`, and say so with its
+verdict. The check grants nothing and is not the credential boundary; see
+[agent credential check](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#agent-credential-check).
+
 Before choosing a cloud/provider recovery route for candidate preparation or
 publication, use the
 [conditional agent execution recovery playbook](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#conditional-agent-execution-recovery-playbook).

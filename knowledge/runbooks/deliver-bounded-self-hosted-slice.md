@@ -177,9 +177,52 @@ Like the checkpoint above, this is review enforcement, not a software gate. The
 conformance tests prove only that the gate is routed. The reviewer checks the table
 against the actual candidate.
 
+### Agent credential check
+
+Agents work as the owner's operating-system user, through the owner's provider
+account, so the provider attributes every write to the owner whichever token made it.
+What bounds an agent is what its token can do, and the owner's authority channel for
+merge admission holds only while that token cannot approve a pending deployment
+(Decision 0101).
+
+Before the first provider write of a session, run the check from protected main
+through `run_main_credential_check` (`AGENTS.md`), and quote its verdict. The check's
+authority is protected main as the provider reports it: `ci/credential-check`,
+retrieved from that exact commit, runs that commit's checker against that commit's
+declaration, so a candidate cannot authorize its own first provider write. Bootstrap:
+until protected main first provides the wrapper, the helper says so, and only then does
+the candidate's own `knowledge credential-check` run, with the exception stated next to
+its verdict.
+
+The check probes the token without effect and compares the result with
+`policy/agent-credentials.yaml`. It also shows that a push uses the same token. A push
+authenticates through Git's own credential, so every push URL a push could reach (every remote's, and any that push routing names) must be HTTPS to github.com
+with no credential in it, and Git's credential helpers for it must be exactly the
+trusted `gh` (`gh auth setup-git`), with no extra header. Otherwise `transport:push` is
+unverified and so is the verdict.
+
+- `EXACT`: the token holds the declared grants and no others, within scope and
+  lifetime, over every permission the provider documents. A required grant no probe can
+  measure (`workflows:write`) is listed under `minimum_unverified`. A level the
+  declaration accepts in `accepted_unmeasurable` is listed in the verdict under
+  `accepted_unverified`. Neither changes the verdict.
+- `EXCESS`: a grant beyond the declaration, or a writable repository outside it.
+- `DEFICIENT`: a declared grant is missing.
+- `UNVERIFIED`: an excess grant could not be ruled out, the selection could be "all
+  repositories", or a push might use another credential (`transport:push`).
+- `CREDENTIAL_KIND_MISMATCH` or `LIFETIME_EXCEEDED`: the wrong kind of credential, or a
+  lifetime beyond the declared one.
+
+On anything but `EXACT`, make no provider write until the owner resolves it, by fixing
+the token or by amending the declaration through an ordinary change. The check reports
+effective grants; it grants nothing and is not the credential boundary. An agent on
+the owner's user can still reach the owner's browser session, so agents use no browser
+automation on the owner's profile.
+
 ## Procedure
 
-1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind
+1. **Orient and read back the current subject.** Start through `AGENTS.md`, and run the
+   [agent credential check](#agent-credential-check) before the first provider write; bind
    protected source, provider lifecycle and the active Work Item without replaying
    raw conversations. Before creating another Work Item or PR for the same outcome,
    read provider state for an existing open same-purpose record. Resume it when it
