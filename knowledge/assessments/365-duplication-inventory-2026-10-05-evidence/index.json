@@ -1,0 +1,11 @@
+{
+  "subject": "4618e1bc15fc09dd6e0845dc0e8d015167ed3251", "annotation": "# pragma: allowlist secret -- public commit id",
+  "run_over": "an extracted git archive of the subject",
+  "outputs": [
+    {"detectors": "A and B", "script": "same_names_and_clones.py", "file": "same-names-and-clones.json", "sha256": "8a7d8d9822545eab83a30e861f90a7ba3108b11d034cd76aadb9f8e1fbfbdb54", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "interpreter": "CPython 3.14.7"},
+    {"detectors": "A and B, uncapped counts", "script": "same_names_and_clones.py --counts", "file": "same-names-and-clones-counts.json", "sha256": "b34bef64a22228ac2dc113e016c7898c0176f94f1eb5c3352cef726d5b6064fb", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "interpreter": "CPython 3.14.7"},
+    {"detectors": "C", "script": "responsibility_signatures.py", "file": "responsibility-signatures.txt.gz", "uncompressed_sha256": "01a0e3c7da154e0e6e335ba4f762fa1a49304999ce1e1a7571f9ff25b76a649b", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "interpreter": "CPython 3.11 or later"},
+    {"detectors": "D", "script": "duplicate_code.sh", "file": "duplicate-code.txt.gz", "uncompressed_sha256": "ffcfdcbff558e4eb676b77eeea4b729ea47ec62f0889041edf2e3a21ff154066", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "tool": "pylint 3.3.9"}
+  ],
+  "compressed_because": "their exact bytes end lines with spaces or end with a blank line, which the repository's whitespace check refuses; gzip -dc restores them"
+}

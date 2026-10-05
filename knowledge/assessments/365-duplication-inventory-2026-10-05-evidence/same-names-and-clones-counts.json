@@ -1,0 +1,7 @@
+{
+ "functions": 1219,
+ "same_name_groups": 77,
+ "same_name_groups_at_least_0_90_similar": 31,
+ "exact_clone_groups": 12,
+ "near_clone_pairs": 3
+}
