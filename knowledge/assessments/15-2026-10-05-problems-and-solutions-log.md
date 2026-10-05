@@ -35,6 +35,8 @@ x-project-knowledge:
   scope:
     - gnostoa
   relations:
+    - kind: governed-by
+      target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
     - kind: references
       target: /assessments/365-duplication-inventory-2026-10-05.md
     - kind: references
@@ -52,6 +54,10 @@ solutions, so that they can be reflected on and evaluated later. Each entry link
 the provider records that hold its detail. Numbers are measured unless marked as an
 estimate. Where a solution is still open, the status says so. Nothing here admits
 work.
+
+**Governance.** This is an owner-selected formal retrospective under
+[Decision 0053](../decisions/0053-require-lightweight-work-item-micro-retrospection.md),
+section C. Its findings remain evidence until a separate Work Item admits them.
 
 ## Index
 

@@ -26,6 +26,8 @@ x-project-knowledge:
   scope:
     - gnostoa
   relations:
+    - kind: governed-by
+      target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
     - kind: references
       target: /assessments/15-2026-10-05-problems-and-solutions-log.md
 ---
@@ -39,13 +41,24 @@ beyond the two families already being consolidated: trusted execution (#368) and
 targeted mutants (#374). The owner asked for the results and proposals to be
 recorded for later reflection and evaluation. This document is that record.
 
+**Governance.** This is an owner-selected formal retrospective analysis under
+[Decision 0053](../decisions/0053-require-lightweight-work-item-micro-retrospection.md),
+section C. Its findings remain evidence, not admitted implementation scope. Each family
+is admitted separately, through its own Work Item and Decision.
+
 - **Subject:** production Python on protected `main` at `4618e1b`: 101 files under
   `tools/`, `ci/`, `tasks/` and `.github/`, 45,435 lines and 1,219 top-level
   functions. Tests are noted separately.
-- **Claim boundary:** the detectors find code that is the *same shape* or has the
-  *same name*. A responsibility implemented twice in two different shapes is
-  invisible to them; #365 records why the review analyzers missed such cases. A
-  family listed here is a candidate. Its owner is chosen when a Work Item admits it.
+- **Claim boundary:** the detectors find code that is the *same shape*, has the
+  *same name*, or matches a *responsibility's line pattern*. Every count below names
+  its detector, because they measure different things. Detector C counts the modules
+  using a responsibility in any shape. Detectors A and B count helpers that share a
+  name or a body. Detector A or B's count is therefore a subset of C's, never the total.
+- **What no detector sees:** a responsibility implemented twice in shapes that share
+  no name, no body and no line pattern. #365 records why the review analyzers missed
+  such cases.
+- **Status of a family:** each one listed here is a candidate. Its owner is chosen
+  when a Work Item admits it.
 
 ## Method
 
@@ -56,7 +69,27 @@ recorded for later reflection and evaluation. This document is that record.
 | C. Responsibility signatures | lines that perform one responsibility, counted per module | 15 signatures |
 | D. Textual duplicates | `pylint` 3.3.9 `duplicate-code` (R0801), ≥ 10 similar lines, imports, docstrings and comments ignored | 11 blocks |
 
-The analysis scripts are agent-side, run against a `git archive` of `4618e1b`.
+### Retained detectors and their outputs
+
+The four detectors and their exact outputs are kept, in their native formats, in
+`365-duplication-inventory-2026-10-05-evidence/`.
+Each runs over an extracted `git archive 4618e1b`:
+
+| Detector | Script | Output | Interpreter |
+|---|---|---|---|
+| A and B | [`same_names_and_clones.py`](365-duplication-inventory-2026-10-05-evidence/same_names_and_clones.py) `<root>` | [`same-names-and-clones.json`](365-duplication-inventory-2026-10-05-evidence/same-names-and-clones.json) | CPython 3.14.7 |
+| C | [`responsibility_signatures.py`](365-duplication-inventory-2026-10-05-evidence/responsibility_signatures.py) `<root>` | [`responsibility-signatures.txt.gz`](365-duplication-inventory-2026-10-05-evidence/responsibility-signatures.txt.gz) | any CPython 3.11 or later |
+| D | [`duplicate_code.sh`](365-duplication-inventory-2026-10-05-evidence/duplicate_code.sh), from `<root>` | [`duplicate-code.txt.gz`](365-duplication-inventory-2026-10-05-evidence/duplicate-code.txt.gz) | pylint 3.3.9 |
+
+Two outputs are gzip-compressed, because their exact bytes end lines with spaces or end
+with a blank line, which the repository's whitespace check refuses; `gzip -dc` restores
+them. [`index.json`](365-duplication-inventory-2026-10-05-evidence/index.json) records each output's SHA-256, of the uncompressed
+bytes where compressed, with its script and interpreter.
+
+**Reproduced on 2026-10-06** from a fresh archive:
+- **A and B:** byte-identical on CPython 3.14.7. Under 3.12 the similarity ratios differ, because `ast.dump`'s format changed in 3.13, though the clone groups do not.
+- **C:** byte-identical.
+- **D:** the same 11 blocks, over the same 22 module spans. Pylint orders files by directory listing, so the excerpt it prints for a block can differ.
 
 ## Families
 
@@ -66,13 +99,16 @@ Several modules re-implement the same strict JSON reading: refusing duplicate ke
 refusing non-finite numbers, bounding document depth and checking RFC 3339 times.
 They do it in identical shapes:
 
-| Responsibility | Copies |
-|---|---|
-| duplicate-key rejection (`object_pairs_hook`) | 6, identical: `review_check`, `review_current`, `review_outer`, `review_protected`, `adoption_check`, `tasks/gnostoa_orientation` |
-| non-finite rejection (`parse_constant`) | 5 |
-| finite float parsing | 4, identical |
-| document depth bound | 2 identical (`review_check`, `review_live`), plus 1 near clone (0.92, `review_policy`) |
-| strict RFC 3339 check | 3, identical (`review_check`, `review_live`, `review_outer`) |
+| Responsibility | Modules using it, any shape (C) | Shared helpers (A, B) |
+|---|---|---|
+| duplicate-key rejection (`object_pairs_hook`) | 9 | 6 identical bodies (B): `review_check`, `review_current`, `review_outer`, `review_protected`, `adoption_check`, `tasks/gnostoa_orientation`. `security_scan` shares the helper's name but not its body. `adoption_assurance` and `experiment/handoff` use other shapes |
+| non-finite rejection (`parse_constant`) | 7 | `_reject_non_finite_constant` in 5 (A): `review_check`, `review_current`, `review_outer`, `review_protected`, `security_scan`. `adoption_assurance` and `adoption_check` use other shapes |
+| finite float parsing | — | `_parse_finite_float`, 4 identical (A) |
+| document depth bound | — | 2 identical (B: `review_check`, `review_live`), plus 1 near clone (0.92, `review_policy`) |
+| strict RFC 3339 check | — | 3 identical (B: `review_check`, `review_live`, `review_outer`) |
+
+So the duplicate-key baseline is **9 modules**, not 6: the 6 identical copies are the
+ones that can merge mechanically (Codex on #375).
 
 Detector D also finds 16- and 19-line duplicated blocks between `review_check` and
 `review_live`.
@@ -115,7 +151,7 @@ the Codacy, DeepSource and three debt modules make their own requests.
 
 | Helper | Copies |
 |---|---|
-| `_now` | 9 modules, identical |
+| `_now` | 9 modules, identical (A); the current time is read in 12 modules (C) |
 | `canonical_json` | 3 |
 | `_sha` | 3 |
 | `_sha256` | 2 |
