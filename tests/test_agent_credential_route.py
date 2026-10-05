@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -180,6 +182,48 @@ class AgentCredentialRouteTests(unittest.TestCase):
             self.assertIn(option, scrubbed_block)
         self.assertNotIn("fetch --quiet origin", helper)
         self.assertIn("run_main_credential_check ktogias/gnostoa", router)
+
+    def test_a_shell_function_never_stands_in_for_an_executable(self) -> None:
+        """The helper runs in the agent's own shell, whose functions it inherits:
+        `command -v` names a function rather than a path, so a `gh` function could forge
+        protected main and a `git` or `mktemp` one could run in place of the trusted
+        executable (CodeAnt on #364). Only an absolute path is run. A forged `gh`
+        carries the flow past the provider read offline, so each function is reached."""
+        router = AGENTS.read_text(encoding="utf-8")
+        start = router.index("run_main_credential_check() (")
+        helper = router[start : router.index("\n)\n", start) + 3]
+        with tempfile.TemporaryDirectory() as scratch:
+            marker = pathlib.Path(scratch) / "ran"
+            subprocess.run(  # nosec B603 B607
+                ["git", "init", "--quiet", scratch], check=True, timeout=30
+            )
+            for name in ("gh", "git", "mktemp", "sh"):
+                with self.subTest(function=name):
+                    marker.unlink(missing_ok=True)
+                    touch = f'printf x > "{marker}"; ' if name == "gh" else ""
+                    functions = f"gh() {{ {touch}echo {'a' * 40}; }}\n"
+                    if name != "gh":
+                        functions += (
+                            f'{name}() {{ printf x > "{marker}"; return 0; }}\n'
+                        )
+                    completed = subprocess.run(  # nosec B603 B607
+                        [
+                            "bash",
+                            "-c",
+                            f"{functions}{helper}\nrun_main_credential_check ktogias/gnostoa",
+                        ],
+                        cwd=scratch,
+                        env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": scratch},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    self.assertFalse(marker.exists(), f"a {name} function ran")
+                    self.assertEqual(2, completed.returncode, completed.stderr)
+                    self.assertRegex(
+                        completed.stderr, rf"not a trusted executable path:.*\b{name}\b"
+                    )
 
     def test_the_runbook_states_the_bootstrap_and_the_push_binding(self) -> None:
         section = _flat(_section())

@@ -187,11 +187,17 @@ No tool found verifies a personal account's fine-grained token against a declara
     that commit's checker against that commit's declaration, so a candidate cannot
     authorize its own first provider write. The wrapper scrubs caller Git routing and
     global configuration, as the preparation wrapper does; the repository's own
-    configuration is read only to extract the commit and to judge the push. The
-    helper's fetch of that commit reads none of it, since an `insteadOf` could
-    redirect the fetch and a credential helper could run first: it uses disposable
-    metadata from an empty template, bound to the checkout's object store, as
-    preparation does. Bootstrap: until protected main first provides the wrapper,
+    configuration is read only to judge the push. Neither the helper's fetch of
+    that commit nor the wrapper's extraction reads it: an `insteadOf` could redirect
+    the fetch, a credential helper could run first, and the checkout's attributes
+    could name a filter driver that `git archive` runs. Both use disposable metadata
+    from an empty template, bound to the checkout's object store, as preparation
+    does, and tar runs with an empty environment. Every executable either script
+    runs is an absolute path, from the fixed trusted directories, that no one but
+    root or the caller can replace, as `knowledge_common.trusted_executable`
+    requires; a shell function named like one never runs. Both trust the shell they
+    run in: a function shadowing a builtin, or a preloaded library, is control of
+    that shell, outside this check. Bootstrap: until protected main first provides the wrapper,
     the candidate's own check runs, and the exception is stated with its verdict.
 11. **A push uses the checked token, or the verdict says so** (owner decision,
     2026-10-05). A push authenticates through Git's own credential, not this token. The

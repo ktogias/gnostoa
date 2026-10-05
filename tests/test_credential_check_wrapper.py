@@ -17,7 +17,9 @@ import pathlib
 import shutil
 import subprocess  # nosec B404
 import tempfile
+import textwrap
 import unittest
+from typing import ClassVar
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "ci" / "credential-check"
@@ -98,7 +100,9 @@ class CredentialCheckWrapperTests(unittest.TestCase):
         self.tmp = pathlib.Path(self.scratch.name) / "tmp"
         self.tmp.mkdir()
 
-    def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, *arguments: str, extra: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         private = pathlib.Path(self.scratch.name) / "wrapper"
         shutil.copyfile(WRAPPER, private)
         private.chmod(0o700)
@@ -108,6 +112,7 @@ class CredentialCheckWrapperTests(unittest.TestCase):
             "PYTHONPATH": str(self.root),
             "TMPDIR": str(self.tmp),
             "GIT_CONFIG_NOSYSTEM": "1",
+            **(extra or {}),
         }
         return subprocess.run(  # nosec B603 B607
             ["sh", str(private), *arguments],
@@ -118,6 +123,76 @@ class CredentialCheckWrapperTests(unittest.TestCase):
             check=False,
             timeout=120,
         )
+
+    def test_a_shell_function_never_stands_in_for_an_executable(self) -> None:
+        """`command -v` names a shell function rather than a path, and a name runs the
+        function: an exported `git` or `tar` function must not run in place of the
+        trusted executable (CodeAnt on #364). Bash imports exported functions, and
+        `sh` is bash on some hosts."""
+        private = pathlib.Path(self.scratch.name) / "wrapper"
+        shutil.copyfile(WRAPPER, private)
+        private.chmod(0o700)
+        for names in (("git",), ("tar",), ("python3", "python"), ("mktemp",)):
+            name = names[0]
+            with self.subTest(function=name):
+                self.marker.unlink(missing_ok=True)
+                environment = {
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                    "HOME": str(self.root),
+                    "TMPDIR": str(self.tmp),
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                }
+                for shadowed in names:
+                    environment[f"BASH_FUNC_{shadowed}%%"] = (
+                        f"() {{ printf x > {self.marker}; return 99; }}"
+                    )
+                completed = subprocess.run(  # nosec B603 B607
+                    ["bash", str(private), self.authority, "--repository", "o/r"],
+                    cwd=self.root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                self.assertFalse(self.marker.exists(), f"a {name} function ran")
+                self.assertEqual(2, completed.returncode, completed.stderr)
+
+    def _hit(self) -> pathlib.Path:
+        """An executable that leaves the marker and passes its input through."""
+        hit = pathlib.Path(self.scratch.name) / "hit"
+        hit.write_text(f"#!/bin/sh\nprintf x > {self.marker}\ncat\n", encoding="utf-8")
+        hit.chmod(0o755)
+        return hit
+
+    def test_tar_options_from_the_caller_never_reach_the_extraction(self) -> None:
+        """GNU tar takes `TAR_OPTIONS` before its own arguments, and a checkpoint
+        action can rewrite the extracted checker before Python imports it (Codex on
+        #364): tar runs with an empty environment."""
+        action = f"--checkpoint=1 --checkpoint-action=exec={self._hit()}"
+        completed = self._run(
+            self.authority, "--repository", "o/r", extra={"TAR_OPTIONS": action}
+        )
+        self.assertFalse(self.marker.exists(), "TAR_OPTIONS ran a command")
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("authority", json.loads(completed.stdout)["from"])
+
+    def test_the_checkout_s_attributes_and_filters_never_touch_the_extraction(
+        self,
+    ) -> None:
+        """`git archive` applies attributes and the filter drivers configuration names:
+        the checkout's own `info/attributes` and configuration must not run a command
+        or rewrite the authority's bytes, as they must not during the fetch."""
+        git_dir = pathlib.Path(_git(self.root, "rev-parse", "--absolute-git-dir"))
+        (git_dir / "info").mkdir(exist_ok=True)
+        (git_dir / "info" / "attributes").write_text(
+            "* filter=evil\n", encoding="utf-8"
+        )
+        _git(self.root, "config", "filter.evil.smudge", str(self._hit()))
+        completed = self._run(self.authority, "--repository", "o/r")
+        self.assertFalse(self.marker.exists(), "the checkout's filter ran")
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("authority", json.loads(completed.stdout)["from"])
 
     def test_the_authority_s_checker_judges_by_the_authority_s_declaration(
         self,
@@ -178,3 +253,93 @@ class CredentialCheckWrapperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _resolution(text: str) -> str:
+    """The trusted-executable resolution, from its first comment to the end of
+    `trusted()`, dedented."""
+    start = text.index("`command -v` names a shell function or alias")
+    start = text.rindex("\n", 0, start) + 1
+    head = text.index("trusted() {", start)
+    indent = head - (text.rindex("\n", 0, head) + 1)
+    end = text.index("\n" + " " * indent + "}\n", head) + indent + 3
+    return textwrap.dedent(text[start:end])
+
+
+class TrustedResolutionTests(unittest.TestCase):
+    """The shells resolve executables as `knowledge_common.trusted_executable` does."""
+
+    SOURCES: ClassVar[dict[str, pathlib.Path]] = {
+        "wrapper": WRAPPER,
+        "helper": ROOT / "AGENTS.md",
+    }
+
+    @staticmethod
+    def _trusted(source: pathlib.Path, path: str) -> subprocess.CompletedProcess[str]:
+        block = _resolution(source.read_text(encoding="utf-8"))
+        return subprocess.run(  # nosec B603 B607
+            ["sh", "-c", f"{block}\ntrusted git"],
+            env={"PATH": path},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+    def test_the_helper_and_the_wrapper_resolve_executables_alike(self) -> None:
+        """One resolution in two places, since the helper must run before the wrapper
+        exists: the two texts may not drift apart (#365)."""
+        blocks = {
+            name: _resolution(path.read_text(encoding="utf-8"))
+            for name, path in self.SOURCES.items()
+        }
+        self.assertEqual(blocks["wrapper"], blocks["helper"])
+
+    def test_an_executable_others_can_replace_is_not_trusted(self) -> None:
+        """Writable by no one but root or the caller, as the Python owner requires:
+        `/opt/homebrew/bin` is commonly group-writable, and whoever can change the
+        directory, the file or a symlink's target chooses what runs (CodeAnt on #364)."""
+        for name, source in self.SOURCES.items():
+            with tempfile.TemporaryDirectory() as scratch:
+                found = pathlib.Path(scratch) / "bin"
+                elsewhere = pathlib.Path(scratch) / "elsewhere"
+                found.mkdir()
+                elsewhere.mkdir()
+                fake = found / "git"
+                fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                fake.chmod(0o755)
+                path = f"{found}:/usr/bin:/bin"
+                with self.subTest(source=name, case="writable only by the caller"):
+                    completed = self._trusted(source, path)
+                    self.assertEqual(0, completed.returncode, completed.stderr)
+                    self.assertEqual(str(fake), completed.stdout.strip())
+                for case, changed, mode in (
+                    ("a group-writable directory", found, 0o775),
+                    ("a world-writable file", fake, 0o757),
+                ):
+                    changed.chmod(mode)
+                    with self.subTest(source=name, case=case):
+                        completed = self._trusted(source, path)
+                        self.assertNotEqual(0, completed.returncode)
+                        self.assertEqual("", completed.stdout)
+                    changed.chmod(0o755)
+                # Another user's file: an `id` naming a different caller stands in for
+                # an owner no test can create.
+                other = pathlib.Path(scratch) / "other"
+                other.mkdir()
+                (other / "id").write_text("#!/bin/sh\necho 4242\n", encoding="utf-8")
+                (other / "id").chmod(0o755)
+                with self.subTest(source=name, case="a file another user owns"):
+                    completed = self._trusted(source, f"{other}:{path}")
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)
+                target = elsewhere / "git"
+                fake.rename(target)
+                fake.symlink_to(target)
+                elsewhere.chmod(0o775)
+                with self.subTest(
+                    source=name, case="a symlink into a group-writable directory"
+                ):
+                    completed = self._trusted(source, path)
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)

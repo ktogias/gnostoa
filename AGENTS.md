@@ -130,12 +130,54 @@ run_main_credential_check() (
 
   PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
   export PATH
-  git_executable="$(command -v git || true)"
-  gh_executable="$(command -v gh || true)"
-  mktemp_executable="$(command -v mktemp || true)"
-  if [ -z "${git_executable}" ] || [ -z "${gh_executable}" ] \
-    || [ -z "${mktemp_executable}" ]; then
-    echo "ERROR: trusted credential-check executables are unavailable" >&2
+  # `command -v` names a shell function or alias rather than a path, and a name runs
+  # it, so only an absolute path is run; and only one no one but root or the caller can
+  # replace: the file it really is, its directory and the directory it was found in, as
+  # `knowledge_common.trusted_executable` requires (CodeAnt on #364).
+  ls_executable="$(command -v ls || true)"
+  readlink_executable="$(command -v readlink || true)"
+  id_executable="$(command -v id || true)"
+  caller=""
+  case "${id_executable}" in
+    /*) caller="$("${id_executable}" -u)" ;;
+  esac
+  owned() {
+    case "${ls_executable}" in
+      /*) ;;
+      *) return 1 ;;
+    esac
+    listing="$("${ls_executable}" -ldn -- "$1" 2>/dev/null)" || return 1
+    # The mode, the link count and the numeric owner.
+    set -- ${listing}
+    [ "$#" -ge 3 ] || return 1
+    case "$1" in
+      ?????w* | ????????w*) return 1 ;;
+    esac
+    [ "$3" = 0 ] || [ "$3" = "${caller}" ]
+  }
+  trusted() {
+    found="$(command -v "$1" || true)"
+    case "${found}:${readlink_executable}" in
+      /*:/*) ;;
+      *) return 1 ;;
+    esac
+    real="$("${readlink_executable}" -f -- "${found}" 2>/dev/null)" || return 1
+    owned "${real}" && owned "${real%/*}" && owned "${found%/*}" || return 1
+    printf '%s\n' "${found}"
+  }
+  unresolved=""
+  for name in ls readlink id; do
+    trusted "${name}" >/dev/null || unresolved="${unresolved} ${name}"
+  done
+  git_executable="$(trusted git)" || unresolved="${unresolved} git"
+  gh_executable="$(trusted gh)" || unresolved="${unresolved} gh"
+  mktemp_executable="$(trusted mktemp)" || unresolved="${unresolved} mktemp"
+  mkdir_executable="$(trusted mkdir)" || unresolved="${unresolved} mkdir"
+  rm_executable="$(trusted rm)" || unresolved="${unresolved} rm"
+  sh_executable="$(trusted sh)" || unresolved="${unresolved} sh"
+  if [ -n "${unresolved}" ]; then
+    echo "ERROR: trusted credential-check executables are unavailable" \
+      "(not a trusted executable path:${unresolved})" >&2
     exit 2
   fi
 
@@ -154,7 +196,7 @@ run_main_credential_check() (
   esac
   wrapper="$("${mktemp_executable}" /tmp/gnostoa-credential-check-wrapper.XXXXXX)"
   metadata="$("${mktemp_executable}" -d /tmp/gnostoa-credential-check-git.XXXXXX)"
-  trap 'rm -f -- "$wrapper"; rm -rf -- "$metadata"' EXIT
+  trap '"$rm_executable" -f -- "$wrapper"; "$rm_executable" -rf -- "$metadata"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
@@ -178,7 +220,7 @@ run_main_credential_check() (
     # object store, as preparation binds it; the exact SHA fixes the bytes.
     common="$("${git_executable}" rev-parse --path-format=absolute --git-common-dir)" \
       && objects="${common}/objects" \
-      && mkdir "${metadata}/template" \
+      && "${mkdir_executable}" "${metadata}/template" \
       && "${git_executable}" init --quiet --bare --template="${metadata}/template" \
         "${metadata}/git" \
       && printf '%s\n' "${objects}" > "${metadata}/git/objects/info/alternates" \
@@ -204,7 +246,7 @@ run_main_credential_check() (
       exit 2
       ;;
   esac
-  sh "${wrapper}" "${main}" --repository "${repository}" "$@"
+  "${sh_executable}" "${wrapper}" "${main}" --repository "${repository}" "$@"
 )
 
 run_main_credential_check ktogias/gnostoa
