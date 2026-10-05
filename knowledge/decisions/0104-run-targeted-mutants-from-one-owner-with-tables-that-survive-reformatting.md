@@ -123,6 +123,10 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 5, on `2c156a9`.**
+    - CodeAnt: a missing `--root` crashed with a traceback, and a failed copy escaped `run`. Now the first is a usage error, exit 2, and the second credits nothing (`NOT RUN`). Each has a test that failed first.
+    - SonarCloud: the module-name pattern uses `\w` under `re.ASCII`, and an exception test has one call that can raise.
+    - Two bounds are stated rather than changed: a token anchor can match a comment, which fails loudly, and the output limit is measured once per poll.
   - **CodeAnt: three ways out of the copy.** Windows-style table paths, unbounded test output, and links that resolve outside the copy. An absolute link let a test write outside on `d887443`. Each has a test that failed first.
 - **The nine round-1 kills were not evidence.** The new baseline then failed on the verification-workflow table itself. Two `tests.test_tools` tests read Git metadata (`git ls-files`, and the tracked-file scope), and a copy without `.git` fails them. So on `8ad4b4b` every one of the nine mutants was "killed" by those two errors, not by its own change.
   - The copy now keeps the repository's `.git` directory, with a test that failed first.

@@ -409,6 +409,42 @@ class SoundnessTests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertFalse(_alive(pid), "the tests' child outlived the timeout")
 
+    def test_a_missing_root_is_a_usage_error(self) -> None:
+        # It raised a traceback from inside the copy (CodeAnt on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            path = _table(
+                base,
+                "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+            )
+            arguments = ["--root", str(base / "missing"), "--table", str(path)]
+            try:
+                code = mutation.main(arguments)
+            except Exception as exc:
+                self.fail(f"main raised {exc!r}")
+            self.assertEqual(2, code)
+
+    def test_a_copy_that_fails_credits_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            with mock.patch(
+                "tools.mutation.shutil.copytree", side_effect=OSError("no space left")
+            ):
+                try:
+                    outcomes = mutation.run(root, table, jobs=1)
+                except OSError as exc:
+                    self.fail(f"run raised {exc!r}")
+        self.assertEqual(["NOT RUN"], [o.status for o in outcomes])
+        self.assertIn("no space left", outcomes[0].detail)
+
     def test_a_timeout_must_be_positive(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
             base = pathlib.Path(scratch)
@@ -417,8 +453,9 @@ class SoundnessTests(unittest.TestCase):
                 base,
                 "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
             )
+            table = mutation.load_table(path)
             with self.assertRaises(ValueError):
-                mutation.run(root, mutation.load_table(path), timeout=0)
+                mutation.run(root, table, timeout=0)
             self.assertEqual(
                 2,
                 mutation.main(

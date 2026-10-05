@@ -16,7 +16,11 @@ link is followed". Tables of them live with the code they guard, as
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
 - What the tests do stays in their copy. A copy holding a link that resolves outside
-  it is refused, and output beyond a limit ends the tests, as a timeout does.
+  it is refused, and output beyond a limit ends the tests, as a timeout does. The
+  output is measured every `_POLL_SECONDS`, so a fast writer can pass the limit by
+  what it writes in one interval before it is stopped.
+- A copy that fails, or tests that cannot start, credit nothing: the mutant is
+  `NOT RUN`.
 
 Anchors survive reformatting:
 
@@ -25,7 +29,10 @@ Anchors survive reformatting:
   whitespace, line breaks and comments do not matter. A decorated definition's
   statement includes its decorators.
 - Any other anchor, and any other file, is located by token sequence: runs of word
-  characters and single punctuation marks, with whitespace ignored.
+  characters and single punctuation marks, with whitespace ignored. Tokens include
+  comments and quoted text. So an anchor can match a commented-out copy of a setting.
+  Beside the real one that match is `AMBIGUOUS`; alone, the mutant changes a comment
+  and `SURVIVED` says so.
 - A replacement is dedented, and its later lines keep their indentation relative to
   its first, starting from the indentation of the line where the match starts. It
   fits a reflowed file whose structure follows relative indentation, as YAML's does,
@@ -68,7 +75,7 @@ _TOKEN = re.compile(r"\w+|[^\w\s]")
 # How a node's source span is computed, and how a table problem is raised.
 Span = Callable[[ast.AST, ast.AST], tuple[int, int]]
 Refuse = Callable[[str], KnowledgeFormatError]
-_MODULE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+_MODULE = re.compile(r"\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z", re.ASCII)
 _MUTANT_KEYS = frozenset({"name", "path", "find", "replace"})
 _TABLE_KEYS = frozenset({"id", "tests", "mutants"})
 _CACHES = shutil.ignore_patterns(
@@ -461,7 +468,13 @@ def _baseline(root: Path, table: Table, timeout: float) -> str | None:
             work = _copy(root, scratch)
         except CopyRefused as exc:
             return f"the copy is refused: {exc}"
-        status, last = _run_tests(work, scratch, table.tests, timeout)
+        except OSError as exc:
+            # A full disk is no verdict on the tests (CodeAnt on #374).
+            return f"the copy failed: {exc}"
+        try:
+            status, last = _run_tests(work, scratch, table.tests, timeout)
+        except OSError as exc:
+            return f"the tests could not run: {exc}"
     return None if status == 0 else f"the unmutated tests fail: {last}"
 
 
@@ -472,11 +485,16 @@ def _run_one(root: Path, table: Table, mutant: Mutant, timeout: float) -> Outcom
             work = _copy(root, scratch)
         except CopyRefused as exc:
             return Outcome(mutant.name, "REFUSED", str(exc))
+        except OSError as exc:
+            return Outcome(mutant.name, "NOT RUN", f"the copy failed: {exc}")
         mutated = _mutated(work, mutant)
         if isinstance(mutated, Outcome):
             return mutated
-        (work / mutant.path).write_text(mutated, encoding="utf-8")
-        status, last = _run_tests(work, scratch, table.tests, timeout)
+        try:
+            (work / mutant.path).write_text(mutated, encoding="utf-8")
+            status, last = _run_tests(work, scratch, table.tests, timeout)
+        except OSError as exc:
+            return Outcome(mutant.name, "NOT RUN", f"the tests could not run: {exc}")
     if status is None:
         return Outcome(mutant.name, "KILLED", last)
     if status == 0:
@@ -502,6 +520,8 @@ def run(
     """
     if not (math.isfinite(timeout) and timeout > 0):
         raise ValueError(f"timeout must be a positive number of seconds: {timeout!r}")
+    if not root.is_dir():
+        raise ValueError(f"the root is not a directory: {root}")
     known = {m.name for m in table.mutants}
     unknown = sorted(set(only) - known)
     if unknown:

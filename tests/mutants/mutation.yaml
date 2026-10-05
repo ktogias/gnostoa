@@ -154,3 +154,17 @@ mutants:
           return status, None
       if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
           return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+  - name: a missing root is copied
+    path: tools/mutation.py
+    find: not root.is_dir()
+    replace: "False"
+  - name: a failed copy escapes
+    path: tools/mutation.py
+    find: |
+      except OSError as exc:
+          # A full disk is no verdict on the tests (CodeAnt on #374).
+          return f"the copy failed: {exc}"
+    replace: |
+      except NotImplementedError as exc:
+          # A full disk is no verdict on the tests (CodeAnt on #374).
+          return f"the copy failed: {exc}"
