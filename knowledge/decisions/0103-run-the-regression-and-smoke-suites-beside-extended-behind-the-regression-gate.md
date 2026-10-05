@@ -74,9 +74,9 @@ The required checks of protected `main`, read back on #369's head `d0a7268`, are
 
 1. **`regression-suite` runs the regression suite.** It has exactly the steps that
    `regression` ran after its assertion: the merge-candidate checkout, the runtime
-   build and `./ci/verify regression`. Like `extended`, it needs only `policy`, so
-   the contract's "the provider adapter runs the separate `policy` suite before
-   dependent project suites" still holds for it.
+   build and `./ci/verify regression`. It needs only `policy` (`extended` needs
+   `policy` and `extended-route`), so the contract's "the provider adapter runs the
+   separate `policy` suite before dependent project suites" still holds for it.
 2. **`smoke` needs only `policy`**, not `regression`. Its steps are unchanged.
 3. **`regression` is the aggregate gate and nothing else.**
    - It keeps its name, `runs-on` and `if: always()`.

@@ -16,6 +16,7 @@ import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from tools import check_runtime_lock as runtime_lock_module
@@ -560,6 +561,65 @@ class PublicationBaselineTests(unittest.TestCase):
 
         self.assertEqual(len(ids), len(set(ids)))
 
+    def _assert_every_suite_runs_in_its_bound_job(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Each suite runs, blocking, in its job, and a poisoned environment or an
+        untrusted prerequisite breaks the binding (Decision 0103 binds the
+        regression suite to `regression-suite`)."""
+        suite_jobs = {
+            suite: suite
+            for suite in ("policy", "security-fast", "fast", "smoke", "extended")
+        }
+        suite_jobs["regression"] = "regression-suite"
+        for suite, job in suite_jobs.items():
+            self.assertTrue(
+                _workflow_has_blocking_verification_suite(
+                    workflow_document,
+                    job,
+                    suite,
+                ),
+                f"{job} job does not invoke its shared verification suite",
+            )
+        # The gate named `regression` runs no suite of its own (Decision 0103).
+        self.assertFalse(
+            _workflow_has_blocking_verification_suite(
+                workflow_document, "regression", "regression"
+            )
+        )
+        for suite, job in suite_jobs.items():
+            with self.subTest(suite=suite, mutation="preceding environment poison"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][job]["steps"].insert(
+                    0,
+                    {
+                        "name": "Poison the verification environment",
+                        "run": (
+                            'echo "GNOSTOA_CI_IMAGE=attacker-controlled:latest" '
+                            '>> "${GITHUB_ENV}"'
+                        ),
+                    },
+                )
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        job,
+                        suite,
+                    )
+                )
+            with self.subTest(suite=suite, mutation="untrusted prerequisite"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][job]["needs"] = [
+                    "attacker-controlled-prerequisite"
+                ]
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        job,
+                        suite,
+                    )
+                )
+
     def test_github_provider_surface_is_active_and_owned(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "verification.yml"
         codeowners_path = ROOT / ".github" / "CODEOWNERS"
@@ -619,58 +679,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
-        suite_jobs = {
-            suite: suite
-            for suite in ("policy", "security-fast", "fast", "smoke", "extended")
-        }
-        suite_jobs["regression"] = "regression-suite"
-        for suite, job in suite_jobs.items():
-            self.assertTrue(
-                _workflow_has_blocking_verification_suite(
-                    workflow_document,
-                    job,
-                    suite,
-                ),
-                f"{job} job does not invoke its shared verification suite",
-            )
-        # The gate named `regression` runs no suite of its own (Decision 0103).
-        self.assertFalse(
-            _workflow_has_blocking_verification_suite(
-                workflow_document, "regression", "regression"
-            )
-        )
-        for suite, job in suite_jobs.items():
-            with self.subTest(suite=suite, mutation="preceding environment poison"):
-                mutated_workflow = copy.deepcopy(workflow_document)
-                mutated_workflow["jobs"][job]["steps"].insert(
-                    0,
-                    {
-                        "name": "Poison the verification environment",
-                        "run": (
-                            'echo "GNOSTOA_CI_IMAGE=attacker-controlled:latest" '
-                            '>> "${GITHUB_ENV}"'
-                        ),
-                    },
-                )
-                self.assertFalse(
-                    _workflow_has_blocking_verification_suite(
-                        mutated_workflow,
-                        job,
-                        suite,
-                    )
-                )
-            with self.subTest(suite=suite, mutation="untrusted prerequisite"):
-                mutated_workflow = copy.deepcopy(workflow_document)
-                mutated_workflow["jobs"][job]["needs"] = [
-                    "attacker-controlled-prerequisite"
-                ]
-                self.assertFalse(
-                    _workflow_has_blocking_verification_suite(
-                        mutated_workflow,
-                        job,
-                        suite,
-                    )
-                )
+        self._assert_every_suite_runs_in_its_bound_job(workflow_document)
         renamed_workflow = copy.deepcopy(workflow_document)
         renamed_workflow["jobs"]["security-fast"]["name"] = "spoofed-context"
         self.assertFalse(
