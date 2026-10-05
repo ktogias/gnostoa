@@ -59,6 +59,11 @@ is admitted separately, through its own Work Item and Decision.
   - Where both count the same responsibility, as for strict JSON, the A or B count is
     the mechanically mergeable part. Neither count is a complete inventory of a
     responsibility.
+- **What detector B normalizes:** identifiers, arguments, constants, and each ordinary
+  function's name, decorators, annotations and docstring. It keeps attribute and
+  keyword names. It leaves an `async def`'s own name, decorators, return annotation
+  and docstring as written. So two bodies that differ only there score lower in A, and are not B clones
+  (CodeAnt on #375). The retained results are those of this method.
 - **What no detector sees:** a responsibility implemented twice in shapes that share
   no name, no body and no line pattern. #365 records why the review analyzers missed
   such cases.
@@ -267,7 +272,8 @@ touched.
 
 ## Proposed order
 
-1. **F1, strict JSON.** A security boundary, with five or six identical copies.
+1. **F1, strict JSON.** A security boundary. Duplicate-key rejection is used in nine
+   modules, six of them with identical bodies.
 2. **F3, HTTP clients and typed accessors.** Security-relevant: URL safety and
    bounded reads.
 3. **F4, canonical JSON, digests and time.** Digest correctness.
