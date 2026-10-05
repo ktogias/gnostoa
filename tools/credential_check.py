@@ -88,9 +88,11 @@ def _token() -> str:
             f" ({TRUSTED_EXECUTABLE_PATH}) to read a token from"
         )
     # The executable is resolved once, so the argv is fixed: no shell, no caller text.
+    # The host is github.com, whose token the push's credential helper answers with,
+    # never the one `GH_HOST` selects (Codex on #364).
     try:
         completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-            [executable, "auth", "token"],
+            [executable, "auth", "token", "--hostname", "github.com"],
             capture_output=True,
             text=True,
             check=False,

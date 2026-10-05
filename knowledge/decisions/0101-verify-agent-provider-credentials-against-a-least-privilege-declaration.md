@@ -187,7 +187,11 @@ No tool found verifies a personal account's fine-grained token against a declara
     that commit's checker against that commit's declaration, so a candidate cannot
     authorize its own first provider write. The wrapper scrubs caller Git routing and
     global configuration, as the preparation wrapper does; the repository's own
-    configuration is read. Bootstrap: until protected main first provides the wrapper,
+    configuration is read only to extract the commit and to judge the push. The
+    helper's fetch of that commit reads none of it, since an `insteadOf` could
+    redirect the fetch and a credential helper could run first: it uses disposable
+    metadata from an empty template, bound to the checkout's object store, as
+    preparation does. Bootstrap: until protected main first provides the wrapper,
     the candidate's own check runs, and the exception is stated with its verdict.
 11. **A push uses the checked token, or the verdict says so** (owner decision,
     2026-10-05). A push authenticates through Git's own credential, not this token. The
@@ -203,7 +207,8 @@ No tool found verifies a personal account's fine-grained token against a declara
     - no extra HTTP header may be configured for it;
     - Git's effective credential helpers for it, folded in order with an empty value
       resetting them, must be exactly the trusted `gh`, which answers with the token
-      checked here. Git, not the check, decides which credential contexts apply, so a
+      checked here: a token from the environment, or else `gh`'s own for github.com,
+      the push URL's host, never the host `GH_HOST` selects. Git, not the check, decides which credential contexts apply, so a
       context in another case, with a default port or percent-encoded matches as it
       does for a push; a context Git cannot normalize is not judged.
 

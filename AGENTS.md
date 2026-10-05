@@ -153,32 +153,57 @@ run_main_credential_check() (
       ;;
   esac
   wrapper="$("${mktemp_executable}" /tmp/gnostoa-credential-check-wrapper.XXXXXX)"
-  trap 'rm -f -- "$wrapper"' EXIT
+  metadata="$("${mktemp_executable}" -d /tmp/gnostoa-credential-check-git.XXXXXX)"
+  trap 'rm -f -- "$wrapper"; rm -rf -- "$metadata"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  if ! (
+  status=0
+  (
     unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
     unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
     unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
     unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+    unset GIT_ASKPASS SSH_ASKPASS
     export GIT_CONFIG_COUNT=0
     export GIT_CONFIG_GLOBAL=/dev/null
     export GIT_CONFIG_SYSTEM=/dev/null
     export GIT_CONFIG_NOSYSTEM=1
     export GIT_ATTR_NOSYSTEM=1
     export GIT_NO_REPLACE_OBJECTS=1
-    # From an explicit HTTPS URL, every other transport refused, so neither a hostile
-    # remote nor an `insteadOf` can run a command first; the exact SHA fixes the bytes.
-    "${git_executable}" -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+    export GIT_TERMINAL_PROMPT=0
+    # The checkout's own configuration is never read: its `insteadOf` could redirect
+    # the fetch and its credential helper could run a command first (CodeAnt on
+    # #364). Disposable metadata with an empty template, bound to the checkout's
+    # object store, as preparation binds it; the exact SHA fixes the bytes.
+    common="$("${git_executable}" rev-parse --path-format=absolute --git-common-dir)" \
+      && objects="${common}/objects" \
+      && mkdir "${metadata}/template" \
+      && "${git_executable}" init --quiet --bare --template="${metadata}/template" \
+        "${metadata}/git" \
+      && printf '%s\n' "${objects}" > "${metadata}/git/objects/info/alternates" \
+      || exit 3
+    GIT_DIR="${metadata}/git"
+    GIT_OBJECT_DIRECTORY="${objects}"
+    export GIT_DIR GIT_OBJECT_DIRECTORY
+    # From an explicit HTTPS URL, every other transport refused.
+    "${git_executable}" -c core.hooksPath=/dev/null \
       -c protocol.allow=never -c protocol.https.allow=always \
       fetch --quiet "https://github.com/${repository}.git" "${main}" >/dev/null \
-      && "${git_executable}" -c core.hooksPath=/dev/null \
-        show "${main}:ci/credential-check"
-  ) > "${wrapper}"; then
-    echo "ERROR: protected main does not provide the credential check" >&2
-    exit 2
-  fi
+      || exit 3
+    "${git_executable}" show "${main}:ci/credential-check" || exit 4
+  ) > "${wrapper}" || status=$?
+  case "${status}" in
+    0) ;;
+    4)
+      echo "ERROR: protected main does not provide the credential check" >&2
+      exit 2
+      ;;
+    *)
+      echo "ERROR: protected main could not be fetched" >&2
+      exit 2
+      ;;
+  esac
   sh "${wrapper}" "${main}" --repository "${repository}" "$@"
 )
 

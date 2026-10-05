@@ -154,8 +154,27 @@ class AgentCredentialRouteTests(unittest.TestCase):
         # The fetch runs inside the scrubbed block, from an explicit HTTPS URL, with
         # every other transport refused: a hostile remote or `insteadOf` cannot run an
         # `ext::` command before the authority is retrieved (CodeAnt on #364).
-        scrubbed_block = helper.split("if ! (", 1)[1].split(") > ", 1)[0]
+        scrubbed_block = helper.split("unset GIT_DIR", 1)[1].split('> "${wrapper}"', 1)[
+            0
+        ]
         self.assertIn("fetch --quiet", scrubbed_block)
+        # The fetch reads none of the checkout's configuration, whose `insteadOf` could
+        # redirect it and whose credential helper could run first (CodeAnt on #364):
+        # disposable metadata from an empty template, bound to the checkout's object
+        # store, in place before the fetch, and nothing may prompt.
+        for isolated in (
+            '--template="${metadata}/template"',
+            'GIT_DIR="${metadata}/git"',
+            'GIT_OBJECT_DIRECTORY="${objects}"',
+            "export GIT_DIR GIT_OBJECT_DIRECTORY",
+            "export GIT_TERMINAL_PROMPT=0",
+            "unset GIT_ASKPASS SSH_ASKPASS",
+        ):
+            self.assertIn(isolated, scrubbed_block)
+        self.assertLess(
+            scrubbed_block.index("export GIT_DIR GIT_OBJECT_DIRECTORY"),
+            scrubbed_block.index("fetch --quiet"),
+        )
         self.assertIn('"https://github.com/${repository}.git"', scrubbed_block)
         for option in ("-c protocol.allow=never", "-c protocol.https.allow=always"):
             self.assertIn(option, scrubbed_block)

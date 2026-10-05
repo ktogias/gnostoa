@@ -1411,6 +1411,33 @@ class CredentialCheckCliTests(unittest.TestCase):
             credential_check._token()  # skipcq: PYL-W0212
         trusted.assert_called_once_with("gh")
 
+    def test_the_gh_token_is_github_coms(self) -> None:
+        """The push's credential helper answers for github.com, the push URL's host, so
+        the token checked must be github.com's too: `GH_HOST` must not select another
+        host's (Codex on #364)."""
+        # Only to intercept the gh the check runs.
+        import subprocess  # nosec B404
+        from types import SimpleNamespace
+
+        from tools import credential_check, github_rest
+
+        with (
+            mock.patch.object(github_rest, "environment_token", return_value=""),
+            mock.patch.object(
+                credential_check, "trusted_executable", return_value="/usr/bin/gh"
+            ),
+            mock.patch.object(
+                subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0, stdout="t\n", stderr=""),
+            ) as run,
+        ):
+            credential_check._token()  # skipcq: PYL-W0212
+        self.assertEqual(
+            ["/usr/bin/gh", "auth", "token", "--hostname", "github.com"],
+            run.call_args.args[0],
+        )
+
     def test_gh_auth_token_is_bounded_in_time(self) -> None:
         """A keyring prompt or a stalled credential helper must not hang the check
         that gates every first provider write (CodeRabbit on #364)."""
