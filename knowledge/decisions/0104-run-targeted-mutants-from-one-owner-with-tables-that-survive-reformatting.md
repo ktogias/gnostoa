@@ -67,7 +67,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
      - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy. A table path with a backslash or a colon is refused when the table loads, because a path checked as POSIX would be read natively elsewhere.
      - **What the tests do stays in the copy.**
        - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
-       - Output beyond 16 MiB stops the tests, as a timeout does.
+       - Output beyond 16 MiB stops the tests, as a timeout does. It is measured after every wait, so tests that pass the limit and exit within one poll are caught too.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
      - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
 2. **Anchors survive reformatting.**
@@ -120,6 +120,9 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
     - no mutant may run after it fails.
 
     A characterization shows the concrete harm: a suite holding an exclusive lock "killed" two mutants it cannot detect, in two of three runs.
+  - **Round 4, on `99bfe52`.**
+    - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
+    - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
   - **CodeAnt: three ways out of the copy.** Windows-style table paths, unbounded test output, and links that resolve outside the copy. An absolute link let a test write outside on `d887443`. Each has a test that failed first.
 - **The nine round-1 kills were not evidence.** The new baseline then failed on the verification-workflow table itself. Two `tests.test_tools` tests read Git metadata (`git ls-files`, and the tracked-file scope), and a copy without `.git` fails them. So on `8ad4b4b` every one of the nine mutants was "killed" by those two errors, not by its own change.
   - The copy now keeps the repository's `.git` directory, with a test that failed first.

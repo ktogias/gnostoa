@@ -142,3 +142,15 @@ mutants:
     path: tools/mutation.py
     find: target = os.path.realpath(path)
     replace: target = os.path.normpath(os.path.join(directory, os.readlink(path)))
+  - name: the output is measured only while the tests run
+    path: tools/mutation.py
+    find: |
+      if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+      if status is not None:
+          return status, None
+    replace: |
+      if status is not None:
+          return status, None
+      if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"

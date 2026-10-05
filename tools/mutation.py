@@ -404,17 +404,25 @@ def _run_tests(
 def _wait(
     process: subprocess.Popen[bytes], log: int, timeout: float
 ) -> tuple[int | None, str | None]:
-    """Wait for ``process``: its exit status, or why it must be stopped."""
+    """Wait for ``process``: its exit status, or why it must be stopped.
+
+    The output is measured after every wait, the last one too: tests that wrote past
+    the limit and exited within one poll were credited with their exit status (Codex
+    on #374).
+    """
     deadline = time.monotonic() + timeout
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, f"timed out after {timeout:g} s"
         try:
-            return process.wait(timeout=min(_POLL_SECONDS, remaining)), None
+            status: int | None = process.wait(timeout=min(_POLL_SECONDS, remaining))
         except subprocess.TimeoutExpired:
-            if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
-                return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+            status = None
+        if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+            return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+        if status is not None:
+            return status, None
 
 
 def _copy(root: Path, scratch: str) -> Path:

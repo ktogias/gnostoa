@@ -575,6 +575,29 @@ class ContainmentTests(unittest.TestCase):
             self.assertEqual("KILLED", outcome.status)
             self.assertIn("more than", outcome.detail)
 
+    def test_output_beyond_the_limit_counts_after_the_tests_exit(self) -> None:
+        # Tests that write past the limit and exit within one poll (Codex on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: wait prints a lot\n    path: pkg/m.py\n"
+                    "    find: 'return None'\n"
+                    "    replace: |\n"
+                    "      print('x' * 2_000_000)\n"
+                    "      return None\n",
+                )
+            )
+            with (
+                mock.patch.object(mutation, "_OUTPUT_LIMIT_BYTES", 1_000_000),
+                mock.patch.object(mutation, "_POLL_SECONDS", 60),
+            ):
+                (outcome,) = mutation.run(root, table, jobs=1, timeout=120)
+            self.assertEqual("KILLED", outcome.status, outcome.detail)
+            self.assertIn("more than", outcome.detail)
+
     def test_a_link_out_of_the_copy_refuses_the_copy(self) -> None:
         for kind in ("absolute", "relative", "through a link to the root"):
             with self.subTest(kind), tempfile.TemporaryDirectory() as scratch:
@@ -648,7 +671,7 @@ class CopyTests(unittest.TestCase):
                 self.skipTest("git is not installed")
             clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
             for command in (["init", "-q"], ["add", "-A"]):
-                subprocess.run(  # nosec B603
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                     [git, *command], cwd=root, env=clean, check=True
                 )
             table = mutation.load_table(
