@@ -92,42 +92,80 @@ class KnowledgeFormatError(ValueError):
 TRUSTED_EXECUTABLE_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 
 
-def _writable_only_by_owner(path: str) -> bool:
-    """Return whether only root or the caller owns ``path`` and may change it."""
-    mode = os.stat(path)
-    owners = {0, os.getuid()}
-    return mode.st_uid in owners and not mode.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-
-
 # As many links as a path may pass through before it is refused, as `SYMLOOP_MAX` bounds.
 _MAX_LINKS = 40
+
+
+def _theirs(held: os.stat_result) -> bool:
+    """Return whether root or the caller owns what ``held`` describes."""
+    return held.st_uid in {0, os.getuid()}
+
+
+def _closed(held: os.stat_result, *, sticky: bool) -> bool:
+    """Return whether no one else may write it; a sticky directory, as `/tmp` is, lets
+    no one but an entry's owner replace the entry."""
+    if not held.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return True
+    return sticky and bool(held.st_mode & stat.S_ISVTX)
 
 
 def trusted_path(found: str) -> str | None:
     """Return the file the absolute path ``found`` really is, if no one can replace it.
 
-    Every link on the way is judged by the directory it is in, since whoever can change
-    that directory can repoint the link (Codex and gitar on #364). The file it really
-    is must be changeable by no one but root or the caller too.
+    The path is walked one component at a time and no link is followed before it is
+    judged (Codex, CodeAnt and gitar on #364). Every component, a link included, must be
+    root's or the caller's; every directory on the way, as it really is, writable by no
+    one else unless it is sticky; and the file at the end writable by no one else.
+    Whoever can change any of them can replace what ``found`` names.
     """
     if not os.path.isabs(found):
         return None
-    hop = found
     try:
-        for _ in range(_MAX_LINKS + 1):
-            if not _writable_only_by_owner(os.path.dirname(hop)):
-                return None
-            if not os.path.islink(hop):
-                break
-            hop = os.path.join(os.path.dirname(hop), os.readlink(hop))
-        else:
-            return None
-        # The last hop's directory, judged above, is the one the file really is in.
-        real = os.path.realpath(hop)
-        if _writable_only_by_owner(real):
-            return real
+        return _walk(found)
     except OSError:
         return None
+
+
+def _parts(path: str) -> list[str]:
+    """Return the components of ``path``, as a walk reads them."""
+    return [part for part in path.split("/") if part]
+
+
+def _follow(entry: str, current: str, pending: list[str]) -> tuple[str, list[str]]:
+    """Return where the link ``entry`` leads: from the root if its target is absolute,
+    from the directory it is in otherwise, its target's components read first."""
+    target = os.readlink(entry)
+    start = "/" if target.startswith("/") else current
+    return start, _parts(target) + pending
+
+
+def _walk(found: str) -> str | None:
+    """Resolve ``found`` as `trusted_path` describes, or return None."""
+    root = os.lstat("/")
+    if not _theirs(root) or not _closed(root, sticky=True):
+        return None
+    current, pending, links = "/", _parts(found), 0
+    while pending:
+        name = pending.pop(0)
+        if name in {".", ".."}:
+            current = current if name == "." else os.path.dirname(current)
+            continue
+        entry = os.path.join(current, name)
+        held = os.lstat(entry)
+        if not _theirs(held):
+            return None
+        if stat.S_ISLNK(held.st_mode):
+            links += 1
+            if links > _MAX_LINKS:
+                return None
+            current, pending = _follow(entry, current, pending)
+            continue
+        if not stat.S_ISDIR(held.st_mode):
+            # The file at the end, writable by no one else; a file on the way is no path.
+            return entry if not pending and _closed(held, sticky=False) else None
+        if not _closed(held, sticky=True):
+            return None
+        current = entry
     return None
 
 

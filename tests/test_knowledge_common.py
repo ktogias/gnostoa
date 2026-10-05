@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -178,6 +179,68 @@ class TrustedPathTests(unittest.TestCase):
             (base / "a").symlink_to(base / "b")
             (base / "b").symlink_to(base / "a")
             self.assertIsNone(knowledge_common.trusted_path(str(base / "a")))
+
+    def test_every_directory_above_is_judged_too(self) -> None:
+        """Whoever can change a directory above can replace the one below it whole
+        (CodeAnt on #364). A sticky directory, as `/tmp` is, lets no one but an entry's
+        owner replace it."""
+        with tempfile.TemporaryDirectory() as scratch:
+            above = pathlib.Path(scratch) / "above"
+            below = above / "bin"
+            below.mkdir(parents=True)
+            tool = below / "tool"
+            tool.write_text("#!/bin/sh\n", encoding="utf-8")
+            tool.chmod(0o755)
+            self.assertEqual(
+                str(tool.resolve()), knowledge_common.trusted_path(str(tool))
+            )
+            above.chmod(0o775)
+            self.assertIsNone(knowledge_common.trusted_path(str(tool)))
+            above.chmod(0o1777)
+            self.assertEqual(
+                str(tool.resolve()), knowledge_common.trusted_path(str(tool))
+            )
+            above.chmod(0o755)
+
+    def test_a_directory_link_is_judged_where_it_leads(self) -> None:
+        """A path through a directory link is judged as it really is too: the link's
+        own chain can be safe while the directory it leads into is not."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            real = base / "shared" / "real"
+            real.mkdir(parents=True)
+            (base / "safe").mkdir()
+            (base / "safe" / "link").symlink_to(real)
+            tool = real / "tool"
+            tool.write_text("#!/bin/sh\n", encoding="utf-8")
+            tool.chmod(0o755)
+            through = str(base / "safe" / "link" / "tool")
+            self.assertEqual(
+                str(tool.resolve()), knowledge_common.trusted_path(through)
+            )
+            (base / "shared").chmod(0o775)
+            self.assertIsNone(knowledge_common.trusted_path(through))
+            (base / "shared").chmod(0o755)
+
+    def test_a_directory_link_is_judged_by_its_own_owner(self) -> None:
+        """In a sticky directory a link's owner can repoint it: a path through another
+        user's directory link is not trusted, though where it leads is (Codex on #364).
+        Another user's link stands as a caller other than the link's owner."""
+        temporary = tempfile.gettempdir()
+        held = os.stat(temporary)
+        if held.st_uid != 0 or not held.st_mode & stat.S_ISVTX:
+            self.skipTest("the temporary directory is not root's and sticky")
+        shell = shutil.which("sh", path="/usr/bin:/bin")
+        if shell is None:
+            self.skipTest("no sh in the system directories")
+        system = os.path.dirname(os.path.realpath(shell))
+        link = pathlib.Path(temporary) / f"gnostoa-link-{os.getpid()}-{id(self)}"
+        link.symlink_to(system)
+        self.addCleanup(link.unlink)
+        through = str(link / "sh")
+        self.assertIsNotNone(knowledge_common.trusted_path(through))
+        with mock.patch("os.getuid", return_value=4242):
+            self.assertIsNone(knowledge_common.trusted_path(through))
 
     def test_a_relative_or_missing_path_is_not_trusted(self) -> None:
         self.assertIsNone(knowledge_common.trusted_path("gh"))

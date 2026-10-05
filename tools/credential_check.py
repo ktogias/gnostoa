@@ -376,15 +376,13 @@ def _url_binding(worktree: Path, pushed: str, subject: str) -> tuple[str, str]:
     if target is None:
         return "UNBOUND", why
     try:
-        header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+        judged = _http_judgement(worktree, target)
         helpers = _effective_helpers(worktree, target)
     except (posture.PolicyError, OSError, subprocess.TimeoutExpired) as error:
         # Every read after the push URL fails closed too (gitar on #364).
         return "UNKNOWN", f"git could not be read: {error}"
-    if header.returncode not in (0, 1):
-        return "UNKNOWN", "the extra HTTP headers for a push URL could not be read"
-    if header.returncode == 0 and header.stdout.strip():
-        return "UNBOUND", "an extra HTTP header is configured for a push URL"
+    if judged is not None:
+        return judged
     if helpers is None:
         return "UNKNOWN", "Git's credential helpers for a push URL could not be judged"
     if len(helpers) != 1 or not _is_trusted_gh(helpers[0]):
@@ -393,6 +391,54 @@ def _url_binding(worktree: Path, pushed: str, subject: str) -> tuple[str, str]:
             f" ({len(helpers)} configured)"
         )
     return "BOUND", "HTTPS push through the trusted gh's credential helper"
+
+
+def _session_judgement() -> tuple[str, str] | None:
+    """Return how the session's environment changes a push, or None if it does not."""
+    if os.environ.get("GIT_EXEC_PATH"):
+        # It chooses which `git-remote-https` a push runs: another transport than the
+        # one checked (Codex on #364).
+        return (
+            "UNBOUND",
+            "GIT_EXEC_PATH is set, so it chooses the transport a push runs",
+        )
+    if "GIT_SSL_NO_VERIFY" in os.environ:
+        # Set to anything, it turns TLS verification off (CodeAnt on #364).
+        return "UNBOUND", (
+            "GIT_SSL_NO_VERIFY turns TLS verification off, so the token may reach"
+            " another server"
+        )
+    routed = [name for name in _REPOSITORY_ROUTING if os.environ.get(name)]
+    if routed:
+        # Git would read another repository than the checkout named (CodeAnt on #364).
+        return "UNKNOWN", (
+            f"{', '.join(routed)} routes git to a repository other than the checkout"
+        )
+    return None
+
+
+def _http_judgement(worktree: Path, target: str) -> tuple[str, str] | None:
+    """Return how the push URL's HTTP settings change a push, or None if they do not.
+
+    An extra header is another credential; with TLS verification off, git sends the
+    checked token to whichever server answers (CodeAnt on #364).
+    """
+    header = _git(worktree, "config", "--get-urlmatch", "http.extraheader", target)
+    verify = _git(
+        worktree, "config", "--bool", "--get-urlmatch", "http.sslverify", target
+    )
+    if header.returncode not in (0, 1):
+        return "UNKNOWN", "the extra HTTP headers for a push URL could not be read"
+    if verify.returncode not in (0, 1):
+        return "UNKNOWN", "TLS verification for a push URL could not be read"
+    if header.returncode == 0 and header.stdout.strip():
+        return "UNBOUND", "an extra HTTP header is configured for a push URL"
+    if verify.returncode == 0 and verify.stdout.strip() == "false":
+        return "UNBOUND", (
+            "TLS verification is off for a push URL, so the token may reach another"
+            " server"
+        )
+    return None
 
 
 def _push_destinations(worktree: Path) -> tuple[list[str], list[str]] | str:
@@ -430,19 +476,9 @@ def _push_binding(worktree: Path, subject: str) -> tuple[str, str]:
     credential helpers exactly the trusted gh, which answers with the token this check
     read. Only configuration is read, never a credential (Codex on #364).
     """
-    if os.environ.get("GIT_EXEC_PATH"):
-        # It chooses which `git-remote-https` a push runs: another transport than the
-        # one checked (Codex on #364).
-        return (
-            "UNBOUND",
-            "GIT_EXEC_PATH is set, so it chooses the transport a push runs",
-        )
-    routed = [name for name in _REPOSITORY_ROUTING if os.environ.get(name)]
-    if routed:
-        # Git would read another repository than the checkout named (CodeAnt on #364).
-        return "UNKNOWN", (
-            f"{', '.join(routed)} routes git to a repository other than the checkout"
-        )
+    judged = _session_judgement()
+    if judged is not None:
+        return judged
     try:
         destinations = _push_destinations(worktree)
         if isinstance(destinations, str):

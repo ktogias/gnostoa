@@ -305,6 +305,77 @@ class TrustedResolutionTests(unittest.TestCase):
         }
         self.assertEqual(blocks["wrapper"], blocks["helper"])
 
+    def test_every_directory_above_is_judged_too(self) -> None:
+        """Whoever can change a directory above can replace the one below it whole
+        (CodeAnt on #364); a sticky directory lets no one but an entry's owner do so."""
+        for name, source in self.SOURCES.items():
+            with tempfile.TemporaryDirectory() as scratch:
+                above = pathlib.Path(scratch) / "above"
+                found = above / "bin"
+                found.mkdir(parents=True)
+                fake = found / "git"
+                fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                fake.chmod(0o755)
+                path = f"{found}:/usr/bin:/bin"
+                for case, mode, trusted in (
+                    ("no one else can change it", 0o755, True),
+                    ("a group-writable directory above", 0o775, False),
+                    ("a sticky directory above", 0o1777, True),
+                ):
+                    above.chmod(mode)
+                    with self.subTest(source=name, case=case):
+                        completed = self._trusted(source, path)
+                        if trusted:
+                            self.assertEqual(str(fake), completed.stdout.strip())
+                        else:
+                            self.assertNotEqual(0, completed.returncode)
+                            self.assertEqual("", completed.stdout)
+                above.chmod(0o755)
+                # Through a directory link, judged where it leads too.
+                (pathlib.Path(scratch) / "safe").mkdir()
+                link = pathlib.Path(scratch) / "safe" / "link"
+                link.symlink_to(found)
+                through = f"{link}:/usr/bin:/bin"
+                above.chmod(0o775)
+                with self.subTest(source=name, case="a directory link into it"):
+                    completed = self._trusted(source, through)
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)
+                above.chmod(0o755)
+
+    def test_a_directory_link_is_judged_by_its_own_owner(self) -> None:
+        """A link is followed only after it is judged: a safe directory link is
+        trusted, another user's in a sticky directory is not (Codex on #364). Another
+        user stands as a caller other than the link's owner."""
+        temporary = tempfile.gettempdir()
+        held = os.stat(temporary)
+        if held.st_uid != 0 or not held.st_mode & 0o1000:
+            self.skipTest("the temporary directory is not root's and sticky")
+        shell = shutil.which("sh", path="/usr/bin:/bin")
+        if shell is None:
+            self.skipTest("no sh in the system directories")
+        system = os.path.dirname(os.path.realpath(shell))
+        link = pathlib.Path(temporary) / f"gnostoa-link-{os.getpid()}-{id(self)}"
+        link.symlink_to(system)
+        self.addCleanup(link.unlink)
+        for name, source in self.SOURCES.items():
+            with self.subTest(source=name, case="the caller's own link"):
+                completed = self._trusted(
+                    source, "/usr/bin:/bin", command=f'checked "{link}/sh"'
+                )
+                self.assertEqual(
+                    f"{link}/sh", completed.stdout.strip(), completed.stderr
+                )
+            with self.subTest(source=name, case="another user's link"):
+                completed = self._trusted(
+                    source,
+                    "/usr/bin:/bin",
+                    then="caller=4242\n",
+                    command=f'checked "{link}/sh"',
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertEqual("", completed.stdout)
+
     def test_an_executable_others_can_replace_is_not_trusted(self) -> None:
         """Writable by no one but root or the caller, as the Python owner requires:
         `/opt/homebrew/bin` is commonly group-writable, and whoever can change the

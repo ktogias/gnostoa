@@ -848,6 +848,15 @@ class SharedResponsibilityTests(unittest.TestCase):
         listing[f"{root}/y"] = ([0], {"link": '<https://evil.example/x>; rel="next"'})
         with self.assertRaises(github_rest.GitHubReadError):
             list(github_rest.follow_pages(page, f"{root}/y", max_pages=3))
+        # A next page the header names but this reading cannot parse is not the end
+        # of the listing: a listing cut short would hide what it did not read
+        # (CodeAnt on #364).
+        listing[f"{root}/z"] = (
+            [0],
+            {"link": f'<{root}/z?page=2>; type="text/html"; rel="next"'},
+        )
+        with self.assertRaises(github_rest.GitHubReadError):
+            list(github_rest.follow_pages(page, f"{root}/z", max_pages=3))
 
 
 def _names_the_client(node: ast.AST) -> bool:

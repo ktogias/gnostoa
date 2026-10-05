@@ -1012,6 +1012,8 @@ class GitHubRestClient:
 
 
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+# Any `rel` that includes `next`, however the link's parameters are ordered.
+_NAMES_A_NEXT_PAGE = re.compile(r'\brel\s*=\s*"?[^",;]*\bnext\b', re.IGNORECASE)
 
 
 def next_url(headers: Any, root: str = API_ROOT) -> str | None:
@@ -1047,6 +1049,11 @@ def follow_pages(
         yield document
         named = next_url(headers, root)
         if named is None:
+            # A next page named but not read is no end: a listing cut short would hide
+            # what it did not read (CodeAnt on #364).
+            link = headers.get("link") if headers else None
+            if link and _NAMES_A_NEXT_PAGE.search(str(link)):
+                raise MalformedAnswer("a next page the Link header names was not read")
             return
         following = named
     raise TooManyPages(f"the listing has more than {max_pages} pages")

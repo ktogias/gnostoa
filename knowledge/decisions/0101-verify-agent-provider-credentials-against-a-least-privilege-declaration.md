@@ -68,7 +68,7 @@ accepts.
 | GitHub transport | `tools/github_rest.py` (Decision 0100) | **extended**: a refusal keeps its accepted permissions, and the client can `put` |
 | token from the environment | `GitHubRestClient.from_environment` | **factored** into `github_rest.environment_token()`, consumed by both; the `gh auth token` fallback is the residual |
 | a name safe in an API path | `analyzer_readback.normalize_repository`'s rule | **extended** into `github_rest.owner_name()` / `repository_name()`, which `github_rest` owns beside `validate_url`; the copies converge under #365 |
-| bounded `Link` pagination | `read_page` + `next_url` | **extended** with `github_rest.follow_pages()`, a loop any transport can drive |
+| bounded `Link` pagination | `read_page` + `next_url` | **extended** with `github_rest.follow_pages()`, a loop any transport can drive; a next page it cannot read is an error, not the listing's end |
 | path confinement | `agent_review_paths.within` | **extended** with `within_root()`, for a root the caller holds |
 | declaration contract | `schemas/` + `Draft202012Validator`, 9 local helpers | **created** `schemas/agent-credentials.schema.json` and the shared `tools/schema_validation.py`; the loaders converge under #365 |
 | YAML without duplicate keys; timestamp | `knowledge_common.load_yaml`; 9 local `_now()` | **consumed**; **created** `knowledge_common.utc_timestamp()` |
@@ -198,9 +198,12 @@ No tool found verifies a personal account's fine-grained token against a declara
     and `TAR_OPTIONS` would add options to tar. Only the search path, the home
     directory and a fetch's proxy and certificate settings pass. Every executable either script
     runs is an absolute path, from the fixed trusted directories, that no one but
-    root or the caller can replace, as `knowledge_common.trusted_executable`
-    requires, every link on the way judged by the directory it is in; a shell function
-    named like one never runs. The validators that rule runs (`ls`, `readlink`, `id`)
+    root or the caller can replace, as `knowledge_common.trusted_path` judges it: the
+    path is walked one component at a time and no link is followed before it is
+    judged, so every component, a link included, is root's or the caller's, every
+    directory on the way is writable by no one else unless it is sticky, and the file
+    at the end is writable by no one else. A shell function named like an executable
+    never runs. The validators that rule runs (`ls`, `readlink`, `id`)
     come from `/usr/bin` and `/bin` alone, so none vouches for itself. Both trust the shell they
     run in: a function shadowing a builtin, or a preloaded library, is control of
     that shell, outside this check. Bootstrap: until protected main first provides the wrapper,
@@ -216,8 +219,10 @@ No tool found verifies a personal account's fine-grained token against a declara
     - the push URL must be HTTPS to github.com, with no credential in it, after
       `pushInsteadOf`; a URL that push routing names directly is the raw value, so
       with any rewrite rule configured it is not judged;
-    - no extra HTTP header may be configured for it, and `GIT_EXEC_PATH` must be
-      unset in the session, since it chooses the transport a push runs; with
+    - no extra HTTP header may be configured for it, nor TLS verification turned off
+      (`http.sslVerify`, `GIT_SSL_NO_VERIFY`), since then the token may reach another
+      server; `GIT_EXEC_PATH` must be unset in the session, since it chooses the
+      transport a push runs; with
       `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` set, git reads another repository
       than the checkout, which is then not judged;
     - Git's effective credential helpers for it, folded in order with an empty value

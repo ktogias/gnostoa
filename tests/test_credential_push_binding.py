@@ -224,6 +224,7 @@ class PushBindingTests(unittest.TestCase):
         reads = {
             "the push routing": lambda a: routing in a,
             "the header": lambda a: "http.extraheader" in a,
+            "TLS verification": lambda a: "http.sslverify" in a,
             "the helper listing": lambda a: r"^credential\..*helper$" in a,
             "a context's normalization": lambda a: "--file" in a and a[-1] != target,
             "a context's match": lambda a: "--file" in a and a[-1] == target,
@@ -475,6 +476,18 @@ class PushBindingTests(unittest.TestCase):
                 del self.environment[variable]
                 self.assertEqual("UNKNOWN", state)
                 self.assertIn(variable, evidence)
+
+    def test_a_push_without_tls_verification_is_unbound(self) -> None:
+        """With TLS verification off, git sends the checked token to whichever server
+        answers (CodeAnt on #364): by URL-matched configuration or by environment."""
+        self._bind_gh()
+        self._git("config", "http.https://github.com/.sslVerify", "false")
+        state, evidence = self._binding()
+        self.assertEqual("UNBOUND", state)
+        self.assertIn("TLS", evidence)
+        self._git("config", "--unset-all", "http.https://github.com/.sslVerify")
+        self.environment["GIT_SSL_NO_VERIFY"] = "1"
+        self.assertEqual("UNBOUND", self._binding()[0])
 
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")
