@@ -59,10 +59,15 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
 1. **One owner, `tools/mutation.py`, exposed as `knowledge mutants`.** It loads a mutant table and either checks it (`--check`) or runs it.
    - **Check:** every anchor must apply exactly once, and every mutated Python file must still compile.
    - **Run:**
-     - **The baseline comes first.** The table's tests first run unmutated, in an isolated copy. Only if they pass does a failure say anything about a mutant. Otherwise every mutant is `NOT RUN`.
+     - **The baseline comes first.** The table's tests first run unmutated, in isolated copies, as many at once as the mutants will run. Only if every copy passes does a failure say anything about a mutant. Otherwise no mutant runs, and each that applies is `NOT RUN`.
+       - The baseline ends before any mutant starts.
+       - It runs as wide as the mutants because a suite that cannot share the machine with itself, holding a fixed port or lock, would otherwise "kill" mutants through contention.
      - **One copy per mutant.** Each mutant is applied in its own isolated copy of the root.
      - **The copy is faithful.** It keeps the repository's own `.git` directory, so tests that read Git see what they would see in place. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share.
-     - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy.
+     - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy. A table path with a backslash or a colon is refused when the table loads, because a path checked as POSIX would be read natively elsewhere.
+     - **What the tests do stays in the copy.**
+       - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
+       - Output beyond 16 MiB stops the tests, as a timeout does.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
      - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
 2. **Anchors survive reformatting.**
@@ -108,6 +113,14 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - a token-sequence replacement doubled the document's indentation.
 
   Each has a test that failed first, on the unchanged runner, and a mutant in `tests/mutants/mutation.yaml`.
+- **Review of `d887443`, round 3.**
+  - **Codex: the baseline overlapped the mutants.** With more than one worker, a mutant started before the baseline ended. Tests that failed first:
+    - the baseline must end before any mutant starts;
+    - it must run as wide as the mutants;
+    - no mutant may run after it fails.
+
+    A characterization shows the concrete harm: a suite holding an exclusive lock "killed" two mutants it cannot detect, in two of three runs.
+  - **CodeAnt: three ways out of the copy.** Windows-style table paths, unbounded test output, and links that resolve outside the copy. An absolute link let a test write outside on `d887443`. Each has a test that failed first.
 - **The nine round-1 kills were not evidence.** The new baseline then failed on the verification-workflow table itself. Two `tests.test_tools` tests read Git metadata (`git ls-files`, and the tracked-file scope), and a copy without `.git` fails them. So on `8ad4b4b` every one of the nine mutants was "killed" by those two errors, not by its own change.
   - The copy now keeps the repository's `.git` directory, with a test that failed first.
   - With that copy, all nine are killed for their own reasons.

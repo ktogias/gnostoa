@@ -27,8 +27,12 @@ mutants:
     replace: pass
   - name: a timeout is a survivor
     path: tools/mutation.py
-    find: 'Outcome(mutant.name, "KILLED", f"timed out after {timeout:g} s")'
-    replace: 'Outcome(mutant.name, "SURVIVED", "")'
+    find: |
+      if status is None:
+          return Outcome(mutant.name, "KILLED", last)
+    replace: |
+      if status is None:
+          return Outcome(mutant.name, "SURVIVED", last)
   - name: the original tree is mutated
     path: tools/mutation.py
     find: |
@@ -53,15 +57,13 @@ mutants:
     replace: spans, statements = [], False
   - name: a path that climbs is accepted
     path: tools/mutation.py
-    find: |
-      if not relative.parts or relative.is_absolute() or ".." in relative.parts:
-          raise refuse(f"{where}: path must stay inside the root: {item['path']!r}")
-    replace: pass
+    find: '".." in relative.parts'
+    replace: "False"
   - name: a broken mutant is not invalid
     path: tools/mutation.py
     find: |
       if broken:
-          problems.append(f"{mutant.name}: INVALID ({broken})")
+          return Outcome(mutant.name, "INVALID", broken)
     replace: pass
   - name: workers are ignored
     path: tools/mutation.py
@@ -75,8 +77,16 @@ mutants:
     replace: pass
   - name: a failing baseline is ignored
     path: tools/mutation.py
-    find: failure = baseline.result()
-    replace: failure = None
+    find: 'not failures'
+    replace: 'True'
+  - name: the baseline is skipped
+    path: tools/mutation.py
+    find: range(width)
+    replace: range(0)
+  - name: the baseline runs alone
+    path: tools/mutation.py
+    find: width = max(1, min(jobs, len(selected)))
+    replace: width = 1
   - name: a failing baseline passes
     path: tools/mutation.py
     find: |
@@ -84,21 +94,13 @@ mutants:
     replace: return None
   - name: a failing baseline hides a static problem
     path: tools/mutation.py
-    find: |
-      Outcome(o.name, "NOT RUN", failure) if o.status in {"KILLED", "SURVIVED"} else o
-    replace: Outcome(o.name, "NOT RUN", failure)
-  - name: a run writes through a link
+    find: result if isinstance(result, Outcome) else Outcome(mutant.name, "NOT RUN", failure)
+    replace: Outcome(mutant.name, "NOT RUN", failure)
+  - name: a link is written through
     path: tools/mutation.py
     find: |
       if linked is not None:
           return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
-    replace: pass
-  - name: a check accepts a link
-    path: tools/mutation.py
-    find: |
-      if linked is not None:
-          problems.append(f"{mutant.name}: REFUSED ({linked} is a symbolic link)")
-          continue
     replace: pass
   - name: only the file itself is checked for a link
     path: tools/mutation.py
@@ -122,3 +124,21 @@ mutants:
     path: tools/mutation.py
     find: (os.path.islink(git) or not os.path.isdir(git))
     replace: os.path.islink(git)
+  - name: a Windows path is accepted
+    path: tools/mutation.py
+    find: or any(c in item["path"] for c in "\\:")
+    replace: or False
+  - name: output is unbounded
+    path: tools/mutation.py
+    find: os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES
+    replace: "False"
+  - name: a link out of the copy is kept
+    path: tools/mutation.py
+    find: |
+      if escaping is not None:
+          raise CopyRefused(f"the link {escaping} resolves outside the copy")
+    replace: pass
+  - name: a link is judged by its own text
+    path: tools/mutation.py
+    find: target = os.path.realpath(path)
+    replace: target = os.path.normpath(os.path.join(directory, os.readlink(path)))

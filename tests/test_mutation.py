@@ -9,7 +9,8 @@ from __future__ import annotations
 import ast
 import os
 import pathlib
-import subprocess
+import shutil
+import subprocess  # nosec B404 -- test fixtures run only git, resolved once, with fixed arguments
 import tempfile
 import textwrap
 import threading
@@ -157,6 +158,13 @@ class TableTests(unittest.TestCase):
                 one.replace("pkg/m.py", "../m.py"),
                 "[tests.test_m]",
             ),
+            # Checked as POSIX, a Windows path would be used natively (CodeAnt on #374).
+            (
+                "a backslash",
+                one.replace("pkg/m.py", "'pkg\\..\\..\\m.py'"),
+                "[tests.test_m]",
+            ),
+            ("a drive", one.replace("pkg/m.py", "'C:/m.py'"), "[tests.test_m]"),
             ("an empty anchor", one.replace("find: 'a'", "find: ''"), "[tests.test_m]"),
             (
                 "a non-string replacement",
@@ -419,6 +427,205 @@ class SoundnessTests(unittest.TestCase):
             )
 
 
+class BaselineOrderTests(unittest.TestCase):
+    """The baseline runs first, alone, as wide as the mutants (Codex on #374)."""
+
+    @staticmethod
+    def _table(base: pathlib.Path) -> mutation.Table:
+        mutants = "".join(
+            f"  - name: m{i}\n    path: pkg/m.py\n    find: 'x * 2'\n"
+            f"    replace: 'x * {i + 3}'\n"
+            for i in range(2)
+        )
+        return mutation.load_table(_table(base, mutants))
+
+    def test_the_baseline_ends_before_any_mutant_starts(self) -> None:
+        events: list[str] = []
+
+        def baseline(*_args):  # type: ignore[no-untyped-def]
+            time.sleep(0.3)
+            events.append("baseline ended")
+
+        def one(*args):  # type: ignore[no-untyped-def]
+            events.append("mutant started")
+            return mutation.Outcome(args[2].name, "KILLED", "")
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = self._table(base)
+            with (
+                mock.patch.object(mutation, "_baseline", baseline),
+                mock.patch.object(mutation, "_run_one", one),
+            ):
+                mutation.run(root, table, jobs=2)
+        first = events.index("mutant started")
+        self.assertNotIn("baseline ended", events[first:], events)
+
+    def test_the_baseline_runs_as_wide_as_the_mutants(self) -> None:
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def baseline(*_args):  # type: ignore[no-untyped-def]
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.3)
+            with lock:
+                active -= 1
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = self._table(base)
+            with (
+                mock.patch.object(mutation, "_baseline", baseline),
+                mock.patch.object(
+                    mutation,
+                    "_run_one",
+                    lambda *a: mutation.Outcome(a[2].name, "KILLED", ""),
+                ),
+            ):
+                mutation.run(root, table, jobs=2)
+        self.assertEqual(2, peak)
+
+    def test_no_mutant_runs_after_a_failing_baseline(self) -> None:
+        ran: list[str] = []
+
+        def one(*args):  # type: ignore[no-untyped-def]
+            ran.append(args[2].name)
+            return mutation.Outcome(args[2].name, "KILLED", "")
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = self._table(base)
+            with (
+                mock.patch.object(mutation, "_baseline", return_value="it fails"),
+                mock.patch.object(mutation, "_run_one", one),
+            ):
+                outcomes = mutation.run(root, table, jobs=2)
+        self.assertEqual([], ran)
+        self.assertEqual(["NOT RUN", "NOT RUN"], [o.status for o in outcomes])
+
+    def test_a_suite_that_cannot_run_beside_itself_kills_nothing(self) -> None:
+        # Its test holds an exclusive lock outside the copy for a second.
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            lock = base / "shared.lock"
+            (root / "tests" / "test_lock.py").write_text(
+                "import os\nimport time\nimport unittest\n\n\n"
+                "class L(unittest.TestCase):\n"
+                "    def test_alone(self):\n"
+                f"        held = os.open({str(lock)!r}, os.O_CREAT | os.O_EXCL)\n"
+                "        time.sleep(1)\n"
+                "        os.close(held)\n"
+                f"        os.unlink({str(lock)!r})\n",
+                encoding="utf-8",
+            )
+            # Two mutants the suite cannot see: alone, each survives.
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: same double\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: '2 * x'\n"
+                    "  - name: added double\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x + x'\n",
+                    tests="[tests.test_lock]",
+                )
+            )
+            outcomes = mutation.run(root, table, jobs=2)
+        self.assertNotIn("KILLED", [o.status for o in outcomes], outcomes)
+
+
+class ContainmentTests(unittest.TestCase):
+    """What the tests do in a copy stays in it (CodeAnt on #374)."""
+
+    def test_output_beyond_the_limit_ends_the_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table_path = base / "table.yaml"
+            table_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "id": "fixture",
+                        "tests": ["tests.test_m"],
+                        "mutants": [
+                            {
+                                "name": "wait prints forever",
+                                "path": "pkg/m.py",
+                                "find": "return None",
+                                "replace": "while True:\n    print('x' * 65536)\n",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            started = time.monotonic()
+            with mock.patch.object(mutation, "_OUTPUT_LIMIT_BYTES", 1_000_000):
+                (outcome,) = mutation.run(
+                    root, mutation.load_table(table_path), jobs=1, timeout=15
+                )
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertEqual("KILLED", outcome.status)
+            self.assertIn("more than", outcome.detail)
+
+    def test_a_link_out_of_the_copy_refuses_the_copy(self) -> None:
+        for kind in ("absolute", "relative", "through a link to the root"):
+            with self.subTest(kind), tempfile.TemporaryDirectory() as scratch:
+                base = pathlib.Path(scratch)
+                root = _project(base)
+                outside = base / "outside"
+                outside.mkdir()
+                if kind == "absolute":
+                    (root / "pkg" / "data").symlink_to(outside)
+                elif kind == "relative":
+                    (root / "pkg" / "data").symlink_to("../../outside")
+                else:
+                    (root / "here").symlink_to(".")
+                    (root / "pkg" / "data").symlink_to("../here/../outside")
+                (root / "tests" / "test_write.py").write_text(
+                    "import unittest\n\n\n"
+                    "class W(unittest.TestCase):\n"
+                    "    def test_write(self):\n"
+                    "        with open('pkg/data/written', 'w') as handle:\n"
+                    "            handle.write('x')\n",
+                    encoding="utf-8",
+                )
+                table = mutation.load_table(
+                    _table(
+                        base,
+                        "  - name: double triples\n    path: pkg/m.py\n"
+                        "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                        tests="[tests.test_write, tests.test_m]",
+                    )
+                )
+                (outcome,) = mutation.run(root, table, jobs=1)
+                self.assertFalse((outside / "written").exists())
+                self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+                self.assertIn("outside the copy", outcome.detail)
+
+    def test_a_link_inside_the_copy_is_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "pkg" / "alias.py").symlink_to("m.py")
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+            self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+
 class CopyTests(unittest.TestCase):
     """A copy is faithful: its tests see the repository they would see in place."""
 
@@ -436,9 +643,14 @@ class CopyTests(unittest.TestCase):
                 "        )\n",
                 encoding="utf-8",
             )
+            git = shutil.which("git")
+            if git is None:
+                self.skipTest("git is not installed")
             clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
             for command in (["init", "-q"], ["add", "-A"]):
-                subprocess.run(["git", *command], cwd=root, env=clean, check=True)
+                subprocess.run(  # nosec B603
+                    [git, *command], cwd=root, env=clean, check=True
+                )
             table = mutation.load_table(
                 _table(
                     base,

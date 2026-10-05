@@ -7,13 +7,16 @@ link is followed". Tables of them live with the code they guard, as
 - `check` confirms that every anchor applies exactly once and that every mutated
   Python file still compiles. `tests/test_mutant_tables.py` runs it over every table,
   so an anchor a refactor breaks fails in the `fast` profile.
-- `run` first runs the table's tests unmutated, in an isolated copy of the root. Only if
-  they pass does a failure mean anything: otherwise every mutant is `NOT RUN`. It then
+- `run` first runs the table's tests unmutated, in isolated copies of the root, as
+  many at once as the mutants will run. Only if every copy passes does a failure mean
+  anything: otherwise no mutant runs, and each that applies is `NOT RUN`. It then
   applies each mutant in its own isolated copy and runs the tests there. A mutant is
   `KILLED` when they fail or time out, and `SURVIVED` when they pass. A timeout ends
   the tests' whole process group.
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
+- What the tests do stays in their copy. A copy holding a link that resolves outside
+  it is refused, and output beyond a limit ends the tests, as a timeout does.
 
 Anchors survive reformatting:
 
@@ -47,6 +50,7 @@ import subprocess  # nosec B404
 import sys
 import tempfile
 import textwrap
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -56,6 +60,10 @@ from tools.knowledge_common import KnowledgeFormatError, load_yaml
 DEFAULT_TIMEOUT = 300.0
 # How much of the end of the tests' output an outcome reports from.
 _OUTPUT_TAIL_BYTES = 4096
+# Output beyond this ends the tests, so a mutant that prints forever cannot fill the
+# scratch file system (CodeAnt on #374). How often the size and the deadline are read.
+_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024
+_POLL_SECONDS = 0.2
 _TOKEN = re.compile(r"\w+|[^\w\s]")
 # How a node's source span is computed, and how a table problem is raised.
 Span = Callable[[ast.AST, ast.AST], tuple[int, int]]
@@ -86,6 +94,10 @@ def _ignored(directory: str, names: list[str]) -> set[str]:
     if ".git" in names and (os.path.islink(git) or not os.path.isdir(git)):
         ignored.add(".git")
     return ignored
+
+
+class CopyRefused(Exception):
+    """An isolated copy holds a link out of it, which its tests could write through."""
 
 
 class AnchorError(ValueError):
@@ -172,7 +184,14 @@ def _mutant(item: object, where: str, refuse: Refuse) -> Mutant:
     if not item["name"] or not item["find"].strip():
         raise refuse(f"{where}: name and find must not be empty")
     relative = PurePosixPath(item["path"])
-    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+    # Checked as POSIX, a backslash or a drive would be read natively elsewhere
+    # (CodeAnt on #374).
+    if (
+        not relative.parts
+        or relative.is_absolute()
+        or ".." in relative.parts
+        or any(c in item["path"] for c in "\\:")
+    ):
         raise refuse(f"{where}: path must stay inside the root: {item['path']!r}")
     return Mutant(item["name"], item["path"], item["find"], item["replace"])
 
@@ -309,40 +328,46 @@ def _linked(root: Path, relative: str) -> str | None:
     return None
 
 
+def _mutated(root: Path, mutant: Mutant) -> str | Outcome:
+    """``mutant``'s file under ``root`` with the mutant applied, or why it does not
+    apply: `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`."""
+    linked = _linked(root, mutant.path)
+    if linked is not None:
+        return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
+    try:
+        text = (root / mutant.path).read_text(encoding="utf-8")
+    except OSError as exc:
+        return Outcome(mutant.name, "NOT FOUND", f"cannot read {mutant.path}: {exc}")
+    try:
+        mutated = apply(text, mutant.find, mutant.replace, python=mutant.python)
+    except AnchorError as exc:
+        return Outcome(mutant.name, exc.status, mutant.path)
+    broken = _compiles(mutated, mutant.path) if mutant.python else None
+    if broken:
+        return Outcome(mutant.name, "INVALID", broken)
+    return mutated
+
+
 def check(root: Path, table: Table) -> list[str]:
     """Return one line for each mutant of ``table`` that does not apply under ``root``."""
     problems = []
     for mutant in table.mutants:
-        linked = _linked(root, mutant.path)
-        if linked is not None:
-            problems.append(f"{mutant.name}: REFUSED ({linked} is a symbolic link)")
-            continue
-        try:
-            text = (root / mutant.path).read_text(encoding="utf-8")
-        except OSError as exc:
-            problems.append(
-                f"{mutant.name}: NOT FOUND (cannot read {mutant.path}: {exc})"
-            )
-            continue
-        try:
-            mutated = apply(text, mutant.find, mutant.replace, python=mutant.python)
-        except AnchorError as exc:
-            problems.append(f"{mutant.name}: {exc.status} ({mutant.path})")
-            continue
-        broken = _compiles(mutated, mutant.path) if mutant.python else None
-        if broken:
-            problems.append(f"{mutant.name}: INVALID ({broken})")
+        result = _mutated(root, mutant)
+        if isinstance(result, Outcome):
+            problems.append(f"{result.name}: {result.status} ({result.detail})")
     return problems
 
 
 def _run_tests(
     work: Path, scratch: str, tests: tuple[str, ...], timeout: float
 ) -> tuple[int | None, str]:
-    """Run ``tests`` in ``work``: their exit status, None on timeout, and last line.
+    """Run ``tests`` in ``work``: their exit status and their last line of output, or
+    None and why they were stopped.
 
     The tests run in a new session, and their whole process group is killed when
     they end, so a child they leave behind dies with them. Their output goes to a
-    file, so such a child cannot hold a pipe open.
+    file, so such a child cannot hold a pipe open. They are stopped at ``timeout``, or
+    once their output passes `_OUTPUT_LIMIT_BYTES`.
     """
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -363,58 +388,89 @@ def _run_tests(
             start_new_session=True,
         )
         try:
-            status: int | None = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            status = None
+            status, stopped = _wait(process, log.fileno(), timeout)
         finally:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+    if stopped is not None:
+        return None, stopped
     with output.open("rb") as log:
         log.seek(max(0, output.stat().st_size - _OUTPUT_TAIL_BYTES))
         tail = log.read().decode("utf-8", errors="replace")
     return status, (tail.strip().splitlines() or [""])[-1]
 
 
+def _wait(
+    process: subprocess.Popen[bytes], log: int, timeout: float
+) -> tuple[int | None, str | None]:
+    """Wait for ``process``: its exit status, or why it must be stopped."""
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, f"timed out after {timeout:g} s"
+        try:
+            return process.wait(timeout=min(_POLL_SECONDS, remaining)), None
+        except subprocess.TimeoutExpired:
+            if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+                return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+
+
 def _copy(root: Path, scratch: str) -> Path:
+    """An isolated copy of ``root``, or `CopyRefused` when a link in it leads out."""
     work = Path(scratch) / "w"
     shutil.copytree(root, work, ignore=_ignored, symlinks=True)
+    escaping = _escaping_link(work)
+    if escaping is not None:
+        raise CopyRefused(f"the link {escaping} resolves outside the copy")
     return work
+
+
+def _escaping_link(work: Path) -> str | None:
+    """The first symbolic link in ``work`` that resolves outside it, if any.
+
+    A copy keeps its links, and one leading out, such as an absolute link back into
+    the original tree, would let the tests write there (CodeAnt on #374). Each is
+    resolved in full, through any links it passes, since `..` after a link climbs
+    from that link's target.
+    """
+    base = os.path.realpath(work)
+    for directory, directories, files in os.walk(work):
+        for name in (*directories, *files):
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                target = os.path.realpath(path)
+                if os.path.commonpath([base, target]) != base:
+                    return os.path.relpath(path, work)
+    return None
 
 
 def _baseline(root: Path, table: Table, timeout: float) -> str | None:
     """Why the table's tests fail without any mutant, or None when they pass."""
     with tempfile.TemporaryDirectory(prefix="gnostoa-mutant-") as scratch:
-        status, last = _run_tests(_copy(root, scratch), scratch, table.tests, timeout)
-    if status is None:
-        last = f"timed out after {timeout:g} s"
+        try:
+            work = _copy(root, scratch)
+        except CopyRefused as exc:
+            return f"the copy is refused: {exc}"
+        status, last = _run_tests(work, scratch, table.tests, timeout)
     return None if status == 0 else f"the unmutated tests fail: {last}"
 
 
 def _run_one(root: Path, table: Table, mutant: Mutant, timeout: float) -> Outcome:
     """Apply ``mutant`` in an isolated copy of ``root`` and run the table's tests."""
     with tempfile.TemporaryDirectory(prefix="gnostoa-mutant-") as scratch:
-        work = _copy(root, scratch)
-        linked = _linked(work, mutant.path)
-        if linked is not None:
-            return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
-        target = work / mutant.path
         try:
-            mutated = apply(
-                target.read_text(encoding="utf-8"),
-                mutant.find,
-                mutant.replace,
-                python=mutant.python,
-            )
-        except (AnchorError, OSError) as exc:
-            return Outcome(mutant.name, getattr(exc, "status", "NOT FOUND"), str(exc))
-        broken = _compiles(mutated, mutant.path) if mutant.python else None
-        if broken:
-            return Outcome(mutant.name, "INVALID", broken)
-        target.write_text(mutated, encoding="utf-8")
+            work = _copy(root, scratch)
+        except CopyRefused as exc:
+            return Outcome(mutant.name, "REFUSED", str(exc))
+        mutated = _mutated(work, mutant)
+        if isinstance(mutated, Outcome):
+            return mutated
+        (work / mutant.path).write_text(mutated, encoding="utf-8")
         status, last = _run_tests(work, scratch, table.tests, timeout)
     if status is None:
-        return Outcome(mutant.name, "KILLED", f"timed out after {timeout:g} s")
+        return Outcome(mutant.name, "KILLED", last)
     if status == 0:
         return Outcome(mutant.name, "SURVIVED", "the tests passed")
     return Outcome(mutant.name, "KILLED", last)
@@ -430,8 +486,11 @@ def run(
 ) -> list[Outcome]:
     """Run ``table``'s mutants, or those named in ``only``, in ``jobs`` workers.
 
-    The unmutated baseline runs alongside them. When it fails, a failure says
-    nothing about a mutant, so every mutant that ran is `NOT RUN` instead.
+    The unmutated baseline ends before any mutant starts, and runs as many copies at
+    once as the mutants will. A suite that cannot share the machine with itself, such
+    as one holding a fixed port or lock, then fails here rather than killing mutants
+    it never detected (Codex on #374). When any copy fails, no mutant runs: each that
+    applies is `NOT RUN`, and each that does not keeps its status.
     """
     if not (math.isfinite(timeout) and timeout > 0):
         raise ValueError(f"timeout must be a positive number of seconds: {timeout!r}")
@@ -440,18 +499,35 @@ def run(
     if unknown:
         raise KnowledgeFormatError(f"{table.id} has no mutant named {unknown}")
     selected = [m for m in table.mutants if not only or m.name in only]
+    width = max(1, min(jobs, len(selected)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        baseline = pool.submit(_baseline, root, table, timeout)
-        outcomes = list(
-            pool.map(lambda mutant: _run_one(root, table, mutant, timeout), selected)
-        )
-    failure = baseline.result()
-    if failure is None:
-        return outcomes
-    return [
-        Outcome(o.name, "NOT RUN", failure) if o.status in {"KILLED", "SURVIVED"} else o
-        for o in outcomes
-    ]
+        failures = [
+            failure
+            for failure in pool.map(
+                lambda _: _baseline(root, table, timeout), range(width)
+            )
+            if failure is not None
+        ]
+        if not failures:
+            return list(
+                pool.map(
+                    lambda mutant: _run_one(root, table, mutant, timeout), selected
+                )
+            )
+    failure = failures[0]
+    if width > 1:
+        failure += f" ({len(failures)} of {width} copies run at once failed)"
+    return [_static(root, mutant, failure) for mutant in selected]
+
+
+def _static(root: Path, mutant: Mutant, failure: str) -> Outcome:
+    """Why ``mutant`` does not apply, or `NOT RUN` because the baseline failed."""
+    result = _mutated(root, mutant)
+    return (
+        result
+        if isinstance(result, Outcome)
+        else Outcome(mutant.name, "NOT RUN", failure)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -482,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.timeout,
             only=tuple(args.names),
         )
-    except (KnowledgeFormatError, ValueError) as exc:
+    except ValueError as exc:  # a KnowledgeFormatError, or a bad --timeout
         print(f"mutants: {exc}")
         return 2
     for outcome in outcomes:
