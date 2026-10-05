@@ -425,6 +425,38 @@ class PushBindingTests(unittest.TestCase):
         )
         self.assertEqual("UNKNOWN", self._binding()[0])
 
+    def test_an_inherited_exec_path_is_unbound(self) -> None:
+        """`GIT_EXEC_PATH` chooses which `git-remote-https` a push runs, so a session
+        that sets it may push through a transport other than the one checked (Codex on
+        #364)."""
+        self._bind_gh()
+        self.environment["GIT_EXEC_PATH"] = str(
+            pathlib.Path(self.scratch.name) / "exec"
+        )
+        state, evidence = self._binding()
+        self.assertEqual("UNBOUND", state)
+        self.assertIn("GIT_EXEC_PATH", evidence)
+
+    def test_a_helper_reached_through_a_replaceable_link_is_unbound(self) -> None:
+        """Git runs the helper's own path, not its target: a link to the trusted gh in
+        a directory others can write can be repointed after the check (Codex on #364).
+        The helper's path is held to the rule `trusted_executable` applies."""
+        links = pathlib.Path(self.scratch.name) / "links"
+        links.mkdir()
+        link = links / "gh"
+        link.symlink_to(self.gh)
+        links.chmod(0o775)
+        self._git("config", "--add", "credential.https://github.com.helper", "")
+        self._git(
+            "config",
+            "--add",
+            "credential.https://github.com.helper",
+            f"!{link} auth git-credential",
+        )
+        self.assertEqual("UNBOUND", self._binding()[0])
+        links.chmod(0o755)
+        self.assertEqual("BOUND", self._binding()[0])
+
     def test_a_missing_remote_is_unknown(self) -> None:
         self._git("remote", "remove", "origin")
         self.assertEqual("UNKNOWN", self._binding()[0])

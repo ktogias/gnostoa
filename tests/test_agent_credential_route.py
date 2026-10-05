@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pathlib
 import re
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 import unittest
 
@@ -151,35 +151,31 @@ class AgentCredentialRouteTests(unittest.TestCase):
         helper = router.split("run_main_credential_check() (", 1)[1].split("\n)\n", 1)[
             0
         ]
-        for scrubbed in ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_NO_REPLACE_OBJECTS=1"):
-            self.assertIn(scrubbed, helper)
-        # The fetch runs inside the scrubbed block, from an explicit HTTPS URL, with
-        # every other transport refused: a hostile remote or `insteadOf` cannot run an
-        # `ext::` command before the authority is retrieved (CodeAnt on #364).
-        scrubbed_block = helper.split("unset GIT_DIR", 1)[1].split('> "${wrapper}"', 1)[
-            0
-        ]
-        self.assertIn("fetch --quiet", scrubbed_block)
+        # Every git the retrieval runs inherits no environment (Codex on #364): an
+        # inherited `GIT_EXEC_PATH` alone would choose the transport the fetch runs.
+        self.assertIn('"${env_executable}" -i PATH=', helper)
+        for pinned in ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0"):
+            self.assertIn(pinned, helper)
+        retrieval = helper.split("  status=0\n  (", 1)[1].split('> "${wrapper}"', 1)[0]
+        logical = retrieval.replace("\\\n", " ").splitlines()
+        git_calls = [line for line in logical if '"${git_executable}"' in line]
+        self.assertTrue(git_calls)
+        for line in git_calls:
+            self.assertIn("isolated ", line)
         # The fetch reads none of the checkout's configuration, whose `insteadOf` could
         # redirect it and whose credential helper could run first (CodeAnt on #364):
         # disposable metadata from an empty template, bound to the checkout's object
-        # store, in place before the fetch, and nothing may prompt.
+        # store, from an explicit HTTPS URL with every other transport refused.
+        (fetch,) = [line for line in git_calls if "fetch --quiet" in line]
         for isolated in (
-            '--template="${metadata}/template"',
             'GIT_DIR="${metadata}/git"',
             'GIT_OBJECT_DIRECTORY="${objects}"',
-            "export GIT_DIR GIT_OBJECT_DIRECTORY",
-            "export GIT_TERMINAL_PROMPT=0",
-            "unset GIT_ASKPASS SSH_ASKPASS",
+            '"https://github.com/${repository}.git"',
+            "-c protocol.allow=never",
+            "-c protocol.https.allow=always",
         ):
-            self.assertIn(isolated, scrubbed_block)
-        self.assertLess(
-            scrubbed_block.index("export GIT_DIR GIT_OBJECT_DIRECTORY"),
-            scrubbed_block.index("fetch --quiet"),
-        )
-        self.assertIn('"https://github.com/${repository}.git"', scrubbed_block)
-        for option in ("-c protocol.allow=never", "-c protocol.https.allow=always"):
-            self.assertIn(option, scrubbed_block)
+            self.assertIn(isolated, fetch)
+        self.assertIn('--template="${metadata}/template"', retrieval)
         self.assertNotIn("fetch --quiet origin", helper)
         self.assertIn("run_main_credential_check ktogias/gnostoa", router)
 
@@ -206,7 +202,7 @@ class AgentCredentialRouteTests(unittest.TestCase):
                         functions += (
                             f'{name}() {{ printf x > "{marker}"; return 0; }}\n'
                         )
-                    completed = subprocess.run(  # nosec B603 B607
+                    completed = subprocess.run(  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                         [
                             "bash",
                             "-c",

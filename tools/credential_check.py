@@ -37,6 +37,7 @@ from tools.knowledge_common import (
     TRUSTED_EXECUTABLE_PATH,
     load_yaml,
     trusted_executable,
+    trusted_path,
     utc_timestamp,
 )
 from tools.schema_validation import schema_errors
@@ -322,11 +323,12 @@ def _is_trusted_gh(helper: str) -> bool:
     if gh is None or not helper.startswith("!"):
         return False
     words = shlex.split(helper[1:])
+    # Git runs the helper's own path, not its target, so the path itself must be one no
+    # one can repoint (Codex on #364).
     return (
         len(words) == 3
         and words[1:] == ["auth", "git-credential"]
-        and os.path.isabs(words[0])
-        and os.path.realpath(words[0]) == gh
+        and trusted_path(words[0]) == gh
     )
 
 
@@ -426,6 +428,13 @@ def _push_binding(worktree: Path, subject: str) -> tuple[str, str]:
     credential helpers exactly the trusted gh, which answers with the token this check
     read. Only configuration is read, never a credential (Codex on #364).
     """
+    if os.environ.get("GIT_EXEC_PATH"):
+        # It chooses which `git-remote-https` a push runs: another transport than the
+        # one checked (Codex on #364).
+        return (
+            "UNBOUND",
+            "GIT_EXEC_PATH is set, so it chooses the transport a push runs",
+        )
     try:
         destinations = _push_destinations(worktree)
         if isinstance(destinations, str):

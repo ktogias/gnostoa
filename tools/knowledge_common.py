@@ -99,24 +99,35 @@ def _writable_only_by_owner(path: str) -> bool:
     return mode.st_uid in owners and not mode.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
 
 
+def trusted_path(found: str) -> str | None:
+    """Return the file the absolute path ``found`` really is, if no one can replace it.
+
+    The file it really is -- a symlink resolved -- its directory, and the directory
+    ``found`` is in must be changeable by no one but root or the caller: whoever can
+    change that last one repoints ``found`` and chooses what runs (Codex on #364).
+    """
+    if not os.path.isabs(found):
+        return None
+    real = os.path.realpath(found)
+    checked = (real, os.path.dirname(real), os.path.dirname(found))
+    try:
+        if all(_writable_only_by_owner(path) for path in checked):
+            return real
+    except OSError:
+        return None
+    return None
+
+
 def trusted_executable(name: str) -> str | None:
     """Return ``name`` resolved from the trusted system directories, or None.
 
-    Found is not trusted yet: the file it really is -- a symlink resolved -- its
-    directory, and the directory it was found in must be changeable by no one but root
-    or the caller. `/opt/homebrew/bin`
-    belongs to a user, not to root (CodeAnt on #364).
+    Found is not trusted yet: it must be a `trusted_path`. `/opt/homebrew/bin` belongs
+    to a user, not to root (CodeAnt on #364).
     """
     found = shutil.which(name, path=TRUSTED_EXECUTABLE_PATH)
     if found is None:
         return None
-    real = os.path.realpath(found)
-    # The file it really is and its directory, and the directory the name was found
-    # in: whoever can change that one chooses which binary runs (Codex on #364).
-    checked = (real, os.path.dirname(real), os.path.dirname(os.path.abspath(found)))
-    if all(_writable_only_by_owner(path) for path in checked):
-        return real
-    return None
+    return trusted_path(os.path.abspath(found))
 
 
 def utc_timestamp() -> str:

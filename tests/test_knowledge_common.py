@@ -128,5 +128,34 @@ class TrustedExecutableWritersTests(unittest.TestCase):
                 open_dir.chmod(0o755)
 
 
+class TrustedPathTests(unittest.TestCase):
+    """A given path, as a configured helper names one, is held to the same rule."""
+
+    def test_a_path_is_judged_by_its_own_directory_and_its_target(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            target_dir = base / "real"
+            link_dir = base / "links"
+            target_dir.mkdir()
+            link_dir.mkdir()
+            target = target_dir / "tool"
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            target.chmod(0o755)
+            link = link_dir / "tool"
+            link.symlink_to(target)
+            self.assertEqual(
+                str(target.resolve()), knowledge_common.trusted_path(str(link))
+            )
+            for changed in (link_dir, target_dir):
+                with self.subTest(writable=changed.name):
+                    changed.chmod(0o775)
+                    self.assertIsNone(knowledge_common.trusted_path(str(link)))
+                    changed.chmod(0o755)
+
+    def test_a_relative_or_missing_path_is_not_trusted(self) -> None:
+        self.assertIsNone(knowledge_common.trusted_path("gh"))
+        self.assertIsNone(knowledge_common.trusted_path("/nonexistent/gnostoa/gh"))
+
+
 if __name__ == "__main__":
     unittest.main()

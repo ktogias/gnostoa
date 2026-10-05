@@ -134,9 +134,11 @@ run_main_credential_check() (
   # it, so only an absolute path is run; and only one no one but root or the caller can
   # replace: the file it really is, its directory and the directory it was found in, as
   # `knowledge_common.trusted_executable` requires (CodeAnt on #364).
-  ls_executable="$(command -v ls || true)"
-  readlink_executable="$(command -v readlink || true)"
-  id_executable="$(command -v id || true)"
+  # The validators come from the system directories alone, so none is found where the
+  # rule below would refuse it and then vouches for itself (gitar on #364).
+  ls_executable="$(PATH=/usr/bin:/bin; command -v ls || true)"
+  readlink_executable="$(PATH=/usr/bin:/bin; command -v readlink || true)"
+  id_executable="$(PATH=/usr/bin:/bin; command -v id || true)"
   caller=""
   case "${id_executable}" in
     /*) caller="$("${id_executable}" -u)" ;;
@@ -155,25 +157,46 @@ run_main_credential_check() (
     esac
     [ "$3" = 0 ] || [ "$3" = "${caller}" ]
   }
-  trusted() {
-    found="$(command -v "$1" || true)"
-    case "${found}:${readlink_executable}" in
+  # What runs Git or tar inherits no environment: `GIT_EXEC_PATH` alone chooses the
+  # transport a fetch runs, and `TAR_OPTIONS` adds options to tar (Codex on #364). Only
+  # the search path, the home directory and the proxy and certificate settings a fetch
+  # may need pass, beside what each step names.
+  isolated() {
+    "${env_executable}" -i PATH="${PATH}" HOME="${HOME:-/}" \
+      ${http_proxy+"http_proxy=${http_proxy}"} \
+      ${https_proxy+"https_proxy=${https_proxy}"} \
+      ${HTTPS_PROXY+"HTTPS_PROXY=${HTTPS_PROXY}"} \
+      ${all_proxy+"all_proxy=${all_proxy}"} \
+      ${ALL_PROXY+"ALL_PROXY=${ALL_PROXY}"} \
+      ${no_proxy+"no_proxy=${no_proxy}"} \
+      ${NO_PROXY+"NO_PROXY=${NO_PROXY}"} \
+      ${SSL_CERT_FILE+"SSL_CERT_FILE=${SSL_CERT_FILE}"} \
+      ${SSL_CERT_DIR+"SSL_CERT_DIR=${SSL_CERT_DIR}"} \
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+      GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 "$@"
+  }
+  checked() {
+    case "$1:${readlink_executable}" in
       /*:/*) ;;
       *) return 1 ;;
     esac
-    real="$("${readlink_executable}" -f -- "${found}" 2>/dev/null)" || return 1
-    owned "${real}" && owned "${real%/*}" && owned "${found%/*}" || return 1
-    printf '%s\n' "${found}"
+    real="$("${readlink_executable}" -f -- "$1" 2>/dev/null)" || return 1
+    owned "${real}" && owned "${real%/*}" && owned "${1%/*}" || return 1
+    printf '%s\n' "$1"
+  }
+  trusted() {
+    checked "$(command -v "$1" || true)"
   }
   unresolved=""
-  for name in ls readlink id; do
-    trusted "${name}" >/dev/null || unresolved="${unresolved} ${name}"
-  done
+  checked "${ls_executable}" >/dev/null || unresolved="${unresolved} ls"
+  checked "${readlink_executable}" >/dev/null || unresolved="${unresolved} readlink"
+  checked "${id_executable}" >/dev/null || unresolved="${unresolved} id"
   git_executable="$(trusted git)" || unresolved="${unresolved} git"
   gh_executable="$(trusted gh)" || unresolved="${unresolved} gh"
   mktemp_executable="$(trusted mktemp)" || unresolved="${unresolved} mktemp"
   mkdir_executable="$(trusted mkdir)" || unresolved="${unresolved} mkdir"
   rm_executable="$(trusted rm)" || unresolved="${unresolved} rm"
+  env_executable="$(trusted env)" || unresolved="${unresolved} env"
   sh_executable="$(trusted sh)" || unresolved="${unresolved} sh"
   if [ -n "${unresolved}" ]; then
     echo "ERROR: trusted credential-check executables are unavailable" \
@@ -202,38 +225,26 @@ run_main_credential_check() (
   trap 'exit 129' HUP
   status=0
   (
-    unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
-    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
-    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
-    unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
-    unset GIT_ASKPASS SSH_ASKPASS
-    export GIT_CONFIG_COUNT=0
-    export GIT_CONFIG_GLOBAL=/dev/null
-    export GIT_CONFIG_SYSTEM=/dev/null
-    export GIT_CONFIG_NOSYSTEM=1
-    export GIT_ATTR_NOSYSTEM=1
-    export GIT_NO_REPLACE_OBJECTS=1
-    export GIT_TERMINAL_PROMPT=0
     # The checkout's own configuration is never read: its `insteadOf` could redirect
     # the fetch and its credential helper could run a command first (CodeAnt on
     # #364). Disposable metadata with an empty template, bound to the checkout's
     # object store, as preparation binds it; the exact SHA fixes the bytes.
-    common="$("${git_executable}" rev-parse --path-format=absolute --git-common-dir)" \
+    common="$(isolated "${git_executable}" rev-parse --path-format=absolute \
+      --git-common-dir)" \
       && objects="${common}/objects" \
       && "${mkdir_executable}" "${metadata}/template" \
-      && "${git_executable}" init --quiet --bare --template="${metadata}/template" \
-        "${metadata}/git" \
+      && isolated "${git_executable}" init --quiet --bare \
+        --template="${metadata}/template" "${metadata}/git" >/dev/null \
       && printf '%s\n' "${objects}" > "${metadata}/git/objects/info/alternates" \
       || exit 3
-    GIT_DIR="${metadata}/git"
-    GIT_OBJECT_DIRECTORY="${objects}"
-    export GIT_DIR GIT_OBJECT_DIRECTORY
     # From an explicit HTTPS URL, every other transport refused.
-    "${git_executable}" -c core.hooksPath=/dev/null \
+    isolated GIT_DIR="${metadata}/git" GIT_OBJECT_DIRECTORY="${objects}" \
+      "${git_executable}" -c core.hooksPath=/dev/null \
       -c protocol.allow=never -c protocol.https.allow=always \
       fetch --quiet "https://github.com/${repository}.git" "${main}" >/dev/null \
       || exit 3
-    "${git_executable}" show "${main}:ci/credential-check" || exit 4
+    isolated GIT_DIR="${metadata}/git" GIT_OBJECT_DIRECTORY="${objects}" \
+      "${git_executable}" show "${main}:ci/credential-check" || exit 4
   ) > "${wrapper}" || status=$?
   case "${status}" in
     0) ;;

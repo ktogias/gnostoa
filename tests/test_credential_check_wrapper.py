@@ -177,6 +177,17 @@ class CredentialCheckWrapperTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("authority", json.loads(completed.stdout)["from"])
 
+    def test_no_inherited_git_environment_reaches_the_extraction(self) -> None:
+        """Git and tar run with no inherited environment, not with a list of scrubbed
+        variables: `GIT_EXEC_PATH` escaped such a list (Codex on #364). An inherited
+        `GIT_TRACE` would make git write its trace."""
+        trace = pathlib.Path(self.scratch.name) / "trace"
+        completed = self._run(
+            self.authority, "--repository", "o/r", extra={"GIT_TRACE": str(trace)}
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertFalse(trace.exists(), "an inherited GIT_TRACE reached git")
+
     def test_the_checkout_s_attributes_and_filters_never_touch_the_extraction(
         self,
     ) -> None:
@@ -251,10 +262,6 @@ class CredentialCheckWrapperTests(unittest.TestCase):
         self.assertIn("could not be extracted", completed.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _resolution(text: str) -> str:
     """The trusted-executable resolution, from its first comment to the end of
     `trusted()`, dedented."""
@@ -275,10 +282,13 @@ class TrustedResolutionTests(unittest.TestCase):
     }
 
     @staticmethod
-    def _trusted(source: pathlib.Path, path: str) -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def _trusted(
+        source: pathlib.Path, path: str, then: str = ""
+    ) -> subprocess.CompletedProcess[str]:
         block = _resolution(source.read_text(encoding="utf-8"))
-        return subprocess.run(  # nosec B603 B607
-            ["sh", "-c", f"{block}\ntrusted git"],
+        return subprocess.run(  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            ["sh", "-c", f"{block}\n{then}trusted git"],
             env={"PATH": path},
             capture_output=True,
             text=True,
@@ -323,16 +333,27 @@ class TrustedResolutionTests(unittest.TestCase):
                         self.assertNotEqual(0, completed.returncode)
                         self.assertEqual("", completed.stdout)
                     changed.chmod(0o755)
-                # Another user's file: an `id` naming a different caller stands in for
-                # an owner no test can create.
-                other = pathlib.Path(scratch) / "other"
-                other.mkdir()
-                (other / "id").write_text("#!/bin/sh\necho 4242\n", encoding="utf-8")
-                (other / "id").chmod(0o755)
+                # Another user's file: a caller other than the file's owner, named
+                # directly, stands in for an owner no test can create.
                 with self.subTest(source=name, case="a file another user owns"):
-                    completed = self._trusted(source, f"{other}:{path}")
+                    completed = self._trusted(source, path, then="caller=4242\n")
                     self.assertNotEqual(0, completed.returncode)
                     self.assertEqual("", completed.stdout)
+                # A validator planted where the rule would refuse it must not vouch for
+                # itself and then for everything else (gitar on #364).
+                planted = found / "ls"
+                planted.write_text(
+                    "#!/bin/sh\necho '-rwxr-xr-x 1 0 0 0 Jan 1 00:00 x'\n",
+                    encoding="utf-8",
+                )
+                planted.chmod(0o755)
+                found.chmod(0o775)
+                with self.subTest(source=name, case="a planted ls"):
+                    completed = self._trusted(source, path)
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertEqual("", completed.stdout)
+                found.chmod(0o755)
+                planted.unlink()
                 target = elsewhere / "git"
                 fake.rename(target)
                 fake.symlink_to(target)
@@ -343,3 +364,7 @@ class TrustedResolutionTests(unittest.TestCase):
                     completed = self._trusted(source, path)
                     self.assertNotEqual(0, completed.returncode)
                     self.assertEqual("", completed.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

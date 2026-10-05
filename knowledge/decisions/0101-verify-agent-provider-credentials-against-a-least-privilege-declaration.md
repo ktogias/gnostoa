@@ -192,10 +192,16 @@ No tool found verifies a personal account's fine-grained token against a declara
     the fetch, a credential helper could run first, and the checkout's attributes
     could name a filter driver that `git archive` runs. Both use disposable metadata
     from an empty template, bound to the checkout's object store, as preparation
-    does, and tar runs with an empty environment. Every executable either script
+    does. What runs Git or tar inherits no environment, rather than a list of scrubbed
+    variables: an inherited `GIT_EXEC_PATH` alone would choose the fetch's transport,
+    and `TAR_OPTIONS` would add options to tar. Only the search path, the home
+    directory and a fetch's proxy and certificate settings pass. Every executable either script
     runs is an absolute path, from the fixed trusted directories, that no one but
     root or the caller can replace, as `knowledge_common.trusted_executable`
-    requires; a shell function named like one never runs. Both trust the shell they
+    requires; a shell function named like one never runs. The validators that rule
+    runs (`ls`, `readlink`, `id`) come from `/usr/bin` and `/bin` alone, so none
+    vouches for itself. Where `readlink -f` is unavailable, as on macOS before 12.3,
+    every executable is refused: the check fails closed. Both trust the shell they
     run in: a function shadowing a builtin, or a preloaded library, is control of
     that shell, outside this check. Bootstrap: until protected main first provides the wrapper,
     the candidate's own check runs, and the exception is stated with its verdict.
@@ -210,9 +216,11 @@ No tool found verifies a personal account's fine-grained token against a declara
     - the push URL must be HTTPS to github.com, with no credential in it, after
       `pushInsteadOf`; a URL that push routing names directly is the raw value, so
       with any rewrite rule configured it is not judged;
-    - no extra HTTP header may be configured for it;
+    - no extra HTTP header may be configured for it, and `GIT_EXEC_PATH` must be
+      unset in the session, since it chooses the transport a push runs;
     - Git's effective credential helpers for it, folded in order with an empty value
-      resetting them, must be exactly the trusted `gh`, which answers with the token
+      resetting them, must be exactly the trusted `gh`, through a path no one can
+      repoint (`knowledge_common.trusted_path`), which answers with the token
       checked here: a token from the environment, or else `gh`'s own for github.com,
       the push URL's host, never the host `GH_HOST` selects. Git, not the check, decides which credential contexts apply, so a
       context in another case, with a default port or percent-encoded matches as it
