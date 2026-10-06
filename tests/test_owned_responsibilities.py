@@ -976,6 +976,26 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(unmarked=line):
                 self.assertFalse(pattern.search(line))
 
+    def test_git_after_a_shell_assignment_runs_it(self) -> None:
+        """`LC_ALL=C git status` runs Git with one variable set, in any command
+        position (Codex on #369)."""
+        pattern = _pattern("trusted-execution", "git-execution")
+        for line in (
+            "LC_ALL=C git status",
+            "FOO=bar /usr/bin/git status",
+            "LANG=C LC_ALL=C git log --oneline",
+            "out=$(LC_ALL=C git rev-parse HEAD)",
+            "if GIT_TERMINAL_PROMPT=0 git fetch; then",
+            "      run: LC_ALL=C git diff --exit-code",
+            "sudo LC_ALL=C git gc",
+            "env FOO=1 git status",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
+        for line in ("LC_ALL=C python3 tool.py", "x=1 y=2", "FOO=bar github status"):
+            with self.subTest(unmarked=line):
+                self.assertFalse(pattern.search(line))
+
     def test_the_shell_s_own_lookup_is_a_signature(self) -> None:
         """`$(which git)` and `$(type -P git)` resolve an executable as `command -v`
         does (Codex on #369)."""

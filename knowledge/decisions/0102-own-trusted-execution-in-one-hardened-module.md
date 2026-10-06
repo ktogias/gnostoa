@@ -280,6 +280,8 @@ here.
    Round 29 gives `env`'s own options their arguments, as `env -u GIT_DIR git`
    and `env -C dir git`, and reads `env -S '...'` as a string that names the
    command.
+   Round 30 reads a leading shell assignment, as `LC_ALL=C git status`, in any
+   command position, a line start included.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and
