@@ -392,6 +392,10 @@ class StructuralSignatureTests(unittest.TestCase):
             ),
             ("from os.path import commonpath\nok = commonpath((r, p)) != r\n", 2),
             ("import os\nok = os.path.commonprefix([r, p]) == r\n", 2),
+            (
+                "import os\nok = os.path.commonpath([p, '/srv/root']) == '/srv/root'\n",
+                2,
+            ),
             ("import os\nok = (\n    os.path.commonpath([r, p])\n    == r\n)\n", 3),
             ("ok = root in path.parents\n", 1),
             ("ok = root not in path.resolve().parents\n", 1),
@@ -418,6 +422,47 @@ class StructuralSignatureTests(unittest.TestCase):
             with self.subTest(unmarked=source):
                 found = _findings_with_the_real_registry({"tools/new.py": source})
                 self.assertFalse([f for f in found if "path-confinement" in f], found)
+
+    def test_a_shell_helper_imported_by_name_runs_its_command_too(self) -> None:
+        """`from subprocess import run`, then `run("git status", shell=True)`, runs Git
+        where no line shows it (Codex on #369). So does a module alias, and a command
+        on a line of its own. A command handed to a shell is read as a line is, so
+        the responsibility's own line patterns judge it."""
+        cases = (
+            ('from subprocess import run\nrun("git status", shell=True)\n', 2),
+            ('from os import system\nsystem("git fetch")\n', 2),
+            ('from os import system as sh\nsh("LC_ALL=C git status")\n', 2),
+            ('import subprocess as sp\nsp.run("git status", shell=True)\n', 2),
+            (
+                'import subprocess\nsubprocess.run(\n    "git status",\n'
+                "    shell=True,\n)\n",
+                3,
+            ),
+            (
+                "from subprocess import check_output as co\n"
+                'out = co(f"git -C {path} rev-parse HEAD", shell=True)\n',
+                2,
+            ),
+            ('from os import system\nsystem("sudo -u builder git gc")\n', 2),
+            ('from subprocess import run\nrun(args="git status", shell=True)\n', 2),
+        )
+        for source, line in cases:
+            with self.subTest(source=source):
+                found = _findings_with_the_real_registry({"tools/new.py": source})
+                self.assertEqual(
+                    [str(line)],
+                    [f.split(":")[1] for f in found if "shell-command" in f],
+                    found,
+                )
+        for source in (
+            'from subprocess import run\nrun("make test", shell=True)\n',
+            "from os import system\nsystem(command)\n",
+            'import subprocess\nsubprocess.run("git status", shell=True)\n',
+            'from subprocess import run\nrun(["git", "status"])\n',
+        ):
+            with self.subTest(unmarked=source):
+                found = _findings_with_the_real_registry({"tools/new.py": source})
+                self.assertFalse([f for f in found if "shell-command" in f], found)
 
     def test_a_submodule_s_function_is_reached_too(self) -> None:
         """`from jsonschema.validators import validator_for as select` and a dotted call
@@ -599,6 +644,33 @@ class StructuralSignatureTests(unittest.TestCase):
             )
             with self.assertRaises(KnowledgeFormatError):
                 list(no_end)
+
+    def test_a_line_beyond_the_bound_inside_one_block_is_refused(self) -> None:
+        """Only what was still pending was measured, so a line that ended inside the
+        block it was read in passed the bound (CodeAnt on #369)."""
+        with (
+            mock.patch.object(reuse_check, "_LINE_LIMIT_BYTES", 1024),
+            mock.patch.object(reuse_check, "_BLOCK_BYTES", 4096),
+        ):
+            lines = reuse_check._byte_lines(  # skipcq: PYL-W0212
+                io.BytesIO(b"x" * 1025 + b"\ny\n"), "tools/long.py"
+            )
+            with self.assertRaises(KnowledgeFormatError):
+                list(lines)
+
+    def test_a_byte_order_mark_hides_nothing(self) -> None:
+        """A UTF-8 byte order mark reached `ast.parse` as U+FEFF, which it refuses, and
+        stood before a first line's command, which no line start then matched
+        (CodeAnt on #369)."""
+        for name, source, line in (
+            ("tools/marked.py", "\ufeffimport os\nos.system('git status')\n", "2"),
+            ("ci/marked.sh", "\ufeffgit status\n", "1"),
+        ):
+            with self.subTest(name=name):
+                found = _findings_with_the_real_registry({name: source})
+                self.assertEqual(
+                    [line], [f.split(":")[1] for f in found if "git-execution" in f]
+                )
 
     def test_a_nested_agents_file_is_production(self) -> None:
         # Only the root AGENTS.md was scanned (CodeAnt on #369).

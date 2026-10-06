@@ -133,6 +133,18 @@ def trusted_path(found: str) -> str | None:
         return None
 
 
+def trusted_directory(found: str) -> str | None:
+    """Return the directory the absolute path ``found`` really is, if no one else can
+    replace it or any entry in it: `trusted_path`'s walk, ending at a directory, which
+    must be closed unless it is sticky (CodeAnt on #369)."""
+    if not os.path.isabs(found):
+        return None
+    try:
+        return _walk(found, directory=True)
+    except OSError:
+        return None
+
+
 def _parts(path: str) -> list[str]:
     """Return the components of ``path``, as a walk reads them.
 
@@ -171,8 +183,9 @@ def _component(entry: str, pending: list[str]) -> str:
     return "directory" if _closed(held, sticky=True) else "refuse"
 
 
-def _walk(found: str) -> str | None:
-    """Resolve ``found`` as `trusted_path` describes, or return None."""
+def _walk(found: str, *, directory: bool = False) -> str | None:
+    """Resolve ``found`` as `trusted_path` describes, or return None. With
+    ``directory``, the walk ends at a directory instead of a file."""
     root = os.lstat("/")
     if not _theirs(root) or not _closed(root, sticky=True):
         return None
@@ -191,11 +204,11 @@ def _walk(found: str) -> str | None:
             current, pending = _follow(entry, current, pending)
         elif kind == "directory":
             current = entry
-        elif kind == "file":
+        elif kind == "file" and not directory:
             return entry
         else:
             return None
-    return None
+    return current if directory else None
 
 
 def trusted_executable(name: str) -> str | None:
@@ -574,6 +587,14 @@ def extract_tree(repository: Path, tree: str, destination: Path) -> None:
     objects = repository_objects(repository)
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        # The tree is staged beside its destination. Whoever else may write the
+        # parent, or a directory on the way, could swap the staging directory for a
+        # link while the tree is extracted (CodeAnt on #369).
+        if trusted_directory(os.path.abspath(destination.parent)) is None:
+            raise TrustedExecutionError(
+                f"{destination.parent} may be changed by someone else, so no tree is"
+                " staged in it"
+            )
         staging = Path(
             tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)
         )

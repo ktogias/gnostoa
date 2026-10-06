@@ -298,8 +298,11 @@ def _lines(root: Path, relative: str) -> Iterator[str]:
     if descriptor is None:
         return
     with os.fdopen(descriptor, "rb") as handle:
-        for line in _byte_lines(handle, relative):
-            yield line.decode("utf-8", errors="replace")
+        for number, line in enumerate(_byte_lines(handle, relative)):
+            # A byte order mark stood before a first line's command, so no line
+            # start matched it (CodeAnt on #369).
+            codec = "utf-8-sig" if number == 0 else "utf-8"
+            yield line.decode(codec, errors="replace")
 
 
 def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
@@ -313,6 +316,10 @@ def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
             # A `\r` that ends what is read so far may begin a `\r\n`.
             if block and ending.group() == b"\r" and ending.end() == len(pending):
                 break
+            # A line that ends in the block it was read in is measured too; only
+            # what was pending used to be (CodeAnt on #369).
+            if ending.start() - start > _LINE_LIMIT_BYTES:
+                raise _too_long(relative)
             yield pending[start : ending.start()]
             start = ending.end()
         pending = pending[start:]
@@ -320,16 +327,19 @@ def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
         if len(pending) - pending.endswith(b"\r") > _LINE_LIMIT_BYTES:
             # A file with no line end was read whole (Codex on #369); a line this
             # long is an error, never a clean result.
-            raise KnowledgeFormatError(
-                f"{relative}: a line longer than {_LINE_LIMIT_BYTES} bytes cannot be"
-                " checked"
-            )
+            raise _too_long(relative)
         # What is pending holds no line end, but perhaps a final `\r`.
         searched = max(0, len(pending) - 1)
         if not block:
             if pending:
                 yield pending
             return
+
+
+def _too_long(relative: str) -> KnowledgeFormatError:
+    return KnowledgeFormatError(
+        f"{relative}: a line longer than {_LINE_LIMIT_BYTES} bytes cannot be checked"
+    )
 
 
 def _open_regular(root: Path, relative: str) -> int | None:
@@ -425,7 +435,7 @@ def _compares_a_prefix(node: ast.Compare) -> bool:
             and _called(side) in {"commonpath", "commonprefix"}
             for side in sides
         )
-        and not any(isinstance(side, ast.Constant) for side in sides)
+        and not any(_is_plain_text(side) for side in sides)
     ):
         return True
     return any(
@@ -433,6 +443,16 @@ def _compares_a_prefix(node: ast.Compare) -> bool:
         and isinstance(right, ast.Attribute)
         and right.attr == "parents"
         for op, right in zip(node.ops, node.comparators, strict=True)
+    )
+
+
+def _is_plain_text(node: ast.expr) -> bool:
+    """A string constant that names no path: compared with a common prefix, it compares
+    strings (CodeAnt on #369). A literal root, as `'/srv/root'`, is a path."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "/" not in node.value
     )
 
 
@@ -630,6 +650,94 @@ def _git_argv(tree: ast.AST) -> set[int]:
     }
 
 
+# The helpers that hand a string to a shell, or split it into a command, by module.
+_SHELL_HELPERS: dict[str, frozenset[str]] = {
+    "os": frozenset({"system", "popen"}),
+    "subprocess": frozenset(
+        {
+            "run",
+            "call",
+            "check_call",
+            "check_output",
+            "Popen",
+            "getoutput",
+            "getstatusoutput",
+        }
+    ),
+    "asyncio": frozenset({"create_subprocess_shell"}),
+    "shlex": frozenset({"split"}),
+    "pexpect": frozenset({"spawn", "run"}),
+}
+# The structure whose lines are judged by the entry's own line patterns.
+_SHELL_COMMAND = "shell-command-indirect"
+
+
+def _shell_commands(tree: ast.AST) -> dict[int, tuple[str, ...]]:
+    """Each literal command handed to a shell helper, by the line it starts on: the
+    helper named through an imported name, a module alias or its own module (Codex
+    on #369). A command is read as a line is, so no new syntax is described here."""
+    names, modules = _shell_bindings(tree)
+    found: dict[int, list[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _is_shell_helper(node.func, names, modules):
+            command = _command_text(node)
+            if command is not None:
+                found.setdefault(command[0], []).append(command[1])
+    return {line: tuple(texts) for line, texts in found.items()}
+
+
+def _shell_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
+    """The names bound to a shell helper by `from module import helper [as name]`,
+    and the names bound to a helper's module, its own name included."""
+    names: set[str] = set()
+    modules = {module: module for module in _SHELL_HELPERS}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and not node.level
+            and node.module in _SHELL_HELPERS
+        ):
+            helpers = _SHELL_HELPERS[node.module]
+            names.update(a.asname or a.name for a in node.names if a.name in helpers)
+        elif isinstance(node, ast.Import):
+            modules.update(
+                {
+                    a.asname: a.name
+                    for a in node.names
+                    if a.asname and a.name in _SHELL_HELPERS
+                }
+            )
+    return names, modules
+
+
+def _is_shell_helper(func: ast.expr, names: set[str], modules: dict[str, str]) -> bool:
+    if isinstance(func, ast.Name):
+        return func.id in names
+    return (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id in modules
+        and func.attr in _SHELL_HELPERS[modules[func.value.id]]
+    )
+
+
+def _command_text(call: ast.Call) -> tuple[int, str] | None:
+    """The literal command a call hands over first, with its line: a string, or an
+    f-string whose fields stand as `{}`. An argument list is no shell command."""
+    argument = call.args[0] if call.args else None
+    for keyword in call.keywords:
+        if argument is None and keyword.arg in ("args", "cmd", "command"):
+            argument = keyword.value
+    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+        return argument.lineno, argument.value
+    if isinstance(argument, ast.JoinedStr):
+        parts = (
+            v.value if isinstance(v, ast.Constant) else "{}" for v in argument.values
+        )
+        return argument.lineno, "".join(str(p) for p in parts)
+    return None
+
+
 def _never(_name: str) -> bool:
     return False
 
@@ -671,34 +779,41 @@ _STRUCTURES: dict[str, Callable[[ast.AST], set[int]]] = {
 
 def _structural_lines(
     root: Path, relative: str, wanted: frozenset[str]
-) -> dict[str, frozenset[int]]:
-    """For a Python file of the product, the lines each wanted detector marks.
+) -> tuple[dict[str, frozenset[int]], dict[int, tuple[str, ...]]]:
+    """For a Python file of the product, the lines each wanted detector marks, and
+    the literal commands handed to a shell, by line.
 
     A Python file ends in `.py` or starts with a Python shebang. One that does not
     parse, or is too large to parse, cannot pass as clean, so it is an error.
     """
     if not wanted:
-        return {}
+        return {}, {}
     descriptor = _open_regular(root, relative)
     if descriptor is None:
-        return {}
+        return {}, {}
     with os.fdopen(descriptor, "rb") as handle:
         data = handle.read(128)
         first = data.split(b"\n", 1)[0]
         if not relative.endswith(".py") and not (
             first.startswith(b"#!") and b"python" in first
         ):
-            return {}
+            return {}, {}
         data += handle.read(_STRUCTURE_LIMIT_BYTES + 1 - len(data))
     if len(data) > _STRUCTURE_LIMIT_BYTES:
         raise KnowledgeFormatError(f"{relative}: too large to check its structure")
     try:
-        tree = ast.parse(data.decode("utf-8", errors="replace"), filename=relative)
+        # `utf-8-sig` drops a byte order mark, which `ast.parse` refuses (CodeAnt on
+        # #369).
+        tree = ast.parse(data.decode("utf-8-sig", errors="replace"), filename=relative)
     except (SyntaxError, ValueError, RecursionError) as exc:
         raise KnowledgeFormatError(
             f"{relative}: Python that does not parse cannot be checked: {exc}"
         ) from exc
-    return {name: frozenset(_STRUCTURES[name](tree)) for name in wanted}
+    return {
+        name: frozenset(_STRUCTURES[name](tree))
+        for name in wanted
+        if name in _STRUCTURES
+    }, _shell_commands(tree) if _SHELL_COMMAND in wanted else {}
 
 
 def _covers(places: tuple[Place, ...], path: str, signature: str) -> bool:
@@ -725,21 +840,50 @@ def _scan(
     number: int,
     text: str,
     marked: dict[str, frozenset[int]],
+    commands: dict[int, tuple[str, ...]],
 ) -> tuple[list[Violation], Owed | None]:
     """Return each copy of ``entry`` on one line, and the line if a debt entry may owe
-    it. ``marked`` holds the lines each structural detector marked in the file."""
-    matched = [
-        s.id
-        for s in entry.signatures
-        if (s.pattern is not None and s.pattern.search(text))
-        or (s.structure is not None and number in marked.get(s.structure, ()))
-    ]
+    it. ``marked`` holds the lines each structural detector marked in the file, and
+    ``commands`` the literal commands handed to a shell, by line."""
+    matched = _matched(entry, number, text, marked, commands)
     unexplained = [s for s in matched if not _allowed(entry, relative, s)]
     indebted = [s for s in unexplained if _covers(entry.debt, relative, s)]
     copies = [
         Violation(entry, relative, number, s) for s in unexplained if s not in indebted
     ]
     return copies, (number, text.strip(), indebted[0]) if indebted else None
+
+
+def _matched(
+    entry: Responsibility,
+    number: int,
+    text: str,
+    marked: dict[str, frozenset[int]],
+    commands: dict[int, tuple[str, ...]],
+) -> list[str]:
+    """The signatures of ``entry`` that one line shows, in the entry's order. A
+    command handed to a shell counts only where no line pattern already did, so no
+    line is marked twice."""
+    lined = {s.id for s in entry.signatures if s.pattern and s.pattern.search(text)}
+    shell = not lined and _runs_as_a_line(entry, commands.get(number, ()))
+    return [
+        s.id
+        for s in entry.signatures
+        if s.id in lined
+        or (s.structure is not None and number in marked.get(s.structure, ()))
+        or (s.structure == _SHELL_COMMAND and shell)
+    ]
+
+
+def _runs_as_a_line(entry: Responsibility, commands: tuple[str, ...]) -> bool:
+    """Whether a command handed to a shell matches the entry's own line patterns, as
+    the same text on a line would."""
+    return any(
+        s.pattern.search(command)
+        for command in commands
+        for s in entry.signatures
+        if s.pattern is not None
+    )
 
 
 def _debt_findings(
@@ -782,10 +926,10 @@ def violations(root: Path, registry: Registry) -> list[Violation]:
         s.structure for e in entries for s in e.signatures if s.structure is not None
     )
     for relative in _production_files(root, registry.path):
-        marked = _structural_lines(root, relative, structures)
+        marked, commands = _structural_lines(root, relative, structures)
         for number, text in enumerate(_lines(root, relative), start=1):
             for index, entry in enumerate(entries):
-                found, owes = _scan(entry, relative, number, text, marked)
+                found, owes = _scan(entry, relative, number, text, marked, commands)
                 copies[index].extend(found)
                 if owes is not None:
                     owed[index].setdefault(relative, []).append(owes)

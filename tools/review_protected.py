@@ -28,13 +28,23 @@ class ProtectedMainDocument:
     document: dict[str, Any]
 
 
-def _git_environment() -> dict[str, str]:
+def _git_environment(arguments: list[str]) -> dict[str, str]:
     # Do not inherit caller-controlled Git configuration, repository selectors,
     # credential helpers or URL rewrite rules. The protected route is public,
     # read-only GitHub HTTPS and therefore needs no caller credentials. Nor does it
     # take the caller's proxy or certificates, which could counterfeit it (Decision
-    # 0102; Codex on #369).
-    return trusted_execution.git_environment()
+    # 0102; Codex on #369), nor follow a redirect over another transport (CodeAnt on
+    # #369).
+    return trusted_execution.git_environment(transports=_transports(arguments))
+
+
+def _transports(arguments: list[str]) -> tuple[str, ...]:
+    """The one transport a call needs: a fetch's own, HTTPS for the fixed route and
+    the file transport for a local repository, as tests use; none for a local call."""
+    if not arguments or arguments[0] != "fetch":
+        return ()
+    source = next((a for a in arguments[1:] if not a.startswith("-")), "")
+    return ("https",) if source.startswith("https://") else ("file",)
 
 
 def _run_git(
@@ -49,7 +59,7 @@ def _run_git(
         return trusted_execution.run_git(
             arguments,
             cwd=cwd,
-            environment=_git_environment(),
+            environment=_git_environment(arguments),
             timeout=_GIT_TIMEOUT_SECONDS,
         ).stdout
     except trusted_execution.GitFailure as exc:

@@ -37,7 +37,7 @@
               "properties": {
                 "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
                 "pattern": {"type": "string", "minLength": 1},
-                "structure": {"enum": ["relative-to-under-value-error", "path-prefix-comparison", "yaml-load-indirect", "jsonschema-validator-indirect", "executable-lookup-indirect", "git-argv", "http-request-indirect"]},
+                "structure": {"enum": ["relative-to-under-value-error", "shell-command-indirect", "path-prefix-comparison", "yaml-load-indirect", "jsonschema-validator-indirect", "executable-lookup-indirect", "git-argv", "http-request-indirect"]},
                 "means": {"type": "string", "pattern": "\\S"}
               }
             }

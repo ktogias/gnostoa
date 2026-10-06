@@ -102,6 +102,13 @@ responsibilities:
         # lines, where the line pattern cannot see it (CodeAnt on #369).
         structure: git-argv
         means: Git run outside the owner, by an argument list the line does not show
+      - id: git-shell-command
+        # A literal command handed to a shell helper named through an imported
+        # name, a module alias, or on another line than the command, where no line
+        # shows it. The command is read as a line is, by this entry's own line
+        # patterns, so a line no pattern marks is judged this way (Codex on #369).
+        structure: shell-command-indirect
+        means: a command run outside the owner, handed to a shell where no line shows it
       - id: executable-lookup-indirect
         # `which` on a line of its own in a multi-line import, or called through an
         # alias of shutil, where the line pattern cannot see it (Codex on #369).

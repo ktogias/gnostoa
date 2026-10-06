@@ -6,6 +6,7 @@ and move here unchanged.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import os
 import pathlib
@@ -144,6 +145,22 @@ class OperatorExecutableTests(unittest.TestCase):
                 )
             with mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
                 self.assertIsNone(trusted_execution.operator_executable("sandbox"))
+
+
+class TrustedDirectoryTests(unittest.TestCase):
+    def test_only_a_directory_no_one_else_may_change_is_trusted(self) -> None:
+        """`trusted_path`'s walk, ending at a directory (CodeAnt on #369)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            (base / "file").write_text("x", encoding="utf-8")
+            (base / "open").mkdir()
+            (base / "open").chmod(0o777)
+            self.assertEqual(
+                os.path.realpath(scratch), trusted_execution.trusted_directory(scratch)
+            )
+            for found in (str(base / "file"), str(base / "open"), "relative/dir"):
+                with self.subTest(found=found):
+                    self.assertIsNone(trusted_execution.trusted_directory(found))
 
 
 class TrustedPathTests(unittest.TestCase):
@@ -563,6 +580,33 @@ class ExtractTreeTests(unittest.TestCase):
             self.assertEqual(
                 "kept\n", (destination / "kept.txt").read_text(encoding="utf-8")
             )
+
+    def test_a_parent_someone_else_may_change_is_no_staging_place(self) -> None:
+        """The staging directory sits in the destination's parent. Whoever else may
+        write there could swap it for a link while the tree is extracted (CodeAnt on
+        #369). A sticky parent lets no one but its owner rename an entry."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repository = base / "subject"
+            repository.mkdir()
+            _git(repository, "init", "--quiet")
+            (repository / "kept.txt").write_text("kept\n", encoding="utf-8")
+            _git(repository, "add", "kept.txt")
+            tree = _git(repository, "write-tree")
+            for mode, refused in ((0o777, True), (0o1777, False), (0o755, False)):
+                parent = base / f"parent-{mode:o}"
+                parent.mkdir()
+                parent.chmod(mode)
+                with self.subTest(mode=f"{mode:o}"):
+                    if refused:
+                        with self.assertRaises(trusted_execution.TrustedExecutionError):
+                            trusted_execution.extract_tree(
+                                repository, tree, parent / "out"
+                            )
+                        self.assertEqual([], list(parent.iterdir()))
+                    else:
+                        trusted_execution.extract_tree(repository, tree, parent / "out")
+                        self.assertTrue((parent / "out" / "kept.txt").exists())
 
     def test_the_tree_s_own_attributes_change_no_byte(self) -> None:
         """`eol=crlf` rewrote line endings, `ident` expanded `$Id$` and
@@ -1277,6 +1321,29 @@ class RunGitTests(unittest.TestCase):
             self.assertNotIsInstance(raised.exception, trusted_execution.GitFailure)
 
 
+def _record_then_time_out(
+    seen: list[dict[str, str]], *_arguments: object, **options: object
+) -> None:
+    """Record a Git call's environment, then fail the call as a timeout would."""
+    seen.append(dict(options["env"]))  # type: ignore[call-overload]
+    raise subprocess.TimeoutExpired("git", 1)
+
+
+def _record_each_command(
+    seen: dict[str, str | None], argv: list[str], **options: object
+) -> subprocess.CompletedProcess[bytes]:
+    """Record the transports each Git command allows; `init` succeeds, and the fetch
+    then fails as a timeout would."""
+    command = next((a for a in argv[1:] if a in {"init", "fetch"}), "")
+    environment = options["env"]
+    if not isinstance(environment, dict):
+        raise TypeError("a Git call names its whole environment")
+    seen[command] = environment.get("GIT_ALLOW_PROTOCOL")
+    if command == "fetch":
+        raise subprocess.TimeoutExpired("git", 1)
+    return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+
 class ProtectedRouteCharacterizationTests(unittest.TestCase):
     def test_git_s_own_reason_reaches_the_unavailable_route(self) -> None:
         """The route reports what Git said, not only its own description."""
@@ -1321,11 +1388,7 @@ class ProtectedRouteCharacterizationTests(unittest.TestCase):
         from tools import review_protected
 
         seen: list[dict[str, str]] = []
-
-        def record(*_arguments: object, **options: object) -> None:
-            seen.append(dict(options["env"]))  # type: ignore[call-overload]
-            raise subprocess.TimeoutExpired("git", 1)
-
+        record = functools.partial(_record_then_time_out, seen)
         with (
             mock.patch.dict(os.environ, _CALLER_ROUTING),
             mock.patch.object(subprocess, "run", side_effect=record),
@@ -1337,6 +1400,30 @@ class ProtectedRouteCharacterizationTests(unittest.TestCase):
         self.assertTrue(seen)
         for environment in seen:
             self.assertFalse(set(_CALLER_ROUTING) & set(environment), environment)
+
+    def test_the_protected_fetch_allows_only_its_own_transport(self) -> None:
+        """With no transport allowlist, Git could follow the protected fetch's redirect
+        over another protocol (CodeAnt on #369). The fixed HTTPS route allows HTTPS
+        alone; a local repository, as the tests use, allows the file transport alone."""
+        from tools import review_protected
+
+        for repository, transport in (
+            ("https://github.com/ktogias/gnostoa.git", "https"),
+            ("/srv/protected", "file"),
+        ):
+            seen: dict[str, str | None] = {}
+            record = functools.partial(_record_each_command, seen)
+            with (
+                self.subTest(repository=repository),
+                mock.patch.object(subprocess, "run", side_effect=record),
+                self.assertRaises(review_protected.ProtectedAcquisitionUnavailable),
+            ):
+                review_protected._acquire_from_repository(  # skipcq: PYL-W0212
+                    repository, "tasks/protected.json"
+                )
+            # The fetch allows its own transport alone; a local call allows none.
+            self.assertEqual(transport, seen.get("fetch"))
+            self.assertEqual("", seen.get("init"))
 
 
 class CallerGitFailureTests(unittest.TestCase):

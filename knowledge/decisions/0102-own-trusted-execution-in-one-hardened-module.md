@@ -282,6 +282,15 @@ here.
    command.
    Round 30 reads a leading shell assignment, as `LC_ALL=C git status`, in any
    command position, a line start included.
+   Round 32 reads a literal command handed to a shell helper named through an
+   imported name, a module alias or on another line than the command, by the
+   entry's own line patterns, as the same text on a line would be read. The
+   protected route allows one transport, HTTPS for its fixed route. A tree is no
+   longer staged in a parent someone else may change: `trusted_directory` walks
+   it as `trusted_path` walks a file. A byte order mark no longer hides a first
+   line or a Python file, and a common path compared with a literal root counts.
+   Every line is measured against the reader's bound, one that ends in the block
+   it was read in too.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and
