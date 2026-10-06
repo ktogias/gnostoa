@@ -16,6 +16,7 @@ import textwrap
 import threading
 import time
 import unittest
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -1045,6 +1046,15 @@ class CopyTests(unittest.TestCase):
         self.assertIn("filemode = true\n", kept)
         self.assertIn("objectformat = sha1\n", kept)
 
+    def test_a_long_line_is_read_in_linear_time(self) -> None:
+        # Spaces after a key, then text that is no value, were split between two
+        # `\s*` every way before the match failed: quadratic (CodeRabbit on #374).
+        text = "[core]\n\tbare" + " " * 50_000 + "!\n\tfilemode = true\n"
+        started = time.perf_counter()
+        kept = mutation._format_config(text)  # skipcq: PYL-W0212
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertEqual("[core]\n\tfilemode = true\n", kept)
+
     def test_a_subsection_keeps_none_of_its_settings(self) -> None:
         # `[core "x"] bare = true` is `core.x.bare`, not `core.bare`; kept as the
         # latter, it would make the copy a bare repository.
@@ -1098,6 +1108,93 @@ class CopyTests(unittest.TestCase):
                 (outcome,) = mutation.run(root, table, jobs=1)
                 self.assertEqual("NOT RUN", outcome.status, outcome.detail)
                 self.assertIn("borrows objects", outcome.detail)
+
+    def test_other_repositories_metadata_is_left_out(self) -> None:
+        # A submodule's directory under .git/modules kept its own configuration and
+        # hooks (Codex on #374); a linked worktree's under .git/worktrees likewise.
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            for nested in ("modules/sub", "worktrees/other"):
+                directory = root / ".git" / nested
+                (directory / "hooks").mkdir(parents=True)
+                (directory / "config").write_text(
+                    "[core]\n\tworktree = /\n", encoding="utf-8"
+                )
+            (root / "tests" / "test_nested.py").write_text(
+                "import pathlib\nimport unittest\n\n\n"
+                "class N(unittest.TestCase):\n"
+                "    def test_none(self):\n"
+                "        for nested in ('modules', 'worktrees'):\n"
+                "            self.assertFalse((pathlib.Path('.git') / nested).exists())\n",
+                encoding="utf-8",
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_nested, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_tests_from_outside_the_copy_are_refused(self) -> None:
+        # A `tests` directory without `__init__.py` loses to a regular `tests`
+        # package later on the path, an installed one say, whose tests then ran
+        # instead (CodeAnt on #374). A later PYTHONPATH entry stands in for it here.
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "tests" / "__init__.py").unlink()
+            elsewhere = base / "elsewhere" / "tests"
+            elsewhere.mkdir(parents=True)
+            (elsewhere / "__init__.py").write_text("", encoding="utf-8")
+            (elsewhere / "test_m.py").write_text(
+                "import unittest\n\n\nclass M(unittest.TestCase):\n"
+                "    def test_nothing(self):\n        pass\n",
+                encoding="utf-8",
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            popen = subprocess.Popen
+
+            def with_elsewhere(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+                path = kwargs["env"]["PYTHONPATH"]
+                kwargs["env"] = {
+                    **kwargs["env"],
+                    "PYTHONPATH": f"{path}{os.pathsep}{elsewhere.parent}",
+                }
+                return popen(*args, **kwargs)
+
+            with mock.patch.object(subprocess, "Popen", side_effect=with_elsewhere):
+                (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+        self.assertIn("tests.test_m", outcome.detail)
+
+    def test_a_scratch_directory_inside_the_root_is_a_usage_error(self) -> None:
+        # The snapshot would be copied into the tree it copies (Codex on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            inside = root / "tmp"
+            inside.mkdir()
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            with (
+                mock.patch.object(tempfile, "tempdir", str(inside)),
+                self.assertRaises(ValueError),
+            ):
+                mutation.run(root, table, jobs=1)
 
     def test_a_shared_git_directory_refuses_the_copy(self) -> None:
         # `commondir` makes Git share another repository's directory.
@@ -1176,6 +1273,17 @@ class CopyTests(unittest.TestCase):
 
 
 class AnchorShapeTests(unittest.TestCase):
+    def test_a_multi_line_replacement_in_an_inline_suite_is_refused(self) -> None:
+        # `if flag: x = 1` gives its statement no indentation, so later lines of a
+        # replacement would leave the suite (CodeAnt on #374).
+        source = "if flag: x = 1\n"
+        with self.assertRaises(mutation.AnchorError) as raised:
+            mutation.apply(source, "x = 1", "x = 2\ny = 3", python=True)
+        self.assertEqual("INVALID", raised.exception.status)
+        self.assertEqual(
+            "if flag: x = 2\n", mutation.apply(source, "x = 1", "x = 2", python=True)
+        )
+
     def test_an_f_string_fragment_is_no_string_literal(self) -> None:
         # `'foo'` matched the fragment of `f"foo{bar}"`, whose text has no quotes, and
         # the replacement put quotes into the f-string (Codex on #374).

@@ -123,6 +123,13 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 12, on `137f79a`.**
+    - Codex: with `TMPDIR` inside the root, the snapshot was copied into the tree it copies. That is now a usage error.
+    - Codex: a submodule's metadata under `.git/modules`, or a linked worktree's under `.git/worktrees`, kept its own configuration and hooks. Both are left out of the copy.
+    - CodeAnt: a test module could come from outside the copy. The repository's `tests` has no `__init__.py`, so a regular `tests` package later on the path, an installed one say, won, and its tests ran instead. The runner now imports each test module first and refuses one whose file is not in the copy, then runs `unittest` as `-m unittest` does.
+    - CodeAnt nitpick: a multi-line replacement of a statement that does not begin its line, as in `if flag: x = 1`, would leave the suite. It is refused as `INVALID`. So is the rarer `a = 1; x = 1`, conservatively.
+    - CodeRabbit: the configuration pattern backtracked quadratically on a long run of spaces after a key, 15 s for 50,000 spaces. It is now matched whole against the stripped line, which reads such a run one way only.
+    - Each has a test that failed first, and a mutant. The first mutant for the pattern restored only its outer `\s*`, which stays linear. It would have survived, so it restores the whole original pattern.
   - **Round 11, on `b179ddd`.** Codex: a string-literal anchor matched an f-string's literal fragment, which equals the string but whose text has no quotes, so the replacement put quotes into the f-string. An expression match now counts only if its own source parses back to the anchor's expression, with a test that failed first.
   - **Round 10, on `09cbd28`.**
     - Codex: a copy whose `.git` borrows objects through `objects/info/alternates` or `http-alternates`, as a clone made with `--reference` does, read an object store outside the copy. It is now refused, with a test that failed first.

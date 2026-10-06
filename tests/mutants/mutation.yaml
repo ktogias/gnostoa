@@ -159,8 +159,11 @@ mutants:
     find: |
       if not root.is_dir():
           raise ValueError(f"the root is not a directory: {root}")
-      known = {m.name for m in table.mutants}
-    replace: known = {m.name for m in table.mutants}
+      # The snapshot would be copied into the tree it copies (Codex on #374).
+      scratch, top = Path(tempfile.gettempdir()).resolve(), root.resolve()
+    replace: |
+      # The snapshot would be copied into the tree it copies (Codex on #374).
+      scratch, top = Path(tempfile.gettempdir()).resolve(), root.resolve()
   - name: a failed copy escapes
     path: tools/mutation.py
     find: |
@@ -268,3 +271,26 @@ mutants:
     path: tools/mutation.py
     find: setting.group(3) or 'true'
     replace: setting.group(3)
+  - name: other repositories' metadata is copied
+    path: tools/mutation.py
+    find: |
+      if os.path.basename(directory) == ".git":
+          ignored |= {"modules", "worktrees"} & set(names)
+    replace: pass
+  - name: a scratch directory inside the root is used
+    path: tools/mutation.py
+    find: scratch == top or top in scratch.parents
+    replace: "False"
+  - name: a multi-line replacement leaves an inline suite
+    path: tools/mutation.py
+    find: statements and len(lines) > 1 and text[line_start:start].strip()
+    replace: "False"
+  - name: tests from outside the copy are run
+    path: tools/mutation.py
+    find: '[sys.executable, "-c", _BOOTSTRAP, *tests]'
+    replace: '[sys.executable, "-m", "unittest", *tests]'
+  - name: a config line is matched quadratically
+    path: tools/mutation.py
+    find: _SIMPLE.fullmatch(line.strip())
+    replace: |
+      re.match(r'^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*("?)([A-Za-z0-9._-]+)\2)?\s*$', line)

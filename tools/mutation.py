@@ -89,6 +89,18 @@ _OUTPUT_TAIL_BYTES = 4096
 # Output beyond this ends the tests, so a mutant that prints forever cannot fill the
 # scratch file system (CodeAnt on #374). How often the size and the deadline are read.
 _OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024
+# Runs the tests as `python -m unittest` does, once each test module is shown to come
+# from the copy: a `tests` directory without `__init__.py` loses to a regular `tests`
+# package later on the path, an installed one say (CodeAnt on #374).
+_BOOTSTRAP = """\
+import importlib, os, sys, unittest
+root = os.path.realpath(os.getcwd())
+for name in sys.argv[1:]:
+    origin = os.path.realpath(importlib.import_module(name).__file__ or "")
+    if os.path.commonpath([root, origin]) != root:
+        sys.exit(f"{name} is not the copy's: {origin}")
+unittest.main(module=None, argv=["python -m unittest", *sys.argv[1:]])
+"""
 _POLL_SECONDS = 0.2
 _TOKEN = re.compile(r"\w+|[^\w\s]")
 _LINE_END = re.compile(r"\r\n|\r|\n")
@@ -120,6 +132,11 @@ def _ignored(directory: str, names: list[str]) -> set[str]:
     git = os.path.join(directory, ".git")
     if ".git" in names and (os.path.islink(git) or not os.path.isdir(git)):
         ignored.add(".git")
+    # Other repositories' metadata, a submodule's or a linked worktree's, keeps its
+    # own configuration and hooks; the tests need the repository's own only (Codex
+    # on #374).
+    if os.path.basename(directory) == ".git":
+        ignored |= {"modules", "worktrees"} & set(names)
     return ignored
 
 
@@ -340,7 +357,7 @@ def _token_spans(text: str, find: str) -> list[tuple[int, int]]:
 def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     """Return ``text`` with the one place ``find`` names replaced by ``replace``.
 
-    Raises `AnchorError` with status `NOT FOUND` or `AMBIGUOUS`.
+    Raises `AnchorError` with status `NOT FOUND`, `AMBIGUOUS` or `INVALID`.
     """
     located = _python_spans(text, find) if python else None
     if located is None:
@@ -362,6 +379,13 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     lines = textwrap.dedent(replace).strip("\n").splitlines()
     if statements and not lines:
         lines = ["pass"]
+    # A statement after other code on its line, as in `if flag: x = 1`, has no
+    # indentation of its own; later lines would leave its suite (CodeAnt on #374).
+    if statements and len(lines) > 1 and text[line_start:start].strip():
+        raise AnchorError(
+            "INVALID",
+            "a multi-line replacement of a statement that does not begin its line",
+        )
     return text[:start] + (eol + indent).join(lines).rstrip() + text[end:]
 
 
@@ -451,7 +475,7 @@ def _run_tests(
     output = Path(scratch) / "tests.log"
     with output.open("wb") as log:
         process = subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-            [sys.executable, "-m", "unittest", *tests],
+            [sys.executable, "-c", _BOOTSTRAP, *tests],
             cwd=work,
             env=environment,
             stdin=subprocess.DEVNULL,
@@ -543,10 +567,10 @@ _CORE_KEYS = frozenset(
 )
 _SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)\s*(")?')
 # A key with a simple value, quoted or not, or alone, which Git reads as true
-# (CodeAnt on #374).
-_SIMPLE = re.compile(
-    r'^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*("?)([A-Za-z0-9._-]+)\2)?\s*$'
-)
+# (CodeAnt on #374). Matched whole against the stripped line, so a run of spaces can
+# be read only one way: two `\s*` around it backtracked quadratically (CodeRabbit on
+# #374).
+_SIMPLE = re.compile(r'([A-Za-z][A-Za-z0-9-]*)(?:\s*=\s*("?)([A-Za-z0-9._-]+)\2)?')
 
 
 def _sanitize_git(work: Path) -> None:
@@ -599,7 +623,7 @@ def _format_config(text: str) -> str:
             # A subsection, such as `[remote "origin"]`, keeps nothing.
             section = None if header.group(2) else header.group(1).lower()
             continue
-        setting = _SIMPLE.match(line)
+        setting = _SIMPLE.fullmatch(line.strip())
         if setting is None or section not in kept:
             continue
         key = setting.group(1).lower()
@@ -672,6 +696,12 @@ def run(
         raise ValueError(f"timeout must be a positive number of seconds: {timeout!r}")
     if not root.is_dir():
         raise ValueError(f"the root is not a directory: {root}")
+    # The snapshot would be copied into the tree it copies (Codex on #374).
+    scratch, top = Path(tempfile.gettempdir()).resolve(), root.resolve()
+    if scratch == top or top in scratch.parents:
+        raise ValueError(
+            f"the temporary directory {scratch} is inside the root; set TMPDIR outside it"
+        )
     known = {m.name for m in table.mutants}
     unknown = sorted(set(only) - known)
     if unknown:
