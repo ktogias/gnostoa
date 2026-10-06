@@ -75,7 +75,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
      - a single expression, matched among the file's expressions;
      - a statement or a run of consecutive statements, matched within one block.
 
-     Whitespace, line breaks, comments and trailing commas do not matter. A decorated definition's statement includes its decorators.
+     Whitespace, line breaks, comments and trailing commas do not matter. A decorated definition's statement includes its decorators. A matched expression's own source must parse back to the anchor's expression, so an f-string's literal fragment is no string literal.
    - An anchor that does not parse, and any non-Python file, is located by token sequence: runs of word characters and single punctuation marks, with whitespace ignored.
    - An anchor that matches nowhere is `NOT FOUND`. One that matches more than once is `AMBIGUOUS`.
    - A replacement is dedented. Its later lines keep their indentation relative to its first line, starting from the indentation of the line where the match starts. It therefore fits a reflowed file whose structure follows relative indentation, as YAML's does. It keeps the table's indentation width, not the file's.
@@ -123,6 +123,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 11, on `b179ddd`.** Codex: a string-literal anchor matched an f-string's literal fragment, which equals the string but whose text has no quotes, so the replacement put quotes into the f-string. An expression match now counts only if its own source parses back to the anchor's expression, with a test that failed first.
   - **Round 10, on `09cbd28`.**
     - Codex: a copy whose `.git` borrows objects through `objects/info/alternates` or `http-alternates`, as a clone made with `--reference` does, read an object store outside the copy. It is now refused, with a test that failed first.
     - Codex, CodeRabbit: this Decision overstated the containment and miscounted round 2's defects; both corrected.

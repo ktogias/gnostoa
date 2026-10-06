@@ -262,20 +262,40 @@ def _python_spans(text: str, find: str) -> tuple[list[tuple[int, int]], bool] | 
 
     body = snippet.body
     if len(body) == 1 and isinstance(body[0], ast.Expr):
-        return _expression_spans(tree, body[0].value, span), False
+        return _expression_spans(text, tree, body[0].value, span), False
     return _statement_spans(tree, body, span), True
 
 
 def _expression_spans(
-    tree: ast.AST, wanted: ast.expr, span: Span
+    text: str, tree: ast.AST, wanted: ast.expr, span: Span
 ) -> list[tuple[int, int]]:
-    """Every expression in ``tree`` equal to ``wanted``."""
+    """Every expression in ``tree`` equal to ``wanted`` whose own source is that
+    expression.
+
+    A node can equal ``wanted`` while its text is something else: the fragment
+    `foo` of `f"foo{bar}"` is the string `'foo'`, without the quotes. Replacing it
+    would put quotes into the f-string (Codex on #374). So a candidate's text must
+    parse back to ``wanted``.
+    """
     shape = ast.dump(wanted)
-    return [
-        span(node, node)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.expr) and ast.dump(node) == shape
-    ]
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.expr) or ast.dump(node) != shape:
+            continue
+        start, end = span(node, node)
+        if _parses_as(text[start:end], shape):
+            found.append((start, end))
+    return found
+
+
+def _parses_as(source: str, shape: str) -> bool:
+    """Whether ``source`` is, by itself, the expression ``shape`` dumps."""
+    try:
+        # Parenthesized, so an expression that spans lines still parses.
+        parsed = ast.parse(f"({source})", mode="eval")
+    except SyntaxError:
+        return False
+    return ast.dump(parsed.body) == shape
 
 
 def _blocks(tree: ast.AST) -> list[list[ast.stmt]]:
@@ -522,7 +542,11 @@ _CORE_KEYS = frozenset(
     }
 )
 _SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)\s*(")?')
-_SIMPLE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]*)\s*=\s*([A-Za-z0-9._-]+)\s*$")
+# A key with a simple value, quoted or not, or alone, which Git reads as true
+# (CodeAnt on #374).
+_SIMPLE = re.compile(
+    r'^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*("?)([A-Za-z0-9._-]+)\2)?\s*$'
+)
 
 
 def _sanitize_git(work: Path) -> None:
@@ -582,7 +606,7 @@ def _format_config(text: str) -> str:
         if (section == "core" and key in _CORE_KEYS) or (
             section == "extensions" and key != "worktreeconfig"
         ):
-            kept[section].append(f"\t{key} = {setting.group(2)}\n")
+            kept[section].append(f"\t{key} = {setting.group(3) or 'true'}\n")
     return "".join(f"[{name}]\n" + "".join(rows) for name, rows in kept.items() if rows)
 
 

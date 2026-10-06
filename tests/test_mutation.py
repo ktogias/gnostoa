@@ -1033,6 +1033,18 @@ class CopyTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "a linked hook ran in the copy")
         self.assertEqual("KILLED", outcome.status, outcome.detail)
 
+    def test_a_format_key_keeps_a_quoted_or_shorthand_value(self) -> None:
+        # Valid forms were dropped, and Git fell back to its defaults (CodeAnt on
+        # #374).
+        text = (
+            '[core]\n\trepositoryformatversion = "1"\n\tfilemode\n'
+            "[extensions]\n\tobjectformat = sha1\n"
+        )
+        kept = mutation._format_config(text)  # skipcq: PYL-W0212
+        self.assertIn("repositoryformatversion = 1\n", kept)
+        self.assertIn("filemode = true\n", kept)
+        self.assertIn("objectformat = sha1\n", kept)
+
     def test_a_subsection_keeps_none_of_its_settings(self) -> None:
         # `[core "x"] bare = true` is `core.x.bare`, not `core.bare`; kept as the
         # latter, it would make the copy a bare repository.
@@ -1164,6 +1176,18 @@ class CopyTests(unittest.TestCase):
 
 
 class AnchorShapeTests(unittest.TestCase):
+    def test_an_f_string_fragment_is_no_string_literal(self) -> None:
+        # `'foo'` matched the fragment of `f"foo{bar}"`, whose text has no quotes, and
+        # the replacement put quotes into the f-string (Codex on #374).
+        source = "x = f'foo{bar}'\n"
+        with self.assertRaises(mutation.AnchorError) as raised:
+            mutation.apply(source, "'foo'", "'baz'", python=True)
+        self.assertEqual("NOT FOUND", raised.exception.status)
+        # An expression inside the f-string is a real expression.
+        self.assertEqual(
+            "x = f'foo{baz}'\n", mutation.apply(source, "bar", "baz", python=True)
+        )
+
     def test_a_decorated_definition_is_replaced_with_its_decorator(self) -> None:
         source = "@cache\ndef f():\n    return 1\n"
         mutated = mutation.apply(

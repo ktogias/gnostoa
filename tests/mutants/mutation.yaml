@@ -258,3 +258,13 @@ mutants:
           where = borrowed.relative_to(work)
           raise CopyRefused(f"{where} borrows objects from outside the copy")
     replace: pass
+  - name: an f-string fragment passes for a string literal
+    path: tools/mutation.py
+    find: |
+      if _parses_as(text[start:end], shape):
+          found.append((start, end))
+    replace: found.append((start, end))
+  - name: a key alone is dropped
+    path: tools/mutation.py
+    find: setting.group(3) or 'true'
+    replace: setting.group(3)
