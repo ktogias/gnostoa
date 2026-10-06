@@ -291,6 +291,8 @@ here.
    line or a Python file, and a common path compared with a literal root counts.
    Every line is measured against the reader's bound, one that ends in the block
    it was read in too.
+   Round 33 reads each line of a command handed to a shell as a line, so a second
+   command after a newline is judged too.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and

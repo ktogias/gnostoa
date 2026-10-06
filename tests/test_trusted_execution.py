@@ -1341,7 +1341,10 @@ def _record_each_command(
     seen[command] = environment.get("GIT_ALLOW_PROTOCOL")
     if command == "fetch":
         raise subprocess.TimeoutExpired("git", 1)
-    return subprocess.CompletedProcess(argv, 0, b"", b"")
+    # A result, not a run: `init` succeeds as the real call would.
+    return subprocess.CompletedProcess(
+        argv, 0, b"", b""
+    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
 
 
 class ProtectedRouteCharacterizationTests(unittest.TestCase):

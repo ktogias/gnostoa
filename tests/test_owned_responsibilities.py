@@ -445,6 +445,11 @@ class StructuralSignatureTests(unittest.TestCase):
             ),
             ('from os import system\nsystem("sudo -u builder git gc")\n', 2),
             ('from subprocess import run\nrun(args="git status", shell=True)\n', 2),
+            (
+                'import subprocess\nsubprocess.run("echo ok\\ngit status", shell=True)\n',
+                2,
+            ),
+            ('from os import system\nsystem("cd /srv\\ngit fetch")\n', 2),
         )
         for source, line in cases:
             with self.subTest(source=source):

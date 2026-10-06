@@ -311,17 +311,13 @@ def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
     while True:
         block = handle.read(_BLOCK_BYTES)
         pending += block
-        start = 0
-        for ending in _LINE_END.finditer(pending, searched):
-            # A `\r` that ends what is read so far may begin a `\r\n`.
-            if block and ending.group() == b"\r" and ending.end() == len(pending):
-                break
+        spans, start = _line_spans(pending, searched, more=bool(block))
+        for first, last in spans:
             # A line that ends in the block it was read in is measured too; only
             # what was pending used to be (CodeAnt on #369).
-            if ending.start() - start > _LINE_LIMIT_BYTES:
+            if last - first > _LINE_LIMIT_BYTES:
                 raise _too_long(relative)
-            yield pending[start : ending.start()]
-            start = ending.end()
+            yield pending[first:last]
         pending = pending[start:]
         # A deferred `\r` ends the line; it is none of its content (CodeAnt on #369).
         if len(pending) - pending.endswith(b"\r") > _LINE_LIMIT_BYTES:
@@ -334,6 +330,22 @@ def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
             if pending:
                 yield pending
             return
+
+
+def _line_spans(
+    pending: bytes, searched: int, *, more: bool
+) -> tuple[list[tuple[int, int]], int]:
+    """The complete lines in ``pending``, as (start, end) spans, and where what is
+    still pending starts. A `\r` that ends what is read so far may begin a `\r\n`,
+    so while there is ``more`` to read it waits."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for ending in _LINE_END.finditer(pending, searched):
+        if more and ending.group() == b"\r" and ending.end() == len(pending):
+            break
+        spans.append((start, ending.start()))
+        start = ending.end()
+    return spans, start
 
 
 def _too_long(relative: str) -> KnowledgeFormatError:
@@ -877,10 +889,12 @@ def _matched(
 
 def _runs_as_a_line(entry: Responsibility, commands: tuple[str, ...]) -> bool:
     """Whether a command handed to a shell matches the entry's own line patterns, as
-    the same text on a line would."""
+    the same text on a line would. Each of its lines is a line: a shell runs
+    `echo ok\\ngit status` as two commands (Codex on #369)."""
     return any(
-        s.pattern.search(command)
+        s.pattern.search(line)
         for command in commands
+        for line in command.splitlines()
         for s in entry.signatures
         if s.pattern is not None
     )
