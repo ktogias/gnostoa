@@ -200,7 +200,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **Savings:** rounds 17, 18 and 19 of #369 might have been one round: about 75 minutes on #369 alone. In general, one round avoided saves about 40 minutes.
 - **Risk:** more work per round, and enumeration finds only the members I think of.
 
-**P2. Use the host better: same verification, less contention. This is #380, awaiting admission.**
+**P2. Use the host better: same verification, less contention. This is #380, admitted by the owner on 2026-10-06.**
 - **The change:**
   - never run my local whole-table mutants during a flow's concurrent stage;
   - give a flow's mutants as many jobs as the concurrent stage leaves cores free.
@@ -218,7 +218,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
   - *Savings:* 8–11 minutes on such rounds.
   - *Risk:* a policy file read by tests in non-obvious ways, such as the registry being read by the reuse-check tests. The test selection must follow data dependencies, not file types.
 
-**P4. Make the suite itself faster. This is #370, admitted on 2026-10-05.**
+**P4. Make the suite itself faster. This is #370, admitted on 2026-10-05; on 2026-10-06 the owner moved it to follow #369 and #374.**
 - **The change:** `extended` and the runtime self-check each run 1,799 tests in one process: 366 s and 283 s on `4fa24f2` with no other load. A parallel runner, sharded by module, could cut each to about 2 minutes on 8 cores.
 - **Savings:** about 4–6 minutes per flow, through `extended` and the runtime self-check, and more through the mutants, which each run test modules.
 - **Risk:** tests that share temporary paths, ports or global state would need isolating first. This changes CI tooling, so it needs its own Work Item and Decision.
@@ -236,9 +236,9 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 | Proposal | Work Item | State | Proposed order |
 |---|---|---|---|
 | P1: fix a finding's whole family in one round | #378 | The agent fixes each review finding's family from #369 round 20 on. This falls under the owner's standing instruction to fix every review finding, and it changes no repository source. #378 adds it to the runbook, after admission. | Now, as practice |
-| P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | #380 | Awaiting admission. It was applied in the agent's local publish flow on 2026-10-06 before admission, for one round, #369's round 20. Codex on #379 found that this skipped the admission step, and it was reverted the same hour. | After admission |
+| P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | #380 | Admitted by the owner on 2026-10-06 ("yes. go on with P2 (#380)"), and applied in the agent's publish flow from then on. It had first been applied for one round, #369's round 20, before any admission; Codex on #379 found this, and it was reverted until the admission. | Done; re-measure |
 | P3(a)–(c): scope each round's verification to the change, the whole on the final round | #377 | Planned. It extends the mutation owner of #374, and changes Process A, so each part needs a Decision. | After #374 lands |
-| P4: a parallel test runner | #370 | Admitted on 2026-10-05, after #368's PR B. The proposal on #370 is to take it after #369 and #374, alongside #377. | The owner's choice |
+| P4: a parallel test runner | #370 | Admitted on 2026-10-05, after #368's PR B. On 2026-10-06 the owner moved it ("#370 move up to follow #369 and #374, instead of #368's PR B"), so the order is #369, #374, #370, then #368's PR B. It still needs its own Decision. | After #374 |
 
 **To re-measure when evaluating:**
 - the mean and median time between commits, against 38.9 and 27.1 min for both PRs here;
