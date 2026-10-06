@@ -170,12 +170,18 @@ mutants:
           return f"the copy failed: {exc}"
   - name: the copy keeps the repository's configuration
     path: tools/mutation.py
-    find: config.write_text(_format_config(text), encoding="utf-8")
+    find: |
+      config.unlink()
+      config.write_text(_format_config(text), encoding="utf-8")
     replace: pass
   - name: the copy keeps its hooks
     path: tools/mutation.py
-    find: shutil.rmtree(git_dir / "hooks", ignore_errors=True)
+    find: shutil.rmtree(hooks)
     replace: pass
+  - name: linked hooks are kept
+    path: tools/mutation.py
+    find: hooks.is_symlink() or hooks.is_file()
+    replace: hooks.is_file()
   - name: a subsection's settings are kept
     path: tools/mutation.py
     find: None if header.group(2) else header.group(1).lower()
@@ -219,3 +225,7 @@ mutants:
     replace: |
       except NotImplementedError as exc:
           return [_static(root, m, f"the copy failed: {exc}") for m in selected]
+  - name: a replacement takes the file's first line ending
+    path: tools/mutation.py
+    find: eol = "\r\n" if line_end > 0 and text[line_end - 1] == "\r" else "\n"
+    replace: eol = "\r\n" if "\r\n" in text else "\n"

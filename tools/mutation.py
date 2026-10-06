@@ -16,7 +16,9 @@ link is followed". Tables of them live with the code they guard, as
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
 - What the tests do stays in their copy.
-  - Every copy is taken from one snapshot of the root, made when the run starts.
+  - Every copy is taken from one snapshot of the root, made when the run starts. The
+    snapshot is itself copied file by file, so an edit made during that copy can
+    still mix; it narrows the window from the whole run to the copy.
   - A copy holding a link that resolves outside it is refused.
   - A copy's Git metadata keeps only the repository's format: no work tree, include,
     filter, hook or other program the repository configured. A copy that shares
@@ -324,7 +326,9 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
         raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
     start, end = spans[0]
     line_start = text.rfind("\n", 0, start) + 1
-    eol = "\r\n" if "\r\n" in text else "\n"
+    # The matched line's own ending: a file may mix them (Codex on #374).
+    line_end = text.find("\n", start)
+    eol = "\r\n" if line_end > 0 and text[line_end - 1] == "\r" else "\n"
     indent = re.match(r"[ \t]*", text[line_start:start]).group()  # type: ignore[union-attr]
     lines = textwrap.dedent(replace).strip("\n").splitlines()
     if statements and not lines:
@@ -521,11 +525,19 @@ def _sanitize_git(work: Path) -> None:
         if (git_dir / "commondir").exists():
             where = git_dir.relative_to(work) / "commondir"
             raise CopyRefused(f"{where} shares another repository's directory")
-        shutil.rmtree(git_dir / "hooks", ignore_errors=True)
+        # A link or a file is unlinked, never followed: `rmtree` refuses a link,
+        # and an ignored error left linked hooks in place (CodeAnt on #374).
+        hooks = git_dir / "hooks"
+        if hooks.is_symlink() or hooks.is_file():
+            hooks.unlink()
+        elif hooks.is_dir():
+            shutil.rmtree(hooks)
         (git_dir / "config.worktree").unlink(missing_ok=True)
         config = git_dir / "config"
         if config.is_file():
             text = config.read_text(encoding="utf-8", errors="replace")
+            # A new file, so a linked configuration is never written through.
+            config.unlink()
             config.write_text(_format_config(text), encoding="utf-8")
 
 

@@ -205,6 +205,12 @@ class LineEndingTests(unittest.TestCase):
             (outcome,) = mutation.run(root, table, jobs=1)
         self.assertEqual("SURVIVED", outcome.status, outcome.detail)
 
+    def test_a_replacement_takes_the_matched_line_s_ending(self) -> None:
+        # A file with CRLF elsewhere gave an LF region CRLF breaks (Codex on #374).
+        source = "a = 1\r\nif x:\n    y = 1\n    z = 2\n"
+        mutated = mutation.apply(source, "y = 1\nz = 2", "y = 3\nz = 4", python=True)
+        self.assertEqual("a = 1\r\nif x:\n    y = 3\n    z = 4\n", mutated)
+
     def test_a_form_feed_does_not_move_a_python_anchor(self) -> None:
         # `str.splitlines` breaks at a form feed, which Python does not, so the
         # matched span was computed on the wrong line.
@@ -918,6 +924,50 @@ class CopyTests(unittest.TestCase):
                 (outcome,) = mutation.run(root, table, jobs=1)
                 self.assertFalse(marker.exists(), f"the copied {route} ran")
                 self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_a_linked_hooks_directory_is_removed_too(self) -> None:
+        # `rmtree` refuses a link, and its ignored error left the hooks in place
+        # (CodeAnt on #374).
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git is not installed")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            marker = base / "hooked"
+            (root / "tests" / "test_commit.py").write_text(
+                "import subprocess\nimport unittest\n\n\n"
+                "class C(unittest.TestCase):\n"
+                "    def test_commit(self):\n"
+                "        subprocess.run(['git', '-c', 'user.name=t', '-c',\n"
+                "                        'user.email=t@example.invalid', 'commit',\n"
+                "                        '--allow-empty', '-qm', 'x'], check=True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [git, "init", "-q"], cwd=root, env=clean, check=True
+            )
+            hooks = root / ".git" / "hooks"
+            shutil.rmtree(hooks)
+            real = root / ".git" / "real-hooks"
+            real.mkdir()
+            hook = real / "pre-commit"
+            hook.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+            hook.chmod(0o755)
+            hooks.symlink_to("real-hooks")
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_commit, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+            # Inside the block: the marker goes with the scratch directory.
+            self.assertFalse(marker.exists(), "a linked hook ran in the copy")
+        self.assertEqual("KILLED", outcome.status, outcome.detail)
 
     def test_a_subsection_keeps_none_of_its_settings(self) -> None:
         # `[core "x"] bare = true` is `core.x.bare`, not `core.bare`; kept as the

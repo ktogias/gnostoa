@@ -123,6 +123,11 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 8, on `aedb94f`, rebased onto `main` after #375 merged.**
+    - Codex, CodeRabbit: a multi-line replacement took the file's first line ending, not the matched line's.
+    - CodeAnt: a `.git/hooks` that is a symbolic link survived, because `rmtree` refuses a link and its error was ignored.
+    - Both have a test that failed first. The hooks test first passed for the wrong reason, asserting after its scratch directory was gone. It was repaired before the fix.
+    - The copied configuration is replaced by a new file, never written through a link.
   - **Round 7, on `d56d583`.**
     - **Codex P1: copies of a live root.** The baseline and the mutants each copied the live root, so an edit during the run gave them different subjects. Every copy is now taken from one snapshot.
     - **Codex P2: execution through the copied metadata.** A filter or a hook ran from the copied `.git`. The copy's configuration is now reduced to the repository's format, and its hooks removed. This also covers round 6's routes, the work tree and the include, so they are no longer refused but dropped.
