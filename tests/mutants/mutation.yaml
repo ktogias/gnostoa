@@ -251,3 +251,10 @@ mutants:
     path: tools/mutation.py
     find: not isinstance(document, dict) or not all(isinstance(k, str) for k in document)
     replace: not isinstance(document, dict)
+  - name: borrowed objects are copied
+    path: tools/mutation.py
+    find: |
+      if borrowed.is_file() and borrowed.read_text(errors="replace").strip():
+          where = borrowed.relative_to(work)
+          raise CopyRefused(f"{where} borrows objects from outside the copy")
+    replace: pass

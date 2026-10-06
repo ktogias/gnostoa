@@ -63,9 +63,9 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
        - The baseline ends before any mutant starts.
        - It runs as wide as the mutants because a suite that cannot share the machine with itself, holding a fixed port or lock, would otherwise "kill" mutants through contention.
      - **One copy per mutant.** Each mutant is applied in its own isolated copy of the root.
-     - **The copy is faithful, and its Git stays in it.** Every copy is taken from one snapshot of the root, made when the run starts. It keeps the repository's own `.git` directory, so tests that read Git see the same history and tracked files as in place. Its configuration keeps only the repository's format: `[core]`'s format keys and `[extensions]`. Its hooks are removed. A work tree, an include, a filter, a hook or any other program the repository configured therefore neither routes Git elsewhere nor runs. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share. A `commondir`, which shares another repository's directory, refuses the copy.
+     - **The copy is faithful, and its Git stays in it.** Every copy is taken from one snapshot of the root, made when the run starts. It keeps the repository's own `.git` directory, so tests that read Git see the same history and tracked files as in place. Its configuration keeps only the repository's format: `[core]`'s format keys and `[extensions]`. Its hooks are removed. A work tree, an include, a filter, a hook or any other program the repository configured therefore neither routes Git elsewhere nor runs. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share. A `commondir`, which shares another repository's directory, refuses the copy, and so do borrowed objects (`objects/info/alternates` or `http-alternates`).
      - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy. A table path with a backslash or a colon is refused when the table loads, because a path checked as POSIX would be read natively elsewhere.
-     - **What the tests do stays in the copy.**
+     - **What the runner sets up stays in the copy; the tests are not sandboxed.** They run as the caller and can write anywhere the caller can, as in place under `ci/verify`. Run the runner in a container with the root mounted read-only to bound them, as the publication flow does (owner, 2026-10-06; Codex on #374).
        - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
        - Output beyond 16 MiB stops the tests, as a timeout does. It is measured after every wait, so tests that pass the limit and exit within one poll are caught too.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
@@ -104,7 +104,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - parallel workers;
   - table validation.
 - **After the change,** those tests pass. The verification-workflow table checks clean, and all nine of its mutants are reported killed.
-- **Review of `8ad4b4b`, round 2.** Codex and CodeAnt found seven defects in the first version:
+- **Review of `8ad4b4b`, round 2.** Codex and CodeAnt found six defects in the first version, in seven findings: both reported the symbolic link.
   - test failures were credited without a clean baseline, so a misspelled or unimportable test module killed every mutant;
   - a path through a symbolic link was written through, to a file outside the copy;
   - a timeout ended the test runner but not its children;
@@ -123,6 +123,10 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 10, on `09cbd28`.**
+    - Codex: a copy whose `.git` borrows objects through `objects/info/alternates` or `http-alternates`, as a clone made with `--reference` does, read an object store outside the copy. It is now refused, with a test that failed first.
+    - Codex, CodeRabbit: this Decision overstated the containment and miscounted round 2's defects; both corrected.
+    - CodeAnt: the test fixture's `tests` is a regular package, so an installed `tests` package cannot shadow it.
   - **Round 9, on `f177eba`.**
     - Codex: a CR-only file was read as one line, so a nested replacement lost its indentation and line breaks. Lines now end at `\r\n`, `\r` or `\n`, as Python reads them.
     - CodeAnt: Git in the tests read the host's system configuration. Now `GIT_CONFIG_NOSYSTEM` is set, and with `HOME` a scratch directory there is no global configuration either.

@@ -34,6 +34,9 @@ def _project(base: pathlib.Path) -> pathlib.Path:
         encoding="utf-8",
     )
     (root / "tests").mkdir()
+    # A regular package: an installed `tests` package would shadow a namespace one
+    # (CodeAnt on #374).
+    (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
     (root / "tests" / "test_m.py").write_text(
         "import unittest\n\nfrom pkg import m\n\n\n"
         "class T(unittest.TestCase):\n"
@@ -1062,6 +1065,27 @@ class CopyTests(unittest.TestCase):
             )
             (outcome,) = mutation.run(root, table, jobs=1)
         self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_borrowed_objects_refuse_the_copy(self) -> None:
+        # A clone made with --reference reads objects from outside the copy (Codex on
+        # #374).
+        for name in ("alternates", "http-alternates"):
+            with self.subTest(name), tempfile.TemporaryDirectory() as scratch:
+                base = pathlib.Path(scratch)
+                root = _project(base)
+                info = root / ".git" / "objects" / "info"
+                info.mkdir(parents=True)
+                (info / name).write_text(f"{base / 'elsewhere'}\n", encoding="utf-8")
+                table = mutation.load_table(
+                    _table(
+                        base,
+                        "  - name: double triples\n    path: pkg/m.py\n"
+                        "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    )
+                )
+                (outcome,) = mutation.run(root, table, jobs=1)
+                self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+                self.assertIn("borrows objects", outcome.detail)
 
     def test_a_shared_git_directory_refuses_the_copy(self) -> None:
         # `commondir` makes Git share another repository's directory.

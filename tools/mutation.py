@@ -23,7 +23,7 @@ link is followed". Tables of them live with the code they guard, as
   - A copy holding a link that resolves outside it is refused.
   - A copy's Git metadata keeps only the repository's format: no work tree, include,
     filter, hook or other program the repository configured. A copy that shares
-    another repository's Git directory is refused.
+    another repository's Git directory, or borrows its objects, is refused.
   - Output beyond a limit ends the tests, as a timeout does. The output is measured
     every `_POLL_SECONDS`, so a fast writer can pass the limit by what it writes in
     one interval before it is stopped.
@@ -542,6 +542,13 @@ def _sanitize_git(work: Path) -> None:
         if (git_dir / "commondir").exists():
             where = git_dir.relative_to(work) / "commondir"
             raise CopyRefused(f"{where} shares another repository's directory")
+        # A clone made with --reference reads its objects from outside the copy
+        # (Codex on #374).
+        for name in ("alternates", "http-alternates"):
+            borrowed = git_dir / "objects" / "info" / name
+            if borrowed.is_file() and borrowed.read_text(errors="replace").strip():
+                where = borrowed.relative_to(work)
+                raise CopyRefused(f"{where} borrows objects from outside the copy")
         # A link or a file is unlinked, never followed: `rmtree` refuses a link,
         # and an ignored error left linked hooks in place (CodeAnt on #374).
         hooks = git_dir / "hooks"
