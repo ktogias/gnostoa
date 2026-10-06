@@ -165,11 +165,13 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 | **Total** | **18.7** (17.1–20.2) | **17.5** (14.8–21.6) |
 
 - **The critical path is `extended` (17 of these 22 runs) or the mutants (5 of 22).** Since 09:57 on #369 it has been the mutants: 12.4 and 12.9 min for 151–153 mutants, against `extended` at 8.4 and 8.3. Its table has grown from 114 to 155 mutants, and in-flow mutants from 3–4 min on 10-05 to 9–13 min.
-- **Host contention adds up to about 3 minutes.** `extended` takes a median of 8.3 min (21 runs) when little else runs during the concurrent stage. With half or more of that stage shared, by the other PR's flow or by my local mutant runs, it takes 11.1 min (9 runs). The host has 8 cores, and the concurrent stage alone runs: Over these runs, though, the flow's own mutant table grew from 114 to 155 mutants, and those mutants compete with `extended` too. So the gap is an upper estimate of contention from outside the flow, not an attribution (CodeAnt on #379). #380's re-measurement compares runs at a matched table size.
-  - the whole suite twice, under coverage and in the runtime image;
-  - the mutants, three jobs at once.
-
-  My local runs add five more jobs.
+- **Host contention: measured, it is small; its upper bound is about 3 minutes.**
+  - **The host:** 8 cores. The concurrent stage alone runs the whole suite twice, under coverage and in the runtime image, and the mutants, three jobs at once. My local runs add five more jobs.
+  - **The reproducible measure.** Over the 22 qualifying runs, consider how much of each run's concurrent stage another flow's concurrent stage overlapped. `extended` took a median of 10.6 min in the 17 runs overlapped less than half, and 11.1 min in the 5 runs overlapped half or more: about 0.5 min.
+  - **What it cannot see:** overlap with my local mutant runs, whose start times were not recorded.
+  - **A first version's figure,** 8.3 min over 21 runs against 11.1 over 9, recorded no run selection and is not reproduced here.
+  - **A confounder:** the flow's own mutant table grew from 114 to 155 over these runs, and those mutants compete with `extended` too (CodeAnt on #379).
+  - **So:** about 3 minutes is an upper bound, not an attribution. #380 re-measures at a matched table size, with local runs dated.
 
 ## Lost flow time
 
@@ -177,12 +179,12 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 |---|---:|---:|---|
 | A mutant table failed in-flow: an anchor made stale by preparation's reformatting, or a survivor. The fail-fast rule then stopped every stage. | 6 | 84.6 min | four on 10-05, 18:45–21:44, before S6's tables (`368a4`, `368a5`, `368a7`, `368a8`); #374 `r7c` and #369 `r11`, 02:00 on 10-06 |
 | A verification that passed but was redone; the reason is not recorded | 1 | 13.0 min | #369 `368a3`, 17:52 on 10-05 |
-| Pre-flight stops: DeepSource-local findings (PYL-W0212, TYP, PTC-W0062) and a whitespace stop | 10 | ~1.3 min of flow, plus 1–5 min each to fix and relaunch | spread out |
+| Pre-flight stops: DeepSource-local findings (PYL-W0212, TYP, PTC-W0062) and a whitespace stop | 8: 3 on #369 and 5 on #374. Two more, `timing-373a` and `timing-rec3`, are other PRs' (Codex on #379). | ~1.3 min of flow, plus 1–5 min each to fix and relaunch | spread out |
 | A defect in my own snapshot check: it read `git status`, which lists the staged candidate | 1 | 5.2 min | 09:51 on 10-06 |
 
-No in-flow mutant failure has happened since whole-table local runs became routine, around 02:30 on 10-06: 0 in 15 published flows. On time alone, the practice does not pay for itself (Codex on #379):
-- **Its cost:** about 6.5 minutes per #369 round (*estimate*), about 97.5 minutes over the 15 rounds.
-- **What it saved:** it caught two in-flow failures in those rounds. They would have cost about 16 minutes each, or about 34 with an 18-minute relaunch: 32–68 minutes in all.
+No in-flow mutant failure has happened since whole-table local runs became routine, around 02:30 on 10-06: 0 in the 12 flows published from then to the cutoff, 7 on #369 and 5 on #374. On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
+- **Its cost:** 13 retained local whole-table runs on #369, at about 6.5 min each, and 3 on #374, at about 5 min each: about 100 min (*estimates*).
+- **What it saved:** one of them, #369's round 17, caught a survivor that would have failed in-flow: about 16 min, or about 34 with an 18-min relaunch. A second survivor was caught in round 20, after the cutoff, so it is not counted.
 
 What it buys instead is a flow that does not fail late, so the round's evidence is not rerun. Since every mutant now runs twice, this is the case for P3(b): run only the new or changed mutants locally.
 
@@ -200,7 +202,7 @@ What it buys instead is a flow that does not fail late, so the round's evidence 
    - **Root cause:** fixes went instance by instance. When the first member of a family was found, the family itself was not enumerated.
    - **Share:** most of the cadence. With a fixed cost of about 24 minutes per round, every avoided round saves about 40.
 2. **Full verification on every round.** The flow takes about 18 minutes whatever changed. A one-line registry pattern gets a fresh preparation, both full suites, the runtime image build and every mutant of the table, including those for unchanged files. That is about 40% of a typical round.
-3. **Duplicated and contending work on one 8-core host.** The suite runs twice per flow. The mutants run locally, then again in the flow. The other PR's flow, and my local five-job mutant runs, often overlap a flow's concurrent stage. Together this costs about 3 minutes on `extended` per flow, and about 6.5 minutes of duplicated mutant runs per #369 round (*estimates*).
+3. **Duplicated and contending work on one 8-core host.** The suite runs twice per flow. The mutants run locally, then again in the flow. The other PR's flow, and my local five-job mutant runs, often overlap a flow's concurrent stage. Contention costs at most about 3 minutes on `extended` per flow, and the reproducible flow-to-flow measure is about 0.5 minutes. Duplicated mutant runs cost about 6.5 minutes per #369 round (*estimates*).
 4. **Gaps between my local checks and the flow's gates.** These are smaller now:
    - the stale-anchor and survivor failures, about 85 minutes, were removed by the tables of #374 and by the local runs;
    - DeepSource-local missed PYL-W1113, which then cost a review finding on #374;
@@ -220,7 +222,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **The change:**
   - never run my local whole-table mutants during a flow's concurrent stage;
   - give a flow's mutants as many jobs as the concurrent stage leaves cores free.
-- **Savings:** about 3 minutes per flow, `extended` going from 11.1 to 8.3; perhaps 2–4 minutes of mutants on #369.
+- **Savings:** unknown until #380's re-measurement (Codex on #379). At most about 3 minutes per flow on `extended`, an upper bound; the reproducible flow-to-flow measure is about 0.5 minutes. Perhaps 2–4 minutes of mutants on #369, from the extra jobs.
 - **Risk:** the other PR's next round sometimes waits a few minutes.
 
 **P3. Change what each round verifies, and what runs twice. This changes Process A, so each part needs a Decision; it is #377.**
@@ -229,7 +231,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
   - *Risk:* a change to shared code or a fixture can weaken a kill elsewhere. The final full run is the backstop.
 - **(b) Run only the new or changed mutants locally,** leaving the whole table to the flow.
   - *Savings:* about 5 minutes per #369 round.
-  - *Risk:* an old mutant made equivalent by the change is found only in-flow, at a cost of about 18 minutes. That happened twice in 15 rounds; both times the local run caught it.
+  - *Risk:* an old mutant made equivalent by the change is found only in-flow, at a cost of about 18 minutes. Before the cutoff that happened once, in #369's round 17, and the local run caught it.
 - **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, and the toolchain, image and interpreter it runs on. Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. A round that changes only policy YAML or documentation would then run only the tests that read those files, the reuse check and the docs build, about 2–3 minutes.
   - *Savings:* 8–11 minutes on such rounds.
   - *Risk:* a policy file read by tests in non-obvious ways, such as the registry being read by the reuse-check tests. The test selection must follow data dependencies, not file types.
@@ -243,7 +245,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - Add the DeepSource rules that have already cost a round to the agent's local mirror. W1113 was added on 2026-10-06.
 - Review the publish flow's own changes on both paths before the first run, as was done after the snapshot-check defect.
 
-**A rough total.** P2 with P3(a) and P3(b) together would cut a typical #369 round from about 42 to about 28–32 minutes. P1, by avoiding rounds, matters more than any per-round saving: each round avoided saves about 40 minutes.
+**A rough total.** P2 with P3(a) and P3(b) together would cut a typical #369 round from about 42 to about 28–32 minutes at best, since P2's share is an upper bound. P1, by avoiding rounds, matters more than any per-round saving: each round avoided saves about 40 minutes.
 
 ## Plan, as recorded on 2026-10-06
 
@@ -270,4 +272,4 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
 - **Lost runs.** Why a run failed was read from its `V-*` result files. `368a3` passed every stage and was redone anyway; its reason is not recorded.
 - **Early timing files.** They carry no PUBLISHED line, so publication is inferred from a `publish end` mark.
-- **Round 19 of #369, and everything after the cutoff.** Round 19's flow started at the cutoff and published `8a25bbe` at 11:45:59. Its retained log is evidence, but it is not counted, so the counts, means, the stage sample and the "0 in 15" claim all stop at the cutoff (Codex on #379).
+- **Round 19 of #369, and everything after the cutoff.** Round 19's flow started at the cutoff and published `8a25bbe` at 11:45:59. Its retained log is evidence, but it is not counted, so the counts, means, the stage sample and the "0 in 12" claim all stop at the cutoff (Codex on #379).
