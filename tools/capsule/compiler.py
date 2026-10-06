@@ -13,14 +13,13 @@ import hashlib
 import json
 import shutil
 import stat
-import subprocess
-import tarfile
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
+from tools import trusted_execution
 from tools.capsule import (
     adapters,
     certificates,
@@ -72,11 +71,6 @@ _ARBITRATION_ROUNDS = 16
 #: status re-reads when a commit lands between the state and the record it is
 #: checked against. A workspace that will not hold still is reported, not guessed.
 _STATUS_READ_ATTEMPTS = 8
-_GIT_ENV = {
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "PATH": "/usr/bin:/bin",
-}
 _IMPORT_ROOTS = ("src",)
 
 
@@ -85,74 +79,75 @@ class CompileError(RuntimeError):
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_GIT_ENV,
-    ).stdout.strip()
+    # A read of the subject repository, which runs none of its own configured
+    # programs (Codex on #369); a failed read is a compile error (CodeAnt on #369).
+    try:
+        return trusted_execution.repository_read(repo, *args)
+    # A refused argument comes from the spec, so it is a compile error too (CodeAnt
+    # on #369).
+    except (trusted_execution.TrustedExecutionError, ValueError) as exc:
+        raise CompileError(str(exc)) from exc
 
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination.parent / f"{destination.name}.tar"
+    # The owner materializes the tree with none of the subject repository's own
+    # attributes or filters, and refuses without the PEP 706 member filter
+    # (Decision 0102).
     try:
-        with archive.open("wb") as handle:
-            subprocess.run(
-                ["git", "-C", str(repo), "archive", "--format=tar", tree],
-                check=True,
-                stdout=handle,
-                env=_GIT_ENV,
-            )
-        if not hasattr(tarfile, "data_filter"):
-            # PEP 706 landed in 3.12 and was backported to 3.11.4. Refuse rather than
-            # extract a subject tree without the hardened member filter.
-            raise CompileError("tarfile-data-filter-unavailable")
-        with tarfile.open(archive) as handle:
-            handle.extractall(destination, filter="data")
-    finally:
-        archive.unlink(missing_ok=True)
+        trusted_execution.extract_tree(repo, tree, destination)
+    # A spec's or lock's tree name is data: a malformed one is a blocker too
+    # (CodeAnt on #369).
+    except (trusted_execution.TrustedExecutionError, ValueError) as exc:
+        raise CompileError(str(exc)) from exc
 
 
 def _frozen_tree_paths(repo: Path, tree: str) -> frozenset[str]:
     """Every path the frozen Git tree carries. The source of truth about absence."""
-    listed = subprocess.run(
-        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", tree],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_GIT_ENV,
-    )
-    return frozenset(line for line in listed.stdout.splitlines() if line)
+    # NUL-separated: without `-z` Git quotes a name with a newline or a non-ASCII
+    # byte, and the set held the quoted form (CodeAnt on #369).
+    listed = _git(repo, "ls-tree", "-r", "--name-only", "-z", tree)
+    return frozenset(path for path in listed.split("\0") if path)
 
 
 def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> str:
-    """Independently reconstruct the Git tree identity of a materialised directory."""
-    with tempfile.TemporaryDirectory() as scratch:
-        index = Path(scratch) / "index"
-        env = {**_GIT_ENV, "GIT_INDEX_FILE": str(index)}
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "--work-tree",
-                str(worktree),
-                "add",
-                "-A",
-                "--force",
-            ],
-            check=True,
-            capture_output=True,
-            env=env,
+    """Independently reconstruct the Git tree identity of a materialised directory.
+
+    Under disposable metadata that reads the repository's objects through its
+    alternates, so the subject repository's own configuration, attributes and filter
+    drivers do not run while its retained tree is verified, and the reconstructed
+    objects are written into the disposable store, not the subject's (CodeAnt on
+    #369). Nor do the materialised tree's own `.gitattributes`: the metadata's own
+    attributes outrank them, so each file is hashed as the bytes it holds, as
+    `extract_tree` wrote them.
+    """
+    # Git runs through the owner, so its failure is a compile error, never a raw
+    # `CalledProcessError` (Codex on #369).
+    try:
+        return _reconstruct(repo, worktree, ignore)
+    # Its own scratch directory can fail too (CodeAnt on #369).
+    except (trusted_execution.TrustedExecutionError, OSError) as exc:
+        raise CompileError(f"cannot reconstruct the materialised tree: {exc}") from exc
+
+
+def _reconstruct(repo: Path, worktree: Path, ignore: Sequence[str]) -> str:
+    objects = trusted_execution.repository_objects(repo)
+    with (
+        trusted_execution.disposable_git_metadata(
+            objects, object_format=trusted_execution.repository_format(repo)
+        ) as git_dir,
+        tempfile.TemporaryDirectory() as scratch,
+    ):
+        env = trusted_execution.git_environment(
+            git_dir=git_dir,
+            work_tree=worktree,
+            index_file=Path(scratch) / "index",
+        )
+        trusted_execution.run_git(
+            ["add", "-A", "--force"], cwd=worktree, environment=env
         )
         if ignore:
-            subprocess.run(
+            trusted_execution.run_git(
                 [
-                    "git",
-                    "-C",
-                    str(repo),
                     "rm",
                     "--cached",
                     # Index-only, and forced: without -f git refuses to drop a path
@@ -164,17 +159,13 @@ def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> st
                     "--ignore-unmatch",
                     *ignore,
                 ],
-                check=True,
-                capture_output=True,
-                env=env,
+                cwd=worktree,
+                environment=env,
             )
-        return subprocess.run(
-            ["git", "-C", str(repo), "write-tree"],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        ).stdout.strip()
+        written = trusted_execution.run_git(
+            ["write-tree"], cwd=worktree, environment=env
+        )
+        return written.stdout.decode("utf-8").strip()
 
 
 def _materialize_verified(

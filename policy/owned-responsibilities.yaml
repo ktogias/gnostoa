@@ -1,0 +1,684 @@
+# The responsibilities the toolkit owns once (Decision 0102, #368, #365).
+#
+# Before writing a helper, find the responsibility here and extend its owner: never
+# write it again. `knowledge reuse-check` runs in the `fast`, `regression` and
+# `extended` profiles of `ci/verify`, so in the pre-commit and pre-push hooks and in
+# provider CI. It fails on any signature below that appears in production, meaning
+# every tracked file but tests, knowledge, guidance and Markdown other than
+# `AGENTS.md`, outside its owner and the places allowed. A debt entry names the
+# exact lines it owes: a matching line it does not name is a new copy, and a line it
+# names that has gone must be removed, so debt can only shrink. Identical lines are
+# interchangeable call sites (owner, 2026-10-06; Decision 0102, rule 4).
+#
+# The check guards against an agent re-implementing an owner by accident. It does not
+# detect deliberate obfuscation, such as getattr or a name built at run time; review
+# and the routing hooks cover that (Decision 0102, rule 4).
+#
+# A responsibility missing from this list is not therefore free to copy. Run the
+# runbook's prior-art checkpoint, and add the new owner here when you create it.
+id: gnostoa-owned-responsibilities
+version: "1.0"
+responsibilities:
+  - id: trusted-execution
+    responsibility: >-
+      Resolving an executable to run; a Git environment free of the caller's routing
+      and configuration; disposable Git metadata bound to an object store;
+      materializing an exact tree, byte for byte, with none of the repository's own
+      configuration, attributes or filter drivers applying, nor the tree's own
+      .gitattributes: none of its files is left out or rewritten;
+      and, with PR B of #368, running an authority commit's entrypoint.
+    owner: tools/trusted_execution.py
+    interface:
+      - trusted_executable
+      - trusted_path
+      - operator_executable
+      - git_executable
+      - git_environment
+      - without_git_variables
+      - caller_git_environment
+      - disposable_git_metadata
+      - repository_objects
+      - repository_format
+      - repository_read
+      - repository_files
+      - extract_tree
+      - run_git
+      - GitFailure
+    extend: >-
+      Add the new need to tools/trusted_execution.py and its tests in
+      tests/test_trusted_execution.py. Use trusted_executable() for an authority or
+      judge path, and operator_executable() only for a tool the operator chooses. In a
+      repository you do not trust, use repository_read() or repository_files() for a
+      read of a shape the owner allows, or work under disposable_git_metadata(). Run no
+      Git, build no Git environment and archive no tree yourself.
+    decision: knowledge/decisions/0102-own-trusted-execution-in-one-hardened-module.md
+    signatures:
+      - id: git-environment
+        pattern: 'GIT_CONFIG_(GLOBAL|SYSTEM|NOSYSTEM|PARAMETERS|COUNT)|startswith\(\s*["'']GIT_|GIT_EXEC_PATH|GIT_TRACE|\bunset\s+GIT_|["''$]\{?GIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)\b|\bGIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)\s*[=:]|^\s*ENV\s+GIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)\s'
+        means: a Git environment built outside the owner
+      - id: git-execution
+        # A command line starts a line, follows `$(` or `;`, `&`, `|`, or starts the
+        # string a call hands to a shell, as `os.system("git status")` does (Codex on
+        # #369); a message that names a Git command is no call. `--version`, `--help`,
+        # `-v` and `-h` run Git with no subcommand (Codex on #369). The command may be
+        # an absolute path, such as `/usr/bin/git` (Codex on #369). Rounds 15 to 19
+        # each found one more form, so the rest are listed at once: a workflow's
+        # `run:`, a Dockerfile's `RUN`, a backtick substitution after `=`, `"` or `(`
+        # but not inline code, `find -exec`, `sh -c '...'`,
+        # wrappers such as `timeout`, `sudo` and `xargs`, also by an absolute path
+        # and with an option that takes a word or a path, as `/usr/bin/env git` and
+        # `sudo -u builder git` (Codex on #369), `shlex.split` and
+        # `pexpect.spawn` strings, an argv list headed by a name like `git_bin`, and
+        # GitPython, which runs the git binary. In an explicit command context any
+        # subcommand is a command, external ones such as `git lfs` too (Codex on
+        # #369); at a bare line start, where `git and ...` is also prose, only Git's
+        # own subcommands and well-known extensions are.
+        # An option reads one way only: a bare `-C` or `-c` takes its argument, and a
+        # word follows the dashes. Read two ways at each step, a run of options
+        # backtracked exponentially (CodeAnt on #369).
+        pattern: '\[\s*["'']git["'']|\[\s*(?:\w+\.)*(?:[A-Za-z]\w*_)?_?git(?:_\w+)?(?:\(\))?\s*,|git_executable\b|(?:\(|,)\s*(?:\w+\s*=\s*)?["'']git["'']\s*[,)]|["'']/(?:[\w.+-]+/)*git["'']|["'']git["'']\s*,|(?:^\s*(?:(?:(?:-\s+)?run:\s+|RUN\s+)(?:(?:if|then|elif|else|do|exec|!)\s+)*|(?:(?:if|then|elif|else|do|exec|!)\s+)+|(?=(?:/(?:[\w.+-]+/)*)?(?:env|command|timeout|nice|nohup|sudo|xargs|time|stdbuf|ionice|setsid|chrt|flock)\s))|\$\(\s*|[="(]`\s*|[;&|]\s*|\s-exec(?:dir)?\s+|\b(?:ba|da|k|z)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+["'']\s*|(?:os\.(?:system|popen)|subprocess\.\w+|create_subprocess_shell|getoutput|shlex\.split|pexpect\.(?:spawn|run))\(\s*(?:\b[rbfRBF]{1,2})?["'']\s*)(?:(?:/(?:[\w.+-]+/)*)?(?:env(?:\s+(?:-\S+|\w+=\S*))*|command(?:\s+-[pvV])*|(?:timeout|nice|nohup|sudo|xargs|time|stdbuf|ionice|setsid|chrt|flock)(?:\s+(?:-\S+(?:\s+[A-Za-z_][\w.@:-]*)?|\d\S*|/\S*))*)\s+)*(?:/(?:[\w.+-]+/)*)?git(?:\s+(?:-[Cc]\s+\S+|-(?![Cc]\s)-?\w[\w-]*(?:=\S+)?))*(?:\s+(?:--version|--help|--exec-path|--html-path|--man-path|--info-path|--list-cmds|-v|-h)(?![\w-])|\s+(?:\\\s*$|[a-z][a-z0-9-]*(?![\w-])))|^\s*(?:/(?:[\w.+-]+/)*)?git(?:\s+(?:-[Cc]\s+\S+|-(?![Cc]\s)-?\w[\w-]*(?:=\S+)?))*(?:\s+(?:--version|--help|--exec-path|--html-path|--man-path|--info-path|--list-cmds|-v|-h)(?![\w-])|\s+(?:\\\s*$|(?:add|am|annotate|apply|archive|backfill|bisect|blame|branch|bugreport|bundle|cat-file|check-attr|check-ignore|check-mailmap|check-ref-format|checkout|checkout--worker|checkout-index|cherry|cherry-pick|clean|clone|column|commit|commit-graph|commit-tree|config|contacts|count-objects|credential|credential-cache|credential-cache--daemon|credential-netrc|credential-store|daemon|describe|diagnose|diff|diff-files|diff-index|diff-pairs|diff-tree|difftool|difftool--helper|fast-export|fast-import|fetch|fetch-pack|filter-branch|fmt-merge-msg|for-each-ref|for-each-repo|format-patch|format-rev|fsck|fsck-objects|fsmonitor--daemon|gc|get-tar-commit-id|grep|hash-object|help|history|hook|http-backend|http-fetch|http-push|imap-send|index-pack|init|init-db|instaweb|interpret-trailers|last-modified|log|ls-files|ls-remote|ls-tree|mailinfo|mailsplit|maintenance|merge|merge-base|merge-file|merge-index|merge-octopus|merge-one-file|merge-ours|merge-recursive|merge-recursive-ours|merge-recursive-theirs|merge-resolve|merge-subtree|merge-tree|mergetool|mktag|mktree|multi-pack-index|mv|name-rev|notes|pack-objects|pack-redundant|pack-refs|patch-id|pickaxe|prune|prune-packed|pull|push|quiltimport|range-diff|read-tree|rebase|receive-pack|reflog|refs|remote|remote-ext|remote-fd|remote-ftp|remote-ftps|remote-http|remote-https|repack|replace|replay|repo|request-pull|rerere|reset|restore|rev-list|rev-parse|revert|rm|send-pack|sh-i18n--envsubst|shell|shortlog|show|show-branch|show-index|show-ref|sparse-checkout|stage|stash|status|stripspace|submodule|submodule--helper|subtree|switch|symbolic-ref|tag|unpack-file|unpack-objects|update-index|update-ref|update-server-info|upload-archive|upload-archive--writer|upload-pack|url-parse|var|verify-commit|verify-pack|verify-tag|version|web--browse|whatchanged|worktree|write-tree|lfs|annex|filter-repo|crypt|secret|secrets|flow|absorb|imerge|sizer|credential-manager|town|branchless|subrepo)(?![\w-])))|^\s*\w+\s*(?::[^=]+)?=\s*["'']git["'']\s*(?:#.*)?$|^\s*(?:(?:export|readonly|local|typeset|declare(?:\s+-\w+)*)\s+)?\w+=(?:/(?:[\w.+-]+/)*)?git\s*(?:[;#].*)?$|^\s*alias\s+\w+=["'']?(?:/(?:[\w.+-]+/)*)?git\b|^\s*(?:import|from)\s+git(?:\.\w+)*(?:\s|$)'
+        # The subcommands are Git's own list, `git --list-cmds=main` of Git 2.47 and
+        # 2.55; tests/test_owned_responsibilities.py fails when a Git lists one more.
+        # Its last forms bind a name to Git, for a later `[GIT, ...]` or `"$GIT"`:
+        # the literal "git", as `GIT = "git"`, a shell assignment, unquoted and
+        # perhaps an absolute path or a declaration, as `git_cmd=git`, and a shell
+        # alias. A subscript, such as a data field, is no binding (Codex on #369).
+        # Git's other bare options, such as `--exec-path`, run it with no subcommand
+        # too (CodeAnt on #369).
+        means: Git run outside the owner
+      - id: executable-lookup
+        # A module call, a name imported from shutil (Codex on #369), or the shell's.
+        # An import is read as its list of names, not `[^#]*`, which rescanned the
+        # line from each `from ... import`, quadratically (CodeAnt on #369).
+        # The shell's own lookups, `$(which git)` and `$(type -P git)`, too (Codex on
+        # #369).
+        pattern: 'shutil\.which\(|command -v |(?:\$\(|`)\s*(?:which|type\s+-[Pp]a?)\s+|from\s+shutil\s+import\s+\(?\s*(?:\w+(?:\s+as\s+\w+)?\s*,\s*)*which\b'
+        means: an executable resolved outside the owner
+      - id: git-argv
+        # An argument list headed by a name for git, as a tuple or split across
+        # lines, where the line pattern cannot see it (CodeAnt on #369).
+        structure: git-argv
+        means: Git run outside the owner, by an argument list the line does not show
+      - id: executable-lookup-indirect
+        # `which` on a line of its own in a multi-line import, or called through an
+        # alias of shutil, where the line pattern cannot see it (Codex on #369).
+        structure: executable-lookup-indirect
+        means: an executable resolved outside the owner, under a name the line hides
+      - id: tree-archive
+        pattern: '["'']archive["''],\s*["'']--format|git archive|archive --format'
+        means: a tree archived outside the owner
+      - id: disposable-metadata
+        pattern: '--template='
+        means: Git metadata made outside the owner
+    allowed:
+      - path: tools/trusted_execution.py
+        reason: the owner
+      - path: ci/review_b15_runtime_smoke.py
+        signatures: [executable-lookup]
+        reason: >-
+          Its `command -v` runs inside the runtime image, to prove what the image
+          lacks; it resolves nothing for this process to run.
+    debt:
+      # The preparation authority and the repository's shell scripts move onto the
+      # owner and its shell library by authority evolution: #368, PR B (Decision
+      # 0102, rule 6).
+      - path: tools/candidate_prepare.py
+        signatures: [disposable-metadata, executable-lookup, git-environment, git-execution]
+        lines:
+          - '_GIT = shutil.which("git")'
+          - '"GIT_DIR",'
+          - '"GIT_WORK_TREE",'
+          - '"GIT_COMMON_DIR",'
+          - '"GIT_OBJECT_DIRECTORY",'
+          - '"GIT_ALTERNATE_OBJECT_DIRECTORIES",'
+          - '"GIT_INDEX_FILE",'
+          - '"GIT_CEILING_DIRECTORIES",'
+          - '"GIT_DISCOVERY_ACROSS_FILESYSTEM",'
+          - '"GIT_CONFIG_PARAMETERS",'
+          - '"GIT_CONFIG_GLOBAL",'
+          - '"GIT_CONFIG_SYSTEM",'
+          - '"GIT_CONFIG_NOSYSTEM",'
+          - 'def _git_executable() -> str:'
+          - 'or name == "GIT_CONFIG_COUNT"'
+          - '_git_executable(),'
+          - 'env["GIT_CONFIG_GLOBAL"] = os.devnull'
+          - 'env["GIT_CONFIG_SYSTEM"] = os.devnull'
+          - 'env["GIT_CONFIG_NOSYSTEM"] = "1"'
+          - 'env["GIT_CONFIG_COUNT"] = "1"'
+          - 'git_dir = str(Path(_git_executable()).parent)'
+          - 'completed = _run([_git_executable(), *arguments], cwd=root, env=env)'
+          - '[_git_executable(), "rev-parse", "--show-toplevel"],'
+          - '_git_executable(),'
+          - '[_git_executable(), "ls-files", "-v", "-z"],'
+          - '[_git_executable(), "update-ref", ref, tree, "0" * 40],'
+          - '[_git_executable(), "update-ref", "-d", ref, tree],'
+          - 'env["GIT_DIR"] = str(git_dir)'
+          - 'env["GIT_WORK_TREE"] = str(worktree)'
+          - 'env["GIT_OBJECT_DIRECTORY"] = object_directory'
+          - '_git_executable(),'
+          - 'f"--template={template_dir}",'
+          - '[_git_executable(), "diff", "--cached", "--name-only", "-z", parent],'
+          - '_git_executable(),'
+          - '_git_executable(),'
+          - '[_git_executable(), "diff", "--cached", "--name-only", "-z", parent],'
+          - '[_git_executable(), "ls-files", "--stage", "-z"],'
+          - '[_git_executable(), "diff", "--quiet", "--"],'
+          - '[_git_executable(), "ls-files", "--others", "--exclude-standard", "-z"],'
+          - '_run([_git_executable(), "clean", "-ffdx"], cwd=root, env=env)'
+          - 'env.pop("GIT_OBJECT_DIRECTORY", None)'
+          - 'env["GIT_INDEX_FILE"] = str(Path(directory) / "index")'
+          - '[_git_executable(), "add", "-A"],'
+          - '[_git_executable(), "diff", "--cached", "--check", parent_commit],'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: ci/prepare-candidate
+        signatures: [executable-lookup, git-environment, git-execution]
+        lines:
+          - 'git_executable="$(command -v git || true)"'
+          - 'bootstrap_python="$(command -v python || command -v python3 || true)"'
+          - 'mktemp_executable="$(command -v mktemp || true)"'
+          - 'if [ -z "$git_executable" ] || [ -z "$bootstrap_python" ] || [ -z "$mktemp_executable" ]; then'
+          - 'unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY'
+          - 'unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES'
+          - 'unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS'
+          - 'unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE'
+          - 'export GIT_CONFIG_COUNT=0'
+          - 'export GIT_CONFIG_GLOBAL=/dev/null'
+          - 'export GIT_CONFIG_SYSTEM=/dev/null'
+          - 'export GIT_CONFIG_NOSYSTEM=1'
+          - 'root="$("$git_executable" -c core.hooksPath=/dev/null rev-parse --show-toplevel)"'
+          - 'if ! "$git_executable" -c core.hooksPath=/dev/null \'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: AGENTS.md
+        signatures: [executable-lookup, git-environment, git-execution]
+        lines:
+          - 'git_executable="$(command -v git || true)"'
+          - 'mktemp_executable="$(command -v mktemp || true)"'
+          - 'if [ -z "${git_executable}" ] || [ -z "${mktemp_executable}" ]; then'
+          - 'unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY'
+          - 'unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES'
+          - 'unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS'
+          - 'unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE'
+          - 'export GIT_CONFIG_COUNT=0'
+          - 'export GIT_CONFIG_GLOBAL=/dev/null'
+          - 'export GIT_CONFIG_SYSTEM=/dev/null'
+          - 'export GIT_CONFIG_NOSYSTEM=1'
+          - '"${git_executable}" -c core.hooksPath=/dev/null \'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: ci/verify
+        signatures: [executable-lookup]
+        lines:
+          - 'if command -v knowledge >/dev/null 2>&1; then'
+          - 'command -v docker >/dev/null 2>&1'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: ci/style
+        signatures: [git-execution]
+        # The first line, a command continued on the next, was found by the
+        # signature's continuation form (CodeRabbit on #369).
+        lines:
+          - 'git -c "safe.directory=${repository_root}" \'
+          - '"git",'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: ci/build-runtime
+        signatures: [git-execution]
+        lines:
+          - 'ROOT=$(git rev-parse --show-toplevel)'
+          - 'unsupported=$(git ls-files --cached --format=''%(objectmode)'' \'
+          - 'git ls-files --cached --deduplicate -z \'
+          - 'resolved=$(git rev-parse --verify --quiet "${CANDIDATE_REF}^{commit}") || {'
+          - 'head=$(git rev-parse --verify HEAD)'
+          - 'git ls-tree -r --name-only -z "$resolved" | LC_ALL=C sort -z > "$CONTEXT/meta/.revision-paths"'
+          - 'git ls-files --cached -z --format=''%(objectmode)%x09%(path)'' \'
+          # Seen once the line-start form read `if !` as two keywords (Codex on #369).
+          - 'if ! git diff --quiet "$resolved" -- || ! git diff --cached --quiet "$resolved" -- ; then'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: ci/x3_conformance
+        signatures: [git-execution]
+        lines:
+          - 'ROOT=$(git rev-parse --show-toplevel)'
+          - 'REF=$(git rev-parse HEAD)'
+          - 'git clone --quiet --local --no-hardlinks "$ROOT" "$CLEAN"'
+          - 'git -C "$CLEAN" checkout --quiet --detach "$REF"'
+          - '"$(git -C "$CLEAN" ls-files --cached --deduplicate -z | sha256sum | cut -c1-16)" \'
+          - '"$(git -C "$DIRTY" ls-files --cached --deduplicate -z | sha256sum | cut -c1-16)"'
+          - 's1=$(git -C "$CLEAN" ls-files --cached --deduplicate -z | tr -cd ''\0'' | wc -c)'
+          - '( cd "$CLEAN" && git ls-files --cached --deduplicate -z | LC_ALL=C sort -z ) \'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      # The workflows' base and candidate selection, and their Git reads: #368, PR D.
+      - path: .github/workflows/analyzer-readback.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-current-advisory-restoration-runtime.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse "HEAD^{tree}")" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git cat-file -t "refs/tags/${SOURCE_TAG}")" = "tag"'
+          - 'test "$(git rev-parse "refs/tags/${SOURCE_TAG}")" = "${TAG_OBJECT}"'
+          - 'test "$(git rev-parse "${SOURCE_TAG}^{commit}")" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain --untracked-files=no)"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-r2a-p2a-bootstrap-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-r2a-p2b-b1-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-r2a-p2b-b15-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-r2a-p2b-b16-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+          - 'test "$(git -C b16-source rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git -C b16-source rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git -C b16-source status --porcelain=v1 --untracked-files=all)"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/publish-r2a-p2b-oci.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"'
+          - 'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+          - 'source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/r2a-protected-current-advisory.yml
+        signatures: [git-execution]
+        lines:
+          - 'candidate_commit=$(git rev-parse HEAD)'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/verification.yml
+        signatures: [git-execution, tree-archive]
+        lines:
+          - 'GNOSTOA_CANDIDATE_REF="$(git rev-parse HEAD)" \'
+          - 'candidate_commit=$(git rev-parse HEAD)'
+          - 'candidate_tree=$(git rev-parse ''HEAD^{tree}'')'
+          - 'git archive "${candidate_commit}" | tar -x -C "${vendored_root}"'
+          - 'git diff --name-only "${BASE_SHA}" HEAD'
+          - '&& git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then'
+          - 'git diff --no-renames --name-only -z "${BASE_SHA}" HEAD > "${paths_file}"'
+          - 'candidate_ref=$(git rev-parse HEAD)'
+          # Seen once the line-start form read `if !` as two keywords (Codex on #369).
+          - 'if ! git diff --quiet "${BASE_SHA}" HEAD -- tools/extended_route.py; then'
+          - 'if ! git show "${BASE_SHA}:tools/extended_route.py" > "${router_file}"; then'
+          # Seen once `elif` was read as a shell keyword.
+          - 'elif git cat-file -e "${BASE_SHA}:tools/extended_route.py" 2>/dev/null; then'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      - path: .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
+        signatures: [git-execution]
+        lines:
+          - 'test "$(git -C restoration-source rev-parse HEAD)" = "${SOURCE_COMMIT}"'
+          - 'test "$(git -C restoration-source rev-parse ''HEAD^{tree}'')" = "${SOURCE_TREE}"'
+          - 'test -z "$(git -C restoration-source status --porcelain)"'
+          - 'git merge-base --is-ancestor "${SOURCE_COMMIT}" "${protected_main}" || {'
+        until: https://github.com/ktogias/gnostoa/issues/368
+      # Python modules that run Git themselves converge on the owner under #365.
+      - path: tasks/gnostoa_orientation.py
+        signatures: [git-execution, git-argv]
+        lines:
+          - 'git = trusted_execution.git_executable()'
+          # The head of an argument list split across lines, seen once git-argv
+          # read such lists (CodeAnt on #369).
+          - 'git,'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/adoption_check.py
+        signatures: [git-execution]
+        lines:
+          - '["git", "-c", f"safe.directory={root}", "-C", str(root), *arguments],'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/quality_evidence.py
+        signatures: [git-execution]
+        lines:
+          - '["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],'
+          - '"git",'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/release_smoke.py
+        signatures: [git-execution]
+        lines:
+          - 'current = _run(["git", "rev-parse", "HEAD"], cwd=root).stdout.strip()'
+          - '["git", "status", "--porcelain=v1", "--untracked-files=all"],'
+          - '_run(["git", "init", "-b", "main"], cwd=project)'
+          - '_run(["git", "config", "user.email", "fixture@example.invalid"], cwd=project)'
+          - '_run(["git", "config", "user.name", "Release smoke"], cwd=project)'
+          - '_run(["git", "add", "AGENTS.md"], cwd=project)'
+          - '_run(["git", "commit", "-m", "baseline"], cwd=project)'
+          - '_run(["git", "add", "."], cwd=project)'
+          - '["git", "rev-parse", "HEAD"], cwd=repository_root'
+          - 'before = _run(["git", "status", "--porcelain=v2"], cwd=project).stdout'
+          - 'after = _run(["git", "status", "--porcelain=v2"], cwd=project).stdout'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/repository_scope.py
+        signatures: [git-execution]
+        lines:
+          - '"git",'
+        until: https://github.com/ktogias/gnostoa/issues/365
+
+  - id: schema-validation
+    responsibility: >-
+      Checking a machine-read declaration against an installed Draft 2020-12 schema
+      under schemas/.
+    owner: tools/schema_validation.py
+    interface: [load_schema, schema_errors]
+    extend: >-
+      Call schema_errors(document, "<name>.schema.json"); add the schema under
+      schemas/. Nine local helpers predate this owner and converge on it under #365.
+    decision: knowledge/decisions/0102-own-trusted-execution-in-one-hardened-module.md
+    signatures:
+      - id: jsonschema-validator
+        # Any draft's validator class, and the standard entry points (Codex on #369).
+        # An import is read as its list of names, as for executable-lookup.
+        pattern: 'Draft\d+Validator|jsonschema\.validate\(|from\s+jsonschema\s+import\s+\(?\s*(?:\w+(?:\s+as\s+\w+)?\s*,\s*)*validate\b|validator_for\('
+        means: a schema validated outside the owner
+      - id: jsonschema-validator-indirect
+        # An entry point on a line of its own in a multi-line import, or `validate`
+        # called through an alias of jsonschema (Codex on #369).
+        structure: jsonschema-validator-indirect
+        means: a schema validated outside the owner, under a name the line hides
+    allowed: []
+    debt:
+      - path: tools/adoption_assurance.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator.check_schema(schema)'
+          - 'Draft202012Validator.check_schema(value)'
+          - 'Draft202012Validator(schema).iter_errors(result),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/capsule/spec.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'jsonschema.Draft202012Validator(schema).iter_errors(dict(payload)),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/check_change_policy.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator(schema_value).iter_errors(policy),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/check_ci_policy.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator(schema).iter_errors(value),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/check_guardrails.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator(_schema(schema)).iter_errors(manifest),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/check_runtime_lock.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator(_schema(schema)).iter_errors(lock),'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/review_check.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator, FormatChecker'
+          - 'Draft202012Validator.check_schema(loaded)'
+          - 'validator = Draft202012Validator('
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/review_live.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator, FormatChecker'
+          - 'Draft202012Validator.check_schema(loaded)'
+          - 'validator = Draft202012Validator('
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/review_outer.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator, FormatChecker'
+          - 'Draft202012Validator.check_schema(loaded)'
+          - 'validator = Draft202012Validator(loaded, format_checker=_FORMAT_CHECKER)'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/task_envelope.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator.check_schema(value)'
+          - 'validator = Draft202012Validator(_schema(schema), registry=_offline_registry())'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/validate_bundle.py
+        signatures: [jsonschema-validator]
+        lines:
+          - 'from jsonschema import Draft202012Validator'
+          - 'Draft202012Validator(_schema(schema_dir / "profile.schema.json")).iter_errors('
+          - 'frontmatter_validator = Draft202012Validator('
+        until: https://github.com/ktogias/gnostoa/issues/365
+
+  - id: github-rest-transport
+    responsibility: >-
+      Talking to the GitHub REST API: URL safety, bounded reads, classified errors,
+      rate limits and pagination.
+    owner: tools/github_rest.py
+    interface: [GitHubRestClient, validate_url, next_url]
+    extend: >-
+      Extend GitHubRestClient and its tests in tests/test_github_rest.py
+      (SharedClientOwnershipTests). Do not open a connection to the API elsewhere.
+    decision: knowledge/decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md
+    signatures:
+      - id: http-request
+        # A client named by its dotted module, or imported by name: `from http import
+        # client`, `from urllib import request` (Codex on #369), or a third-party
+        # client, whose import changes the lock but may already be installed.
+        pattern: 'urllib\.request|urlopen\(|http\.client|from\s+http\s+import\s+\(?\s*(?:\w+(?:\s+as\s+\w+)?\s*,\s*)*client\b|from\s+urllib\s+import\s+\(?\s*(?:\w+(?:\s+as\s+\w+)?\s*,\s*)*request\b|^\s*(?:import|from)\s+(?:requests|httpx|urllib3|aiohttp)\b'
+        means: an HTTP request made outside the shared client
+      - id: http-request-indirect
+        # `client` or `request` on a line of its own in a multi-line import, where
+        # the line pattern cannot see it (Codex on #369).
+        structure: http-request-indirect
+        means: an HTTP request made outside the shared client, under a name the line hides
+    allowed:
+      - path: tools/analyzer_deepsource.py
+        signatures: [http-request]
+        reason: >-
+          It talks to DeepSource's API, not GitHub's.
+      - path: tools/analyzer_codacy.py
+        signatures: [http-request]
+        reason: >-
+          It talks to Codacy's API, not GitHub's.
+      - path: tools/requirements_lock.py
+        signatures: [http-request]
+        reason: >-
+          It talks to PyPI, not GitHub.
+    debt:
+      - path: .github/review-context/build_review_context.py
+        signatures: [http-request]
+        lines:
+          - 'import urllib.request'
+          - 'request = urllib.request.Request('
+          - 'request: urllib.request.Request,'
+          - 'def _read_json(url: str, request: urllib.request.Request, limit: float) -> Any:'
+          - 'opener = urllib.request.build_opener(pinned_redirect_handler())'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: ci/analyzer_readback.py
+        signatures: [http-request]
+        lines:
+          - 'import urllib.request'
+          - 'req: urllib.request.Request,'
+          - ') -> urllib.request.Request | None:'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: ci/review_github_current_state.py
+        signatures: [http-request]
+        lines:
+          - 'import urllib.request'
+          - 'req: urllib.request.Request,'
+          - ') -> urllib.request.Request | None:'
+        until: https://github.com/ktogias/gnostoa/issues/365
+
+  - id: path-confinement
+    responsibility: >-
+      Confining a path to a root. For a path argument and a root that an environment
+      variable names, the owner exists. The other roots' copies converge on one owner
+      under #376.
+    owner: tools/agent_review_paths.py
+    interface: [within]
+    extend: >-
+      Call within(); extend agent_review_paths for a new kind of root, rather than
+      comparing paths yourself: with is_relative_to, with relative_to under except
+      ValueError, with a common path, with a path's parents or with a prefix ending
+      in the separator.
+    decision: knowledge/decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md
+    signatures:
+      - id: path-relation
+        pattern: 'is_relative_to\('
+        means: a path confined outside the owner
+      # Structural, for Python files: `relative_to` in a `try` whose handlers catch
+      # ValueError. A line pattern cannot tell it from a relative path computed for
+      # display (Codex on #369; the owner chose this signature on 2026-10-06).
+      - id: path-relation-guarded
+        structure: relative-to-under-value-error
+        means: a path confined outside the owner, by relative_to under except ValueError
+      # Structural, for Python files: a common path or prefix compared with a root, a
+      # root among a path's parents, or a prefix ending in os.sep (Codex on #369).
+      - id: path-prefix-compared
+        structure: path-prefix-comparison
+        means: a path confined outside the owner, by a common path, its parents or a separator prefix
+    allowed:
+      - path: tools/capsule/profiles.py
+        signatures: [path-relation]
+        reason: >-
+          It checks whether two declared paths overlap; it confines no argument.
+    debt:
+      - path: tasks/gnostoa_orientation.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'target.relative_to(root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/adoption_check.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'relative = resolved.relative_to(root.resolve())'
+          - 'output.relative_to(project_root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      # Frozen preparation authority: it changes only through its own admitted path.
+      - path: tools/candidate_prepare.py
+        signatures: [path-prefix-compared]
+        lines:
+          - 'if resolved == resolved_root or resolved_root in resolved.parents:'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/check_guardrails.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'path.relative_to(root.resolve())'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/check_runtime_lock.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'source.relative_to(root)'
+          - 'profile.relative_to(root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/experiment/handoff.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'child.relative_to(parent)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/experiment/packaging.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'output_path.relative_to(handoff.bundle_root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/experiment/profile.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'child.relative_to(parent)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/knowledge_common.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'candidate.relative_to(root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/reuse_check.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'own = registry.resolve().relative_to(root.resolve()).as_posix()'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/task_envelope.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'candidate.relative_to(root)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+      - path: tools/validate_bundle.py
+        signatures: [path-relation-guarded]
+        lines:
+          - 'candidate.relative_to(root)'
+          - 'parts = reference.relative_to(root).parts'
+          - 'stack = list(base.relative_to(root).parts)'
+        until: https://github.com/ktogias/gnostoa/issues/376
+
+  - id: yaml-loading
+    responsibility: Loading YAML, refusing duplicate keys.
+    owner: tools/knowledge_common.py
+    interface: [load_yaml]
+    extend: Call load_yaml(); do not call yaml.safe_load on a declaration yourself.
+    decision: knowledge/decisions/0102-own-trusted-execution-in-one-hardened-module.md
+    signatures:
+      - id: yaml-load
+        # A module call, or a loader imported by name (Codex on #369). An import is
+        # read as its list of names, as for executable-lookup.
+        pattern: 'yaml\.(safe_|full_|unsafe_)?load(_all)?\(|from\s+yaml\s+import\s+\(?\s*(?:\w+(?:\s+as\s+\w+)?\s*,\s*)*(safe_|full_|unsafe_)?load(_all)?\b'
+        means: YAML loaded outside the owner
+      - id: yaml-load-indirect
+        # A loader on a line of its own in a multi-line import, or called through an
+        # alias of yaml, where the line pattern cannot see it (Codex on #369).
+        structure: yaml-load-indirect
+        means: YAML loaded outside the owner, under a name the line hides
+    allowed: []
+    debt:
+      - path: tools/capsule/spec.py
+        signatures: [yaml-load]
+        lines:
+          - 'payload = yaml.safe_load(text)'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/experiment/profile.py
+        signatures: [yaml-load]
+        lines:
+          - 'raw = yaml.safe_load(path.read_text(encoding="utf-8"))'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/review_policy.py
+        signatures: [yaml-load]
+        lines:
+          - 'value = yaml.load(text, Loader=ReviewPolicyLoader)'
+        until: https://github.com/ktogias/gnostoa/issues/365
+      - path: tools/task_envelope.py
+        signatures: [yaml-load]
+        lines:
+          - 'value = yaml.load(text, Loader=KnowledgeLoader)'
+        until: https://github.com/ktogias/gnostoa/issues/365

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
+
+from tools import trusted_execution
 
 _GNOSTOA_SELF_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 _GNOSTOA_SELF_BUNDLE_PATH = "tasks/issue-11-r2a-current-advisory.json"
@@ -29,42 +28,34 @@ class ProtectedMainDocument:
     document: dict[str, Any]
 
 
-def _git_executable() -> str:
-    executable = shutil.which("git", path=os.defpath)
-    if executable is None:
-        raise ProtectedAcquisitionUnavailable(
-            "Git is unavailable on the bounded protected-main acquisition path"
-        )
-    return executable
-
-
 def _git_environment() -> dict[str, str]:
     # Do not inherit caller-controlled Git configuration, repository selectors,
     # credential helpers or URL rewrite rules. The protected route is public,
-    # read-only GitHub HTTPS and therefore needs no caller credentials.
-    return {
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_TERMINAL_PROMPT": "0",
-        "LC_ALL": "C",
-    }
+    # read-only GitHub HTTPS and therefore needs no caller credentials. Nor does it
+    # take the caller's proxy or certificates, which could counterfeit it (Decision
+    # 0102; Codex on #369).
+    return trusted_execution.git_environment()
 
 
 def _run_git(
     arguments: list[str],
     *,
-    cwd: Path | None = None,
-) -> subprocess.CompletedProcess[bytes]:
+    cwd: Path,
+    description: str,
+) -> bytes:
+    """Run Git through the owner (Decision 0102; Codex on #369) and return its
+    output; any failure is the protected route being unavailable."""
     try:
-        return subprocess.run(
-            [_git_executable(), *arguments],
+        return trusted_execution.run_git(
+            arguments,
             cwd=cwd,
-            check=False,
-            capture_output=True,
+            environment=_git_environment(),
             timeout=_GIT_TIMEOUT_SECONDS,
-            env=_git_environment(),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        ).stdout
+    except trusted_execution.GitFailure as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise ProtectedAcquisitionUnavailable(detail or description) from exc
+    except trusted_execution.TrustedExecutionError as exc:
         raise ProtectedAcquisitionUnavailable(
             f"protected Git read-back failed: {exc}"
         ) from exc
@@ -76,11 +67,7 @@ def _git_output(
     cwd: Path,
     description: str,
 ) -> bytes:
-    result = _run_git(arguments, cwd=cwd)
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ProtectedAcquisitionUnavailable(detail or description)
-    return result.stdout
+    return _run_git(arguments, cwd=cwd, description=description)
 
 
 def _object_without_duplicate_fields(
@@ -123,11 +110,11 @@ def _acquire_from_repository(
 
     with tempfile.TemporaryDirectory(prefix="gnostoa-r2a-protected-") as directory:
         repository = Path(directory)
-        init = _run_git(["init", "-q", str(repository)])
-        if init.returncode != 0:
-            raise ProtectedAcquisitionUnavailable(
-                "cannot create bounded protected-main Git read-back workspace"
-            )
+        _run_git(
+            ["init", "-q", str(repository)],
+            cwd=repository,
+            description="cannot create bounded protected-main Git read-back workspace",
+        )
         _git_output(
             [
                 "fetch",

@@ -6,13 +6,14 @@ import math
 import os
 import re
 import selectors
-import shutil
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
+
+from tools import trusted_execution
 
 from .review_model import canonical_json
 
@@ -143,7 +144,8 @@ class _AbortOutcome:
 
 
 def _docker_executable() -> str:
-    executable = shutil.which("docker", path=os.defpath)
+    # The protected judge's tool, by the owner's strict rule (Decision 0102).
+    executable = trusted_execution.trusted_executable("docker")
     if executable is None:
         raise ProtectedJudgeUnavailable("Docker CLI is unavailable")
     return executable
@@ -591,7 +593,7 @@ def _run_docker(
     command = [docker_executable, *docker_arguments]
     try:
         # Audited for command injection: no shell is involved. The program is
-        # resolved by shutil.which() from os.defpath, the argv is a list, and
+        # resolved by trusted_execution.trusted_executable(), the argv is a list, and
         # every option has passed _validate_docker_run_options(). shlex.quote
         # would insert literal quotes into argv elements and corrupt the call.
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit

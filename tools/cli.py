@@ -12,6 +12,7 @@ from . import (
     check_ci_policy,
     check_guardrails,
     check_runtime_lock,
+    reuse_check,
     review_check,
     self_check,
     task_envelope,
@@ -60,6 +61,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
         task_envelope.project_main,
     ),
     "self-check": ("run the toolkit self-check", self_check.main),
+    "reuse-check": (
+        "refuse a new copy of a responsibility the toolkit owns once",
+        reuse_check.main,
+    ),
 }
 
 

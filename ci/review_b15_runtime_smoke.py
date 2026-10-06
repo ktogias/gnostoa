@@ -4,10 +4,18 @@ import os
 import re
 import secrets
 import selectors
-import shutil
 import subprocess
+import sys
 import tempfile
 import time
+from pathlib import Path
+
+# The publication workflows run this smoke by path from a nested checkout with no
+# PYTHONPATH, so its own checkout comes first: another `tools`, an installed one say,
+# answered the import instead (CodeAnt on #369).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools import trusted_execution
 
 DOCKER_CLI_VERSION = "26.1.5+dfsg1-9+deb13u1"
 MAX_OUTPUT_BYTES = 65_536
@@ -21,7 +29,8 @@ OWNER_LABEL = "org.gnostoa.b15-smoke-owner"
 
 
 def _docker() -> str:
-    executable = shutil.which("docker", path=os.defpath)
+    # The smoke's tool, by the owner's strict rule (Decision 0102).
+    executable = trusted_execution.trusted_executable("docker")
     if executable is None:
         raise RuntimeError("Docker CLI is unavailable for B1.5 runtime smoke")
     return executable

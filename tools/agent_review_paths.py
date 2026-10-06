@@ -1,5 +1,8 @@
 """The one path-confinement check the agent review pipeline shares (Decision 0100).
 
+The owner of registry id `path-confinement` (`policy/owned-responsibilities.yaml`):
+extend this module, never compare paths yourself.
+
 Every path a pipeline step reads or writes comes from its composition, which is
 trusted -- but a value that reaches a file read or write is worth checking where it is
 used, not where it was set, and the check costs nothing.

@@ -1,5 +1,8 @@
 """One hardened GitHub REST client for every GitHub adapter here (Decision 0100).
 
+The owner of registry id `github-rest-transport` (`policy/owned-responsibilities.yaml`):
+extend this client, never open a connection to the API elsewhere.
+
 Merged from five that each guarded a different part of the same exchange: the
 useful-L1 adapter's (Decision 0086), analyzer readback's (Decision 0091), and the agent
 review pipeline's admission reader, context collector and comment poster (Decisions
