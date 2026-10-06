@@ -460,9 +460,7 @@ def _is_separator(node: ast.AST) -> bool:
 
 def _called(call: ast.Call) -> str | None:
     """The name a call ends in: `commonpath` for `os.path.commonpath(...)` too."""
-    if isinstance(call.func, ast.Attribute):
-        return call.func.attr
-    return call.func.id if isinstance(call.func, ast.Name) else None
+    return _name_of(call.func)
 
 
 def _runs_now(node: ast.AST) -> list[ast.AST]:
@@ -532,17 +530,29 @@ def _module_aliases(tree: ast.AST, module: str) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if _under(alias.name, module) and alias.asname not in (None, module):
-                    aliases[str(alias.asname)] = alias.name
-        elif (
-            isinstance(node, ast.ImportFrom)
-            and not node.level
-            and _under(node.module, module)
-        ):
-            for alias in node.names:
-                aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            aliases.update(_import_aliases(node, module))
+        elif isinstance(node, ast.ImportFrom):
+            aliases.update(_from_aliases(node, module))
     return aliases
+
+
+def _import_aliases(node: ast.Import, module: str) -> dict[str, str]:
+    """`import module[.sub] as name`: the name, if it is not the module's own."""
+    return {
+        str(alias.asname): alias.name
+        for alias in node.names
+        if _under(alias.name, module) and alias.asname not in (None, module)
+    }
+
+
+def _from_aliases(node: ast.ImportFrom, module: str) -> dict[str, str]:
+    """`from module import sub [as name]`; a relative import binds nothing."""
+    if node.level or not _under(node.module, module):
+        return {}
+    return {
+        alias.asname or alias.name: f"{node.module}.{alias.name}"
+        for alias in node.names
+    }
 
 
 def _calls_through(
@@ -596,14 +606,15 @@ _GIT_NAME = re.compile(
 
 
 def _names_git(node: ast.expr) -> bool:
-    name = (
-        node.attr
-        if isinstance(node, ast.Attribute)
-        else node.id
-        if isinstance(node, ast.Name)
-        else None
-    )
+    name = _name_of(node)
     return name is not None and _GIT_NAME.search(name) is not None
+
+
+def _name_of(node: ast.expr) -> str | None:
+    """The name an expression ends in: an attribute's, or a bare name's."""
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return node.id if isinstance(node, ast.Name) else None
 
 
 def _git_argv(tree: ast.AST) -> set[int]:

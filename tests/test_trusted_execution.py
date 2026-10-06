@@ -1178,12 +1178,9 @@ class TransportTests(unittest.TestCase):
             )
             _git(destination, "config", "protocol.file.allow", "always")
             fetch = ["fetch", "--quiet", str(source), "HEAD"]
+            refusing = trusted_execution.git_environment(transports=())
             with self.assertRaises(trusted_execution.GitFailure):
-                trusted_execution.run_git(
-                    fetch,
-                    cwd=destination,
-                    environment=trusted_execution.git_environment(transports=()),
-                )
+                trusted_execution.run_git(fetch, cwd=destination, environment=refusing)
             trusted_execution.run_git(
                 fetch,
                 cwd=destination,

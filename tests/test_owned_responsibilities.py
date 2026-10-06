@@ -357,6 +357,7 @@ class StructuralSignatureTests(unittest.TestCase):
                 )
         for source in (
             "import jsonschema\njsonschema.validate(1, {})\n",
+            "import jsonschema as jsonschema\njsonschema.validate(1, {})\n",
             "from .jsonschema import validators as v\nv.validate(1, {})\n",
         ):
             with self.subTest(unmarked=source):
@@ -583,23 +584,21 @@ class StructuralSignatureTests(unittest.TestCase):
         with (
             mock.patch.object(reuse_check, "_LINE_LIMIT_BYTES", 1024),
             mock.patch.object(reuse_check, "_BLOCK_BYTES", 1026),
-            self.assertRaises(KnowledgeFormatError),
         ):
-            list(
-                reuse_check._byte_lines(  # skipcq: PYL-W0212
-                    io.BytesIO(b"x" * 1025 + b"\r\ny\n"), "tools/over.py"
-                )
+            over = reuse_check._byte_lines(  # skipcq: PYL-W0212
+                io.BytesIO(b"x" * 1025 + b"\r\ny\n"), "tools/over.py"
             )
+            with self.assertRaises(KnowledgeFormatError):
+                list(over)
         with (
             mock.patch.object(reuse_check, "_LINE_LIMIT_BYTES", 1024),
             mock.patch.object(reuse_check, "_BLOCK_BYTES", 1025),
-            self.assertRaises(KnowledgeFormatError),
         ):
-            list(
-                reuse_check._byte_lines(  # skipcq: PYL-W0212
-                    io.BytesIO(b"x" * 1025), "tools/no_end.py"
-                )
+            no_end = reuse_check._byte_lines(  # skipcq: PYL-W0212
+                io.BytesIO(b"x" * 1025), "tools/no_end.py"
             )
+            with self.assertRaises(KnowledgeFormatError):
+                list(no_end)
 
     def test_a_nested_agents_file_is_production(self) -> None:
         # Only the root AGENTS.md was scanned (CodeAnt on #369).
@@ -1199,12 +1198,7 @@ class CheckTests(unittest.TestCase):
         with _tree({"policy/r.yaml": ""}) as scratch:
             registry = pathlib.Path(scratch) / "policy" / "r.yaml"
             registry.write_bytes(b"id: \xff\xfe\n")
-            try:
-                code = reuse_check.main(
-                    ["--root", scratch, "--registry", str(registry)]
-                )
-            except UnicodeDecodeError as exc:
-                self.fail(f"main raised {exc!r}")
+            code = reuse_check.main(["--root", scratch, "--registry", str(registry)])
             self.assertEqual(2, code)
 
     def test_a_large_tracked_file_is_read_a_line_at_a_time(self) -> None:
