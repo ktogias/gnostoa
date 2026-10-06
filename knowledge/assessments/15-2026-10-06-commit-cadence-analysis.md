@@ -48,6 +48,8 @@ x-project-knowledge:
 
 Measured 2026-10-06, read-only. Times are Athens time (UTC+3) unless marked UTC. Durations are minutes. **Estimates are marked as such.**
 
+**Cutoff:** every figure counts events up to 11:26:22 Athens (08:26:22 UTC) on 2026-10-06, when the flow of #369's round 19 started. Later events are not counted, though some of their evidence is retained with this analysis: round 19's publication at 11:45:59, `8a25bbe`, and its flow log.
+
 ## Answer in brief
 
 **Mean time between subsequent commits:**
@@ -63,7 +65,7 @@ The means are pulled up by four long intervals, with three causes:
 - **159 min on #369, `3b3a79a` → `13fcdf4`:** #374's first rounds, #375 and an owner-requested analysis ran in between.
 - **97–101 min, two intervals: #374 `aedb94f` and #369 `eb83ead`:** in-flow mutant failures forced reruns.
 
-**A typical round is about 42 min**: median 41.7, mean 42.8, over the 24 intervals that are not the four long ones above.
+**A typical round is about 42 min**: median 41.7, mean 42.8. That is over 24 intervals: the 29 intervals less the four long ones above, and less #369's `d0a7268`. That interval, 104.3 min, has no flow data to decompose, since it predates the flow's timing files.
 
 | Component | Median | Mean | Share of the mean |
 |---|---:|---:|---:|
@@ -81,7 +83,7 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
 
 1. **Commits.** `gh api …/pulls/{369,374}/commits --paginate`, using author dates: the rebase after #375 merged rewrote the committer dates. #369's first five published heads were squashed by that rebase. For them, the owner's `@codex review` request time is the publication proxy, minus 1.5 min: *estimate*, the measured median is 1.1. Every later head is matched to its pre-rebase SHA through the Codex review that names it.
 2. **Flows.** Every `timing-*.txt` in the scratchpad and every `*-flow.log` under `/tmp/claude-1000/{tae,mut}`: 85 files, 59 timing files and 26 stdout logs, all retained with this analysis. Stage marks carry epoch seconds.
-   - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 46 runs: 28 on #369 and 18 on #374.
+   - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 45 runs that started before the cutoff, 27 on #369 and 18 on #374, and one at it: round 19, retained but not counted.
    - **Other PRs.** 13 of the files are runs of other PRs, #372, #373 and #375. They are retained, but not counted.
    - **Stopped runs.** A run that stopped in pre-flight has only its start mark, so its end is the file's mtime. Every file's mtime is retained in the evidence index.
 3. **Reviews.** Issue comments, reviews and review comments, all with `--paginate`:
@@ -252,4 +254,4 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
 - **Lost runs.** Why a run failed was read from its `V-*` result files. `368a3` passed every stage and was redone anyway; its reason is not recorded.
 - **Early timing files.** They carry no PUBLISHED line, so publication is inferred from a `publish end` mark.
-- **Round 19 of #369.** It started at 11:26 on 10-06 and was still running at the time of measurement, so it is excluded.
+- **Round 19 of #369, and everything after the cutoff.** Round 19's flow started at the cutoff and published `8a25bbe` at 11:45:59. Its retained log is evidence, but it is not counted, so the counts, means, the stage sample and the "0 in 15" claim all stop at the cutoff (Codex on #379).
