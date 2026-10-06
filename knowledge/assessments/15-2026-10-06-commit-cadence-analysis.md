@@ -40,12 +40,18 @@ sources:
   - id: p4-order
     resource: https://github.com/ktogias/gnostoa/issues/370#issuecomment-6014263689
     title: The owner's decision on 2026-10-06 to take #370 after #369 and #374, before #368's PR B
+  - id: flow-refusals
+    resource: https://github.com/ktogias/gnostoa/issues/373
+    title: Refused publish-flow runs, whose S8 captures reviewing the flow's own changes on both paths
   - id: earlier-analysis
     resource: ./15-2026-10-05-problems-and-solutions-log.md
     title: The problems and solutions of 2026-10-05, E4 verification time
   - id: evidence
     resource: ./15-2026-10-06-commit-cadence-evidence/index.json
     title: The publish-flow logs this analysis reads, retained
+  - id: local-runs
+    resource: ./15-2026-10-06-commit-cadence-evidence/local-whole-table-runs.json
+    title: Every local whole-table mutant run before the cutoff, from the session transcript
 x-project-knowledge:
   id: kit.assessment.15-2026-10-06-commit-cadence-analysis
   owners:
@@ -105,7 +111,7 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
    - the owner's `@codex review` comments are the request times;
    - Codex reviews, and its "Didn't find any major issues" comments, are the verdicts;
    - root inline comments by bots, and CodeAnt reviews, are the findings.
-4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs are counted from the scratchpad files' mtimes. Their duration is an *estimate*: 6.5 min for #369's table, 5 min for #374's, from the gaps between consecutive runs. Those result files, and their mtimes, are retained with the flow logs.
+4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs come from the agent's session transcript: every tool call before the cutoff that ran #369's whole scratch table or #374's tables with no mutant names. Anchor checks are excluded. Each run starts at its call and ends at its result file's mtime, or at the call's result where it wrote no file, so each duration is an upper bound. `local-whole-table-runs.json` lists the 28 runs, with the rule; 16 of their result files are retained with the flow logs (Codex on #379).
 
 ## Per-interval decomposition
 
@@ -171,7 +177,7 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 - **Host contention: measured, it is small; its upper bound is about 3 minutes.**
   - **The host:** 8 cores. The concurrent stage alone runs the whole suite twice, under coverage and in the runtime image, and the mutants, three jobs at once. My local runs add five more jobs.
   - **The reproducible measure.** Over the 22 qualifying runs, consider how much of each run's concurrent stage another flow's concurrent stage overlapped. `extended` took a median of 10.6 min in the 17 runs overlapped less than half, and 11.1 min in the 5 runs overlapped half or more: about 0.5 min.
-  - **What it cannot see:** overlap with my local mutant runs, whose start times were not recorded.
+  - **What it does not use:** overlap with my local mutant runs. Their starts are now in `local-whole-table-runs.json`, but this estimate was made without them.
   - **A first version's figure,** 8.3 min over 21 runs against 11.1 over 9, recorded no run selection and is not reproduced here.
   - **A confounder:** the flow's own mutant table grew from 114 to 155 over these runs, and those mutants compete with `extended` too (CodeAnt on #379).
   - **So:** about 3 minutes is an upper bound, not an attribution. #380 re-measures at a matched table size, with local runs dated.
@@ -187,10 +193,10 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 
 No in-flow mutant failure has happened since whole-table local runs became routine. Counted by flow start, not publication (Codex on #379): 0 in the 12 flows whose pre-flight started from 03:54 on 10-06, when #369's round-12 local run ended, to the cutoff, 7 on #369 and 5 on #374. By publication time there would be 13, since #374's `f177eba` started before 03:54 and published at 03:58.
 
-From 03:54 on, every #369 round has a retained local result. Two earlier ones are retained too, #374's round 2 and #369's round 9, at 23:05 and 23:33 on 10-05. Of #374's later rounds only 12 and 13 have retained results; the others' local runs printed their counts without a file.
+From 03:54 on, every #369 round has a retained local result. Two earlier ones are retained too, #374's round 2 and #369's round 9, at 23:05 and 23:33 on 10-05. #374 ran its whole tables locally twice in round 2, then from round 7d on, 02:46 on 10-06. Rounds 3 to 7c ran only their new mutants by name. Only the runs of rounds 2, 12 and 13 left a retained file; the other 7 printed their counts. #369's five whole-table runs on 10-05 before round 9, 14:28 to 20:22, wrote scratch files the evidence does not retain.
 
 On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
-- **Its cost:** 13 retained local whole-table runs on #369, at about 6.5 min each, and 3 on #374, at about 5 min each: about 100 min (*estimates*).
+- **Its cost:** 28 local whole-table runs, 18 on #369 and 10 on #374: 184.5 min, 125.2 on #369 and 59.3 on #374, each an upper bound. Only 16 left a retained result file, 13 on #369 and 3 on #374. The other 12 took 63.5 min, which the earlier figure of about 100 min (*estimates*) counted as zero (Codex on #379).
 - **What it saved:** one of them, #369's round 17, caught a survivor that would have failed in-flow: about 16 min, or about 34 with an 18-min relaunch. A second survivor was caught in round 20, after the cutoff, so it is not counted.
 
 What it buys instead is a flow that does not fail late, so the round's evidence is not rerun. Since every mutant now runs twice, this is the case for P3(b): run only the new or changed mutants locally.
@@ -250,7 +256,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 
 **Smaller items:**
 - **A finding, not a proposal here:** the agent's local DeepSource mirror lacked rules the provider enforces, and each cost a review round. W1113 cost one on #374, and Bandit's B108 one on #369. The mirror is the DeepSource-local check in the publish flow's pre-flight, part of Process A, which the owner admitted on 2026-10-05. So a rule the provider already enforces is added to keep that check faithful to it, as maintenance within an admitted process, not as a new practice (Codex on #379). This assessment applies nothing.
-- Review the publish flow's own changes on both paths before the first run, as was done after the snapshot-check defect.
+- Review the publish flow's own changes on both paths before their first run. The snapshot-check defect cost one run. #373 owns refused publish-flow runs and now records this as S8, captured and awaiting the owner's admission (CodeAnt on #379).
 
 **A rough total.** P2 with P3(a) and P3(b) together would cut a typical #369 round from about 42 to about 28–32 minutes at best, since P2's share is an upper bound. P1, by avoiding rounds, matters more than any per-round saving: each round avoided saves about 40 minutes.
 
@@ -264,6 +270,7 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 | P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | #380 | Admitted by the owner on 2026-10-06 ("yes. go on with P2 (#380)"), and applied in the agent's publish flow from then on. It had first been applied for one round, #369's round 20, before any admission; Codex on #379 found this, and it was reverted until the admission. | Done; re-measure |
 | P3(a)–(c): scope each round's verification to the change, the whole on the final round | #377 | Planned. It extends the mutation owner of #374, and changes Process A, so each part needs a Decision. | After #374 lands |
 | P4: a parallel test runner | #370 | Admitted on 2026-10-05, after #368's PR B. On 2026-10-06 the owner moved it ("#370 move up to follow #369 and #374, instead of #368's PR B"), so the order is #369, #374, #370, then #368's PR B. It still needs its own Decision. | After #374 |
+| Smaller item: review the publish flow's own changes on both paths before their first run | #373, as S8 | Captured on 2026-10-06, awaiting the owner's admission. Not applied: since 2026-10-06 a retrospective proposal is admitted first, the agent's own practice included (Codex and CodeAnt on #379). | When admitted |
 
 **To re-measure when evaluating:**
 - the mean and median time between commits, against 38.9 and 27.1 min for both PRs here;
@@ -274,7 +281,7 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 ## Data gaps
 
 - **My attention.** There is no record of my active time, so "My work" is wall-clock time and includes work on the other PR and on #375.
-- **Local mutant runs.** Their start times were not recorded, only the end mtimes; their durations are estimates.
+- **Local mutant runs.** No result file records its run's start. The starts, and the 12 runs without a retained file, come from the session transcript's tool-call times. So each duration is an upper bound, and the evidence retains the extract, not the transcript.
 - **CodeAnt's nitpicks.** They arrive by editing one sticky comment, so only the last update time survives. Only CodeAnt's inline findings and reviews are timed here.
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
 - **Lost runs.** Why a run failed is read from its `V-*` result files, now retained with the flow logs (Codex on #379). Each of the six failed runs' mutant results shows a stale anchor (`NOT FOUND`) or a survivor (`SURVIVED`). In the four early runs, `368a4` to `368a8`, `extended` and the runtime stage exited 0. In `mut7c` and `tae11` the mutant failure stopped the concurrent stage before `extended` finished, so its outcome is unknown; their runtime stages exited 0 (Codex on #379). `368a3` passed every stage and was redone anyway; its reason is not recorded.

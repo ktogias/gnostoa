@@ -1,0 +1,348 @@
+{
+ "description": "Every local whole-table mutant run on #369 and #374 before the cutoff, 2026-10-06T08:26:22Z, extracted from the agent's session transcript.",
+ "source": "The agent's session transcript, local and not retained: it holds the whole conversation, not only these runs.",
+ "rule": "A Bash tool call before the cutoff whose docker run, without MUTANT_CHECK=1, ran #369's scratch table (mutate368.py /workspace) or #374's tables (cli mutants --table $t --jobs N) with no mutant names. Anchor checks and named runs are excluded.",
+ "timing": "Each run starts at its tool call and ends at its result file's mtime, or at the tool result where it wrote no file. So each duration is an upper bound: a few calls checked anchors or ran tests first.",
+ "retained": "A run is retained when its result file is in flow-logs.txt.gz: the 369-r* and 374-r* files.",
+ "printed_counts": "The last counts the call printed, verbatim: a killed count, or the number of KILLED lines.",
+ "runs": [
+  {
+   "pr": 369,
+   "start": "2026-10-05T11:28:43Z",
+   "end": "2026-10-05T11:32:25Z",
+   "minutes": 3.7,
+   "end_from": "result file mtime",
+   "result_file": "368-mutants.txt",
+   "retained": false,
+   "printed_counts": [
+    "24"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-05T12:47:37Z",
+   "end": "2026-10-05T12:51:36Z",
+   "minutes": 4.0,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": []
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-05T12:52:32Z",
+   "end": "2026-10-05T12:57:25Z",
+   "minutes": 4.9,
+   "end_from": "result file mtime",
+   "result_file": "368-mutants-r2.txt",
+   "retained": false,
+   "printed_counts": [
+    "38"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-05T14:36:10Z",
+   "end": "2026-10-05T14:42:28Z",
+   "minutes": 6.3,
+   "end_from": "result file mtime",
+   "result_file": "368-mutants-r3.txt",
+   "retained": false,
+   "printed_counts": []
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-05T17:22:04Z",
+   "end": "2026-10-05T17:25:56Z",
+   "minutes": 3.9,
+   "end_from": "result file mtime",
+   "result_file": "368-mutants-r6.txt",
+   "retained": false,
+   "printed_counts": [
+    "KILLED 89 of 92"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-05T20:03:45Z",
+   "end": "2026-10-05T20:05:10Z",
+   "minutes": 1.4,
+   "end_from": "result file mtime",
+   "result_file": "374-r2-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "22 of 22 killed",
+    "0 of 9 killed"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-05T20:08:06Z",
+   "end": "2026-10-05T20:09:47Z",
+   "minutes": 1.7,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "23 of 24 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-05T20:29:27Z",
+   "end": "2026-10-05T20:33:58Z",
+   "minutes": 4.5,
+   "end_from": "result file mtime",
+   "result_file": "369-r9-mutants.txt",
+   "retained": true,
+   "printed_counts": []
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-05T23:46:42Z",
+   "end": "2026-10-05T23:52:40Z",
+   "minutes": 6.0,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "41 of 41 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T00:29:35Z",
+   "end": "2026-10-06T00:35:15Z",
+   "minutes": 5.7,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "42 of 43 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T00:44:06Z",
+   "end": "2026-10-06T00:54:18Z",
+   "minutes": 10.2,
+   "end_from": "result file mtime",
+   "result_file": "369-r12-mutants.txt",
+   "retained": true,
+   "printed_counts": []
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T01:14:05Z",
+   "end": "2026-10-06T01:20:43Z",
+   "minutes": 6.6,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "47 of 47 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T01:31:11Z",
+   "end": "2026-10-06T01:40:17Z",
+   "minutes": 9.1,
+   "end_from": "result file mtime",
+   "result_file": "369-r13-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "126"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T01:51:14Z",
+   "end": "2026-10-06T01:59:42Z",
+   "minutes": 8.5,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "48 of 48 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T02:13:45Z",
+   "end": "2026-10-06T02:20:08Z",
+   "minutes": 6.4,
+   "end_from": "result file mtime",
+   "result_file": "369-r14-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "130"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T02:27:13Z",
+   "end": "2026-10-06T02:34:30Z",
+   "minutes": 7.3,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "49 of 49 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T02:37:18Z",
+   "end": "2026-10-06T02:42:13Z",
+   "minutes": 4.9,
+   "end_from": "tool result",
+   "result_file": null,
+   "retained": false,
+   "printed_counts": [
+    "50 of 50 killed",
+    "9 of 9 killed"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T02:50:27Z",
+   "end": "2026-10-06T02:58:22Z",
+   "minutes": 7.9,
+   "end_from": "result file mtime",
+   "result_file": "369-r15-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "133"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T03:00:23Z",
+   "end": "2026-10-06T03:05:14Z",
+   "minutes": 4.9,
+   "end_from": "result file mtime",
+   "result_file": "369-r15b-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "134"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T03:14:20Z",
+   "end": "2026-10-06T03:22:37Z",
+   "minutes": 8.3,
+   "end_from": "result file mtime",
+   "result_file": "374-r12-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "9 of 9 killed",
+    "64"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T03:30:04Z",
+   "end": "2026-10-06T03:39:03Z",
+   "minutes": 9.0,
+   "end_from": "result file mtime",
+   "result_file": "369-r16-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "139"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T03:42:56Z",
+   "end": "2026-10-06T03:48:21Z",
+   "minutes": 5.4,
+   "end_from": "result file mtime",
+   "result_file": "369-r16b-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "141"
+   ]
+  },
+  {
+   "pr": 374,
+   "start": "2026-10-06T03:54:34Z",
+   "end": "2026-10-06T04:03:30Z",
+   "minutes": 8.9,
+   "end_from": "result file mtime",
+   "result_file": "374-r13-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "9 of 9 killed",
+    "69"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T06:32:11Z",
+   "end": "2026-10-06T06:40:44Z",
+   "minutes": 8.6,
+   "end_from": "result file mtime",
+   "result_file": "369-r17-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "149"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T06:42:05Z",
+   "end": "2026-10-06T06:50:39Z",
+   "minutes": 8.6,
+   "end_from": "result file mtime",
+   "result_file": "369-r17b-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "151"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T07:26:08Z",
+   "end": "2026-10-06T07:35:09Z",
+   "minutes": 9.0,
+   "end_from": "result file mtime",
+   "result_file": "369-r18-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "153"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T08:03:52Z",
+   "end": "2026-10-06T08:13:10Z",
+   "minutes": 9.3,
+   "end_from": "result file mtime",
+   "result_file": "369-r19-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "154"
+   ]
+  },
+  {
+   "pr": 369,
+   "start": "2026-10-06T08:16:18Z",
+   "end": "2026-10-06T08:25:45Z",
+   "minutes": 9.5,
+   "end_from": "result file mtime",
+   "result_file": "369-r19b-mutants.txt",
+   "retained": true,
+   "printed_counts": [
+    "155"
+   ]
+  }
+ ]
+}
