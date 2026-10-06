@@ -51,7 +51,10 @@ sources:
     title: The publish-flow logs this analysis reads, retained
   - id: local-runs
     resource: ./15-2026-10-06-commit-cadence-evidence/local-whole-table-runs.json
-    title: Every local whole-table mutant run before the cutoff, from the session transcript
+    title: Every local whole-table mutant run before the cutoff, derived from the retained tool calls
+  - id: local-run-calls
+    resource: ./15-2026-10-06-commit-cadence-evidence/local-run-calls.jsonl.gz
+    title: The tool calls and result files the local-run count is derived from, retained
 x-project-knowledge:
   id: kit.assessment.15-2026-10-06-commit-cadence-analysis
   owners:
@@ -111,7 +114,7 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
    - the owner's `@codex review` comments are the request times;
    - Codex reviews, and its "Didn't find any major issues" comments, are the verdicts;
    - root inline comments by bots, and CodeAnt reviews, are the findings.
-4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs come from the agent's session transcript: every tool call before the cutoff that ran #369's whole scratch table or #374's tables with no mutant names. Anchor checks are excluded. Each run starts at its call and ends at its result file's mtime, or at the call's result where it wrote no file, so each duration is an upper bound. `local-whole-table-runs.json` lists the 28 runs, with the rule; 16 of their result files are retained with the flow logs (Codex on #379).
+4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs come from the agent's session transcript: every tool call before the cutoff that ran #369's whole scratch table or #374's tables with no mutant names. Anchor checks are excluded. Each run starts at its call and ends at its result file's mtime, or at the call's result where it wrote no file, so each duration is an upper bound. `local-run-calls.jsonl.gz` retains every candidate call, named runs and anchor checks included, with its timestamps and whole result, and the scratch result files they name, with their mtimes. `local-whole-table-runs.json` holds the rule as regular expressions and the 28 runs it selects, each pointing to its call. 16 of their result files are also retained with the flow logs (Codex and CodeAnt on #379).
 
 ## Per-interval decomposition
 
@@ -281,7 +284,7 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 ## Data gaps
 
 - **My attention.** There is no record of my active time, so "My work" is wall-clock time and includes work on the other PR and on #375.
-- **Local mutant runs.** No result file records its run's start. The starts, and the 12 runs without a retained file, come from the session transcript's tool-call times. So each duration is an upper bound, and the evidence retains the extract, not the transcript.
+- **Local mutant runs.** No result file records its run's start. The starts, and the 12 runs without a retained file, come from the session transcript's tool-call times. So each duration is an upper bound. The evidence retains every candidate call and result file, not the whole transcript.
 - **CodeAnt's nitpicks.** They arrive by editing one sticky comment, so only the last update time survives. Only CodeAnt's inline findings and reviews are timed here.
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
 - **Lost runs.** Why a run failed is read from its `V-*` result files, now retained with the flow logs (Codex on #379). Each of the six failed runs' mutant results shows a stale anchor (`NOT FOUND`) or a survivor (`SURVIVED`). In the four early runs, `368a4` to `368a8`, `extended` and the runtime stage exited 0. In `mut7c` and `tae11` the mutant failure stopped the concurrent stage before `extended` finished, so its outcome is unknown; their runtime stages exited 0 (Codex on #379). `368a3` passed every stage and was redone anyway; its reason is not recorded.

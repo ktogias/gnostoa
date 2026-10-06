@@ -1,10 +1,16 @@
 {
- "description": "Every local whole-table mutant run on #369 and #374 before the cutoff, 2026-10-06T08:26:22Z, extracted from the agent's session transcript.",
- "source": "The agent's session transcript, local and not retained: it holds the whole conversation, not only these runs.",
- "rule": "A Bash tool call before the cutoff whose docker run, without MUTANT_CHECK=1, ran #369's scratch table (mutate368.py /workspace) or #374's tables (cli mutants --table $t --jobs N) with no mutant names. Anchor checks and named runs are excluded.",
- "timing": "Each run starts at its tool call and ends at its result file's mtime, or at the tool result where it wrote no file. So each duration is an upper bound: a few calls checked anchors or ran tests first.",
- "retained": "A run is retained when its result file is in flow-logs.txt.gz: the 369-r* and 374-r* files.",
+ "description": "Every local whole-table mutant run on #369 and #374 before the cutoff, 2026-10-06T08:26:22Z, derived from local-run-calls.jsonl.gz.",
+ "source": "local-run-calls.jsonl.gz: every Bash tool call before the cutoff, from the agent's session transcript, whose command names a mutant runner (mutate368.py, cli mutants or knowledge mutants) on #369's or #374's clone, named runs and anchor checks included, with its start and result timestamps and its whole result; then every scratch result file those calls name, with its mtime and content. The transcript itself is not retained: it holds the whole conversation.",
+ "rule": "Split each call's command at `docker run`. A segment counts unless it sets MUTANT_CHECK=1: for #369 when it matches rules.369 on #369's clone, for #374 when it matches rules.374 on #374's clone. Either rule refuses a mutant name after the table, so named runs are excluded.",
+ "rules": {
+  "369": "mutate368\\.py /workspace(?!\\s+\\\")",
+  "374": "cli mutants --table \\$t --jobs \\d+(?!\\s+\\\")",
+  "result_file": "(?:tee|>)\\s*\\\"?\\$S/([\\w.-]+mutants[\\w.-]*\\.txt)"
+ },
+ "timing": "Each run starts at its call and ends at the mtime of the result file its segment writes, matched by rules.result_file, when that mtime falls within two hours after the start; otherwise at the call's result. So each duration is an upper bound: a few calls checked anchors or ran tests first.",
+ "retained": "A run is retained when its result file is also in flow-logs.txt.gz: the 369-r* and 374-r* files.",
  "printed_counts": "The last counts the call printed, verbatim: a killed count, or the number of KILLED lines.",
+ "call_line": "The run's call, as a 1-based line of local-run-calls.jsonl.gz.",
  "runs": [
   {
    "pr": 369,
@@ -16,7 +22,8 @@
    "retained": false,
    "printed_counts": [
     "24"
-   ]
+   ],
+   "call_line": 1
   },
   {
    "pr": 369,
@@ -26,7 +33,8 @@
    "end_from": "tool result",
    "result_file": null,
    "retained": false,
-   "printed_counts": []
+   "printed_counts": [],
+   "call_line": 4
   },
   {
    "pr": 369,
@@ -38,7 +46,8 @@
    "retained": false,
    "printed_counts": [
     "38"
-   ]
+   ],
+   "call_line": 5
   },
   {
    "pr": 369,
@@ -48,7 +57,8 @@
    "end_from": "result file mtime",
    "result_file": "368-mutants-r3.txt",
    "retained": false,
-   "printed_counts": []
+   "printed_counts": [],
+   "call_line": 12
   },
   {
    "pr": 369,
@@ -60,7 +70,8 @@
    "retained": false,
    "printed_counts": [
     "KILLED 89 of 92"
-   ]
+   ],
+   "call_line": 35
   },
   {
    "pr": 374,
@@ -73,7 +84,8 @@
    "printed_counts": [
     "22 of 22 killed",
     "0 of 9 killed"
-   ]
+   ],
+   "call_line": 58
   },
   {
    "pr": 374,
@@ -86,7 +98,8 @@
    "printed_counts": [
     "23 of 24 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 59
   },
   {
    "pr": 369,
@@ -96,7 +109,8 @@
    "end_from": "result file mtime",
    "result_file": "369-r9-mutants.txt",
    "retained": true,
-   "printed_counts": []
+   "printed_counts": [],
+   "call_line": 65
   },
   {
    "pr": 374,
@@ -109,7 +123,8 @@
    "printed_counts": [
     "41 of 41 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 95
   },
   {
    "pr": 374,
@@ -122,7 +137,8 @@
    "printed_counts": [
     "42 of 43 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 98
   },
   {
    "pr": 369,
@@ -132,7 +148,8 @@
    "end_from": "result file mtime",
    "result_file": "369-r12-mutants.txt",
    "retained": true,
-   "printed_counts": []
+   "printed_counts": [],
+   "call_line": 102
   },
   {
    "pr": 374,
@@ -145,7 +162,8 @@
    "printed_counts": [
     "47 of 47 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 107
   },
   {
    "pr": 369,
@@ -157,7 +175,8 @@
    "retained": true,
    "printed_counts": [
     "126"
-   ]
+   ],
+   "call_line": 110
   },
   {
    "pr": 374,
@@ -170,7 +189,8 @@
    "printed_counts": [
     "48 of 48 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 113
   },
   {
    "pr": 369,
@@ -182,7 +202,8 @@
    "retained": true,
    "printed_counts": [
     "130"
-   ]
+   ],
+   "call_line": 116
   },
   {
    "pr": 374,
@@ -195,7 +216,8 @@
    "printed_counts": [
     "49 of 49 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 119
   },
   {
    "pr": 374,
@@ -208,7 +230,8 @@
    "printed_counts": [
     "50 of 50 killed",
     "9 of 9 killed"
-   ]
+   ],
+   "call_line": 121
   },
   {
    "pr": 369,
@@ -220,7 +243,8 @@
    "retained": true,
    "printed_counts": [
     "133"
-   ]
+   ],
+   "call_line": 123
   },
   {
    "pr": 369,
@@ -232,7 +256,8 @@
    "retained": true,
    "printed_counts": [
     "134"
-   ]
+   ],
+   "call_line": 124
   },
   {
    "pr": 374,
@@ -245,7 +270,8 @@
    "printed_counts": [
     "9 of 9 killed",
     "64"
-   ]
+   ],
+   "call_line": 131
   },
   {
    "pr": 369,
@@ -257,7 +283,8 @@
    "retained": true,
    "printed_counts": [
     "139"
-   ]
+   ],
+   "call_line": 134
   },
   {
    "pr": 369,
@@ -269,7 +296,8 @@
    "retained": true,
    "printed_counts": [
     "141"
-   ]
+   ],
+   "call_line": 137
   },
   {
    "pr": 374,
@@ -282,7 +310,8 @@
    "printed_counts": [
     "9 of 9 killed",
     "69"
-   ]
+   ],
+   "call_line": 142
   },
   {
    "pr": 369,
@@ -294,7 +323,8 @@
    "retained": true,
    "printed_counts": [
     "149"
-   ]
+   ],
+   "call_line": 147
   },
   {
    "pr": 369,
@@ -306,7 +336,8 @@
    "retained": true,
    "printed_counts": [
     "151"
-   ]
+   ],
+   "call_line": 149
   },
   {
    "pr": 369,
@@ -318,7 +349,8 @@
    "retained": true,
    "printed_counts": [
     "153"
-   ]
+   ],
+   "call_line": 153
   },
   {
    "pr": 369,
@@ -330,7 +362,8 @@
    "retained": true,
    "printed_counts": [
     "154"
-   ]
+   ],
+   "call_line": 155
   },
   {
    "pr": 369,
@@ -342,7 +375,8 @@
    "retained": true,
    "printed_counts": [
     "155"
-   ]
+   ],
+   "call_line": 157
   }
  ]
 }
