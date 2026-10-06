@@ -156,8 +156,11 @@ mutants:
           return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
   - name: a missing root is copied
     path: tools/mutation.py
-    find: not root.is_dir()
-    replace: "False"
+    find: |
+      if not root.is_dir():
+          raise ValueError(f"the root is not a directory: {root}")
+      known = {m.name for m in table.mutants}
+    replace: known = {m.name for m in table.mutants}
   - name: a failed copy escapes
     path: tools/mutation.py
     find: |
@@ -227,5 +230,24 @@ mutants:
           return [_static(root, m, f"the copy failed: {exc}") for m in selected]
   - name: a replacement takes the file's first line ending
     path: tools/mutation.py
-    find: eol = "\r\n" if line_end > 0 and text[line_end - 1] == "\r" else "\n"
-    replace: eol = "\r\n" if "\r\n" in text else "\n"
+    find: ending = _LINE_END.search(text, start) or _LINE_END.search(text)
+    replace: ending = _LINE_END.search(text)
+  - name: a CR-only line is not a line
+    path: tools/mutation.py
+    find: max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
+    replace: text.rfind("\n", 0, start) + 1
+  - name: the system Git configuration is read
+    path: tools/mutation.py
+    find: '"GIT_CONFIG_NOSYSTEM": "1",'
+    replace: '"GIT_CONFIG_NOSYSTEM": "0",'
+  - name: check takes a missing root
+    path: tools/mutation.py
+    find: |
+      if not root.is_dir():
+          raise ValueError(f"the root is not a directory: {root}")
+      problems = []
+    replace: problems = []
+  - name: a key that is no string is sorted
+    path: tools/mutation.py
+    find: not isinstance(document, dict) or not all(isinstance(k, str) for k in document)
+    replace: not isinstance(document, dict)

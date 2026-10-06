@@ -123,6 +123,12 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 9, on `f177eba`.**
+    - Codex: a CR-only file was read as one line, so a nested replacement lost its indentation and line breaks. Lines now end at `\r\n`, `\r` or `\n`, as Python reads them.
+    - CodeAnt: Git in the tests read the host's system configuration. Now `GIT_CONFIG_NOSYSTEM` is set, and with `HOME` a scratch directory there is no global configuration either.
+    - CodeAnt: a table whose keys were of two types raised `TypeError`, and `--check` took a missing root as missing anchors. Both are refused, as a format error and as a usage error.
+    - Each has a test that failed first. One fixture first passed for the wrong reason: a single unknown key sorts fine, so it was given two.
+    - Stated, not changed: a token anchor ignores whitespace inside quoted text. The heading over the copy's guarantees now says the runner's set-up stays in the copy, not the tests' effects.
   - **Round 8, on `aedb94f`, rebased onto `main` after #375 merged.**
     - Codex, CodeRabbit: a multi-line replacement took the file's first line ending, not the matched line's.
     - CodeAnt: a `.git/hooks` that is a symbolic link survived, because `rmtree` refuses a link and its error was ignored.

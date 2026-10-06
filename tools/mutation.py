@@ -15,7 +15,8 @@ link is followed". Tables of them live with the code they guard, as
   the tests' whole process group.
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
-- What the tests do stays in their copy.
+- What the runner sets up stays in the copy. The tests themselves are not sandboxed;
+  see below.
   - Every copy is taken from one snapshot of the root, made when the run starts. The
     snapshot is itself copied file by file, so an edit made during that copy can
     still mix; it narrows the window from the whole run to the copy.
@@ -30,10 +31,11 @@ link is followed". Tables of them live with the code they guard, as
   `NOT RUN`.
 
 What this does not do:
-- It does not sandbox the tests. They run as the caller, with the caller's file-system
-  access, as they do in place under `ci/verify`. The runner keeps its own writes, and
-  Git, inside the copy. To bound what the tests can reach, run it as the publication
-  flow does, in a container with the root mounted read-only (CodeAnt on #374).
+- It does not sandbox the tests. The owner confirmed this boundary on 2026-10-06. They
+  run as the caller, with the caller's file-system access, as they do in place under
+  `ci/verify`. The runner keeps its own writes, and Git, inside the copy. To bound
+  what the tests can reach, run it as the publication flow does, in a container with
+  the root mounted read-only (CodeAnt on #374).
 - It runs on POSIX only. It starts the tests in a new session and ends their process
   group, which Windows has no equivalent of.
 
@@ -47,7 +49,8 @@ Anchors survive reformatting:
   characters and single punctuation marks, with whitespace ignored. Tokens include
   comments and quoted text. So an anchor can match a commented-out copy of a setting.
   Beside the real one that match is `AMBIGUOUS`; alone, the mutant changes a comment
-  and `SURVIVED` says so.
+  and `SURVIVED` says so. Whitespace inside quoted text is ignored too, so an anchor
+  can still match a literal that differs from it only there (CodeAnt on #374).
 - A replacement is dedented, and its later lines keep their indentation relative to
   its first, starting from the indentation of the line where the match starts. It
   fits a reflowed file whose structure follows relative indentation, as YAML's does,
@@ -88,6 +91,7 @@ _OUTPUT_TAIL_BYTES = 4096
 _OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024
 _POLL_SECONDS = 0.2
 _TOKEN = re.compile(r"\w+|[^\w\s]")
+_LINE_END = re.compile(r"\r\n|\r|\n")
 # How a node's source span is computed, and how a table problem is raised.
 Span = Callable[[ast.AST, ast.AST], tuple[int, int]]
 Refuse = Callable[[str], KnowledgeFormatError]
@@ -164,6 +168,9 @@ def load_table(path: Path) -> Table:
     def refuse(problem: str) -> KnowledgeFormatError:
         return KnowledgeFormatError(f"{path}: {problem}")
 
+    # Names are strings: keys of two types made sorting them raise (CodeAnt on #374).
+    if not isinstance(document, dict) or not all(isinstance(k, str) for k in document):
+        raise refuse("a table must be a mapping of names")
     if set(document) - _TABLE_KEYS:
         raise refuse(f"unknown keys {sorted(set(document) - _TABLE_KEYS)}")
     table_id = document.get("id")
@@ -325,10 +332,12 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     if len(spans) > 1:
         raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
     start, end = spans[0]
-    line_start = text.rfind("\n", 0, start) + 1
-    # The matched line's own ending: a file may mix them (Codex on #374).
-    line_end = text.find("\n", start)
-    eol = "\r\n" if line_end > 0 and text[line_end - 1] == "\r" else "\n"
+    # Lines end as Python reads them, at `\r\n`, `\r` or `\n`: a CR-only file has no
+    # `\n` at all (Codex on #374).
+    line_start = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
+    # The matched line's own ending, since a file may mix them (Codex on #374).
+    ending = _LINE_END.search(text, start) or _LINE_END.search(text)
+    eol = ending.group() if ending else "\n"
     indent = re.match(r"[ \t]*", text[line_start:start]).group()  # type: ignore[union-attr]
     lines = textwrap.dedent(replace).strip("\n").splitlines()
     if statements and not lines:
@@ -385,6 +394,10 @@ def _mutated(root: Path, mutant: Mutant) -> str | Outcome:
 
 def check(root: Path, table: Table) -> list[str]:
     """Return one line for each mutant of ``table`` that does not apply under ``root``."""
+    # A missing root is a usage error, as for `run`, not missing anchors (CodeAnt on
+    # #374).
+    if not root.is_dir():
+        raise ValueError(f"the root is not a directory: {root}")
     problems = []
     for mutant in table.mutants:
         result = _mutated(root, mutant)
@@ -410,6 +423,10 @@ def _run_tests(
         "LC_ALL": "C.UTF-8",
         "PYTHONPATH": str(work),
         "KNOWLEDGE_KIT_ROOT": str(work),
+        # Git in the tests reads only the copy's reduced configuration: not the
+        # host's system file, which could set hooks or filters (CodeAnt on #374).
+        # With HOME a scratch directory, there is no global one either.
+        "GIT_CONFIG_NOSYSTEM": "1",
     }
     output = Path(scratch) / "tests.log"
     with output.open("wb") as log:

@@ -143,6 +143,19 @@ class TableTests(unittest.TestCase):
             self.assertEqual(("tests.test_m",), table.tests)
             self.assertEqual(["double adds"], [m.name for m in table.mutants])
 
+    def test_a_table_that_is_no_mapping_of_names_is_refused(self) -> None:
+        # Mixed key types made `sorted` raise TypeError (CodeAnt on #374).
+        for label, text in (
+            ("a list", "- id: fixture\n"),
+            # Two unknown keys of two types: sorting them is what raised.
+            ("a key that is no string", "id: fixture\n1: x\nb: y\n"),
+        ):
+            with tempfile.TemporaryDirectory() as scratch, self.subTest(label):
+                path = pathlib.Path(scratch) / "table.yaml"
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaises(KnowledgeFormatError):
+                    mutation.load_table(path)
+
     def test_a_malformed_table_is_refused(self) -> None:
         one = "  - name: n\n    path: pkg/m.py\n    find: 'a'\n    replace: 'b'\n"
         for label, mutants, tests in (
@@ -210,6 +223,13 @@ class LineEndingTests(unittest.TestCase):
         source = "a = 1\r\nif x:\n    y = 1\n    z = 2\n"
         mutated = mutation.apply(source, "y = 1\nz = 2", "y = 3\nz = 4", python=True)
         self.assertEqual("a = 1\r\nif x:\n    y = 3\n    z = 4\n", mutated)
+
+    def test_a_cr_only_file_keeps_its_lines_and_indentation(self) -> None:
+        # `rfind("\\n")` saw a CR-only file as one line, so a nested replacement lost
+        # its indentation and its line breaks (Codex on #374).
+        source = "def f():\r    a = 1\r    b = 2\r"
+        mutated = mutation.apply(source, "a = 1\nb = 2", "a = 3\nb = 4", python=True)
+        self.assertEqual("def f():\r    a = 3\r    b = 4\r", mutated)
 
     def test_a_form_feed_does_not_move_a_python_anchor(self) -> None:
         # `str.splitlines` breaks at a form feed, which Python does not, so the
@@ -477,6 +497,47 @@ class SoundnessTests(unittest.TestCase):
             while _alive(pid) and time.monotonic() < deadline:
                 time.sleep(0.1)
             self.assertFalse(_alive(pid), "the tests' child outlived the timeout")
+
+    def test_a_missing_root_is_a_usage_error_for_check_too(self) -> None:
+        # `--check` reported a missing root as missing anchors (CodeAnt on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            path = _table(
+                base,
+                "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+            )
+            arguments = [
+                "--root",
+                str(base / "missing"),
+                "--table",
+                str(path),
+                "--check",
+            ]
+            self.assertEqual(2, mutation.main(arguments))
+
+    def test_the_tests_read_no_system_git_configuration(self) -> None:
+        # A host's /etc/gitconfig could set hooks or filters for Git in the copy
+        # (CodeAnt on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "tests" / "test_env.py").write_text(
+                "import os\nimport unittest\n\n\n"
+                "class E(unittest.TestCase):\n"
+                "    def test_no_system_config(self):\n"
+                "        self.assertEqual('1', os.environ.get('GIT_CONFIG_NOSYSTEM'))\n",
+                encoding="utf-8",
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_env, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("KILLED", outcome.status, outcome.detail)
 
     def test_a_missing_root_is_a_usage_error(self) -> None:
         # It raised a traceback from inside the copy (CodeAnt on #374).
