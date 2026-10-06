@@ -1,0 +1,316 @@
+# The targeted mutants that guard the mutation owner itself (Decision 0104, #373).
+# Run: knowledge mutants --table tests/mutants/mutation.yaml --jobs 3
+id: mutation
+tests: [tests.test_mutation]
+mutants:
+  - name: a missing anchor is accepted
+    path: tools/mutation.py
+    find: |
+      if not spans:
+          raise AnchorError("NOT FOUND", "the anchor matches nowhere")
+    replace: pass
+  - name: an ambiguous anchor is accepted
+    path: tools/mutation.py
+    find: |
+      if len(spans) > 1:
+          raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
+    replace: pass
+  - name: a survivor counts as killed
+    path: tools/mutation.py
+    find: return 0 if killed == len(outcomes) else 1
+    replace: return 0
+  - name: passing tests are a kill
+    path: tools/mutation.py
+    find: |
+      if status == 0:
+          return Outcome(mutant.name, "SURVIVED", "the tests passed")
+    replace: pass
+  - name: a timeout is a survivor
+    path: tools/mutation.py
+    find: |
+      if status is None:
+          return Outcome(mutant.name, "KILLED", last)
+    replace: |
+      if status is None:
+          return Outcome(mutant.name, "SURVIVED", last)
+  - name: the original tree is mutated
+    path: tools/mutation.py
+    find: |
+      work = Path(scratch) / "w"
+      shutil.copytree(root, work, ignore=_ignored, symlinks=True)
+    replace: work = root
+  - name: a statement keeps no indentation
+    path: tools/mutation.py
+    find: (eol + indent).join(lines)
+    replace: eol.join(lines)
+  - name: a replacement is not dedented
+    path: tools/mutation.py
+    find: lines = textwrap.dedent(replace).strip("\n").splitlines()
+    replace: lines = replace.strip("\n").splitlines()
+  - name: decorators are left behind
+    path: tools/mutation.py
+    find: line = decorators[0].lineno if decorators else first.lineno
+    replace: line = first.lineno
+  - name: an anchor that does not parse is never found
+    path: tools/mutation.py
+    find: spans, statements = _token_spans(text, find), False
+    replace: spans, statements = [], False
+  - name: a path that climbs is accepted
+    path: tools/mutation.py
+    find: '".." in relative.parts'
+    replace: "False"
+  - name: a broken mutant is not invalid
+    path: tools/mutation.py
+    find: |
+      if broken:
+          return Outcome(mutant.name, "INVALID", broken)
+    replace: pass
+  - name: workers are ignored
+    path: tools/mutation.py
+    find: max(1, jobs)
+    replace: "1"
+  - name: a repeated mutant name is accepted
+    path: tools/mutation.py
+    find: |
+      if repeated:
+          raise refuse(f"mutant names used twice: {repeated}")
+    replace: pass
+  - name: a failing baseline is ignored
+    path: tools/mutation.py
+    find: 'not failures'
+    replace: 'True'
+  - name: the baseline is skipped
+    path: tools/mutation.py
+    find: range(width)
+    replace: range(0)
+  - name: the baseline runs alone
+    path: tools/mutation.py
+    find: width = max(1, min(jobs, len(selected)))
+    replace: width = 1
+  - name: a failing baseline passes
+    path: tools/mutation.py
+    find: |
+      return None if status == 0 else f"the unmutated tests fail: {last}"
+    replace: return None
+  - name: a failing baseline hides a static problem
+    path: tools/mutation.py
+    find: result if isinstance(result, Outcome) else Outcome(mutant.name, "NOT RUN", failure)
+    replace: Outcome(mutant.name, "NOT RUN", failure)
+  - name: a link is written through
+    path: tools/mutation.py
+    find: |
+      if linked is not None:
+          return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
+    replace: pass
+  - name: only the file itself is checked for a link
+    path: tools/mutation.py
+    find: current = current / part
+    replace: current = root / relative
+  - name: a timeout ends only the leader
+    path: tools/mutation.py
+    find: os.killpg(process.pid, signal.SIGKILL)
+    replace: process.kill()
+  - name: a non-positive timeout is accepted
+    path: tools/mutation.py
+    find: |
+      if not (math.isfinite(timeout) and timeout > 0):
+          raise ValueError(f"timeout must be a positive number of seconds: {timeout!r}")
+    replace: pass
+  - name: a copy drops the repository's metadata
+    path: tools/mutation.py
+    find: (os.path.islink(git) or not os.path.isdir(git))
+    replace: "True"
+  - name: a copy keeps a shared metadata pointer
+    path: tools/mutation.py
+    find: (os.path.islink(git) or not os.path.isdir(git))
+    replace: os.path.islink(git)
+  - name: a Windows path is accepted
+    path: tools/mutation.py
+    find: or any(c in item["path"] for c in "\\:")
+    replace: or False
+  - name: output is unbounded
+    path: tools/mutation.py
+    find: os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES
+    replace: "False"
+  - name: a link out of the copy is kept
+    path: tools/mutation.py
+    find: |
+      if escaping is not None:
+          raise CopyRefused(f"the link {escaping} resolves outside the copy")
+    replace: pass
+  - name: a link is judged by its own text
+    path: tools/mutation.py
+    find: target = os.path.realpath(path)
+    replace: target = os.path.normpath(os.path.join(directory, os.readlink(path)))
+  - name: the output is measured only while the tests run
+    path: tools/mutation.py
+    find: |
+      if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+      if status is not None:
+          return status, None
+    replace: |
+      if status is not None:
+          return status, None
+      if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
+          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+  - name: a missing root is copied
+    path: tools/mutation.py
+    find: |
+      if not root.is_dir():
+          raise ValueError(f"the root is not a directory: {root}")
+      # The snapshot would be copied into the tree it copies (Codex on #374).
+      scratch, top = Path(tempfile.gettempdir()).resolve(), root.resolve()
+    replace: |
+      # The snapshot would be copied into the tree it copies (Codex on #374).
+      scratch, top = Path(tempfile.gettempdir()).resolve(), root.resolve()
+  - name: a failed copy escapes
+    path: tools/mutation.py
+    find: |
+      except OSError as exc:
+          # A full disk is no verdict on the tests (CodeAnt on #374).
+          return f"the copy failed: {exc}"
+    replace: |
+      except NotImplementedError as exc:
+          # A full disk is no verdict on the tests (CodeAnt on #374).
+          return f"the copy failed: {exc}"
+  - name: the copy keeps the repository's configuration
+    path: tools/mutation.py
+    find: |
+      config.unlink()
+      config.write_text(_format_config(text), encoding="utf-8")
+    replace: pass
+  - name: the copy keeps its hooks
+    path: tools/mutation.py
+    find: shutil.rmtree(hooks)
+    replace: pass
+  - name: linked hooks are kept
+    path: tools/mutation.py
+    find: hooks.is_symlink() or hooks.is_file()
+    replace: hooks.is_file()
+  - name: a subsection's settings are kept
+    path: tools/mutation.py
+    find: None if header.group(2) else header.group(1).lower()
+    replace: header.group(1).lower()
+  - name: a shared Git directory is copied
+    path: tools/mutation.py
+    find: |
+      if (git_dir / "commondir").exists():
+          where = git_dir.relative_to(work) / "commondir"
+          raise CopyRefused(f"{where} shares another repository's directory")
+    replace: pass
+  - name: each copy is taken from the live root
+    path: tools/mutation.py
+    find: return _run_from(snapshot, table, selected, jobs, timeout)
+    replace: return _run_from(root, table, selected, jobs, timeout)
+  - name: line endings are normalized
+    path: tools/mutation.py
+    find: (root / mutant.path).open(encoding="utf-8", newline="")
+    replace: (root / mutant.path).open(encoding="utf-8")
+  - name: lines are split as str.splitlines does
+    path: tools/mutation.py
+    find: io.StringIO(text, newline="").readlines()
+    replace: text.splitlines(keepends=True)
+  - name: a file that is not UTF-8 is raised
+    path: tools/mutation.py
+    find: |
+      except UnicodeDecodeError as exc:
+          # Tables name UTF-8 files; another encoding is reported, not raised (CodeAnt
+          # on #374).
+          reason = f"cannot read {mutant.path} as UTF-8: {exc.reason}"
+          return Outcome(mutant.name, "NOT FOUND", reason)
+    replace: |
+      except NotImplementedError as exc:
+          reason = f"cannot read {mutant.path} as UTF-8: {exc}"
+          return Outcome(mutant.name, "NOT FOUND", reason)
+  - name: a failed snapshot escapes
+    path: tools/mutation.py
+    find: |
+      except OSError as exc:
+          return [_static(root, m, f"the copy failed: {exc}") for m in selected]
+    replace: |
+      except NotImplementedError as exc:
+          return [_static(root, m, f"the copy failed: {exc}") for m in selected]
+  - name: a replacement takes the file's first line ending
+    path: tools/mutation.py
+    find: ending = _LINE_END.search(text, start) or _LINE_END.search(text)
+    replace: ending = _LINE_END.search(text)
+  - name: a CR-only line is not a line
+    path: tools/mutation.py
+    find: max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
+    replace: text.rfind("\n", 0, start) + 1
+  - name: the system Git configuration is read
+    path: tools/mutation.py
+    find: '"GIT_CONFIG_NOSYSTEM": "1",'
+    replace: '"GIT_CONFIG_NOSYSTEM": "0",'
+  - name: check takes a missing root
+    path: tools/mutation.py
+    find: |
+      if not root.is_dir():
+          raise ValueError(f"the root is not a directory: {root}")
+      problems = []
+    replace: problems = []
+  - name: a key that is no string is sorted
+    path: tools/mutation.py
+    find: not isinstance(document, dict) or not all(isinstance(k, str) for k in document)
+    replace: not isinstance(document, dict)
+  - name: borrowed objects are copied
+    path: tools/mutation.py
+    find: |
+      if borrowed.is_file() and borrowed.read_text(errors="replace").strip():
+          where = borrowed.relative_to(work)
+          raise CopyRefused(f"{where} borrows objects from outside the copy")
+    replace: pass
+  - name: an f-string fragment passes for a string literal
+    path: tools/mutation.py
+    find: |
+      if _parses_as(text[start:end], shape):
+          found.append((start, end))
+    replace: found.append((start, end))
+  - name: a key alone is dropped
+    path: tools/mutation.py
+    find: setting.group(3) or 'true'
+    replace: setting.group(3)
+  - name: other repositories' metadata is copied
+    path: tools/mutation.py
+    find: |
+      if os.path.basename(directory) == ".git":
+          ignored |= {"modules", "worktrees"} & set(names)
+    replace: pass
+  - name: a scratch directory inside the root is used
+    path: tools/mutation.py
+    find: scratch == top or top in scratch.parents
+    replace: "False"
+  - name: a multi-line replacement leaves an inline suite
+    path: tools/mutation.py
+    find: statements and len(lines) > 1 and text[line_start:start].strip()
+    replace: "False"
+  - name: tests from outside the copy are run
+    path: tools/mutation.py
+    find: '[sys.executable, "-c", _BOOTSTRAP, *tests]'
+    replace: '[sys.executable, "-m", "unittest", *tests]'
+  - name: a config line is matched quadratically
+    path: tools/mutation.py
+    find: _SIMPLE.fullmatch(line.strip())
+    replace: |
+      re.match(r'^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*("?)([A-Za-z0-9._-]+)\2)?\s*$', line)
+  - name: a package from outside the copy is imported
+    path: tools/mutation.py
+    find: "if spec.has_location or end == len(parts):"
+    replace: "if end == len(parts):"
+  - name: a module from outside the copy is accepted
+    path: tools/mutation.py
+    find: "if os.path.commonpath([root, origin]) != root:"
+    replace: "if False:"
+  - name: a missing module is not named
+    path: tools/mutation.py
+    find: "if spec is None:"
+    replace: "if False:"
+  - name: a trailing comment drops the key
+    path: tools/mutation.py
+    find: (?:\s*[#;].*)?'
+    replace: "'"
+  - name: a failed write is blamed on the tests
+    path: tools/mutation.py
+    find: 'f"the mutant could not be written: {exc}"'
+    replace: 'f"the tests could not run: {exc}"'

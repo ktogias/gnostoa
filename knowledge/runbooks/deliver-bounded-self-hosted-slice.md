@@ -721,6 +721,39 @@ fixed suite here. Record exact-candidate and integrated-main results separately,
 including public-surface digest, executable/runtime-subject equality and X3 when
 applicable. Provider command success is not authoritative read-back.
 
+### Verify a candidate cheapest check first
+
+Order the local verification of a candidate by how cheaply each check can find a
+failure, not by tool. Five runs on #369 were refused only after their whole
+~13-minute pipeline, by checks that cost seconds (#373). The owner approved this
+order on 2026-10-05.
+
+1. **Pre-flight, before preparation.** Run every cheap static check on the working
+   tree:
+   - `knowledge mutants --table <table> --check` for every table under
+     `tests/mutants/`, which confirms each anchor still applies (Decision 0104);
+   - the local mirrors of the provider's analyzers;
+   - the tests of the changed modules.
+2. **Preparation from the exact parent** (Decision 0090). Its focused `fast` run is
+   the local `fast`. Then confirm that the prepared tree is the working tree.
+3. **The quick gates:** `policy`, `security-fast` and `smoke`.
+4. **Then, concurrently:**
+   - `extended`;
+   - the runtime image's `self-check`, which finds working-directory and install
+     defects that the development container hides;
+   - `knowledge mutants --table <table> --jobs <n>` for each table the change
+     touches.
+
+   Stop the others as soon as one fails.
+5. **Leave `regression` to provider CI.** It is the same suite plus checks that
+   `policy` already runs.
+6. **Commit, push and seal only when every stage passed.** Release the receipt
+   either way.
+
+A targeted mutant is part of the change it guards. When a refactor breaks an
+anchor, update the table in the same change: `tests/test_mutant_tables.py` fails
+until you do. Do not write another mutation runner; extend `tools/mutation.py`.
+
 ## Recovery
 
 On subject drift, a failed required job, an unexpected provider effect or scope
