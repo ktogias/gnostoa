@@ -178,6 +178,41 @@ class TableTests(unittest.TestCase):
                     mutation.load_table(path)
 
 
+class LineEndingTests(unittest.TestCase):
+    def test_a_crlf_file_keeps_its_line_endings(self) -> None:
+        # The copy was rewritten with LF, so a byte-sensitive test killed a mutant it
+        # cannot see (CodeAnt on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "pkg" / "crlf.txt").write_bytes(b"alpha = 1\r\nbeta = 2\r\n")
+            (root / "tests" / "test_crlf.py").write_text(
+                "import unittest\n\n\n"
+                "class E(unittest.TestCase):\n"
+                "    def test_endings(self):\n"
+                "        data = open('pkg/crlf.txt', 'rb').read()\n"
+                "        self.assertEqual(2, data.count(b'\\r\\n'))\n",
+                encoding="utf-8",
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: beta changes\n    path: pkg/crlf.txt\n"
+                    "    find: 'beta = 2'\n    replace: 'beta = 3'\n",
+                    tests="[tests.test_crlf]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("SURVIVED", outcome.status, outcome.detail)
+
+    def test_a_form_feed_does_not_move_a_python_anchor(self) -> None:
+        # `str.splitlines` breaks at a form feed, which Python does not, so the
+        # matched span was computed on the wrong line.
+        source = "x = 1\x0c\ny = 2\nz = 3\n"
+        mutated = mutation.apply(source, "z = 3", "z = 4", python=True)
+        self.assertEqual("x = 1\x0c\ny = 2\nz = 4\n", mutated)
+
+
 class EncodingTests(unittest.TestCase):
     def test_a_file_that_is_not_utf_8_is_reported_not_raised(self) -> None:
         # A declared Latin-1 file aborted `check` and `run` (CodeAnt on #374).
@@ -473,6 +508,32 @@ class SoundnessTests(unittest.TestCase):
         self.assertEqual(["NOT RUN"], [o.status for o in outcomes])
         self.assertIn("no space left", outcomes[0].detail)
 
+    def test_a_copy_that_fails_after_the_snapshot_credits_nothing(self) -> None:
+        # The snapshot is copied first; a later copy failing must not escape either.
+        # `copytree` recurses through itself, so only a copy into a mutant's scratch
+        # directory, never the snapshot's, fails here.
+        real = shutil.copytree
+
+        def fail_after_the_snapshot(src, dst, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if pathlib.Path(dst).parent.name.startswith("gnostoa-mutant-"):
+                raise OSError("no space left")
+            return real(src, dst, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            with mock.patch("tools.mutation.shutil.copytree", fail_after_the_snapshot):
+                outcomes = mutation.run(root, table, jobs=1)
+        self.assertEqual(["NOT RUN"], [o.status for o in outcomes])
+        self.assertIn("the copy failed: no space left", outcomes[0].detail)
+
     def test_a_timeout_must_be_positive(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
             base = pathlib.Path(scratch)
@@ -750,9 +811,10 @@ class CopyTests(unittest.TestCase):
             (outcome,) = mutation.run(root, table, jobs=1)
             self.assertEqual("KILLED", outcome.status, outcome.detail)
 
-    def test_git_metadata_that_routes_outside_refuses_the_copy(self) -> None:
+    def test_git_metadata_that_routes_outside_is_dropped_from_the_copy(self) -> None:
         # Git in the copy took its work tree from the copied configuration (Codex on
-        # #374), and `git clean` there removed files outside the copy.
+        # #374), and `git clean` there removed files outside the copy. The copy's
+        # configuration keeps only the repository's format, so Git stays in it.
         git = shutil.which("git")
         if git is None:
             self.skipTest("git is not installed")
@@ -796,8 +858,150 @@ class CopyTests(unittest.TestCase):
                 )
                 (outcome,) = mutation.run(root, table, jobs=1)
                 self.assertTrue(marker.exists(), "git in the copy cleaned outside it")
-                self.assertEqual("NOT RUN", outcome.status, outcome.detail)
-                self.assertIn("Git metadata", outcome.detail)
+                self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_git_configuration_that_runs_programs_is_dropped_from_the_copy(
+        self,
+    ) -> None:
+        # A clean filter, and a hook, ran from the copied metadata (Codex on #374).
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git is not installed")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for route in ("filter", "hook"):
+            with self.subTest(route), tempfile.TemporaryDirectory() as scratch:
+                base = pathlib.Path(scratch)
+                root = _project(base)
+                marker = base / "ran"
+                (root / "pkg" / "data.txt").write_text("data\n", encoding="utf-8")
+                (root / ".gitattributes").write_text(
+                    "*.txt filter=mark\n", encoding="utf-8"
+                )
+                (root / "tests" / "test_git_use.py").write_text(
+                    "import pathlib\nimport subprocess\nimport unittest\n\n\n"
+                    "class U(unittest.TestCase):\n"
+                    "    def test_use(self):\n"
+                    "        pathlib.Path('pkg/data.txt').write_text('more\\n')\n"
+                    "        subprocess.run(['git', 'add', 'pkg/data.txt'], check=True)\n"
+                    "        subprocess.run(['git', '-c', 'user.name=t', '-c',\n"
+                    "                        'user.email=t@example.invalid', 'commit',\n"
+                    "                        '-qm', 'x'], check=True)\n",
+                    encoding="utf-8",
+                )
+                for command in (["init", "-q"], ["add", "-A"]):
+                    subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                        [git, *command], cwd=root, env=clean, check=True
+                    )
+                if route == "filter":
+                    # A script, since `;` would start a comment in Git's configuration.
+                    script = base / "filter.sh"
+                    script.write_text(
+                        f"#!/bin/sh\ntouch {marker}\ncat\n", encoding="utf-8"
+                    )
+                    script.chmod(0o755)
+                    with (root / ".git" / "config").open(
+                        "a", encoding="utf-8"
+                    ) as config:
+                        config.write(f'[filter "mark"]\n\tclean = {script}\n')
+                else:
+                    hook = root / ".git" / "hooks" / "pre-commit"
+                    hook.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+                    hook.chmod(0o755)
+                table = mutation.load_table(
+                    _table(
+                        base,
+                        "  - name: double triples\n    path: pkg/m.py\n"
+                        "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                        tests="[tests.test_git_use, tests.test_m]",
+                    )
+                )
+                (outcome,) = mutation.run(root, table, jobs=1)
+                self.assertFalse(marker.exists(), f"the copied {route} ran")
+                self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_a_subsection_keeps_none_of_its_settings(self) -> None:
+        # `[core "x"] bare = true` is `core.x.bare`, not `core.bare`; kept as the
+        # latter, it would make the copy a bare repository.
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git is not installed")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / "tests" / "test_status.py").write_text(
+                "import subprocess\nimport unittest\n\n\n"
+                "class S(unittest.TestCase):\n"
+                "    def test_status(self):\n"
+                "        subprocess.run(['git', 'status', '--short'], check=True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [git, "init", "-q"], cwd=root, env=clean, check=True
+            )
+            with (root / ".git" / "config").open("a", encoding="utf-8") as config:
+                config.write('[core "x"]\n\tbare = true\n')
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_status, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_a_shared_git_directory_refuses_the_copy(self) -> None:
+        # `commondir` makes Git share another repository's directory.
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / ".git").mkdir()
+            (root / ".git" / "commondir").write_text(
+                str(base / "other"), encoding="utf-8"
+            )
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+        self.assertIn("shares another repository", outcome.detail)
+
+    def test_every_copy_is_taken_from_one_snapshot(self) -> None:
+        # The root changed during a run, and later copies saw the change (Codex on
+        # #374): here an edit after the baseline removes the mutant's anchor.
+        # The test wraps the real baseline.
+        real = mutation._baseline  # skipcq: PYL-W0212
+
+        def baseline_then_edit(root, table, timeout):  # type: ignore[no-untyped-def]
+            failure = real(root, table, timeout)
+            for live in roots:
+                (live / "pkg" / "m.py").write_text(
+                    "def double(x):\n    return x + x\n\n\n"
+                    "def wait():\n    return None\n",
+                    encoding="utf-8",
+                )
+            return failure
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            roots = [root]
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            with mock.patch.object(mutation, "_baseline", baseline_then_edit):
+                (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("KILLED", outcome.status, outcome.detail)
 
     def test_a_git_file_is_never_copied(self) -> None:
         # A `.git` file points at metadata that other worktrees share.

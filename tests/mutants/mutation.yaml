@@ -41,8 +41,8 @@ mutants:
     replace: work = root
   - name: a statement keeps no indentation
     path: tools/mutation.py
-    find: '("\n" + indent).join(lines)'
-    replace: '"\n".join(lines)'
+    find: (eol + indent).join(lines)
+    replace: eol.join(lines)
   - name: a replacement is not dedented
     path: tools/mutation.py
     find: lines = textwrap.dedent(replace).strip("\n").splitlines()
@@ -168,16 +168,37 @@ mutants:
       except NotImplementedError as exc:
           # A full disk is no verdict on the tests (CodeAnt on #374).
           return f"the copy failed: {exc}"
-  - name: copied Git metadata may route outside
+  - name: the copy keeps the repository's configuration
+    path: tools/mutation.py
+    find: config.write_text(_format_config(text), encoding="utf-8")
+    replace: pass
+  - name: the copy keeps its hooks
+    path: tools/mutation.py
+    find: shutil.rmtree(git_dir / "hooks", ignore_errors=True)
+    replace: pass
+  - name: a subsection's settings are kept
+    path: tools/mutation.py
+    find: None if header.group(2) else header.group(1).lower()
+    replace: header.group(1).lower()
+  - name: a shared Git directory is copied
     path: tools/mutation.py
     find: |
-      if routing is not None:
-          raise CopyRefused(f"the copy's Git metadata routes outside it: {routing}")
+      if (git_dir / "commondir").exists():
+          where = git_dir.relative_to(work) / "commondir"
+          raise CopyRefused(f"{where} shares another repository's directory")
     replace: pass
-  - name: an included configuration is trusted
+  - name: each copy is taken from the live root
     path: tools/mutation.py
-    find: r"^\s*(?:worktree\s*(?:=|$)|\[\s*include(?:if)?\b)"
-    replace: r"^\s*worktree\s*(?:=|$)"
+    find: return _run_from(snapshot, table, selected, jobs, timeout)
+    replace: return _run_from(root, table, selected, jobs, timeout)
+  - name: line endings are normalized
+    path: tools/mutation.py
+    find: (root / mutant.path).open(encoding="utf-8", newline="")
+    replace: (root / mutant.path).open(encoding="utf-8")
+  - name: lines are split as str.splitlines does
+    path: tools/mutation.py
+    find: io.StringIO(text, newline="").readlines()
+    replace: text.splitlines(keepends=True)
   - name: a file that is not UTF-8 is raised
     path: tools/mutation.py
     find: |
@@ -190,3 +211,11 @@ mutants:
       except NotImplementedError as exc:
           reason = f"cannot read {mutant.path} as UTF-8: {exc}"
           return Outcome(mutant.name, "NOT FOUND", reason)
+  - name: a failed snapshot escapes
+    path: tools/mutation.py
+    find: |
+      except OSError as exc:
+          return [_static(root, m, f"the copy failed: {exc}") for m in selected]
+    replace: |
+      except NotImplementedError as exc:
+          return [_static(root, m, f"the copy failed: {exc}") for m in selected]

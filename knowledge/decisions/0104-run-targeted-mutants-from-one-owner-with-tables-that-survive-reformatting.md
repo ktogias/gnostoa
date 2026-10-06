@@ -63,11 +63,10 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
        - The baseline ends before any mutant starts.
        - It runs as wide as the mutants because a suite that cannot share the machine with itself, holding a fixed port or lock, would otherwise "kill" mutants through contention.
      - **One copy per mutant.** Each mutant is applied in its own isolated copy of the root.
-     - **The copy is faithful.** It keeps the repository's own `.git` directory, so tests that read Git see what they would see in place. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share.
+     - **The copy is faithful, and its Git stays in it.** Every copy is taken from one snapshot of the root, made when the run starts. It keeps the repository's own `.git` directory, so tests that read Git see the same history and tracked files as in place. Its configuration keeps only the repository's format: `[core]`'s format keys and `[extensions]`. Its hooks are removed. A work tree, an include, a filter, a hook or any other program the repository configured therefore neither routes Git elsewhere nor runs. It leaves out caches, and any `.git` *file*, because such a file points at metadata other worktrees share. A `commondir`, which shares another repository's directory, refuses the copy.
      - **No path through a link.** A mutant whose path passes through a symbolic link is `REFUSED`, by the check and by the run, because writing through it would change a file outside the copy. A table path with a backslash or a colon is refused when the table loads, because a path checked as POSIX would be read natively elsewhere.
      - **What the tests do stays in the copy.**
        - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
-       - A copy whose Git metadata names a work tree, includes a configuration from elsewhere or shares another repository's directory is refused, since Git in it would work on another tree.
        - Output beyond 16 MiB stops the tests, as a timeout does. It is measured after every wait, so tests that pass the limit and exit within one poll are caught too.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
      - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
@@ -124,10 +123,17 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 7, on `d56d583`.**
+    - **Codex P1: copies of a live root.** The baseline and the mutants each copied the live root, so an edit during the run gave them different subjects. Every copy is now taken from one snapshot.
+    - **Codex P2: execution through the copied metadata.** A filter or a hook ran from the copied `.git`. The copy's configuration is now reduced to the repository's format, and its hooks removed. This also covers round 6's routes, the work tree and the include, so they are no longer refused but dropped.
+    - **CodeAnt: CRLF files rewritten as LF.** A CRLF file was rewritten as LF, which a byte-sensitive test detects. Line endings are now kept.
+    - **Found while fixing that.** Anchors split lines with `str.splitlines`, which breaks at a form feed where Python does not, so a matched span could fall on the wrong line. Lines are now split as Python counts them.
+
+    Each has a test that failed first. One test fixture failed for the wrong reason at first: in Git's configuration `;` starts a comment, so the filter command was cut short. It was repaired before the implementation.
   - **Round 6, on `4068c40`.**
     - Codex: the copied `.git` could route Git outside the copy, through a `core.worktree`, an `include`, a `config.worktree` or a `commondir`. On `4068c40` a test's `git clean` removed a file outside the copy. Such a copy is now refused. A test failed first.
     - CodeAnt: a file that is not UTF-8 aborted `check` and `run`. It is now reported as `NOT FOUND`. A test failed first.
-    - Two boundaries are stated: the runner does not sandbox the tests, which run as the caller, so the publication flow runs it with the root mounted read-only; and it runs on POSIX only.
+    - Two boundaries are stated: the runner does not sandbox the tests, which run as the caller, so the publication flow runs it with the root mounted read-only; and it runs on POSIX only. The owner confirmed the first on 2026-10-06. A sandbox for the tests would be a separate Work Item.
   - **Round 5, on `2c156a9`.**
     - CodeAnt: a missing `--root` crashed with a traceback, and a failed copy escaped `run`. Now the first is a usage error, exit 2, and the second credits nothing (`NOT RUN`). Each has a test that failed first.
     - SonarCloud: the module-name pattern uses `\w` under `re.ASCII`, and an exception test has one call that can raise.

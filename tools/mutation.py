@@ -16,9 +16,11 @@ link is followed". Tables of them live with the code they guard, as
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
 - What the tests do stays in their copy.
-  - A copy holding a link that resolves outside it is refused. So is one whose Git
-    metadata names a work tree, includes a configuration from elsewhere or shares
-    another repository's directory.
+  - Every copy is taken from one snapshot of the root, made when the run starts.
+  - A copy holding a link that resolves outside it is refused.
+  - A copy's Git metadata keeps only the repository's format: no work tree, include,
+    filter, hook or other program the repository configured. A copy that shares
+    another repository's Git directory is refused.
   - Output beyond a limit ends the tests, as a timeout does. The output is measured
     every `_POLL_SECONDS`, so a fast writer can pass the limit by what it writes in
     one interval before it is stopped.
@@ -59,6 +61,7 @@ import argparse
 import ast
 import concurrent.futures
 import contextlib
+import io
 import math
 import os
 import re
@@ -233,7 +236,8 @@ def _python_spans(text: str, find: str) -> tuple[list[tuple[int, int]], bool] | 
         return None
     if not snippet.body:
         return None
-    lines = text.splitlines(keepends=True)
+    # Lines as Python counts them: `str.splitlines` also breaks at a form feed.
+    lines = io.StringIO(text, newline="").readlines()
     starts = [0]
     for line in lines:
         starts.append(starts[-1] + len(line))
@@ -320,11 +324,12 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
         raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
     start, end = spans[0]
     line_start = text.rfind("\n", 0, start) + 1
+    eol = "\r\n" if "\r\n" in text else "\n"
     indent = re.match(r"[ \t]*", text[line_start:start]).group()  # type: ignore[union-attr]
     lines = textwrap.dedent(replace).strip("\n").splitlines()
     if statements and not lines:
         lines = ["pass"]
-    return text[:start] + ("\n" + indent).join(lines).rstrip() + text[end:]
+    return text[:start] + (eol + indent).join(lines).rstrip() + text[end:]
 
 
 def _compiles(text: str, path: str) -> str | None:
@@ -353,7 +358,10 @@ def _mutated(root: Path, mutant: Mutant) -> str | Outcome:
     if linked is not None:
         return Outcome(mutant.name, "REFUSED", f"{linked} is a symbolic link")
     try:
-        text = (root / mutant.path).read_text(encoding="utf-8")
+        # Line endings are kept as they are: a test may read the bytes (CodeAnt on
+        # #374).
+        with (root / mutant.path).open(encoding="utf-8", newline="") as handle:
+            text = handle.read()
     except UnicodeDecodeError as exc:
         # Tables name UTF-8 files; another encoding is reported, not raised (CodeAnt
         # on #374).
@@ -449,16 +457,14 @@ def _wait(
 
 
 def _copy(root: Path, scratch: str) -> Path:
-    """An isolated copy of ``root``, or `CopyRefused` when a link in it, or its Git
-    metadata, leads out."""
+    """An isolated copy of ``root``, its Git metadata reduced to the repository's
+    format, or `CopyRefused` when a link in it, or a shared Git directory, leads out."""
     work = Path(scratch) / "w"
     shutil.copytree(root, work, ignore=_ignored, symlinks=True)
     escaping = _escaping_link(work)
     if escaping is not None:
         raise CopyRefused(f"the link {escaping} resolves outside the copy")
-    routing = _routing_git(work)
-    if routing is not None:
-        raise CopyRefused(f"the copy's Git metadata routes outside it: {routing}")
+    _sanitize_git(work)
     return work
 
 
@@ -481,35 +487,67 @@ def _escaping_link(work: Path) -> str | None:
     return None
 
 
-# What in a copied `.git` makes Git work on another tree: a work tree named in its
-# configuration, a configuration included from elsewhere, a per-worktree
-# configuration, or a common directory shared with another repository.
-_ROUTING_LINE = re.compile(r"^\s*(?:worktree\s*(?:=|$)|\[\s*include(?:if)?\b)", re.I)
-_ROUTING_FILES = ("commondir", "config.worktree")
+# What a copy's `.git` configuration keeps: the repository's format, and nothing that
+# routes Git elsewhere or runs a program.
+_CORE_KEYS = frozenset(
+    {
+        "repositoryformatversion",
+        "bare",
+        "filemode",
+        "logallrefupdates",
+        "ignorecase",
+        "symlinks",
+        "precomposeunicode",
+    }
+)
+_SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)\s*(")?')
+_SIMPLE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]*)\s*=\s*([A-Za-z0-9._-]+)\s*$")
 
 
-def _routing_git(work: Path) -> str | None:
-    """How a `.git` directory in ``work`` routes Git outside the copy, if it does.
+def _sanitize_git(work: Path) -> None:
+    """Reduce every `.git` directory in ``work`` to the repository's format.
 
-    A copy keeps the repository's `.git`, and Git run inside the copy reads its
-    configuration. A `core.worktree` there, or one an `include` brings, made Git work
-    on another tree, such as the original (Codex on #374). Such a copy is refused.
+    A copy keeps the repository's `.git`, and Git run inside it read that metadata. A
+    `core.worktree`, or one an `include` brought, made Git work on another tree, and a
+    filter, a hook or `core.fsmonitor` ran a program (Codex on #374). So each copied
+    configuration keeps only `[core]`'s format keys and `[extensions]` but
+    `worktreeConfig`; the hooks and any per-worktree configuration are removed. A
+    `commondir`, which shares another repository's directory, refuses the copy.
     """
     for directory, directories, _files in os.walk(work):
         if ".git" not in directories:
             continue
         git_dir = Path(directory) / ".git"
-        for name in _ROUTING_FILES:
-            if (git_dir / name).exists():
-                return f"{git_dir.relative_to(work) / name} exists"
+        if (git_dir / "commondir").exists():
+            where = git_dir.relative_to(work) / "commondir"
+            raise CopyRefused(f"{where} shares another repository's directory")
+        shutil.rmtree(git_dir / "hooks", ignore_errors=True)
+        (git_dir / "config.worktree").unlink(missing_ok=True)
         config = git_dir / "config"
         if config.is_file():
             text = config.read_text(encoding="utf-8", errors="replace")
-            for line in text.splitlines():
-                if _ROUTING_LINE.match(line):
-                    where = config.relative_to(work)
-                    return f"{where} has {line.strip()!r}"
-    return None
+            config.write_text(_format_config(text), encoding="utf-8")
+
+
+def _format_config(text: str) -> str:
+    """``text``'s format keys, as a configuration of their own."""
+    kept: dict[str, list[str]] = {"core": [], "extensions": []}
+    section: str | None = None
+    for line in text.splitlines():
+        header = _SECTION.match(line)
+        if header:
+            # A subsection, such as `[remote "origin"]`, keeps nothing.
+            section = None if header.group(2) else header.group(1).lower()
+            continue
+        setting = _SIMPLE.match(line)
+        if setting is None or section not in kept:
+            continue
+        key = setting.group(1).lower()
+        if (section == "core" and key in _CORE_KEYS) or (
+            section == "extensions" and key != "worktreeconfig"
+        ):
+            kept[section].append(f"\t{key} = {setting.group(2)}\n")
+    return "".join(f"[{name}]\n" + "".join(rows) for name, rows in kept.items() if rows)
 
 
 def _baseline(root: Path, table: Table, timeout: float) -> str | None:
@@ -542,7 +580,8 @@ def _run_one(root: Path, table: Table, mutant: Mutant, timeout: float) -> Outcom
         if isinstance(mutated, Outcome):
             return mutated
         try:
-            (work / mutant.path).write_text(mutated, encoding="utf-8")
+            with (work / mutant.path).open("w", encoding="utf-8", newline="") as out:
+                out.write(mutated)
             status, last = _run_tests(work, scratch, table.tests, timeout)
         except OSError as exc:
             return Outcome(mutant.name, "NOT RUN", f"the tests could not run: {exc}")
@@ -578,25 +617,46 @@ def run(
     if unknown:
         raise KnowledgeFormatError(f"{table.id} has no mutant named {unknown}")
     selected = [m for m in table.mutants if not only or m.name in only]
+    with tempfile.TemporaryDirectory(prefix="gnostoa-snapshot-") as held:
+        # Every copy is taken from one snapshot, so a root that changes during the run
+        # cannot give the baseline and the mutants different subjects (Codex on #374).
+        try:
+            snapshot = _copy(root, held)
+        except CopyRefused as exc:
+            return [_static(root, m, f"the copy is refused: {exc}") for m in selected]
+        except OSError as exc:
+            return [_static(root, m, f"the copy failed: {exc}") for m in selected]
+        return _run_from(snapshot, table, selected, jobs, timeout)
+
+
+def _run_from(
+    snapshot: Path,
+    table: Table,
+    selected: list[Mutant],
+    jobs: int,
+    timeout: float,
+) -> list[Outcome]:
+    """The baseline, then each mutant in ``selected``, each in a copy of ``snapshot``."""
     width = max(1, min(jobs, len(selected)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         failures = [
             failure
             for failure in pool.map(
-                lambda _: _baseline(root, table, timeout), range(width)
+                lambda _: _baseline(snapshot, table, timeout), range(width)
             )
             if failure is not None
         ]
         if not failures:
             return list(
                 pool.map(
-                    lambda mutant: _run_one(root, table, mutant, timeout), selected
+                    lambda mutant: _run_one(snapshot, table, mutant, timeout),
+                    selected,
                 )
             )
     failure = failures[0]
     if width > 1:
         failure += f" ({len(failures)} of {width} copies run at once failed)"
-    return [_static(root, mutant, failure) for mutant in selected]
+    return [_static(snapshot, mutant, failure) for mutant in selected]
 
 
 def _static(root: Path, mutant: Mutant, failure: str) -> Outcome:
