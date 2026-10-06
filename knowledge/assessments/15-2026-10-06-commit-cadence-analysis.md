@@ -35,10 +35,10 @@ sources:
     resource: https://github.com/ktogias/gnostoa/issues/370#issuecomment-6014263689
     title: The owner's decision on 2026-10-06 to take #370 after #369 and #374, before #368's PR B
   - id: earlier-analysis
-    resource: knowledge/assessments/15-2026-10-05-problems-and-solutions-log.md
+    resource: ./15-2026-10-05-problems-and-solutions-log.md
     title: The problems and solutions of 2026-10-05, E4 verification time
   - id: evidence
-    resource: knowledge/assessments/15-2026-10-06-commit-cadence-evidence/index.json
+    resource: ./15-2026-10-06-commit-cadence-evidence/index.json
     title: The publish-flow logs this analysis reads, retained
 x-project-knowledge:
   id: kit.assessment.15-2026-10-06-commit-cadence-analysis
@@ -148,20 +148,20 @@ The "My work" column includes work on the other PR and on #375, because one agen
 
 ## Publish flow, by stage (Process A)
 
-Published runs since pre-flight was added, 9 on #369 and 8 on #374:
+Every run with both a `pre-flight start` and a `publish end` before the cutoff, 10 on #369 and 12 on #374. A first version used 9 and 8. It left out `timing-tae9b` and `timing-mut2b` through `timing-mut5b` without saying why (Codex on #379).
 
 | Stage | #369 mean (min–max) | #374 mean (min–max) |
 |---|---|---|
-| Pre-flight: DeepSource-local, whitespace, `security-fast`, anchors | 1.2 (1.0–1.4) | 1.2 (1.0–1.6) |
-| Preparation from the exact parent | 4.4 (4.0–4.9) | 4.6 (4.0–5.6) |
+| Pre-flight: DeepSource-local, whitespace, `security-fast`, anchors | 1.2 (1.0–1.4) | 1.0 (0.2–1.6) |
+| Preparation from the exact parent | 4.5 (4.0–5.2) | 4.7 (4.0–5.6) |
 | Gates: `policy`, `security-fast`, `smoke` | 1.0 (0.8–1.1) | 1.1 (0.8–1.7) |
-| Concurrent stage: `extended` ∥ runtime ∥ mutants | 12.0 (11.0–13.0) | 11.1 (8.7–14.0) |
-| — runtime image build and self-check | 7.1 | 7.3 |
-| — `extended`: style, the whole suite under coverage, docs build | 11.0 | 10.9 |
-| — mutants | 10.8 | 9.7 |
-| **Total** | **18.7** (17.1–20.2) | **18.2** (15.7–21.6) |
+| Concurrent stage: `extended` ∥ runtime ∥ mutants | 11.9 (10.8–13.0) | 10.6 (8.5–14.0) |
+| — runtime image build and self-check | 7.1 | 6.8 |
+| — `extended`: style, the whole suite under coverage, docs build | 11.0 | 10.4 |
+| — mutants | 10.4 | 7.8 |
+| **Total** | **18.7** (17.1–20.2) | **17.5** (14.8–21.6) |
 
-- **The critical path is `extended` (12 of 17 runs) or the mutants (5 of 17).** Since 09:57 on #369 it has been the mutants: 12.4 and 12.9 min for 151–153 mutants, against `extended` at 8.4 and 8.3. Its table has grown from 114 to 155 mutants, and in-flow mutants from 3–4 min on 10-05 to 9–13 min.
+- **The critical path is `extended` (17 of these 22 runs) or the mutants (5 of 22).** Since 09:57 on #369 it has been the mutants: 12.4 and 12.9 min for 151–153 mutants, against `extended` at 8.4 and 8.3. Its table has grown from 114 to 155 mutants, and in-flow mutants from 3–4 min on 10-05 to 9–13 min.
 - **Host contention adds about 3 minutes.** `extended` takes a median of 8.3 min (21 runs) when little else runs during the concurrent stage. With half or more of that stage shared, by the other PR's flow or by my local mutant runs, it takes 11.1 min (9 runs). The host has 8 cores, and the concurrent stage alone runs:
   - the whole suite twice, under coverage and in the runtime image;
   - the mutants, three jobs at once.
@@ -227,7 +227,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **(b) Run only the new or changed mutants locally,** leaving the whole table to the flow.
   - *Savings:* about 5 minutes per #369 round.
   - *Risk:* an old mutant made equivalent by the change is found only in-flow, at a cost of about 18 minutes. That happened twice in 15 rounds; both times the local run caught it.
-- **(c) Reuse verified test results across rounds,** keyed by the prepared tree and the suite: run `extended`'s suite only when Python source or tests changed. A round that changes only policy YAML or documentation would then run the policy tests, the reuse check and the docs build, about 2–3 minutes.
+- **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, and the toolchain, image and interpreter it runs on. Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. A round that changes only policy YAML or documentation would then run only the tests that read those files, the reuse check and the docs build, about 2–3 minutes.
   - *Savings:* 8–11 minutes on such rounds.
   - *Risk:* a policy file read by tests in non-obvious ways, such as the registry being read by the reuse-check tests. The test selection must follow data dependencies, not file types.
 
