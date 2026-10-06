@@ -182,7 +182,11 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 | Pre-flight stops: DeepSource-local findings (PYL-W0212, TYP, PTC-W0062) and a whitespace stop | 8: 3 on #369 and 5 on #374. Two more, `timing-373a` and `timing-rec3`, are other PRs' (Codex on #379). | ~1.3 min of flow, plus 1–5 min each to fix and relaunch | spread out |
 | A defect in my own snapshot check: it read `git status`, which lists the staged candidate | 1 | 5.2 min | 09:51 on 10-06 |
 
-No in-flow mutant failure has happened since whole-table local runs became routine, from the first retained one, #369's round 12 at 03:54 on 10-06: 0 in the 12 flows published from then to the cutoff, 7 on #369 and 5 on #374. On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
+No in-flow mutant failure has happened since whole-table local runs became routine. Counted by flow start, not publication (Codex on #379): 0 in the 12 flows whose pre-flight started from 03:54 on 10-06, when #369's round-12 local run ended, to the cutoff, 7 on #369 and 5 on #374. By publication time there would be 13, since #374's `f177eba` started before 03:54 and published at 03:58.
+
+From 03:54 on, every #369 round has a retained local result. Two earlier ones are retained too, #374's round 2 and #369's round 9, at 23:05 and 23:33 on 10-05. Of #374's later rounds only 12 and 13 have retained results; the others' local runs printed their counts without a file.
+
+On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
 - **Its cost:** 13 retained local whole-table runs on #369, at about 6.5 min each, and 3 on #374, at about 5 min each: about 100 min (*estimates*).
 - **What it saved:** one of them, #369's round 17, caught a survivor that would have failed in-flow: about 16 min, or about 34 with an 18-min relaunch. A second survivor was caught in round 20, after the cutoff, so it is not counted.
 
