@@ -182,7 +182,7 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 | Pre-flight stops: DeepSource-local findings (PYL-W0212, TYP, PTC-W0062) and a whitespace stop | 8: 3 on #369 and 5 on #374. Two more, `timing-373a` and `timing-rec3`, are other PRs' (Codex on #379). | ~1.3 min of flow, plus 1–5 min each to fix and relaunch | spread out |
 | A defect in my own snapshot check: it read `git status`, which lists the staged candidate | 1 | 5.2 min | 09:51 on 10-06 |
 
-No in-flow mutant failure has happened since whole-table local runs became routine, around 02:30 on 10-06: 0 in the 12 flows published from then to the cutoff, 7 on #369 and 5 on #374. On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
+No in-flow mutant failure has happened since whole-table local runs became routine, from the first retained one, #369's round 12 at 03:54 on 10-06: 0 in the 12 flows published from then to the cutoff, 7 on #369 and 5 on #374. On time alone, the practice does not pay for itself (Codex on #379). Counted over one cohort, #369's and #374's runs before the cutoff:
 - **Its cost:** 13 retained local whole-table runs on #369, at about 6.5 min each, and 3 on #374, at about 5 min each: about 100 min (*estimates*).
 - **What it saved:** one of them, #369's round 17, caught a survivor that would have failed in-flow: about 16 min, or about 34 with an 18-min relaunch. A second survivor was caught in round 20, after the cutoff, so it is not counted.
 
@@ -214,7 +214,7 @@ What it buys instead is a flow that does not fail late, so the round's evidence 
 All savings are *estimates*. The first two change no verification and fit Process A as it stands; the last two change it and need the owner's approval.
 
 **P1. Fix a family, not an instance. This is #378, admitted as the agent's practice on 2026-10-06; its runbook text needs a Decision.**
-- **The change:** when a finding is one form of a shape, such as a signature that misses one way of running Git, enumerate the family's other members before publishing. Test each against the signature and the production tree, as rounds 17–19 eventually did.
+- **The change:** when a finding is one form of a shape, such as a signature that misses one way of running Git, enumerate the family's other members before publishing. Test each against the signature and the production tree, as round 20 then did, the first to list the family.
 - **Savings:** rounds 17, 18 and 19 of #369 might have been one round: about 75 minutes on #369 alone. In general, one round avoided saves about 40 minutes.
 - **Risk:** more work per round, and enumeration finds only the members I think of.
 
@@ -232,7 +232,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **(b) Run only the new or changed mutants locally,** leaving the whole table to the flow.
   - *Savings:* about 5 minutes per #369 round.
   - *Risk:* an old mutant made equivalent by the change is found only in-flow, at a cost of about 18 minutes. Before the cutoff that happened once, in #369's round 17, and the local run caught it.
-- **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, and the toolchain, image and interpreter it runs on. Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. A round that changes only policy YAML or documentation would then run only the tests that read those files, the reuse check and the docs build, about 2–3 minutes.
+- **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, Git's tracked-file state (the index, file modes and attributes, which `git ls-files` tests read), and the toolchain, image and interpreter it runs on (CodeAnt on #379). Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. A round that changes only policy YAML or documentation would then run only the tests that read those files, the reuse check and the docs build, about 2–3 minutes.
   - *Savings:* 8–11 minutes on such rounds.
   - *Risk:* a policy file read by tests in non-obvious ways, such as the registry being read by the reuse-check tests. The test selection must follow data dependencies, not file types.
 
@@ -242,7 +242,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **Risk:** tests that share temporary paths, ports or global state would need isolating first. This changes CI tooling, so it needs its own Work Item and Decision.
 
 **Smaller items:**
-- Add the DeepSource rules that have already cost a round to the agent's local mirror. W1113 was added on 2026-10-06.
+- **A finding, not a proposal here:** the agent's local DeepSource mirror lacked rules the provider enforces, and each cost a review round. W1113 cost one on #374, and Bandit's B108 one on #369. The mirror is the DeepSource-local check in the publish flow's pre-flight, part of Process A, which the owner admitted on 2026-10-05. So a rule the provider already enforces is added to keep that check faithful to it, as maintenance within an admitted process, not as a new practice (Codex on #379). This assessment applies nothing.
 - Review the publish flow's own changes on both paths before the first run, as was done after the snapshot-check defect.
 
 **A rough total.** P2 with P3(a) and P3(b) together would cut a typical #369 round from about 42 to about 28–32 minutes at best, since P2's share is an upper bound. P1, by avoiding rounds, matters more than any per-round saving: each round avoided saves about 40 minutes.
