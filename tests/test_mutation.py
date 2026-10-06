@@ -428,6 +428,7 @@ class SoundnessTests(unittest.TestCase):
             outcomes = mutation.run(root, table, jobs=1)
             self.assertEqual(["NOT RUN", "NOT FOUND"], [o.status for o in outcomes])
             self.assertIn("the unmutated tests fail", outcomes[0].detail)
+            self.assertIn("tests.test_misspelled", outcomes[0].detail)
             self.assertEqual(
                 1,
                 mutation.main(
@@ -1046,6 +1047,18 @@ class CopyTests(unittest.TestCase):
         self.assertIn("filemode = true\n", kept)
         self.assertIn("objectformat = sha1\n", kept)
 
+    def test_a_format_key_with_a_trailing_comment_is_kept(self) -> None:
+        # Dropped, `objectformat = sha256` would leave Git reading the copy as SHA-1
+        # (CodeAnt on #374).
+        text = (
+            "[core]\n\tfilemode = false ; local\n\tbare = false# x\n"
+            "[extensions]\n\tobjectformat = sha256 # the format\n"
+        )
+        kept = mutation._format_config(text)  # skipcq: PYL-W0212
+        self.assertIn("filemode = false\n", kept)
+        self.assertIn("bare = false\n", kept)
+        self.assertIn("objectformat = sha256\n", kept)
+
     def test_a_long_line_is_read_in_linear_time(self) -> None:
         # Spaces after a key, then text that is no value, were split between two
         # `\s*` every way before the match failed: quadratic (CodeRabbit on #374).
@@ -1150,7 +1163,10 @@ class CopyTests(unittest.TestCase):
             (root / "tests" / "__init__.py").unlink()
             elsewhere = base / "elsewhere" / "tests"
             elsewhere.mkdir(parents=True)
-            (elsewhere / "__init__.py").write_text("", encoding="utf-8")
+            marker = base / "ran"
+            (elsewhere / "__init__.py").write_text(
+                f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8"
+            )
             (elsewhere / "test_m.py").write_text(
                 "import unittest\n\n\nclass M(unittest.TestCase):\n"
                 "    def test_nothing(self):\n        pass\n",
@@ -1174,8 +1190,37 @@ class CopyTests(unittest.TestCase):
 
             with mock.patch.object(subprocess, "Popen", side_effect=with_elsewhere):
                 (outcome,) = mutation.run(root, table, jobs=1)
+            # Inside the block: the marker goes with the scratch directory. Refused
+            # only once imported, its code had already run (CodeAnt on #374).
+            self.assertFalse(marker.exists(), "code from outside the copy ran")
         self.assertEqual("NOT RUN", outcome.status, outcome.detail)
-        self.assertIn("tests.test_m", outcome.detail)
+        self.assertIn("tests", outcome.detail)
+
+    def test_a_failed_write_is_named_as_such(self) -> None:
+        # A mutant that could not be written was reported as tests that could not run
+        # (CodeAnt nitpick on #374).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: n\n    path: pkg/m.py\n    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            opened = pathlib.Path.open
+
+            def full_disk(
+                self: pathlib.Path, mode: str = "r", *args: Any, **kwargs: Any
+            ) -> Any:
+                if mode == "w":
+                    raise OSError(28, "No space left on device")
+                return opened(self, mode, *args, **kwargs)
+
+            with mock.patch.object(pathlib.Path, "open", full_disk):
+                (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+        self.assertIn("the mutant could not be written", outcome.detail)
 
     def test_a_scratch_directory_inside_the_root_is_a_usage_error(self) -> None:
         # The snapshot would be copied into the tree it copies (Codex on #374).

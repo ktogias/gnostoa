@@ -123,6 +123,11 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
   - **Round 4, on `99bfe52`.**
     - Codex and CodeAnt: output past the limit was not counted when the tests exited within one poll. A test that failed first now catches it.
     - Codacy's Semgrep: the resolved `git` call in a test fixture gets the repository's `nosemgrep` pragma.
+  - **Round 13, on `830dd22`.**
+    - CodeAnt: the bootstrap imported each test module before checking where it came from, so a foreign `tests` package's top-level code ran before the refusal. Each part of the name is now found first, with `find_spec`, which imports only parents already shown to be the copy's.
+    - CodeAnt: a format key with a trailing comment was dropped. Without `objectformat = sha256 # x`, Git would read the copy as SHA-1. A trailing comment is now allowed.
+    - CodeAnt nitpick: a mutant that could not be written was reported as tests that could not run. It is now named as such.
+    - Each has a test that failed first, and a mutant. The misspelled-module test now also pins that its detail names the module, a characterization that kills the missing-module mutant.
   - **Round 12, on `137f79a`.**
     - Codex: with `TMPDIR` inside the root, the snapshot was copied into the tree it copies. That is now a usage error.
     - Codex: a submodule's metadata under `.git/modules`, or a linked worktree's under `.git/worktrees`, kept its own configuration and hooks. Both are left out of the copy.

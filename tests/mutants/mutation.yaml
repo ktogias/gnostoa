@@ -294,3 +294,23 @@ mutants:
     find: _SIMPLE.fullmatch(line.strip())
     replace: |
       re.match(r'^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*("?)([A-Za-z0-9._-]+)\2)?\s*$', line)
+  - name: a package from outside the copy is imported
+    path: tools/mutation.py
+    find: "if spec.has_location or end == len(parts):"
+    replace: "if end == len(parts):"
+  - name: a module from outside the copy is accepted
+    path: tools/mutation.py
+    find: "if os.path.commonpath([root, origin]) != root:"
+    replace: "if False:"
+  - name: a missing module is not named
+    path: tools/mutation.py
+    find: "if spec is None:"
+    replace: "if False:"
+  - name: a trailing comment drops the key
+    path: tools/mutation.py
+    find: (?:\s*[#;].*)?'
+    replace: "'"
+  - name: a failed write is blamed on the tests
+    path: tools/mutation.py
+    find: 'f"the mutant could not be written: {exc}"'
+    replace: 'f"the tests could not run: {exc}"'

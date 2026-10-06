@@ -91,14 +91,23 @@ _OUTPUT_TAIL_BYTES = 4096
 _OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024
 # Runs the tests as `python -m unittest` does, once each test module is shown to come
 # from the copy: a `tests` directory without `__init__.py` loses to a regular `tests`
-# package later on the path, an installed one say (CodeAnt on #374).
+# package later on the path, an installed one say (CodeAnt on #374). Each part of the
+# name is found before anything is imported, so no code from outside the copy runs:
+# finding `a.b` imports only `a`, already shown to be the copy's (CodeAnt on #374).
 _BOOTSTRAP = """\
-import importlib, os, sys, unittest
+import importlib.util, os, sys, unittest
 root = os.path.realpath(os.getcwd())
 for name in sys.argv[1:]:
-    origin = os.path.realpath(importlib.import_module(name).__file__ or "")
-    if os.path.commonpath([root, origin]) != root:
-        sys.exit(f"{name} is not the copy's: {origin}")
+    parts = name.split(".")
+    for end in range(1, len(parts) + 1):
+        prefix = ".".join(parts[:end])
+        spec = importlib.util.find_spec(prefix)
+        if spec is None:
+            sys.exit(f"no module named {prefix}")
+        if spec.has_location or end == len(parts):
+            origin = os.path.realpath(spec.origin or "/")
+            if os.path.commonpath([root, origin]) != root:
+                sys.exit(f"{prefix} is not the copy's: {origin}")
 unittest.main(module=None, argv=["python -m unittest", *sys.argv[1:]])
 """
 _POLL_SECONDS = 0.2
@@ -569,8 +578,11 @@ _SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)\s*(")?')
 # A key with a simple value, quoted or not, or alone, which Git reads as true
 # (CodeAnt on #374). Matched whole against the stripped line, so a run of spaces can
 # be read only one way: two `\s*` around it backtracked quadratically (CodeRabbit on
-# #374).
-_SIMPLE = re.compile(r'([A-Za-z][A-Za-z0-9-]*)(?:\s*=\s*("?)([A-Za-z0-9._-]+)\2)?')
+# #374). A trailing comment is allowed: dropped, `objectformat = sha256 # x` left Git
+# reading the copy as SHA-1 (CodeAnt on #374).
+_SIMPLE = re.compile(
+    r'([A-Za-z][A-Za-z0-9-]*)(?:\s*=\s*("?)([A-Za-z0-9._-]+)\2)?(?:\s*[#;].*)?'
+)
 
 
 def _sanitize_git(work: Path) -> None:
@@ -663,9 +675,16 @@ def _run_one(root: Path, table: Table, mutant: Mutant, timeout: float) -> Outcom
         mutated = _mutated(work, mutant)
         if isinstance(mutated, Outcome):
             return mutated
+        # A failed write is named as such, not as tests that could not run (CodeAnt on
+        # #374).
         try:
             with (work / mutant.path).open("w", encoding="utf-8", newline="") as out:
                 out.write(mutated)
+        except OSError as exc:
+            return Outcome(
+                mutant.name, "NOT RUN", f"the mutant could not be written: {exc}"
+            )
+        try:
             status, last = _run_tests(work, scratch, table.tests, timeout)
         except OSError as exc:
             return Outcome(mutant.name, "NOT RUN", f"the tests could not run: {exc}")
