@@ -270,6 +270,6 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 - **Local mutant runs.** Their start times were not recorded, only the end mtimes; their durations are estimates.
 - **CodeAnt's nitpicks.** They arrive by editing one sticky comment, so only the last update time survives. Only CodeAnt's inline findings and reviews are timed here.
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
-- **Lost runs.** Why a run failed was read from its `V-*` result files. `368a3` passed every stage and was redone anyway; its reason is not recorded.
+- **Lost runs.** Why a run failed is read from its `V-*` result files, now retained with the flow logs (Codex on #379). Each of the six failed runs' mutant results shows a stale anchor (`NOT FOUND`) or a survivor (`SURVIVED`), with its `extended` and runtime stages exiting 0. `368a3` passed every stage and was redone anyway; its reason is not recorded.
 - **Early timing files.** They carry no PUBLISHED line, so publication is inferred from a `publish end` mark.
 - **Round 19 of #369, and everything after the cutoff.** Round 19's flow started at the cutoff and published `8a25bbe` at 11:45:59. Its retained log is evidence, but it is not counted, so the counts, means, the stage sample and the "0 in 12" claim all stop at the cutoff (Codex on #379).
