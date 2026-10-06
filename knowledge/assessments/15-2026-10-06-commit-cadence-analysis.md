@@ -10,6 +10,9 @@ sources:
   - id: owner-request
     resource: https://github.com/ktogias/gnostoa/issues/377
     title: The owner's request on 2026-10-06 for the analysis, and that every reduction be planned
+  - id: this-pr
+    resource: https://github.com/ktogias/gnostoa/pull/379
+    title: The pull request that records this assessment, whose reviews corrected several of its measurements
   - id: pr-a
     resource: https://github.com/ktogias/gnostoa/pull/369
     title: PR A of #368, the trusted-execution owner, the registry and the reuse check
@@ -236,7 +239,7 @@ All savings are *estimates*. The first two change no verification and fit Proces
 - **(b) Run only the new or changed mutants locally,** leaving the whole table to the flow.
   - *Savings:* about 5 minutes per #369 round.
   - *Risk:* an old mutant made equivalent by the change is found only in-flow, at a cost of about 18 minutes. Before the cutoff that happened once, in #369's round 17, and the local run caught it.
-- **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, Git's tracked-file state (the index, file modes and attributes, which `git ls-files` tests read), and the toolchain, image and interpreter it runs on (CodeAnt on #379). Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. A round that changes only policy YAML or documentation would then run only the tests that read those files, the reuse check and the docs build, about 2–3 minutes.
+- **(c) Reuse verified test results across rounds,** keyed by the suite's effective inputs: the content of every file the suite reads, Git's tracked-file state (the index, file modes and attributes, which `git ls-files` tests read), and the toolchain, image and interpreter it runs on (CodeAnt on #379). Not by the prepared tree: every round's tree differs, so a key on it would never hit (Codex on #379). A reused result keeps the prepared tree it was produced for, so its provenance stays exact. Only identity-independent work can be reused: `extended` also runs `tools/quality_evidence.py`, which embeds the candidate's `HEAD` in the generated SBOMs. So that revision-bound generation reruns every round, apart from the reused test results (Codex on #379). A round that changes only policy YAML or documentation would then run the tests that read those files, the reuse check, the docs build and the evidence generation, a few minutes.
   - *Savings:* 8–11 minutes on such rounds.
   - *Risk:* a policy file read by tests in non-obvious ways, such as the registry being read by the reuse-check tests. The test selection must follow data dependencies, not file types.
 
@@ -274,6 +277,6 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 - **Local mutant runs.** Their start times were not recorded, only the end mtimes; their durations are estimates.
 - **CodeAnt's nitpicks.** They arrive by editing one sticky comment, so only the last update time survives. Only CodeAnt's inline findings and reviews are timed here.
 - **#369's first five heads.** Their publication times are request time minus 1.5 minutes.
-- **Lost runs.** Why a run failed is read from its `V-*` result files, now retained with the flow logs (Codex on #379). Each of the six failed runs' mutant results shows a stale anchor (`NOT FOUND`) or a survivor (`SURVIVED`), with its `extended` and runtime stages exiting 0. `368a3` passed every stage and was redone anyway; its reason is not recorded.
+- **Lost runs.** Why a run failed is read from its `V-*` result files, now retained with the flow logs (Codex on #379). Each of the six failed runs' mutant results shows a stale anchor (`NOT FOUND`) or a survivor (`SURVIVED`). In the four early runs, `368a4` to `368a8`, `extended` and the runtime stage exited 0. In `mut7c` and `tae11` the mutant failure stopped the concurrent stage before `extended` finished, so its outcome is unknown; their runtime stages exited 0 (Codex on #379). `368a3` passed every stage and was redone anyway; its reason is not recorded.
 - **Early timing files.** They carry no PUBLISHED line, so publication is inferred from a `publish end` mark.
 - **Round 19 of #369, and everything after the cutoff.** Round 19's flow started at the cutoff and published `8a25bbe` at 11:45:59. Its retained log is evidence, but it is not counted, so the counts, means, the stage sample and the "0 in 12" claim all stop at the cutoff (Codex on #379).
