@@ -63,15 +63,17 @@ The means are pulled up by four long intervals, with three causes:
 - **159 min on #369, `3b3a79a` → `13fcdf4`:** #374's first rounds, #375 and an owner-requested analysis ran in between.
 - **97–101 min, two intervals: #374 `aedb94f` and #369 `eb83ead`:** in-flow mutant failures forced reruns.
 
-**A typical round is about 42 min** (median over the other 25 intervals; mean 44.9):
+**A typical round is about 42 min**: median 41.7, mean 42.8, over the 24 intervals that are not the four long ones above.
 
 | Component | Median | Mean | Share of the mean |
 |---|---:|---:|---:|
-| The publish flow (one successful attempt) | 17.2 | 16.3 | 36% |
-| My work: diagnosis, REDs, fix, local tests and local mutants | 15.3 | 14.9 | 33% |
-| Stopped flow attempts, and their relaunch | 0.0 | 6.3 | 14% |
-| Waiting for Codex after the request | 5.2 | 5.9 | 13% |
+| The publish flow (one successful attempt) | 17.0 | 16.2 | 38% |
+| My work: diagnosis, REDs, fix, local tests and local mutants | 14.9 | 14.8 | 35% |
+| Waiting for Codex after the request | 5.2 | 6.0 | 14% |
+| Stopped flow attempts, and their relaunch | 0.0 | 4.2 | 10% |
 | Publish → review request (replies, summary) | 1.1 | 1.6 | 4% |
+
+The shares sum to 101% by rounding. A first version of this table kept #374's 96.8-minute interval, a long one, among the typical rounds. It gave a mean of 44.9 and 6.3 minutes of stopped attempts (Codex on #379).
 
 The fixed cost per round is about 24 minutes: the flow, the review wait and the request. It does not depend on the size of the fix, which in rounds 15–19 of #369 was often a one-line registry pattern.
 
@@ -81,12 +83,12 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
 2. **Flows.** Every `timing-*.txt` in the scratchpad and every `*-flow.log` under `/tmp/claude-1000/{tae,mut}`: 85 files, 59 timing files and 26 stdout logs, all retained with this analysis. Stage marks carry epoch seconds.
    - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 46 runs: 28 on #369 and 18 on #374.
    - **Other PRs.** 13 of the files are runs of other PRs, #372, #373 and #375. They are retained, but not counted.
-   - **Stopped runs.** A run that stopped in pre-flight has only its start mark, so its end is the file's mtime.
+   - **Stopped runs.** A run that stopped in pre-flight has only its start mark, so its end is the file's mtime. Every file's mtime is retained in the evidence index.
 3. **Reviews.** Issue comments, reviews and review comments, all with `--paginate`:
    - the owner's `@codex review` comments are the request times;
    - Codex reviews, and its "Didn't find any major issues" comments, are the verdicts;
    - root inline comments by bots, and CodeAnt reviews, are the findings.
-4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs are counted from the scratchpad files' mtimes. Their duration is an *estimate*: 6.5 min for #369's table, 5 min for #374's, from the gaps between consecutive runs.
+4. **My work.** From the Codex verdict on head N to the first flow attempt for head N+1. Local whole-table mutant runs are counted from the scratchpad files' mtimes. Their duration is an *estimate*: 6.5 min for #369's table, 5 min for #374's, from the gaps between consecutive runs. Those result files, and their mtimes, are retained with the flow logs.
 
 ## Per-interval decomposition
 
@@ -191,12 +193,12 @@ No in-flow mutant failure has happened since whole-table local runs became routi
 
 All savings are *estimates*. The first two change no verification and fit Process A as it stands; the last two change it and need the owner's approval.
 
-**P1. Fix a family, not an instance. The practice applies from #369 round 20; #378 makes it guidance.**
+**P1. Fix a family, not an instance. The agent's practice from #369 round 20; #378 would make it guidance.**
 - **The change:** when a finding is one form of a shape, such as a signature that misses one way of running Git, enumerate the family's other members before publishing. Test each against the signature and the production tree, as rounds 17–19 eventually did.
 - **Savings:** rounds 17, 18 and 19 of #369 might have been one round: about 75 minutes on #369 alone. In general, one round avoided saves about 40 minutes.
 - **Risk:** more work per round, and enumeration finds only the members I think of.
 
-**P2. Use the host better: same verification, less contention. Applied in the agent's publish flow on 2026-10-06.**
+**P2. Use the host better: same verification, less contention. This is #380, awaiting admission.**
 - **The change:**
   - never run my local whole-table mutants during a flow's concurrent stage;
   - give a flow's mutants as many jobs as the concurrent stage leaves cores free.
@@ -231,8 +233,8 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 
 | Proposal | Work Item | State | Proposed order |
 |---|---|---|---|
-| P1: fix a finding's whole family in one round | #378 | The agent applies it from #369 round 20, which lists the Git-execution family at once: 18 more members it missed, before any reviewer reported them. #378 adds the practice to the runbook. | Now |
-| P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | in the agent's publish flow | Applied on 2026-10-06. While a flow's concurrent stage runs, it holds a marker, and local whole-table runs wait for it to clear. Mutants get 5 jobs, or 3 when another flow is in that stage. | Done; re-measure |
+| P1: fix a finding's whole family in one round | #378 | The agent fixes each review finding's family from #369 round 20 on. This falls under the owner's standing instruction to fix every review finding, and it changes no repository source. #378 adds it to the runbook, after admission. | Now, as practice |
+| P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | #380 | Awaiting admission. It was applied in the agent's local publish flow on 2026-10-06 before admission, for one round, #369's round 20. Codex on #379 found that this skipped the admission step, and it was reverted the same hour. | After admission |
 | P3(a)–(c): scope each round's verification to the change, the whole on the final round | #377 | Planned. It extends the mutation owner of #374, and changes Process A, so each part needs a Decision. | After #374 lands |
 | P4: a parallel test runner | #370 | Admitted on 2026-10-05, after #368's PR B. The proposal on #370 is to take it after #369 and #374, alongside #377. | The owner's choice |
 
