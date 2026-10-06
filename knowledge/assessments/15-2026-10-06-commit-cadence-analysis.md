@@ -58,10 +58,10 @@ Measured 2026-10-06, read-only. Times are Athens time (UTC+3) unless marked UTC.
 | #374 | 42.6 min (median 40.5; 12 intervals; range 27.6–96.8) | 41.2 min (median 42.3; 6 intervals) |
 | Both PRs, merged | 38.9 min (median 27.1; 30 intervals) | 33.0 min (median 20.9; 14 intervals) |
 
-The means are pulled up by three long intervals. Each had an external cause:
+The means are pulled up by four long intervals, with three causes:
 - **190 min on #369, `533a539` → `09913e4`:** the review request waited 128 minutes on an owner question and on #374 work.
 - **159 min on #369, `3b3a79a` → `13fcdf4`:** #374's first rounds, #375 and an owner-requested analysis ran in between.
-- **97–101 min on #374 `aedb94f` and #369 `eb83ead`:** in-flow mutant failures forced reruns.
+- **97–101 min, two intervals: #374 `aedb94f` and #369 `eb83ead`:** in-flow mutant failures forced reruns.
 
 **A typical round is about 42 min** (median over the other 25 intervals; mean 44.9):
 
@@ -78,7 +78,10 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
 ## Method and data
 
 1. **Commits.** `gh api …/pulls/{369,374}/commits --paginate`, using author dates: the rebase after #375 merged rewrote the committer dates. #369's first five published heads were squashed by that rebase. For them, the owner's `@codex review` request time is the publication proxy, minus 1.5 min: *estimate*, the measured median is 1.1. Every later head is matched to its pre-rebase SHA through the Codex review that names it.
-2. **Flows.** Every `timing-*.txt` in the scratchpad and every `*-flow.log` under `/tmp/claude-1000/{tae,mut}`, 52 runs in all. Stage marks carry epoch seconds. A run that stopped in pre-flight has only its start mark, so its end is the file's mtime. Runs are keyed by PR and start second, because two flows launched in the same second would otherwise merge.
+2. **Flows.** Every `timing-*.txt` in the scratchpad and every `*-flow.log` under `/tmp/claude-1000/{tae,mut}`: 85 files, 59 timing files and 26 stdout logs, all retained with this analysis. Stage marks carry epoch seconds.
+   - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 46 runs: 28 on #369 and 18 on #374.
+   - **Other PRs.** 13 of the files are runs of other PRs, #372, #373 and #375. They are retained, but not counted.
+   - **Stopped runs.** A run that stopped in pre-flight has only its start mark, so its end is the file's mtime.
 3. **Reviews.** Issue comments, reviews and review comments, all with `--paginate`:
    - the owner's `@codex review` comments are the request times;
    - Codex reviews, and its "Didn't find any major issues" comments, are the verdicts;
