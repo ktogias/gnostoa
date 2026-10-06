@@ -956,6 +956,26 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(unmarked=line):
                 self.assertFalse(pattern.search(line))
 
+    def test_env_s_options_that_take_an_argument_run_git_too(self) -> None:
+        """`env -u GIT_DIR git status` and `env -C dir git status` run Git, but the
+        argument after the option was read as the command (Codex on #369). `env -S`
+        splits a string into the command, as `sh -c` runs one."""
+        pattern = _pattern("trusted-execution", "git-execution")
+        for line in (
+            "env -u GIT_DIR git status",
+            "/usr/bin/env -C /srv/work git status",
+            "env --unset GIT_DIR git status",
+            "env --chdir /srv/work git status",
+            "env -i PATH=/usr/bin git status",
+            "env -S 'git status'",
+            "env --split-string='git status'",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
+        for line in ("env -u GIT_DIR python3 tool.py", "env -S 'python3 tool.py'"):
+            with self.subTest(unmarked=line):
+                self.assertFalse(pattern.search(line))
+
     def test_the_shell_s_own_lookup_is_a_signature(self) -> None:
         """`$(which git)` and `$(type -P git)` resolve an executable as `command -v`
         does (Codex on #369)."""

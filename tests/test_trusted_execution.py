@@ -10,6 +10,7 @@ import inspect
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import stat
 import subprocess  # nosec B404
@@ -457,7 +458,9 @@ def _repository_with_a_local_filter(
     tree = _git(repository, "rev-parse", "HEAD^{tree}")
     marker = base / "filter-ran"
     hit = base / "hit"
-    hit.write_text(f"#!/bin/sh\nprintf x > {marker}\ncat\n", encoding="utf-8")
+    hit.write_text(
+        f"#!/bin/sh\nprintf x > {shlex.quote(str(marker))}\ncat\n", encoding="utf-8"
+    )
     hit.chmod(0o755)
     (repository / ".git" / "info").mkdir(exist_ok=True)
     (repository / ".git" / "info" / "attributes").write_text(
@@ -671,7 +674,8 @@ class RepositoryReadTests(unittest.TestCase):
             marker = base / "gpg-ran"
             gpg = base / "gpg"
             gpg.write_text(
-                f"#!/bin/sh\nprintf x > {marker}\nexit 1\n", encoding="utf-8"
+                f"#!/bin/sh\nprintf x > {shlex.quote(str(marker))}\nexit 1\n",
+                encoding="utf-8",
             )
             gpg.chmod(0o755)
             _git(repository, "config", "gpg.program", str(gpg))
@@ -792,7 +796,8 @@ class RepositoryReadFetchTests(unittest.TestCase):
             marker = base / "upload-pack-ran"
             program = base / "upload-pack"
             program.write_text(
-                f"#!/bin/sh\nprintf x > {marker}\nexit 1\n", encoding="utf-8"
+                f"#!/bin/sh\nprintf x > {shlex.quote(str(marker))}\nexit 1\n",
+                encoding="utf-8",
             )
             program.chmod(0o755)
             _git(client, "config", "remote.origin.uploadpack", str(program))
