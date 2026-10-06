@@ -25,6 +25,9 @@ sources:
   - id: p4
     resource: https://github.com/ktogias/gnostoa/issues/370
     title: Run the test suite in parallel processes
+  - id: p1-admission
+    resource: https://github.com/ktogias/gnostoa/issues/378#issuecomment-6015880572
+    title: The owner's admission of P1 on 2026-10-06, with its effect boundary and chronology
   - id: p2
     resource: https://github.com/ktogias/gnostoa/issues/380
     title: Run one flow's concurrent stage at a time, and size its mutant jobs to the free host
@@ -162,7 +165,7 @@ Every run with both a `pre-flight start` and a `publish end` before the cutoff, 
 | **Total** | **18.7** (17.1–20.2) | **17.5** (14.8–21.6) |
 
 - **The critical path is `extended` (17 of these 22 runs) or the mutants (5 of 22).** Since 09:57 on #369 it has been the mutants: 12.4 and 12.9 min for 151–153 mutants, against `extended` at 8.4 and 8.3. Its table has grown from 114 to 155 mutants, and in-flow mutants from 3–4 min on 10-05 to 9–13 min.
-- **Host contention adds about 3 minutes.** `extended` takes a median of 8.3 min (21 runs) when little else runs during the concurrent stage. With half or more of that stage shared, by the other PR's flow or by my local mutant runs, it takes 11.1 min (9 runs). The host has 8 cores, and the concurrent stage alone runs:
+- **Host contention adds up to about 3 minutes.** `extended` takes a median of 8.3 min (21 runs) when little else runs during the concurrent stage. With half or more of that stage shared, by the other PR's flow or by my local mutant runs, it takes 11.1 min (9 runs). The host has 8 cores, and the concurrent stage alone runs: Over these runs, though, the flow's own mutant table grew from 114 to 155 mutants, and those mutants compete with `extended` too. So the gap is an upper estimate of contention from outside the flow, not an attribution (CodeAnt on #379). #380's re-measurement compares runs at a matched table size.
   - the whole suite twice, under coverage and in the runtime image;
   - the mutants, three jobs at once.
 
@@ -208,7 +211,7 @@ What it buys instead is a flow that does not fail late, so the round's evidence 
 
 All savings are *estimates*. The first two change no verification and fit Process A as it stands; the last two change it and need the owner's approval.
 
-**P1. Fix a family, not an instance. The agent's practice from #369 round 20; #378 would make it guidance.**
+**P1. Fix a family, not an instance. This is #378, admitted as the agent's practice on 2026-10-06; its runbook text needs a Decision.**
 - **The change:** when a finding is one form of a shape, such as a signature that misses one way of running Git, enumerate the family's other members before publishing. Test each against the signature and the production tree, as rounds 17–19 eventually did.
 - **Savings:** rounds 17, 18 and 19 of #369 might have been one round: about 75 minutes on #369 alone. In general, one round avoided saves about 40 minutes.
 - **Risk:** more work per round, and enumeration finds only the members I think of.
@@ -248,7 +251,7 @@ The owner asked on 2026-10-06 that every way to reduce be planned for implementa
 
 | Proposal | Work Item | State | Proposed order |
 |---|---|---|---|
-| P1: fix a finding's whole family in one round | #378 | The agent fixes each review finding's family from #369 round 20 on. This falls under the owner's standing instruction to fix every review finding, and it changes no repository source. #378 adds it to the runbook, after admission. | Now, as practice |
+| P1: fix a finding's whole family in one round | #378 | Admitted by the owner on 2026-10-06 («Ναι, εγκρίνεται», "Yes, admitted") as the agent's practice. It had first been applied in #369's rounds 20 to 22, before any admission; Codex on #379 found this, as it had for P2. #378's runbook text still needs its own Decision. | Done, as practice; re-measure |
 | P2: one flow's concurrent stage at a time, more mutant jobs when the host is free | #380 | Admitted by the owner on 2026-10-06 ("yes. go on with P2 (#380)"), and applied in the agent's publish flow from then on. It had first been applied for one round, #369's round 20, before any admission; Codex on #379 found this, and it was reverted until the admission. | Done; re-measure |
 | P3(a)–(c): scope each round's verification to the change, the whole on the final round | #377 | Planned. It extends the mutation owner of #374, and changes Process A, so each part needs a Decision. | After #374 lands |
 | P4: a parallel test runner | #370 | Admitted on 2026-10-05, after #368's PR B. On 2026-10-06 the owner moved it ("#370 move up to follow #369 and #374, instead of #368's PR B"), so the order is #369, #374, #370, then #368's PR B. It still needs its own Decision. | After #374 |
