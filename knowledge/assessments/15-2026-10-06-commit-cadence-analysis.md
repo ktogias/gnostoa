@@ -25,6 +25,15 @@ sources:
   - id: p4
     resource: https://github.com/ktogias/gnostoa/issues/370
     title: Run the test suite in parallel processes
+  - id: p2
+    resource: https://github.com/ktogias/gnostoa/issues/380
+    title: Run one flow's concurrent stage at a time, and size its mutant jobs to the free host
+  - id: p2-admission
+    resource: https://github.com/ktogias/gnostoa/issues/380#issuecomment-6014263331
+    title: The owner's admission of P2 on 2026-10-06, with its effect boundary
+  - id: p4-order
+    resource: https://github.com/ktogias/gnostoa/issues/370#issuecomment-6014263689
+    title: The owner's decision on 2026-10-06 to take #370 after #369 and #374, before #368's PR B
   - id: earlier-analysis
     resource: knowledge/assessments/15-2026-10-05-problems-and-solutions-log.md
     title: The problems and solutions of 2026-10-05, E4 verification time
@@ -81,9 +90,9 @@ The fixed cost per round is about 24 minutes: the flow, the review wait and the 
 
 ## Method and data
 
-1. **Commits.** `gh api …/pulls/{369,374}/commits --paginate`, using author dates: the rebase after #375 merged rewrote the committer dates. #369's first five published heads were squashed by that rebase. For them, the owner's `@codex review` request time is the publication proxy, minus 1.5 min: *estimate*, the measured median is 1.1. Every later head is matched to its pre-rebase SHA through the Codex review that names it.
+1. **Commits.** `gh api …/pulls/{369,374}/commits --paginate`, using author dates: the rebase after #375 merged rewrote the committer dates. #369's first five published heads were squashed by that rebase. For them, the owner's `@codex review` request time is the publication proxy, minus 1.5 min: *estimate*, the measured median is 1.1. Every later head is matched to its pre-rebase SHA through the Codex review that names it. Author dates are the flow's own commit times: it commits in its publish stage and pushes at once. For the 14 heads whose flow logs record `publish end`, the push ended 7–8 s after the author date.
 2. **Flows.** Every `timing-*.txt` in the scratchpad and every `*-flow.log` under `/tmp/claude-1000/{tae,mut}`: 85 files, 59 timing files and 26 stdout logs, all retained with this analysis. Stage marks carry epoch seconds.
-   - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 45 runs that started before the cutoff, 27 on #369 and 18 on #374, and one at it: round 19, retained but not counted.
+   - **Runs.** Since 02:00 on 10-06, each run has both its own timing file and a stdout log. So runs are keyed by PR and start second, which merges the two; it also keeps apart two flows that started in the same second. That gives 45 runs that started before the cutoff, 27 on #369 and 18 on #374, and one at it: round 19, retained but not counted. Of the 45, 25 have both a timing file and a stdout log, and 20 a timing file only, from before the stdout logs. Round 19's log is the 26th.
    - **Other PRs.** 13 of the files are runs of other PRs, #372, #373 and #375. They are retained, but not counted.
    - **Stopped runs.** A run that stopped in pre-flight has only its start mark, so its end is the file's mtime. Every file's mtime is retained in the evidence index.
 3. **Reviews.** Issue comments, reviews and review comments, all with `--paginate`:
@@ -168,7 +177,11 @@ Published runs since pre-flight was added, 9 on #369 and 8 on #374:
 | Pre-flight stops: DeepSource-local findings (PYL-W0212, TYP, PTC-W0062) and a whitespace stop | 10 | ~1.3 min of flow, plus 1–5 min each to fix and relaunch | spread out |
 | A defect in my own snapshot check: it read `git status`, which lists the staged candidate | 1 | 5.2 min | 09:51 on 10-06 |
 
-No in-flow mutant failure has happened since whole-table local runs became routine, around 02:30 on 10-06: 0 in 15 published flows. The local run costs about 6.5 minutes per round on #369 (*estimate*), and an in-flow failure costs about 16 minutes plus a relaunch, so the practice pays for itself. But every round now runs the mutants twice.
+No in-flow mutant failure has happened since whole-table local runs became routine, around 02:30 on 10-06: 0 in 15 published flows. On time alone, the practice does not pay for itself (Codex on #379):
+- **Its cost:** about 6.5 minutes per #369 round (*estimate*), about 97.5 minutes over the 15 rounds.
+- **What it saved:** it caught two in-flow failures in those rounds. They would have cost about 16 minutes each, or about 34 with an 18-minute relaunch: 32–68 minutes in all.
+
+What it buys instead is a flow that does not fail late, so the round's evidence is not rerun. Since every mutant now runs twice, this is the case for P3(b): run only the new or changed mutants locally.
 
 ## Root causes, by minutes
 
