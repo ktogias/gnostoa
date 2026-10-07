@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import sys
 import tempfile
@@ -24,28 +25,14 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # GitHub Actions expressions are not shell; each is masked at its own width.
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
-# A shebang's interpreter: its last path part, after `env` and its options.
-SHEBANG = re.compile(
-    rb"\A#![ \t]*(?:\S*/)?(?:env[ \t]+(?:-\S+[ \t]+)*)?[\"']?(?:\S*/)?([\w.+-]+)"
-)
-SHELLS = {b"sh", b"bash", b"dash", b"ash"}
-OTHER_SHELLS = {
-    b"zsh",
-    b"ksh",
-    b"mksh",
-    b"oksh",
-    b"fish",
-    b"csh",
-    b"tcsh",
-    b"yash",
-    b"posh",
-}
+SHELLS = {"sh", "bash", "dash", "ash"}
+OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
 CI_KEY = re.compile(r"^\s*(?:-\s*)?(?:run|script|before_script|after_script)\s*:", re.M)
 GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
-# The instruction files whose shell fences agents run.
-INSTRUCTION_FILES = ("AGENTS.md",)
+# The instruction files whose shell fences agents run, found by name at any depth.
+INSTRUCTION_FILES = {"AGENTS.md"}
 FENCE = re.compile(r"^```(?:bash|sh|shell)[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
@@ -182,6 +169,28 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     )
 
 
+def _shebang_words(head: bytes, name: str) -> set[str]:
+    """The last path part of each word of a shebang line, with each `env -S` string
+    split again. A shell is recognised by its name among them, whatever options,
+    option arguments or assignments come first (Codex and CodeAnt on #394). A line
+    that cannot be split fails closed."""
+    line = head[2:].split(b"\n", 1)[0]
+    try:
+        words = shlex.split(line.decode("utf-8"))
+        for index, word in enumerate(list(words)):
+            if word in ("-S", "--split-string") and index + 1 < len(words):
+                words += shlex.split(words[index + 1])
+            elif word.startswith("-S") and len(word) > 2:
+                words += shlex.split(word[2:])
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise AssertionError(
+            f"{name}: an unreadable shebang; extend this extraction"
+        ) from exc
+    if not words:
+        raise AssertionError(f"{name}: an unreadable shebang; extend this extraction")
+    return {Path(word).name for word in words}
+
+
 def _check_shell_instruction(argument: str) -> None:
     """A Dockerfile `SHELL` keeps the `RUN` lines shell only when it names `sh`,
     `bash`, `dash` or `ash`; another program fails closed (CodeAnt on #394)."""
@@ -190,7 +199,7 @@ def _check_shell_instruction(argument: str) -> None:
     except json.JSONDecodeError as exc:
         raise AssertionError(f"an unreadable SHELL: {argument!r}") from exc
     program = Path(argv[0]).name if isinstance(argv, list) and argv else ""
-    if program.encode() not in SHELLS:
+    if program not in SHELLS:
         raise AssertionError(f"a `{program}` SHELL; extend this extraction")
 
 
@@ -259,7 +268,7 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
             for index, text in enumerate(_ci_shell(path, name.startswith(".github/"))):
                 surfaces[f"{name}#{index}"] = text
             continue
-        if name in INSTRUCTION_FILES:
+        if path.name in INSTRUCTION_FILES:
             text = path.read_text(encoding="utf-8-sig")
             for index, fence in enumerate(FENCE.findall(text)):
                 surfaces[f"{name}#{index}"] = PLACEHOLDER.sub(_masked, fence)
@@ -273,23 +282,17 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
             continue
         with path.open("rb") as handle:
             head = handle.read(256).removeprefix(BOM)
-        shebang = SHEBANG.match(head)
-        if shebang is None:
-            if head.startswith(b"#!"):
-                # A shebang this cannot read is not passed over (CodeAnt on #394).
-                raise AssertionError(
-                    f"{name}: an unreadable shebang; extend this extraction"
-                )
+        if not head.startswith(b"#!"):
             continue
-        interpreter = shebang.group(1)
-        if interpreter in SHELLS:
-            # A shell script that is not UTF-8 fails here, loudly.
-            surfaces[name] = path.read_text(encoding="utf-8-sig")
-        elif interpreter in OTHER_SHELLS:
+        words = _shebang_words(head, name)
+        if other := sorted(words & OTHER_SHELLS):
             # Another shell's grammar is not bash's (Claude on #394).
             raise AssertionError(
-                f"{name}: a `{interpreter.decode()}` script; extend this extraction"
+                f"{name}: a `{other[0]}` script; extend this extraction"
             )
+        if words & SHELLS:
+            # A shell script that is not UTF-8 fails here, loudly.
+            surfaces[name] = path.read_text(encoding="utf-8-sig")
     return surfaces
 
 
@@ -393,7 +396,7 @@ class ShellParserDependencyTests(unittest.TestCase):
         self.assertEqual(set(), broken)
         self.assertTrue(
             any(
-                name.startswith(INSTRUCTION_FILES) and "_exact-" in text
+                Path(name.split("#")[0]).name in INSTRUCTION_FILES and "_exact-" in text
                 for name, text in surfaces.items()
             )
         )
@@ -481,6 +484,11 @@ class SurfaceExtractionTests(unittest.TestCase):
             (root / "AGENTS.md").write_text(
                 "x\n```bash\ngit log <ref>\n```\n```python\nprint()\n```\n", "utf-8"
             )
+            # An instruction file is found by its name, at any depth (Codex on #394).
+            (root / "sub").mkdir()
+            (root / "sub" / "AGENTS.md").write_text(
+                "```sh\ngit fetch <remote>\n```\n", "utf-8"
+            )
             (root / "Dockerfile").write_text("FROM a\nRUN git fetch\n", "utf-8")
             (root / "deep" / "er").mkdir(parents=True)
             (root / "deep" / "er" / "tool").write_bytes(BOM + b"#!/bin/sh\ngit gc\n")
@@ -496,6 +504,7 @@ class SurfaceExtractionTests(unittest.TestCase):
                 {
                     ".github/workflows/w.yml#0": "git status",
                     "AGENTS.md#0": "git log _ref_\n",
+                    "sub/AGENTS.md#0": "git fetch _remote_\n",
                     "Dockerfile#0": "git fetch",
                     "deep/er/tool": "#!/bin/sh\ngit gc\n",
                     ".husky/pre-commit": "#!/bin/sh\ngit diff\n",
@@ -625,20 +634,47 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "c": b"#!/usr/bin/env -S bash -e\ngit c\n",
                 "d": b"#! /bin/dash\ngit d\n",
                 "e": b'#!/usr/bin/env -S "bash -e"\ngit e\n',
+                "f": b"#!/usr/bin/env VAR=1 bash\ngit f\n",
                 "p": b"#!/usr/bin/env python3\nprint()\n",
             }
             for name, content in scripts.items():
                 (root / name).write_bytes(content)
             self.assertEqual(
-                {"a", "b", "c", "d", "e"}, set(_shell_surfaces(_declared(root)))
+                {"a", "b", "c", "d", "e", "f"}, set(_shell_surfaces(_declared(root)))
             )
-            (root / "u").write_bytes(b"#!\ngit u\n")
-            with self.assertRaisesRegex(AssertionError, "u: an unreadable shebang"):
-                _shell_surfaces(_declared(root))
+            for content in (b"#!\ngit u\n", b"#!/usr/bin/env -S 'bash\ngit u\n"):
+                (root / "u").write_bytes(content)
+                with (
+                    self.subTest(shebang=content),
+                    self.assertRaisesRegex(AssertionError, "u: an unreadable shebang"),
+                ):
+                    _shell_surfaces(_declared(root))
             (root / "u").unlink()
+            # An option's argument is not the interpreter (Codex and CodeAnt on #394).
+            (root / "w").write_bytes(b"#!/usr/bin/env -u NAME zsh\ngit w\n")
+            with self.assertRaisesRegex(AssertionError, "w: a `zsh` script"):
+                _shell_surfaces(_declared(root))
+            (root / "w").unlink()
             (root / "z").write_bytes(b"#!/usr/bin/env zsh\ngit z\n")
             with self.assertRaisesRegex(AssertionError, "z: a `zsh` script"):
                 _shell_surfaces(_declared(root))
+
+
+RETAINED_SCRIPTS = [
+    "stress_probe.py",
+    "audit_oracle.py",
+    "audit_docs.py",
+    "evaluate314.py",
+    "corpus_scripts.py",
+    "diff_parsers.py",
+    "oracle.py",
+    "docs.py",
+    "worker.py",
+    "parent.py",
+    "spike.py",
+    "gate.py",
+    "crash_doc.py",
+]
 
 
 class RetainedEvidenceTests(unittest.TestCase):
@@ -653,7 +689,8 @@ class RetainedEvidenceTests(unittest.TestCase):
         sections = re.findall(
             r"^### `([^`]+)`\n(.*?)^````(\w*)\n(.*?)^````\n", text, re.M | re.S
         )
-        self.assertGreaterEqual(len(sections), 11)
+        # The exact inventory, so a lost block fails too (CodeAnt on #394).
+        self.assertEqual(RETAINED_SCRIPTS, [name for name, *_ in sections])
         for name, prose, fence, code in sections:
             with self.subTest(script=name):
                 declared = re.search(r"SHA-256\s+`([0-9a-f]{16})…`", prose)
