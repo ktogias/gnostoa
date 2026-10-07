@@ -80,17 +80,22 @@ The reuse check gains one **shell command reader**:
 5. **Git** is a command word whose name, after its path, is `git`.
 
 **Sources of shell text:**
-- a shell script, by its suffix or a shell shebang, `env`'s options in it
-  included;
-- `RUN` in a `Dockerfile`;
-- a workflow's `run` value, found by composing the workflow as YAML with PyYAML,
-  already a dependency, rather than by a pattern for the key: any spelling of the
-  key, a flow mapping, any block indicator and an alias's anchor are read as YAML
-  reads them (round 41). A block's lines are read each on its own; another value is
-  read as YAML decodes it, on the line it starts on. A workflow YAML cannot read is
-  read whole, so it cannot pass as clean;
+- a shell script, by its suffix or a shell shebang. The shebang is split as a shell
+  splits it, and `env`'s options in it are skipped (round 42);
+- `RUN` in a `Dockerfile`, with the lines its escape character continues: a
+  backslash, or the backtick its `escape` parser directive names. A directive
+  counts only before any other line (round 42);
+- a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
+  found by composing the file as YAML with PyYAML, already a dependency, rather
+  than by a pattern for the key. Any spelling of the key, a flow mapping, any block
+  indicator and an alias's anchor are read as YAML reads them (round 41). A block's
+  lines are read each on its own; another value is read as YAML decodes it, on the
+  line it starts on. A file YAML cannot read is read whole, so it cannot pass as
+  clean;
 - a Make recipe line;
-- a fenced shell block in an `AGENTS.md`;
+- a fenced shell block in an `AGENTS.md`, fenced by three or more backticks or
+  tildes, and closed only by a bare fence of at least as many of the same
+  character (round 42);
 - the commands Python hands to a shell: a string literal given to a shell helper,
   and an argument list, which is read as its words already are.
 

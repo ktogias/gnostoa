@@ -366,6 +366,77 @@ class ShellReaderUnitTests(unittest.TestCase):
                 found = shell_reader.shell_lines(".github/workflows/w.yml", text)
                 self.assertEqual(expected, set(found))
 
+    def test_a_composite_action_s_steps_are_read(self) -> None:
+        """A composite action's `runs.steps[].run` is shell text, as a workflow's is
+        (Codex on #369)."""
+        lines = [
+            "runs:",
+            "  using: composite",
+            "  steps:",
+            "    - run: '\"git\" status'",
+            "      shell: bash",
+        ]
+        found = shell_reader.shell_lines(".github/actions/build/action.yml", lines)
+        self.assertEqual({4}, set(found))
+        self.assertTrue(shell_reader.runs_git(found[4][0]))
+
+    def test_a_dockerfile_s_escape_directive_sets_its_continuation(self) -> None:
+        """`# escape=`` makes a backtick end a continued line. A directive stands
+        only before any other line; later, it is a comment (CodeAnt on #369)."""
+        lines = ["# syntax=docker/dockerfile:1", "# escape=`", "FROM a"]
+        lines += ["RUN echo a `", "  && git clone x", "RUN b"]
+        self.assertEqual(
+            {4: ("echo a `",), 5: ("  && git clone x",), 6: ("b",)},
+            shell_reader.shell_lines("Dockerfile", lines),
+        )
+        late = ["FROM a", "# escape=`", "RUN echo a `", "  && git clone x"]
+        self.assertEqual(
+            {3: ("echo a `",)}, shell_reader.shell_lines("Dockerfile", late)
+        )
+        # Only `escape` sets it, only to a backslash or a backtick, and only from a
+        # comment: anything else leaves the backslash.
+        for head in (["# check=`"], ["# escape=x"], ["ab=1", "# escape=`"]):
+            with self.subTest(head=head):
+                lines = [*head, "FROM a", "RUN echo a \\", "  && git clone x"]
+                found = shell_reader.shell_lines("Dockerfile", lines)
+                self.assertEqual({len(head) + 2, len(head) + 3}, set(found))
+
+    def test_a_fence_of_tildes_holds_shell_too(self) -> None:
+        """A fence opens with three or more backticks or tildes, and only as many of
+        the same character close it (CodeAnt on #369)."""
+        lines = [
+            "~~~bash",
+            "git status",
+            "~~~",
+            "```sh",
+            "~~~",
+            "git log",
+            "```text",
+            "```",
+            "````bash",
+            "```",
+            "```python",
+            "git fetch",
+            "````",
+            "~~~python",
+            "git = 1",
+            "~~~",
+            "~~bash",
+            "git gc",
+        ]
+        self.assertEqual(
+            {
+                2: ("git status",),
+                5: ("~~~",),
+                6: ("git log",),
+                7: ("```text",),
+                10: ("```",),
+                11: ("```python",),
+                12: ("git fetch",),
+            },
+            shell_reader.shell_lines("AGENTS.md", lines),
+        )
+
     def test_nesting_is_followed_to_a_bound(self) -> None:
         text = "git status"
         for _ in range(4):
@@ -463,6 +534,10 @@ class ShellReaderUnitTests(unittest.TestCase):
             ("ci/tool", "#!/usr/bin/env -S bash -e", True),
             ("ci/tool", "#!/usr/bin/env -i sh", True),
             ("ci/tool", "#!/usr/bin/env -S python3 -u", False),
+            # The shebang is split as a shell splits it: a quoted program name runs,
+            # while `"sh -e"` names a program called `sh -e`, which env cannot find.
+            ("ci/tool", '#!/usr/bin/env -S "sh" -e', True),
+            ("ci/tool", '#!/usr/bin/env -S "sh -e"', False),
             ("ci/tool", "#!/usr/bin/python3", False),
             ("Dockerfile", "", True),
             ("Dockerfile.dev", "", True),
@@ -470,6 +545,10 @@ class ShellReaderUnitTests(unittest.TestCase):
             ("Makefile", "", True),
             ("rules.mk", "", True),
             (".github/workflows/w.yaml", "", True),
+            # A composite action's steps run in a shell too (Codex on #369).
+            (".github/actions/build/action.yml", "", True),
+            ("action.yaml", "", True),
+            (".github/actions/build/actions.yml", "", False),
             ("docs/w.yml", "", False),
             ("sub/AGENTS.md", "", True),
             ("README.md", "", False),

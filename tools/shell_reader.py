@@ -272,7 +272,9 @@ def shell_lines(relative: str, lines: list[str]) -> dict[int, tuple[str, ...]]:
 def _shell_shebang(first: str) -> bool:
     if not first.startswith("#!"):
         return False
-    parts = first[2:].split()
+    # Split as a shell splits it, so a quoted program name is that name (CodeAnt on
+    # #369): `env -S "sh" -e` runs `sh`.
+    parts = words(first[2:])
     if parts and parts[0].rsplit("/", 1)[-1] == "env":
         # `env`'s options and assignments come before the program, as `-S` and `-i`
         # do (CodeAnt on #369). The line is already split into words, so `-S` names
@@ -294,14 +296,17 @@ def _is_makefile(name: str) -> bool:
 
 
 def _is_workflow(relative: str, name: str) -> bool:
-    return relative.startswith(".github/workflows/") and name.endswith(
-        (".yml", ".yaml")
+    """A workflow, or an action's metadata: a composite action's steps run in a
+    shell as a workflow's do (Codex on #369)."""
+    return name in {"action.yml", "action.yaml"} or (
+        relative.startswith(".github/workflows/") and name.endswith((".yml", ".yaml"))
     )
 
 
 def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
     """Each `RUN` instruction's shell text, and its continuation lines, each on its
     own line. The exec form, a JSON list, is no shell text."""
+    escape = _escape(lines)
     found: list[tuple[int, str]] = []
     continued = False
     for number, text in enumerate(lines, start=1):
@@ -312,8 +317,22 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
             if head.upper() != "RUN" or rest.lstrip().startswith("["):
                 continue
             found.append((number, rest))
-        continued = text.endswith("\\")
+        continued = text.endswith(escape)
     return found
+
+
+def _escape(lines: list[str]) -> str:
+    """The character that continues a Dockerfile's line: `\\`, or the one its
+    `escape` parser directive names, as `` ` ``. A directive stands only before any
+    other line; after one, it is a comment (CodeAnt on #369)."""
+    for text in lines:
+        body = text.strip()
+        key, equals, value = body[1:].partition("=")
+        if not body.startswith("#") or not equals or not key.strip().isalnum():
+            break
+        if key.strip().lower() == "escape" and value.strip() in ("\\", "`"):
+            return value.strip()
+    return "\\"
 
 
 def _workflow(lines: list[str]) -> list[tuple[int, str]]:
@@ -375,14 +394,42 @@ def _run_values(documents: Iterable[yaml.Node | None]) -> list[yaml.ScalarNode]:
 
 
 def _fenced(lines: list[str]) -> list[tuple[int, str]]:
-    """The lines of each fenced shell block; a console block's `$ ` prompt goes."""
+    """The lines of each fenced shell block; a console block's `$ ` prompt goes. A
+    fence opens with three or more backticks or tildes, and only a bare run of at
+    least as many of the same character closes it (CodeAnt on #369)."""
     found: list[tuple[int, str]] = []
-    language: str | None = None
+    fence: tuple[str, int] | None = None
+    language = ""
     for number, text in enumerate(lines, start=1):
-        stripped = text.strip()
-        if stripped.startswith("```"):
-            language = None if language is not None else stripped[3:].strip()
+        marker = _fence(text.strip())
+        if fence is None:
+            if marker is not None:
+                fence, language = (marker[0], marker[1]), marker[2]
+            continue
+        if _closes(marker, fence):
+            fence = None
             continue
         if language in _FENCES:
             found.append((number, text.lstrip().removeprefix("$ ")))
     return found
+
+
+def _closes(marker: tuple[str, int, str] | None, fence: tuple[str, int]) -> bool:
+    """Whether a line's fence closes the open one: the same character, at least as
+    many, and no info string."""
+    return (
+        marker is not None
+        and marker[0] == fence[0]
+        and marker[1] >= fence[1]
+        and not marker[2]
+    )
+
+
+def _fence(stripped: str) -> tuple[str, int, str] | None:
+    """A fence's character, its length and its info string, or None for a line that
+    is no fence."""
+    for character in "`~":
+        length = len(stripped) - len(stripped.lstrip(character))
+        if length >= 3:
+            return character, length, stripped[length:].strip()
+    return None
