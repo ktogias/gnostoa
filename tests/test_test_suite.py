@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -39,23 +40,45 @@ class TestSuiteOwnerTests(unittest.TestCase):
             command[command.index("--coverage") :],
         )
 
-    def test_run_runs_the_command_in_the_root_and_returns_its_status(self) -> None:
+    def test_run_runs_the_command_in_its_own_session_and_returns_its_status(
+        self,
+    ) -> None:
+        from tools import test_suite
+
+        with patch("tools.test_suite.subprocess.Popen") as popen:
+            process = popen.return_value.__enter__.return_value
+            process.wait.return_value = 3
+            self.assertEqual(3, test_suite.run(ROOT))
+        popen.assert_called_once_with(
+            test_suite.command(sys.executable), cwd=ROOT, start_new_session=True
+        )
+        process.wait.assert_called_once_with(timeout=test_suite.TIMEOUT_SECONDS)
+
+    def test_a_suite_past_its_bound_is_stopped_with_its_workers(self) -> None:
+        """The whole session is killed, so the runner's workers stop too, and the
+        status says the bound was reached (Kody on #392)."""
+        import signal
         import subprocess
-        import sys
 
         from tools import test_suite
 
-        done: subprocess.CompletedProcess[bytes] = subprocess.CompletedProcess(
-            args=[], returncode=3
-        )
-        with patch("tools.test_suite.subprocess.run", return_value=done) as run:
-            self.assertEqual(3, test_suite.run(ROOT))
-        run.assert_called_once_with(
-            test_suite.command(sys.executable), cwd=ROOT, check=False
-        )
+        self.assertEqual(3600, test_suite.TIMEOUT_SECONDS)
+        with (
+            patch("tools.test_suite.subprocess.Popen") as popen,
+            patch("tools.test_suite.os.killpg") as killpg,
+        ):
+            process = popen.return_value.__enter__.return_value
+            process.pid = 4242
+            process.wait.side_effect = [
+                subprocess.TimeoutExpired(cmd="suite", timeout=1),
+                -9,
+            ]
+            self.assertEqual(test_suite.TIMED_OUT, test_suite.run(ROOT))
+        killpg.assert_called_once_with(4242, signal.SIGKILL)
+        self.assertEqual(124, test_suite.TIMED_OUT)
 
     def test_fast_runs_the_suite_through_the_owner(self) -> None:
-        verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
+        verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8-sig")
         fast = verify.split("  fast)", 1)[1].split("    ;;", 1)[0]
         self.assertIn("python -m tools.test_suite", fast)
         self.assertNotIn("unittest discover", fast)
@@ -68,7 +91,9 @@ class TestSuiteOwnerTests(unittest.TestCase):
         run.assert_called_once_with(ROOT.resolve())
 
     def test_the_runner_is_declared_and_pinned(self) -> None:
-        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8-sig")
+        )
         self.assertIn(
             "unittest-parallel",
             {
@@ -76,7 +101,9 @@ class TestSuiteOwnerTests(unittest.TestCase):
                 for d in project["project"]["dependencies"]
             },
         )
-        runtime = (ROOT / "requirements" / "runtime.lock").read_text(encoding="utf-8")
+        runtime = (ROOT / "requirements" / "runtime.lock").read_text(
+            encoding="utf-8-sig"
+        )
         development = (ROOT / "requirements" / "development.lock").read_text(
             encoding="utf-8"
         )
