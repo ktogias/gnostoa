@@ -23,7 +23,23 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # GitHub Actions expressions are not shell; each is masked at its own width.
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
-SHELL_SHEBANG = re.compile(rb"\A#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba|da)?sh\b")
+# A shebang's interpreter: its last path part, after `env` and its options.
+SHEBANG = re.compile(rb"\A#![ \t]*(?:\S*/)?(?:env[ \t]+(?:-\S+[ \t]+)*)?([\w.+-]+)")
+SHELLS = {b"sh", b"bash", b"dash", b"ash"}
+OTHER_SHELLS = {
+    b"zsh",
+    b"ksh",
+    b"mksh",
+    b"oksh",
+    b"fish",
+    b"csh",
+    b"tcsh",
+    b"yash",
+    b"posh",
+}
+# A YAML key that holds shell in a CI definition.
+CI_KEY = re.compile(r"^\s*(?:-\s*)?(?:run|script|before_script|after_script)\s*:", re.M)
+GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run.
 INSTRUCTION_FILES = ("AGENTS.md",)
@@ -81,10 +97,17 @@ def _workflow_runs(path: Path) -> list[str]:
     """Each shell `run:` value of a workflow or action, with its expressions masked.
     A step, or a job's or workflow's default, in another language fails closed:
     this reads shell only."""
+    return _github_runs(path, _load_yaml(path))
+
+
+def _load_yaml(path: Path) -> object:
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+        return yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except yaml.YAMLError as exc:
         raise AssertionError(f"{path}: not YAML: {exc}") from exc
+
+
+def _github_runs(path: Path, document: object) -> list[str]:
     found: list[str] = []
     stack = [document]
     while stack:
@@ -109,6 +132,50 @@ def _workflow_runs(path: Path) -> list[str]:
         elif isinstance(node, list):
             stack.extend(node)
     return found
+
+
+def _gitlab_scripts(document: dict[str, object]) -> list[str]:
+    """Each GitLab CI job's (and `default`'s) `before_script`, `script` and
+    `after_script`, in document order. A list is the lines the runner's shell runs
+    in turn."""
+    found: list[str] = []
+    for job in document.values():
+        if not isinstance(job, dict):
+            continue
+        for key in GITLAB_KEYS:
+            value = job.get(key)
+            if isinstance(value, str):
+                found.append(value)
+            elif isinstance(value, list):
+                lines = [
+                    line
+                    for item in value
+                    for line in (item if isinstance(item, list) else [item])
+                ]
+                found.append("\n".join(str(line) for line in lines))
+    return found
+
+
+def _ci_shell(path: Path, under_github: bool) -> list[str]:
+    """The shell of a CI definition, read by its shape wherever it sits: a GitHub
+    workflow or action, or a GitLab CI file. A YAML file outside `.github` that
+    holds a shell key in another shape fails closed (CodeAnt on #394)."""
+    if not under_github and not CI_KEY.search(path.read_text(encoding="utf-8-sig")):
+        return []
+    document = _load_yaml(path)
+    if under_github or (
+        isinstance(document, dict) and ("jobs" in document or "runs" in document)
+    ):
+        return _github_runs(path, document)
+    if isinstance(document, dict) and (
+        "stages" in document
+        or "default" in document
+        or any(isinstance(job, dict) and "script" in job for job in document.values())
+    ):
+        return _gitlab_scripts(document)
+    raise AssertionError(
+        f"{path.name}: shell in an unknown CI shape; extend this extraction"
+    )
 
 
 def _dockerfile_runs(text: str) -> list[str]:
@@ -160,9 +227,12 @@ def _files(root: Path) -> list[Path]:
 
 
 def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
-    """Every shell surface of the kinds the frozen corpus held (Decision 0108):
-    - each workflow or action `run:` value;
-    - each shell script, by its shebang, anywhere;
+    """Every shell surface of the kinds the frozen corpus held (Decision 0108), and
+    GitLab CI's:
+    - each workflow or action `run:` value, and each GitLab CI script, by the CI
+      definition's shape, anywhere;
+    - each `sh`, `bash`, `dash` or `ash` script, by its shebang's interpreter,
+      anywhere; another shell's script fails closed;
     - each shell fence of the instruction files, its placeholders masked;
     - each shell-form `RUN` of the Dockerfile.
     A Make recipe or another container file fails closed: none is tracked, and none
@@ -172,8 +242,8 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
         name = path.relative_to(root).as_posix()
         if MAKEFILE.match(path.name):
             raise AssertionError(f"{name}: a Make recipe; extend this extraction")
-        if name.startswith(".github/") and path.suffix in (".yml", ".yaml"):
-            for index, text in enumerate(_workflow_runs(path)):
+        if path.suffix in (".yml", ".yaml"):
+            for index, text in enumerate(_ci_shell(path, name.startswith(".github/"))):
                 surfaces[f"{name}#{index}"] = text
             continue
         if name in INSTRUCTION_FILES:
@@ -190,9 +260,18 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
             continue
         with path.open("rb") as handle:
             head = handle.read(256).removeprefix(BOM)
-        if SHELL_SHEBANG.match(head):
+        shebang = SHEBANG.match(head)
+        if shebang is None:
+            continue
+        interpreter = shebang.group(1)
+        if interpreter in SHELLS:
             # A shell script that is not UTF-8 fails here, loudly.
             surfaces[name] = path.read_text(encoding="utf-8-sig")
+        elif interpreter in OTHER_SHELLS:
+            # Another shell's grammar is not bash's (Claude on #394).
+            raise AssertionError(
+                f"{name}: a `{interpreter.decode()}` script; extend this extraction"
+            )
     return surfaces
 
 
@@ -259,6 +338,9 @@ class ShellParserDependencyTests(unittest.TestCase):
         self.assertGreater(len(surfaces), 50)
         for kind in (
             ".github/workflows/verification.yml#",
+            ".gitlab-ci.yml#",
+            "ci/gitlab-ci.yml#",
+            "ci/github-actions.yml#",
             "Dockerfile#",
             "AGENTS.md#",
             "ci/verify",
@@ -408,6 +490,59 @@ class SurfaceExtractionTests(unittest.TestCase):
                     self.assertRaisesRegex(AssertionError, "a container file"),
                 ):
                     _shell_surfaces(root)
+
+
+class InterpreterAndCiShapeTests(unittest.TestCase):
+    """Shell surfaces are found by what they are, not where they sit (CodeAnt and
+    Claude on #394)."""
+
+    def test_ci_definitions_are_read_by_their_shape_anywhere(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ci").mkdir()
+            (root / ".gitlab-ci.yml").write_text(
+                "stages: [test]\ndefault:\n  before_script:\n    - git fetch\n"
+                "job:\n  stage: test\n  script:\n    - git status\n    - echo ok\n"
+                "  after_script: git gc\n",
+                "utf-8",
+            )
+            (root / "ci" / "github-actions.yml").write_text(
+                "jobs:\n  j:\n    steps:\n      - run: git log\n", "utf-8"
+            )
+            (root / "ci" / "policy.yml").write_text("checks:\n  - name: x\n", "utf-8")
+            self.assertEqual(
+                {
+                    ".gitlab-ci.yml#0": "git fetch",
+                    ".gitlab-ci.yml#1": "git status\necho ok",
+                    ".gitlab-ci.yml#2": "git gc",
+                    "ci/github-actions.yml#0": "git log",
+                },
+                _shell_surfaces(root),
+            )
+            (root / "ci" / "other.yml").write_text(
+                "pipeline:\n  steps:\n    - script: git status\n", "utf-8"
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "other.yml: shell in an unknown"
+            ):
+                _shell_surfaces(root)
+
+    def test_a_shebang_is_classified_by_its_interpreter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = {
+                "a": b"#!/bin/ash\ngit a\n",
+                "b": b"#!/usr/local/bin/bash\ngit b\n",
+                "c": b"#!/usr/bin/env -S bash -e\ngit c\n",
+                "d": b"#! /bin/dash\ngit d\n",
+                "p": b"#!/usr/bin/env python3\nprint()\n",
+            }
+            for name, content in scripts.items():
+                (root / name).write_bytes(content)
+            self.assertEqual({"a", "b", "c", "d"}, set(_shell_surfaces(root)))
+            (root / "z").write_bytes(b"#!/usr/bin/env zsh\ngit z\n")
+            with self.assertRaisesRegex(AssertionError, "z: a `zsh` script"):
+                _shell_surfaces(root)
 
 
 class RetainedEvidenceTests(unittest.TestCase):
