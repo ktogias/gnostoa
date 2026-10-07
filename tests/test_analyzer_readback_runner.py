@@ -892,12 +892,18 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         job = loaded["jobs"]["readback"]
         # `workflow_run` matches a workflow by name, so a same-named workflow on any
         # branch could start it: only a pull_request run of verification.yml counts.
+        # Each admitted event is named, so a trigger added later is not admitted by
+        # default (Amazon Q on #388).
         for guard in (
             "github.ref == 'refs/heads/main'",
+            "github.event_name == 'workflow_dispatch'",
+            "github.event_name == 'repository_dispatch'",
+            "github.event_name == 'workflow_run'",
             "github.event.workflow_run.event == 'pull_request'",
             "github.event.workflow_run.path == '.github/workflows/verification.yml'",
         ):
             self.assertIn(guard, job["if"])
+        self.assertNotIn("!=", job["if"])
         self.assertEqual("analyzer-readback", job["environment"])
         self.assertEqual(15, job["timeout-minutes"])
         steps = job["steps"]
@@ -909,8 +915,11 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertLess(bind, subject)
         self.assertLess(subject, read)
         self.assertLess(read, upload)
+        # The checkout takes its event's own revision, main's `github.sha`, which the
+        # binding step verifies; naming a ref is what a fork's code would need
+        # (SonarCloud S7631 on #388, Decision 0096 rule 11).
         checkout = steps[0]
-        self.assertEqual("${{ github.sha }}", checkout["with"]["ref"])
+        self.assertNotIn("ref", checkout["with"])
         self.assertIs(False, checkout["with"]["persist-credentials"])
         resolve = steps[subject]
         self.assertEqual("subject", resolve["id"])
@@ -918,16 +927,16 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn("python ci/analyzer_readback_subject.py", resolve["run"])
         self.assertIn('>> "${GITHUB_OUTPUT}"', resolve["run"])
         acquire = steps[read]
-        self.assertEqual(
-            {
-                "GITHUB_TOKEN": "${{ github.token }}",
-                "DEEPSOURCE_API_TOKEN": "${{ secrets.DEEPSOURCE_API_TOKEN }}",
-                "CODACY_API_TOKEN": "${{ secrets.CODACY_API_TOKEN }}",
-                "PULL_NUMBER": "${{ steps.subject.outputs.pull_number }}",
-                "REQUESTED_HEAD": "${{ steps.subject.outputs.head }}",
-            },
-            acquire["env"],
+        expected = (
+            ("GITHUB_TOKEN", "github.token"),
+            ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
+            ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
+            ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
+            ("REQUESTED_HEAD", "steps.subject.outputs.head"),
         )
+        self.assertEqual({name for name, _ in expected}, set(acquire["env"]))
+        for name, expression in expected:
+            self.assertEqual(f"${{{{ {expression} }}}}", acquire["env"][name], name)
         self.assertIn('--pull-number "${PULL_NUMBER}"', acquire["run"])
         self.assertIn('--head "${REQUESTED_HEAD}"', acquire["run"])
         self.assertIn("gnostoa-analyzer-readback.json", acquire["run"])
@@ -1011,6 +1020,9 @@ class SubjectResolutionTests(unittest.TestCase):
             "384 ",
             "0x10",
             "1" * 11,
+            # An Arabic-Indic digit after an ASCII one, which `int` reads as 12: only
+            # ASCII digits count.
+            "1٢",
         )
         for head in bad_heads:
             with self.subTest(head=head), self.assertRaises(ValueError):

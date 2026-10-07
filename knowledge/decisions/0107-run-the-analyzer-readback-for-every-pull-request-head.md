@@ -70,7 +70,10 @@ admits only `main`. That job now starts in three ways:
 
    It reads the run's `head_sha`, and its `pull_requests` when that list holds
    exactly one Pull Request. A fork's run has none, and a head shared by two Pull
-   Requests is ambiguous; neither is read.
+   Requests is ambiguous; neither is read. For a `pull_request` run, `head_sha` is
+   the Pull Request's own head, not its merge ref: measured on 2026-10-07, each of
+   #384's and #369's last three verification runs carried exactly that round's
+   head.
 2. **On request**, on `repository_dispatch` of type `gnostoa-analyzer-readback`,
    whose payload names `pull_number` and `head`. An agent sends it with the token it
    already holds: `POST /repos/{owner}/{repo}/dispatches` needs Contents write,
@@ -86,6 +89,11 @@ admits only `main`. That job now starts in three ways:
   acquisition, and refuses a head that does not match or that moves (Decision 0091,
   §8). That re-read is the subject's trust boundary.
 - The analyzer credentials still reach only the acquisition step.
+- **Each admitted event is named** in the job's condition, so a trigger added
+  later is not admitted by default.
+- **The checkout names no ref.** It takes its event's own revision, `main`'s
+  `github.sha`, which the binding step verifies (Decision 0096, rule 11). Naming a
+  ref is what checking out a fork's code would need.
 
 **The artifact** is named `gnostoa-analyzer-readback-<pull>-<head>`, from the
 validated subject, so an agent finds the result for an exact head.

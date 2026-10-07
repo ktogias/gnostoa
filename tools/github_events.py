@@ -18,6 +18,16 @@ def workflow_run_pull_numbers(raw: str) -> list[int]:
     error. Anything that is not a list of objects with a positive integer ``number``
     is refused with ``ValueError``.
     """
+    numbers: list[int] = []
+    for item in _items(raw):
+        number = _pull_number(item)
+        if number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
+def _items(raw: str) -> list[object]:
+    """The list ``raw`` holds; empty for an empty or null field."""
     if not raw:
         return []
     try:
@@ -28,15 +38,16 @@ def workflow_run_pull_numbers(raw: str) -> list[int]:
         return []
     if not isinstance(loaded, list):
         raise ValueError("workflow_run.pull_requests must be an array")
-    numbers: list[int] = []
-    for item in loaded:
-        if not isinstance(item, dict):
-            raise ValueError("workflow_run.pull_requests items must be objects")
-        number = item.get("number")
-        if type(number) is not int or number <= 0:
-            raise ValueError(
-                "workflow_run.pull_requests contains an invalid Pull Request number"
-            )
-        if number not in numbers:
-            numbers.append(number)
-    return numbers
+    return loaded
+
+
+def _pull_number(item: object) -> int:
+    """One item's positive integer ``number``; a boolean is no number."""
+    if not isinstance(item, dict):
+        raise ValueError("workflow_run.pull_requests items must be objects")
+    number = item.get("number")
+    if type(number) is not int or number <= 0:
+        raise ValueError(
+            "workflow_run.pull_requests contains an invalid Pull Request number"
+        )
+    return number

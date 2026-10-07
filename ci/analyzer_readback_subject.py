@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from tools import github_events
 from tools.analyzer_readback import exact_sha
 
-_PULL_NUMBER = re.compile(r"[1-9][0-9]{0,9}")
+_PULL_NUMBER = re.compile(r"[1-9]\d{0,9}", re.ASCII)
 
 
 def _pull_number(value: str) -> int:

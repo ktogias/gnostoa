@@ -30,21 +30,24 @@ permissions:
 
 jobs:
   readback:
-    # `workflow_run` matches the triggering workflow by name, so a same-named
-    # workflow on any branch could start this job: only a pull_request run of
-    # verification.yml counts (Decision 0096 rule 7).
+    # Each admitted event is named. `workflow_run` matches the triggering workflow
+    # by name, so a same-named workflow on any branch could start this job: only a
+    # pull_request run of verification.yml counts (Decision 0096 rule 7).
     if: >-
       github.ref == 'refs/heads/main'
-      && (github.event_name != 'workflow_run'
-          || (github.event.workflow_run.event == 'pull_request'
+      && (github.event_name == 'workflow_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || (github.event_name == 'workflow_run'
+              && github.event.workflow_run.event == 'pull_request'
               && github.event.workflow_run.path == '.github/workflows/verification.yml'))
     environment: analyzer-readback
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # No ref is named: the checkout takes its event's own revision, main's
+      # `github.sha`, which the next step verifies (Decision 0096 rule 11).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Bind trusted main execution source
         env:
