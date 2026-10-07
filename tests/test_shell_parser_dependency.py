@@ -416,11 +416,11 @@ class SurfaceExtractionTests(unittest.TestCase):
                 "      git status\n",
                 "utf-8",
             )
-            [run] = _workflow_runs(path)
+            runs = _workflow_runs(path)
             self.assertEqual(
-                "echo " + "_" * 13 + "\n" + "_" * 7 + "\ngit status\n", run
+                ["echo " + "_" * 13 + "\n" + "_" * 7 + "\ngit status\n"], runs
             )
-            self.assertEqual(3, run.count("\n"))
+            self.assertEqual(3, runs[0].count("\n"))
 
     def test_a_step_in_another_language_or_broken_yaml_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
