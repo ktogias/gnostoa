@@ -709,28 +709,39 @@ def _shell_commands(tree: ast.AST) -> dict[int, tuple[str, ...]]:
 
 # The shells an argument list may name at its head, by the name it runs under.
 _SHELLS = frozenset({"sh", "bash", "dash", "ksh", "zsh", "ash"})
+# A shell's options that take the next word as their value, as `-O extglob` does
+# (Codex on #369).
+_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 
 def _shell_argv_command(words: list[ast.expr]) -> tuple[int, str] | None:
     """`["sh", "-c", "git status"]`: the command an argument list hands its shell
     with a short option carrying `c`, as `-lc`, wherever the list stands (Codex on
-    #369). A long option is skipped, and `-o` takes its word."""
+    #369). A long option is skipped, and an option that takes a value, as `-o` or
+    `-O`, takes its word."""
     head = _text(words[0]) if words else None
     if head is None or head.rsplit("/", 1)[-1] not in _SHELLS:
         return None
+    index = _command_index(words)
+    return None if index is None else _literal(words[index])
+
+
+def _command_index(words: list[ast.expr]) -> int | None:
+    """Where the word a shell's `-c` names stands, read past the options before it;
+    None if a word that is no option comes first, or no word follows."""
     index = 1
     while index < len(words):
         option = _text(words[index])
         if option is None:
             return None
-        if option in ("-o", "+o"):
+        if option in _VALUE_OPTIONS:
             index += 2
-            continue
-        if not option.startswith("-"):
+        elif not option.startswith("-"):
             return None
-        if not option.startswith("--") and "c" in option:
-            return _literal(words[index + 1]) if index + 1 < len(words) else None
-        index += 1
+        elif not option.startswith("--") and "c" in option:
+            return index + 1 if index + 1 < len(words) else None
+        else:
+            index += 1
     return None
 
 

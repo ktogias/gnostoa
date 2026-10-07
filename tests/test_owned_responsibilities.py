@@ -483,6 +483,10 @@ class StructuralSignatureTests(unittest.TestCase):
             ('args = ("/bin/sh", "-ec", "git gc")\n', 1),
             ('run(["bash", "--norc", "-o", "pipefail", "-c", "git log"])\n', 1),
             ('run(["sh", "-c", f"git -C {d} status"])\n', 1),
+            ('run(["bash", "-O", "extglob", "-c", "git status"])\n', 1),
+            ('run(["bash", "+O", "nullglob", "-c", "git status"])\n', 1),
+            ('run(["bash", "--rcfile", "/srv/rc", "-c", "git status"])\n', 1),
+            ('run(["bash", "--init-file", "/srv/rc", "-c", "git status"])\n', 1),
         )
         for source, line in cases:
             with self.subTest(source=source):

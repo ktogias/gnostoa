@@ -295,6 +295,8 @@ here.
    command after a newline is judged too.
    Round 34 reads an argument list headed by a shell, as `["sh", "-c", "..."]`,
    wherever it stands, and judges its command the same way.
+   Round 35 reads past a shell's options that take a value, as `-O extglob` and
+   `--rcfile file`, to the `-c` that follows them.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and
