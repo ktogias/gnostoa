@@ -31,6 +31,9 @@ sources:
   - id: ruleset-rules
     resource: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
     title: What each ruleset rule refuses to anyone without bypass permission
+  - id: ruleset-bypass
+    resource: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository
+    title: Bypass permissions are granted for a ruleset
   - id: credentials-boundary
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5979363503
     title: The owner's agent credentials boundary of 2026-10-04
@@ -264,14 +267,36 @@ Read back and exercised on 2026-10-07:
   - `include: ["~ALL"]`;
   - the four rules;
   - `bypass_actors: [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]`.
-- **Role 5 is the admin role.** The provider names it: GraphQL
-  `repository.rulesets.bypassActors` returned, for both rulesets,
-  `repositoryRoleDatabaseId: 5` and `repositoryRoleName: "admin"`, with
-  `bypassMode: ALWAYS`.
-- **What the rules refuse.** GitHub's documentation defines each rule. For
-  example, "Restrict creations" reads: "Only users with bypass permissions can
-  create branches or tags whose name matches the pattern you specify". "Restrict
-  updates" and "Restrict deletions" read the same for pushing and deleting.
+- **Role 5 is the admin role.** The provider names it. This GraphQL query returned,
+  for both rulesets, `repositoryRoleDatabaseId: 5` and
+  `repositoryRoleName: "admin"`, with `bypassMode: ALWAYS`:
+
+  ```graphql
+  query {
+    repository(owner: "ktogias", name: "gnostoa") {
+      rulesets(first: 10) {
+        nodes {
+          databaseId
+          name
+          bypassActors(first: 10) {
+            nodes { bypassMode repositoryRoleName repositoryRoleDatabaseId }
+          }
+        }
+      }
+    }
+  }
+  ```
+- **What the rules refuse.** GitHub's documentation defines each of the four rules:
+  - "Restrict creations" reads: "Only users with bypass permissions can create
+    branches or tags whose name matches the pattern you specify".
+  - "Restrict updates" and "Restrict deletions" read the same for pushing and
+    deleting.
+  - "Block force pushes", the `non_fast_forward` rule, reads: "You can prevent
+    users from force pushing to the targeted branches or tags".
+
+  Bypass is granted for the ruleset as a whole: "You can grant certain roles,
+  teams, or apps bypass permissions for your ruleset". The probe exercised
+  creation and deletion; a force push was not exercised.
 - **They apply to any branch name.** `GET repos/ktogias/gnostoa/rules/branches/probe-anything`
   listed `creation`, `update`, `deletion` and `non_fast_forward` from `24640984`.
 - **They are evaluated for agents too.** A push creating, then deleting, a
