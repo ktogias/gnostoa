@@ -1118,6 +1118,25 @@ class RepositoryTests(unittest.TestCase):
                 self.assertTrue(pattern.search(line))
         self.assertFalse(pattern.search("Check which git version is installed."))
 
+    def test_a_loop_condition_or_a_group_runs_git_too(self) -> None:
+        """`while git status; do` and `until git fetch; do` run Git as `if` does, and
+        so does a brace group or a subshell that opens a line (Codex on #369)."""
+        pattern = _pattern("trusted-execution", "git-execution")
+        for line in (
+            "while git status; do",
+            "until git fetch; do sleep 1; done",
+            "  while ! git diff --quiet; do",
+            "      run: while git fetch; do sleep 1; done",
+            "{ git status; }",
+            "( git fetch )",
+            "(git gc)",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
+        for line in ("while true; do", "until [ -f done ]; do", "{ echo ok; }"):
+            with self.subTest(unmarked=line):
+                self.assertFalse(pattern.search(line))
+
     def test_git_s_other_bare_options_run_it(self) -> None:
         """`git --exec-path` runs Git with no subcommand, as `--version` does
         (CodeAnt on #369)."""
