@@ -780,12 +780,25 @@ def _is_shell_helper(func: ast.expr, names: set[str], modules: dict[str, str]) -
 
 def _command_text(call: ast.Call) -> tuple[int, str] | None:
     """The literal command a call hands over first, with its line: a string, or an
-    f-string whose fields stand as `{}`. An argument list is no shell command."""
+    f-string whose fields stand as `{}`. An argument list is no shell command, unless
+    `shell=True` makes its first word the shell's command text (CodeAnt on #369)."""
     argument = call.args[0] if call.args else None
     for keyword in call.keywords:
         if argument is None and keyword.arg in ("args", "cmd", "command"):
             argument = keyword.value
+    if isinstance(argument, (ast.List, ast.Tuple)):
+        argument = argument.elts[0] if argument.elts and _shell_is_true(call) else None
     return None if argument is None else _literal(argument)
+
+
+def _shell_is_true(call: ast.Call) -> bool:
+    """Whether a call passes `shell=True` as a constant."""
+    return any(
+        keyword.arg == "shell"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in call.keywords
+    )
 
 
 def _literal(node: ast.expr) -> tuple[int, str] | None:

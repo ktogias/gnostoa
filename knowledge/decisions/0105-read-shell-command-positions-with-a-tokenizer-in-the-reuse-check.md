@@ -87,7 +87,10 @@ The reuse check gains one **shell command reader**:
   backslash, or the backtick its `escape` parser directive names. A directive
   counts only before any other line (round 42). Any whitespace separates `RUN` from
   its text, and `RUN`'s own options, as `--mount=type=cache`, are skipped (round
-  43);
+  43). A here-document's body is shell text when a shell reads it: `RUN <<EOF`
+  alone, unless its shebang names no shell, or after a shell that reads its
+  standard input. Another program's body, as `python3 <<EOF`'s, is data. One
+  here-document per instruction is read (round 44);
 - a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
   found by composing the file as YAML with PyYAML, already a dependency, rather
   than by a pattern for the key. Any spelling of the key, a flow mapping, any block
@@ -95,12 +98,14 @@ The reuse check gains one **shell command reader**:
   lines are read each on its own; another value is read as YAML decodes it, on the
   line it starts on. A file YAML cannot read is read whole, so it cannot pass as
   clean;
-- a Make recipe line;
+- a Make recipe line, opened by a tab or by the character `.RECIPEPREFIX` names,
+  from its assignment on (round 44);
 - a fenced shell block in an `AGENTS.md`, fenced by three or more backticks or
   tildes, and closed only by a bare fence of at least as many of the same
   character (round 42);
 - the commands Python hands to a shell: a string literal given to a shell helper,
-  and an argument list, which is read as its words already are.
+  the first word of an argument list given with `shell=True` (round 44), and an
+  argument list that names a shell, which is read as its words already are.
 
 Each physical line is read on its own, so a command is reported on the line
 that holds it, as the line patterns report it. A line ends where the line
@@ -134,7 +139,10 @@ residual work under #365.
   word. A wrapper's option value that names a command, as the user in
   `sudo -u git echo ok`, is read as that command. The reader does not know which
   options take a value, and `sudo -E git status` is spelt the same way, so it
-  reports rather than misses (round 43). Under the owner's scope bound of
+  reports rather than misses (round 43). For the same reason, an option that
+  takes no value before a wrapper's operand, as `-f` in `chrt -f 99 grep git`,
+  makes the reader take the operand for that option's value and the next word for
+  the operand, and it reports `git` (round 44). Under the owner's scope bound of
   2026-10-05, the check guards accidental copies, not obfuscation.
 - **Linear by construction.** A token walk with bounded recursion replaces
   nested regular expressions, so no backtracking is introduced.

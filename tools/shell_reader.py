@@ -14,6 +14,7 @@ import bisect
 import re
 import shlex
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 import yaml
 
@@ -265,7 +266,7 @@ def shell_lines(relative: str, lines: list[str]) -> dict[int, tuple[str, ...]]:
     elif _is_dockerfile(name):
         texts = _dockerfile(lines)
     elif _is_makefile(name):
-        texts = [(n, t[1:]) for n, t in enumerate(lines, 1) if t.startswith("\t")]
+        texts = _make_recipes(lines)
     elif _is_workflow(relative, name):
         texts = _workflow(lines)
     elif name == "AGENTS.md":
@@ -312,26 +313,120 @@ def _is_workflow(relative: str, name: str) -> bool:
     )
 
 
+def _make_recipes(lines: list[str]) -> list[tuple[int, str]]:
+    """Each recipe line's shell text: a line opened by the recipe prefix, a tab
+    unless `.RECIPEPREFIX` names another character, from its assignment on; an empty
+    value restores the tab (Codex on #369)."""
+    prefix = "\t"
+    found: list[tuple[int, str]] = []
+    for number, text in enumerate(lines, start=1):
+        if text.startswith(prefix):
+            found.append((number, text[1:]))
+            continue
+        name, equals, value = text.partition("=")
+        if equals and name.rstrip(" :?+!") == ".RECIPEPREFIX":
+            prefix = value.strip()[:1] or "\t"
+    return found
+
+
+@dataclass
+class _Heredoc:
+    """A `RUN` instruction's here-document, while its body is read."""
+
+    delimiter: str
+    strip_tabs: bool
+    shell: bool
+    bare: bool
+    first: bool = True
+
+
 def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
     """Each `RUN` instruction's shell text, and its continuation lines, each on its
-    own line. The exec form, a JSON list, is no shell text."""
+    own line. The exec form, a JSON list, is no shell text. A here-document's body is
+    shell text when a shell reads it (Codex on #369)."""
     escape = _escape(lines)
     found: list[tuple[int, str]] = []
     continued = False
+    document: _Heredoc | None = None
     for number, text in enumerate(lines, start=1):
+        if document is not None:
+            document = _heredoc_line(document, number, text, found)
+            continue
         if continued:
             found.append((number, text))
         else:
-            # Any whitespace separates an instruction from its text (Claude on #369).
-            instruction = text.split(None, 1)
-            if len(instruction) < 2 or instruction[0].upper() != "RUN":
-                continue
-            rest = _past_run_options(instruction[1])
-            if rest.startswith("["):
+            rest = _run_text(text)
+            if rest is None:
                 continue
             found.append((number, rest))
-        continued = text.endswith(escape)
+            document = _heredoc(rest)
+        continued = document is None and text.endswith(escape)
     return found
+
+
+def _run_text(text: str) -> str | None:
+    """A `RUN` instruction's text past its own options; None for any other line and
+    for the exec form. Any whitespace separates `RUN` from its text (Claude on
+    #369)."""
+    instruction = text.split(None, 1)
+    if len(instruction) < 2 or instruction[0].upper() != "RUN":
+        return None
+    rest = _past_run_options(instruction[1])
+    return None if rest.startswith("[") else rest
+
+
+def _heredoc(rest: str) -> _Heredoc | None:
+    """The here-document a `RUN` text opens, if any. A shell reads its body when it
+    stands alone, as `RUN <<EOF`, or after a shell that reads its standard input, as
+    `RUN bash -e <<EOF`; another program's body, as `python3 <<EOF`'s, is data. One
+    here-document per instruction is read."""
+    tokens = words(rest)
+    if "<<" not in tokens:
+        return None
+    at = tokens.index("<<")
+    delimiter = tokens[at + 1] if at + 1 < len(tokens) else ""
+    strip_tabs = delimiter.startswith("-")
+    delimiter = delimiter.removeprefix("-")
+    if not delimiter:
+        return None
+    command = tokens[:at]
+    shell = not command or _reads_stdin(command)
+    return _Heredoc(delimiter, strip_tabs, shell, bare=not command)
+
+
+def _reads_stdin(command: list[str]) -> bool:
+    """Whether ``command`` is a shell that reads its script from standard input: a
+    shell with options only, and no `-c` string."""
+    if _command_name(command[0]) not in _SHELLS:
+        return False
+    index = 1
+    while index < len(command):
+        option = command[index]
+        if option in _VALUE_OPTIONS:
+            index += 2
+            continue
+        if not option.startswith("-") or (
+            not option.startswith("--") and "c" in option
+        ):
+            return False
+        index += 1
+    return True
+
+
+def _heredoc_line(
+    document: _Heredoc, number: int, text: str, found: list[tuple[int, str]]
+) -> _Heredoc | None:
+    """Read one line of a here-document: its end, or a body line, kept when a shell
+    reads it. A bare document whose shebang names no shell is that program's."""
+    body = text.lstrip("\t") if document.strip_tabs else text
+    if body == document.delimiter:
+        return None
+    if document.bare and document.first and body.startswith("#!"):
+        document.shell = _shell_shebang(body)
+    document.first = False
+    if document.shell:
+        found.append((number, body))
+    return document
 
 
 def _past_run_options(text: str) -> str:

@@ -434,6 +434,57 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(line=number):
                 self.assertTrue(shell_reader.runs_git(found[number][0]))
 
+    def test_make_s_recipe_prefix_is_followed(self) -> None:
+        """`.RECIPEPREFIX` names the character that opens a recipe line, from its
+        assignment on; an empty value restores the tab (Codex on #369)."""
+        lines = [
+            ".RECIPEPREFIX := >",
+            "all:",
+            '>"git" status',
+            "\techo tab",
+            ".RECIPEPREFIX =",
+            "CC := gcc",
+            "b:",
+            '\t"git" log',
+            ">echo no",
+        ]
+        found = shell_reader.shell_lines("Makefile", lines)
+        self.assertEqual({3: ('"git" status',), 8: ('"git" log',)}, found)
+
+    def test_a_dockerfile_heredoc_s_body_is_shell_text(self) -> None:
+        """`RUN <<EOF`, alone or after a shell, runs its body in a shell; `<<-` strips
+        leading tabs, and a quoted delimiter counts. A body another program reads,
+        or one whose shebang names no shell, is no shell text (Codex on #369)."""
+        lines = [
+            "FROM a",
+            "RUN <<EOF",
+            '"git" status',
+            "#!/usr/bin/env python3",
+            "EOF",
+            "RUN bash -e <<-'END'",
+            '\t"git" fetch',
+            "\tEND",
+            "RUN python3 <<EOF",
+            "import git",
+            "EOF",
+            "RUN <<EOF",
+            "#!/usr/bin/env python3",
+            "git = 1",
+            "EOF",
+            "RUN sh build.sh <<EOF",
+            '"git" data',
+            "EOF",
+            "RUN bash -o pipefail <<EOF",
+            '"git" gc',
+            "EOF",
+            "RUN true",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 4, 6, 7, 9, 12, 16, 19, 20, 22}, set(found))
+        for number in (3, 7, 20):
+            with self.subTest(line=number):
+                self.assertTrue(shell_reader.runs_git(found[number][0]))
+
     def test_a_fence_of_tildes_holds_shell_too(self) -> None:
         """A fence opens with three or more backticks or tildes, and only as many of
         the same character close it (CodeAnt on #369)."""
@@ -945,6 +996,10 @@ class StructuralSignatureTests(unittest.TestCase):
             ),
             ('from os import system\nsystem("cd /srv\\ngit fetch")\n', 2),
             ('from os import system\nsystem("echo ok\\nGIT=git")\n', 2),
+            # With shell=True, an argument list's first word is the shell's command
+            # text (CodeAnt on #369).
+            ('import subprocess\nsubprocess.run(["git status"], shell=True)\n', 2),
+            ("import subprocess\nsubprocess.run(['LC_ALL=C git gc'], shell=True)\n", 2),
         )
         for source, line in cases:
             with self.subTest(source=source):
@@ -960,6 +1015,9 @@ class StructuralSignatureTests(unittest.TestCase):
             "from os import system\nsystem(command)\n",
             'import subprocess\nsubprocess.run("git status", shell=True)\n',
             'from subprocess import run\nrun(["git", "status"])\n',
+            'from subprocess import run\nrun(["make test"], shell=True)\n',
+            'from subprocess import run\nrun(["git status"], shell=False)\n',
+            'from subprocess import run\nrun(["git status"], shell=flag)\n',
         ):
             with self.subTest(unmarked=source):
                 found = _findings_with_the_real_registry({"tools/new.py": source})
