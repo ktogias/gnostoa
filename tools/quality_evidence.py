@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import quote, unquote, urlparse
 
+from tools import test_suite
 from tools.repository_scope import (
     RepositoryScopeError,
     candidate_paths,
@@ -1077,22 +1078,15 @@ def collect_quality_evidence(
         root=root,
         environment=environment,
     )
-    statuses["coverage_run"] = _run(
-        [
-            python,
-            "-m",
-            "coverage",
-            "run",
-            "--branch",
-            "--source=tools",
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "tests",
-        ],
-        root=root,
-        environment=environment,
+    # The same branch coverage of `tools`, measured in the suite's parallel
+    # processes and combined (Decision 0109).
+    # Through the owner, so the coverage run has the suite's bound too (CodeAnt on
+    # #392).
+    print(
+        "+ " + " ".join(test_suite.command(python, coverage_source="tools")), flush=True
+    )
+    statuses["coverage_run"] = test_suite.run(
+        root, coverage_source="tools", environment=environment
     )
     statuses["coverage_floor"] = _run(
         [
