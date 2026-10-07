@@ -24,7 +24,6 @@ import sys
 from collections.abc import Mapping
 
 from tools import github_events
-from tools.analyzer_readback import exact_sha
 
 _PULL_NUMBER = re.compile(r"[1-9]\d{0,9}", re.ASCII)
 
@@ -41,7 +40,7 @@ def resolve(environ: Mapping[str, str]) -> dict[str, str]:
     event = environ.get("EVENT_NAME", "")
     if event == "workflow_run":
         numbers = github_events.workflow_run_pull_numbers(environ.get("RUN_PULLS", ""))
-        head = exact_sha(environ.get("RUN_HEAD", ""), "workflow_run head")
+        head = github_events.exact_sha(environ.get("RUN_HEAD", ""), "workflow_run head")
         if len(numbers) != 1:
             raise ValueError(
                 f"the run names {len(numbers)} Pull Requests, not one: "
@@ -55,7 +54,7 @@ def resolve(environ: Mapping[str, str]) -> dict[str, str]:
     if fields is None:
         raise ValueError(f"no readback subject for event {event!r}")
     pull = _pull_number(environ.get(fields[0], ""))
-    head = exact_sha(environ.get(fields[1], ""), "head")
+    head = github_events.exact_sha(environ.get(fields[1], ""), "head")
     return {"pull_number": str(pull), "head": head}
 
 

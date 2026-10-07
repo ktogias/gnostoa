@@ -914,6 +914,17 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             },
             loaded["permissions"],
         )
+        # Readbacks queue, one at a time, and none is cancelled: a flood of requests
+        # waits rather than spending the analyzers' rate limits (Amazon Q on #388),
+        # as review-current-state.yml's runs do (Decision 0086).
+        self.assertEqual(
+            {
+                "group": "gnostoa-analyzer-readback",
+                "cancel-in-progress": False,
+                "queue": "max",
+            },
+            loaded["concurrency"],
+        )
         job = loaded["jobs"]["readback"]
         # `workflow_run` matches a workflow by name, so a same-named workflow on any
         # branch could start it: only a pull_request run of verification.yml counts.
@@ -1124,6 +1135,18 @@ class WorkflowRunPullsTests(unittest.TestCase):
         for empty in ("", "null", "[]"):
             with self.subTest(empty=empty):
                 self.assertEqual([], github_events.workflow_run_pull_numbers(empty))
+
+    def test_an_exact_sha_is_the_only_head(self) -> None:
+        """One exact-SHA check for an event's head, which the resolver and the
+        runner share (Claude on #388)."""
+        self.assertEqual(HEAD, github_events.exact_sha(HEAD, "head"))
+        # A number whose digits spell a SHA is still no SHA: JSON may carry one.
+        for value in ("A" * 40, "a" * 39, HEAD + "\n", "", None, 40, int("1" * 40)):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "head must be an exact"),
+            ):
+                github_events.exact_sha(value, "head")
 
     def test_a_malformed_list_is_refused(self) -> None:
         for raw in (

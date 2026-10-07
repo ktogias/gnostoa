@@ -344,8 +344,3 @@ def canonical_json(value: object) -> str:
         ensure_ascii=True,
         allow_nan=False,
     )
-
-
-# The exact-SHA check, a ``ValueError`` on refusal, public for the readback's subject
-# resolver (#387). It stands last, so no existing line moves.
-exact_sha = _sha

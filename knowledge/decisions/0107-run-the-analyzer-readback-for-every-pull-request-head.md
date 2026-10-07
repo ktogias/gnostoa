@@ -104,9 +104,15 @@ validated subject, so an agent finds the result for an exact head.
 check of Gnostoa verification. That keeps Decision 0091's reason for a dedicated
 surface: analyzer availability must not become a candidate correctness gate.
 
-**One parser.** `workflow_run.pull_requests` is parsed by
+**One parser, and one SHA check.** `workflow_run.pull_requests` is parsed by
 `tools/github_events.workflow_run_pull_numbers`. The useful-L1 reconciler's own
-parser is factored into it, so both read the field the same way.
+parser is factored into it, so both read the field the same way. An exact head is
+checked by `tools/github_events.exact_sha`, which the resolver and the runner
+share; the runner's own pattern is gone.
+
+**Runs queue.** The workflow's runs share one concurrency group, with nothing
+cancelled, so a flood of requests waits rather than spending the analyzers' rate
+limits, as `review-current-state.yml`'s runs do.
 
 ## Alternatives not chosen
 

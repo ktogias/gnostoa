@@ -10,13 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import analyzer_codacy, analyzer_deepsource, github_rest
+from tools import analyzer_codacy, analyzer_deepsource, github_events, github_rest
 from tools.analyzer_readback import (
     AnalyzerReadbackError,
     build_readback,
     canonical_json,
     coverage,
-    exact_sha,
     normalize_repository,
 )
 
@@ -137,11 +136,11 @@ def _mapping(value: object, label: str) -> Mapping[str, Any]:
 
 
 def _exact_head(value: object, label: str) -> str:
-    """The readback's one exact-SHA check, refused as this runner's error (Claude
-    on #388)."""
+    """The shared exact-SHA check, refused as this runner's error (Claude on
+    #388)."""
     try:
-        return exact_sha(value, label)
-    except AnalyzerReadbackError as exc:
+        return github_events.exact_sha(value, label)
+    except ValueError as exc:
         raise RunnerError(f"{label} must be an exact 40-character SHA") from exc
 
 

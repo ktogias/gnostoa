@@ -28,6 +28,14 @@ permissions:
   statuses: read
   checks: read
 
+# Readbacks queue, one at a time, and none is cancelled: a flood of requests waits
+# rather than spending the analyzers' rate limits, as review-current-state.yml's
+# runs do (Decision 0086).
+concurrency:
+  group: gnostoa-analyzer-readback
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   readback:
     # Each admitted event is named. `workflow_run` matches the triggering workflow

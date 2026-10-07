@@ -9,6 +9,18 @@ provider. The useful-L1 reconciler (Decision 0086) and the analyzer readback
 from __future__ import annotations
 
 import json
+import re
+
+_SHA40 = re.compile(r"[0-9a-f]{40}")
+
+
+def exact_sha(value: object, label: str) -> str:
+    """``value`` if it is an exact 40-character lowercase commit SHA; otherwise
+    ``ValueError``. The analyzer readback's resolver and runner share it (Claude on
+    #388)."""
+    if not isinstance(value, str) or _SHA40.fullmatch(value) is None:
+        raise ValueError(f"{label} must be an exact 40-character SHA")
+    return value
 
 
 def workflow_run_pull_numbers(raw: str) -> list[int]:
@@ -18,12 +30,8 @@ def workflow_run_pull_numbers(raw: str) -> list[int]:
     error. Anything that is not a list of objects with a positive integer ``number``
     is refused with ``ValueError``.
     """
-    numbers: list[int] = []
-    for item in _items(raw):
-        number = _pull_number(item)
-        if number not in numbers:
-            numbers.append(number)
-    return numbers
+    # Kept once each, in order, in linear time (Amazon Q on #388).
+    return list(dict.fromkeys(_pull_number(item) for item in _items(raw)))
 
 
 def _items(raw: str) -> list[object]:
