@@ -56,7 +56,19 @@ everything else, to stop carrying slow runs through the rest of the work.
 
 1. **One owner.** `tools/test_suite.py` is the one place that says how the suite
    runs. `command(python, tests, coverage_source=None)` returns the command, and
-   `run(root)` runs it with the current interpreter.
+   `run(root, coverage_source=None, environment=None)` runs it with the current
+   interpreter:
+   - **Containment.** The runner and its workers stay in the caller's process
+     group. A kill of that group, such as preparation's at its focused deadline, a
+     CI job's end or a terminal's Ctrl+C, reaches them all.
+   - **The bound.** A run past one hour has hung. The owner interrupts the runner,
+     whose pool then ends its own workers on every system, and reports exit status
+     124. An error while waiting stops the runner the same way and is raised again.
+     A Ctrl+C is not sent a second time, since the runner already received it.
+   - **The fallback.** A runner still running ten seconds after the interrupt is
+     killed, after the descendants Linux records for it, deepest first.
+   - **Out of scope.** The owner does not sandbox processes that a test itself
+     starts. The caller's group containment reaches them.
 2. **The runner.** `unittest-parallel` 1.8.6 runs every test module under `tests`
    as a task of its own (`--level module`), across one process per CPU, which is
    its default. The tests and the `unittest` runner are the same as before.
@@ -66,8 +78,9 @@ everything else, to stop carrying slow runs through the rest of the work.
    - `knowledge self-check` calls `test_suite.run(root)`, in the development
      container and in the runtime image alike;
    - `extended` measures coverage through
-     `test_suite.command(python, coverage_source="tools")`: branch coverage of
-     `tools`, measured in each process and combined. That is the measurement
+     `test_suite.run(root, coverage_source="tools", environment=…)`, with the same
+     bound: branch coverage of `tools`, measured in each process and combined into
+     the environment's `COVERAGE_FILE`. That is the measurement
      `coverage run --branch --source=tools` made in one process. `coverage report`
      with the floor, and `coverage json`, read the combined data as before.
 4. **The dependency.**

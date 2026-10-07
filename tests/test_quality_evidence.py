@@ -467,10 +467,8 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             package_metadata["Name"] = "example"
             package_metadata["License-Expression"] = "MIT"
             distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
-            commands: list[list[str]] = []
 
             def fake_run(command, *, root, environment=None, stdout=None):
-                commands.append(list(command))
                 if command[2:4] == ["pip", "install"]:
                     report = Path(command[command.index("--report") + 1])
                     report.write_text(json.dumps(_pip_report()), encoding="utf-8")
@@ -572,6 +570,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             # same measurement as before and its bound (Decision 0109).
             suite.assert_called_once_with(
                 root.resolve(), coverage_source="tools", environment=ANY
+            )
+            # In the environment whose data file `coverage report` then reads.
+            self.assertEqual(
+                str(output.resolve() / ".coverage"),
+                suite.call_args.kwargs["environment"]["COVERAGE_FILE"],
             )
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
