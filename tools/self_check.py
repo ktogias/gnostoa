@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import test_suite
@@ -31,45 +32,56 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
         # In parallel processes, as every run of the suite (Decision 0109).
         passed = test_suite.run(root) == 0 and passed
 
+    for check in (_bundles, _guardrails, _change_policies, _ci_policies):
+        passed = check(root) and passed
+    return passed
+
+
+def _report(name: str, issues: Iterable[str], passed_as: str | None = None) -> bool:
+    """Print each issue under ``name``, or that the check passed; whether it did."""
+    reported = False
+    for issue in issues:
+        print(f"ERROR: {name}: {issue}", file=sys.stderr)
+        reported = True
+    if not reported:
+        print(f"OK: {passed_as or name}")
+    return not reported
+
+
+def _bundles(root: Path) -> bool:
+    passed = True
     for name, profile, bundle in BUNDLES:
         _, issues = validate_bundle(root / profile, root / bundle, project_root=root)
-        errors = [issue for issue in issues if issue.severity == "error"]
-        if errors:
-            passed = False
-            for bundle_issue in errors:
-                print(
-                    f"ERROR: {name}: {bundle_issue.path}: {bundle_issue.message}",
-                    file=sys.stderr,
-                )
-        else:
-            print(f"OK: {name}")
+        errors = [
+            f"{issue.path}: {issue.message}"
+            for issue in issues
+            if issue.severity == "error"
+        ]
+        passed = _report(name, errors) and passed
+    return passed
 
-    guardrail_issues = check_guardrails(
-        root / "policy" / "guardrails.yaml",
-        root,
-    )
-    if guardrail_issues:
-        passed = False
-        for guardrail_issue in guardrail_issues:
-            print(f"ERROR: guardrails: {guardrail_issue}", file=sys.stderr)
-    else:
-        print("OK: guardrail coverage")
 
+def _guardrails(root: Path) -> bool:
+    issues = check_guardrails(root / "policy" / "guardrails.yaml", root)
+    return _report("guardrails", issues, passed_as="guardrail coverage")
+
+
+def _change_policies(root: Path) -> bool:
+    passed = True
     for name, path in (
         ("generic change control", "core/change-control.yaml"),
         ("toolkit change control", "policy/change-control.yaml"),
     ):
         try:
-            policy_issues = check_change_policy(root / path)
-        except (KnowledgeFormatError, OSError, ValueError) as exc:
-            policy_issues = [str(exc)]
-        if policy_issues:
-            passed = False
-            for policy_issue in policy_issues:
-                print(f"ERROR: {name}: {policy_issue}", file=sys.stderr)
-        else:
-            print(f"OK: {name}")
+            issues = check_change_policy(root / path)
+        except (OSError, ValueError) as exc:
+            issues = [str(exc)]
+        passed = _report(name, issues) and passed
+    return passed
 
+
+def _ci_policies(root: Path) -> bool:
+    passed = True
     for name, policy, verification in (
         ("generic CI policy", "core/continuous-integration.yaml", None),
         (
@@ -79,19 +91,13 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
         ),
     ):
         try:
-            ci_issues = check_ci_policy(
+            issues = check_ci_policy(
                 root / policy,
                 root / verification if verification else None,
             )
-        except (KnowledgeFormatError, OSError, ValueError) as exc:
-            ci_issues = [str(exc)]
-        if ci_issues:
-            passed = False
-            for ci_issue in ci_issues:
-                print(f"ERROR: {name}: {ci_issue}", file=sys.stderr)
-        else:
-            print(f"OK: {name}")
-
+        except (OSError, ValueError) as exc:
+            issues = [str(exc)]
+        passed = _report(name, issues) and passed
     return passed
 
 
