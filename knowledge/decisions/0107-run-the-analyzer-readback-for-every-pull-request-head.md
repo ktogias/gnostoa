@@ -67,12 +67,19 @@ admits only `main`. That job now starts in three ways:
    - the ref is `refs/heads/main`;
    - the triggering run's event is `pull_request`;
    - the triggering run's path is `.github/workflows/verification.yml`;
-   - the triggering run succeeded or failed. A run that a later push superseded is
-     cancelled, and its head is no longer the Pull Request's, so its readback
-     would only spend the analyzers' rate limits (Kody on #388). A run that failed
-     still reads its head's analyzers, since that head stays the Pull Request's
-     until the next push. Each admitted conclusion is named; for any other, a
-     readback is requested.
+   - the triggering run succeeded, failed or timed out. A run that a later push
+     superseded is cancelled, and its head is no longer the Pull Request's, so its
+     readback would only spend a run (Kody on #388). A run that failed or timed
+     out leaves its head the Pull Request's until the next push, so it is still
+     read (CodeAnt on #388). Each admitted conclusion is named, and the test pins
+     the whole condition, so no arm is added, dropped or regrouped unseen. Of this
+     repository's last 1,000 `pull_request` verification runs, measured on
+     2026-10-07, 438 were cancelled, and every one had been superseded by a newer
+     head on its branch. Since a receipt that binds no exact head fails its run,
+     admitting them would make about 44% of automatic readbacks red runs that
+     read nothing. A run cancelled by hand while its head stays current, or one
+     with any other conclusion, gets its readback by request, which whoever
+     cancelled it sends.
 
    It reads the run's `head_sha`, and its `pull_requests` when that list holds
    exactly one Pull Request. A fork's run has none, and a head shared by two Pull
@@ -114,13 +121,35 @@ surface: analyzer availability must not become a candidate correctness gate.
 
 **One parser, and one SHA check.** `workflow_run.pull_requests` is parsed by
 `tools/github_events.workflow_run_pull_numbers`. The useful-L1 reconciler's own
-parser is factored into it, so both read the field the same way. An exact head is
+parser is factored into it, so both read the field the same way. An event's head is
 checked by `tools/github_events.exact_sha`, which the resolver and the runner
-share; the runner's own pattern is gone.
+share; the runner's own pattern is gone. The same check is still written about a
+dozen more times in `tools/` and `ci/`, among them `tools/analyzer_readback.py`'s
+`_sha`, which checks the receipt's heads again (Claude on #388). This change
+leaves that file untouched: DeepSource reports `build_readback`'s pre-existing
+complexity as blocking in any change to it (PY-R1000). The family is inventoried
+under #365, whose P4 converges each family on its owner. Each copy uses
+`fullmatch`, or `match` with `\A…\Z`, so none admits a trailing newline, and they
+agree.
+
+**A receipt that binds no exact head fails its run.** When the Pull Request's
+head is not the requested one, before or during the readback, the runner still
+writes its `INCOMPLETE` receipt, naming the reason, and the run uploads it; the
+step then fails. A green run without exact-head evidence would make missing
+evidence look like a clean producer (#389). Before this, the runner exited 0
+with that receipt, which was reachable only by hand; the automatic trigger makes
+it reachable whenever a push lands between a verification run's end and its
+readback (Kody on #388).
 
 **Runs queue.** The workflow's runs share one concurrency group, with nothing
 cancelled, so a flood of requests waits rather than spending the analyzers' rate
-limits, as `review-current-state.yml`'s runs do.
+limits, as `review-current-state.yml`'s runs do. The wait is short. Measured on
+2026-10-07, the workflow's last 20 runs took 16 to 25 seconds each, and 52 at most,
+so the queue drains about three runs a minute. Only a verification run of a Pull
+Request that succeeded or failed adds one; a superseded run is cancelled and adds
+none. The queue's order is not guaranteed, so a request's wait is a measured
+expectation, not an ordering property. A request dropped from a full queue, of one
+running and 100 pending, leaves no receipt, and is sent again (Kody on #388).
 
 ## Alternatives not chosen
 

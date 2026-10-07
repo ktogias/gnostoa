@@ -555,7 +555,21 @@ def main(argv: list[str] | None = None) -> int:
     except (RunnerError, ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    return 0
+    return _bound_status(bundle)
+
+
+def _bound_status(bundle: dict[str, Any]) -> int:
+    """0 when ``bundle`` binds the exact requested head, else 1: a green run without
+    exact-head evidence would make missing evidence look like a clean producer
+    (#389). The receipt is written either way, so its reason stays readable."""
+    if bundle["subject_binding"] == "BOUND":
+        return 0
+    print(
+        f"ERROR: the readback binds no exact head ({bundle['reason']});"
+        " its receipt records why",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":

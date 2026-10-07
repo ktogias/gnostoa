@@ -421,6 +421,65 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     self.assertTrue(stderr.getvalue().startswith("ERROR: "))
                     connect.assert_not_called()
 
+    def test_main_fails_visibly_when_the_receipt_binds_no_exact_head(self) -> None:
+        """A receipt that binds no exact head is written, so its reason stays
+        readable, and fails the run: a green run without exact-head evidence would
+        make missing evidence look like a clean producer (Kody on #388, #389)."""
+        urls = _github_urls()
+        for reason, routes in (
+            ("GITHUB_SUBJECT_MISMATCH", {urls["pr"]: [_pr(OTHER)]}),
+            (
+                "GITHUB_SUBJECT_CHANGED_DURING_READBACK",
+                {
+                    urls["pr"]: [_pr(), _pr(OTHER)],
+                    urls["statuses"]: [],
+                    urls["checks"]: {"check_runs": []},
+                    urls["comments"]: [],
+                },
+            ),
+        ):
+            with (
+                self.subTest(reason=reason),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory) / "readback.json"
+                stderr = io.StringIO()
+                with (
+                    patch.dict(os.environ, {}, clear=True),
+                    patch.object(
+                        runner.GitHubReadClient,
+                        "from_environment",
+                        return_value=_GitHubFake(routes),
+                    ),
+                    patch.object(
+                        http.client.HTTPSConnection,
+                        "connect",
+                        side_effect=AssertionError("network forbidden"),
+                    ),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    result = runner.main(
+                        [
+                            "--repository",
+                            "ktogias/gnostoa",
+                            "--pull-number",
+                            "312",
+                            "--head",
+                            HEAD,
+                            "--output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(1, result)
+                bundle = json.loads(output.read_text())
+                self.assertEqual("INCOMPLETE", bundle["subject_binding"])
+                self.assertEqual(reason, bundle["reason"])
+                self.assertEqual(
+                    f"ERROR: the readback binds no exact head ({reason});"
+                    " its receipt records why\n",
+                    stderr.getvalue(),
+                )
+
     def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
         for provider, token_name, peer_type, peer in (
             (
@@ -926,25 +985,30 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             loaded["concurrency"],
         )
         job = loaded["jobs"]["readback"]
-        # `workflow_run` matches a workflow by name, so a same-named workflow on any
-        # branch could start it: only a pull_request run of verification.yml counts.
-        # Each admitted event is named, so a trigger added later is not admitted by
-        # default (Amazon Q on #388).
-        for guard in (
-            "github.ref == 'refs/heads/main'",
-            "github.event_name == 'workflow_dispatch'",
-            "github.event_name == 'repository_dispatch'",
-            "github.event_name == 'workflow_run'",
-            # A run that a later push superseded is cancelled, and its head is no
-            # longer the Pull Request's, so it reads nothing (Kody on #388). A failed
-            # run still reads its head's analyzers. Each admitted conclusion is named.
-            "github.event.workflow_run.conclusion == 'success'",
-            "github.event.workflow_run.conclusion == 'failure'",
-            "github.event.workflow_run.event == 'pull_request'",
-            "github.event.workflow_run.path == '.github/workflows/verification.yml'",
-        ):
-            self.assertIn(guard, job["if"])
-        self.assertNotIn("!=", job["if"])
+        # The whole condition is pinned, so no arm can be added, dropped or regrouped
+        # unseen (Kody on #388):
+        # - `workflow_run` matches a workflow by name, so a same-named workflow on
+        #   any branch could start it: only a pull_request run of verification.yml
+        #   counts;
+        # - each admitted event is named, so a trigger added later is not admitted
+        #   by default (Amazon Q on #388);
+        # - a run that a later push superseded is cancelled, and its head is no
+        #   longer the Pull Request's, so it reads nothing (Kody on #388). A run that
+        #   failed or timed out leaves its head the Pull Request's, so it is still
+        #   read (CodeAnt on #388). Each admitted conclusion is named.
+        self.assertEqual(
+            "github.ref == 'refs/heads/main'"
+            " && (github.event_name == 'workflow_dispatch'"
+            " || github.event_name == 'repository_dispatch'"
+            " || (github.event_name == 'workflow_run'"
+            " && (github.event.workflow_run.conclusion == 'success'"
+            " || github.event.workflow_run.conclusion == 'failure'"
+            " || github.event.workflow_run.conclusion == 'timed_out')"
+            " && github.event.workflow_run.event == 'pull_request'"
+            " && github.event.workflow_run.path"
+            " == '.github/workflows/verification.yml'))",
+            " ".join(job["if"].split()),
+        )
         self.assertEqual("analyzer-readback", job["environment"])
         self.assertEqual(15, job["timeout-minutes"])
         steps = job["steps"]
@@ -982,9 +1046,14 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn('--head "${REQUESTED_HEAD}"', acquire["run"])
         self.assertIn("gnostoa-analyzer-readback.json", acquire["run"])
         # The resolver fails when it binds no subject, so no later step runs without
-        # one, and none needs its own condition (#389).
-        for step in (acquire, steps[upload]):
-            self.assertNotIn("if", step)
+        # one (#389). A receipt that binds no exact head fails its step, and is
+        # uploaded still, so its reason stays readable (Kody on #388).
+        self.assertNotIn("if", acquire)
+        self.assertEqual("readback", acquire["id"])
+        self.assertEqual(
+            "${{ success() || steps.readback.outcome == 'failure' }}",
+            steps[upload]["if"],
+        )
         self.assertEqual(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             steps[upload]["uses"],

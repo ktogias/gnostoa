@@ -47,7 +47,8 @@ jobs:
           || github.event_name == 'repository_dispatch'
           || (github.event_name == 'workflow_run'
               && (github.event.workflow_run.conclusion == 'success'
-                  || github.event.workflow_run.conclusion == 'failure')
+                  || github.event.workflow_run.conclusion == 'failure'
+                  || github.event.workflow_run.conclusion == 'timed_out')
               && github.event.workflow_run.event == 'pull_request'
               && github.event.workflow_run.path == '.github/workflows/verification.yml'))
     environment: analyzer-readback
@@ -87,6 +88,7 @@ jobs:
           set -eu
           PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
       - name: Read exact-head analyzer evidence
+        id: readback
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
@@ -101,6 +103,9 @@ jobs:
             --head "${REQUESTED_HEAD}" \
             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
       - name: Upload non-secret analyzer readback
+        # A receipt that binds no exact head fails the step above, and is uploaded
+        # still, so its reason stays readable.
+        if: ${{ success() || steps.readback.outcome == 'failure' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}
