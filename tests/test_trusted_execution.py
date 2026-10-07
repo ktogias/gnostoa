@@ -1342,9 +1342,9 @@ def _record_each_command(
     if command == "fetch":
         raise subprocess.TimeoutExpired("git", 1)
     # A result, not a run: `init` succeeds as the real call would.
-    return subprocess.CompletedProcess(
+    return subprocess.CompletedProcess(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         argv, 0, b"", b""
-    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    )
 
 
 class ProtectedRouteCharacterizationTests(unittest.TestCase):

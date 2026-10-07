@@ -469,6 +469,39 @@ class StructuralSignatureTests(unittest.TestCase):
                 found = _findings_with_the_real_registry({"tools/new.py": source})
                 self.assertFalse([f for f in found if "shell-command" in f], found)
 
+    def test_a_shell_argument_list_runs_its_command_too(self) -> None:
+        """`subprocess.run(["sh", "-c", "git status"])` hands a shell its command as an
+        argument list, which no signature read (Codex on #369). An argument list
+        headed by a shell is read wherever it stands, as one headed by Git is."""
+        cases = (
+            ('import subprocess\nsubprocess.run(["sh", "-c", "git status"])\n', 2),
+            (
+                "import subprocess\nsubprocess.run(\n"
+                '    ["bash", "-lc", "git fetch"],\n)\n',
+                3,
+            ),
+            ('args = ("/bin/sh", "-ec", "git gc")\n', 1),
+            ('run(["bash", "--norc", "-o", "pipefail", "-c", "git log"])\n', 1),
+            ('run(["sh", "-c", f"git -C {d} status"])\n', 1),
+        )
+        for source, line in cases:
+            with self.subTest(source=source):
+                found = _findings_with_the_real_registry({"tools/new.py": source})
+                self.assertEqual(
+                    [str(line)],
+                    [f.split(":")[1] for f in found if "shell-command" in f],
+                    found,
+                )
+        for source in (
+            'run(["sh", "-c", "make test"])\n',
+            'run(["sh", "script.sh"])\n',
+            'run(["sh", "script.sh", "git status"])\n',
+            'run(["bash", "-c", command])\n',
+        ):
+            with self.subTest(unmarked=source):
+                found = _findings_with_the_real_registry({"tools/new.py": source})
+                self.assertFalse([f for f in found if "shell-command" in f], found)
+
     def test_a_submodule_s_function_is_reached_too(self) -> None:
         """`from jsonschema.validators import validator_for as select` and a dotted call
         through a submodule went unseen: only the module itself was read (Codex on

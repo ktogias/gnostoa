@@ -154,17 +154,23 @@ def _compile(path: Path, signature: dict[str, Any]) -> re.Pattern[str]:
         ) from exc
 
 
+def _repeated(values: list[str]) -> list[str]:
+    """The values named more than once, in order, counted in one pass: a count per
+    value made the check quadratic in the registry's size (CodeAnt on #369)."""
+    return sorted(value for value, times in Counter(values).items() if times > 1)
+
+
 def _refuse_repeats(path: Path, document: dict[str, Any]) -> None:
     """Refuse an id or a path the registry names twice where it must name it once."""
     names = [str(item["id"]) for item in document["responsibilities"]]
-    again = sorted({n for n in names if names.count(n) > 1})
+    again = _repeated(names)
     if again:
         raise KnowledgeFormatError(
             f"{path}: the responsibility id {', '.join(again)} is used twice"
         )
     for item in document["responsibilities"]:
         ids = [str(signature["id"]) for signature in item["signatures"]]
-        repeated = sorted({i for i in ids if ids.count(i) > 1})
+        repeated = _repeated(ids)
         if repeated:
             raise KnowledgeFormatError(
                 f"{path}: {item['id']} uses the signature id {', '.join(repeated)} twice"
@@ -172,7 +178,7 @@ def _refuse_repeats(path: Path, document: dict[str, Any]) -> None:
         # Two entries for one path pooled their counts (CodeAnt on #369).
         for kind in ("allowed", "debt"):
             paths = [str(place["path"]) for place in item[kind]]
-            twice = sorted({p for p in paths if paths.count(p) > 1})
+            twice = _repeated(paths)
             if twice:
                 raise KnowledgeFormatError(
                     f"{path}: {item['id']} lists {', '.join(twice)} twice in {kind}"
@@ -691,11 +697,48 @@ def _shell_commands(tree: ast.AST) -> dict[int, tuple[str, ...]]:
     names, modules = _shell_bindings(tree)
     found: dict[int, list[str]] = {}
     for node in ast.walk(tree):
+        command = None
         if isinstance(node, ast.Call) and _is_shell_helper(node.func, names, modules):
             command = _command_text(node)
-            if command is not None:
-                found.setdefault(command[0], []).append(command[1])
+        elif isinstance(node, (ast.List, ast.Tuple)):
+            command = _shell_argv_command(node.elts)
+        if command is not None:
+            found.setdefault(command[0], []).append(command[1])
     return {line: tuple(texts) for line, texts in found.items()}
+
+
+# The shells an argument list may name at its head, by the name it runs under.
+_SHELLS = frozenset({"sh", "bash", "dash", "ksh", "zsh", "ash"})
+
+
+def _shell_argv_command(words: list[ast.expr]) -> tuple[int, str] | None:
+    """`["sh", "-c", "git status"]`: the command an argument list hands its shell
+    with a short option carrying `c`, as `-lc`, wherever the list stands (Codex on
+    #369). A long option is skipped, and `-o` takes its word."""
+    head = _text(words[0]) if words else None
+    if head is None or head.rsplit("/", 1)[-1] not in _SHELLS:
+        return None
+    index = 1
+    while index < len(words):
+        option = _text(words[index])
+        if option is None:
+            return None
+        if option in ("-o", "+o"):
+            index += 2
+            continue
+        if not option.startswith("-"):
+            return None
+        if not option.startswith("--") and "c" in option:
+            return _literal(words[index + 1]) if index + 1 < len(words) else None
+        index += 1
+    return None
+
+
+def _text(node: ast.expr) -> str | None:
+    """A string constant's text, or None for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
 def _shell_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
@@ -740,13 +783,17 @@ def _command_text(call: ast.Call) -> tuple[int, str] | None:
     for keyword in call.keywords:
         if argument is None and keyword.arg in ("args", "cmd", "command"):
             argument = keyword.value
-    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-        return argument.lineno, argument.value
-    if isinstance(argument, ast.JoinedStr):
-        parts = (
-            v.value if isinstance(v, ast.Constant) else "{}" for v in argument.values
-        )
-        return argument.lineno, "".join(str(p) for p in parts)
+    return None if argument is None else _literal(argument)
+
+
+def _literal(node: ast.expr) -> tuple[int, str] | None:
+    """A literal string with its line, or an f-string whose fields stand as `{}`."""
+    text = _text(node)
+    if text is not None:
+        return node.lineno, text
+    if isinstance(node, ast.JoinedStr):
+        parts = (v.value if isinstance(v, ast.Constant) else "{}" for v in node.values)
+        return node.lineno, "".join(str(p) for p in parts)
     return None
 
 
