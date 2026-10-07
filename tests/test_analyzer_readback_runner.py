@@ -6,7 +6,7 @@ import importlib.util
 import io
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import tempfile
 import traceback
 import unittest
@@ -453,8 +453,12 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 stub.chmod(0o755)
                 output = scratch / "output"
                 output.touch()
-                result = subprocess.run(
-                    ["/bin/sh", "-c", step["run"]],
+                # The script travels on stdin to an absolute shell, as the Claude
+                # workflows' step harnesses do, so the argv is static: the step under
+                # test is the repository's own committed text, not an input.
+                result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    ["/bin/sh", "-s"],
+                    input=step["run"],
                     cwd=ROOT,
                     env={
                         "PATH": f"{stubs}:/usr/bin:/bin",

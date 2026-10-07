@@ -190,6 +190,11 @@ running and 100 pending, leaves no receipt, and is sent again (Kody on #388).
     field reaches any step but the resolver;
   - the resolver for each trigger, its refusals and its outputs;
   - the shared parser.
+- **Tests that failed first in later rounds, on the head before each:**
+  - the runner's failure for a receipt that binds no exact head (round 7);
+  - the job's whole condition, which a third admitted arm had survived (round 7);
+  - the readback step's receipt signal, run as the step's own script against a
+    stub runner for each exit status (round 8).
 - **The token's capability, measured on 2026-10-07.** A `repository_dispatch` of an
   unhandled type returned `204 No Content` and started no workflow.
 - **After integration.** Merged code is not yet a working producer, because the
