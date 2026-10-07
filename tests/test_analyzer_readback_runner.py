@@ -471,6 +471,9 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     check=False,
+                    # A step that blocks fails the test rather than hanging the suite
+                    # (Kody on #388).
+                    timeout=60,
                 )
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertEqual(
