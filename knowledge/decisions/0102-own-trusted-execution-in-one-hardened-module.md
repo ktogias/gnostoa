@@ -299,6 +299,8 @@ here.
    `--rcfile file`, to the `-c` that follows them.
    Round 36 reads a loop's condition after `while` or `until`, and a brace group
    or a subshell that opens a line.
+   Round 37 reads Make's own forms: the recipe prefixes `@`, `-` and `+`,
+   `$(shell ...)`, and a variable bound to Git, as `GIT := git`.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and

@@ -1137,6 +1137,26 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(unmarked=line):
                 self.assertFalse(pattern.search(line))
 
+    def test_make_runs_git_through_its_own_forms(self) -> None:
+        """A recipe's `@`, `-` and `+` prefixes are Make's, and the command still runs
+        (Codex on #369); `$(shell ...)` runs one too, and a variable can name Git."""
+        pattern = _pattern("trusted-execution", "git-execution")
+        for line in (
+            "\t@git status",
+            "\t-git fetch",
+            "\t+git gc",
+            "\t@-git status",
+            "\t@env GIT_PAGER=cat git log",
+            "VERSION := $(shell git describe --tags)",
+            "GIT := git",
+            "GIT ?= /usr/bin/git",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
+        for line in ("- git status is shown below", "\t@echo done", "OUT := build"):
+            with self.subTest(unmarked=line):
+                self.assertFalse(pattern.search(line))
+
     def test_git_s_other_bare_options_run_it(self) -> None:
         """`git --exec-path` runs Git with no subcommand, as `--version` does
         (CodeAnt on #369)."""
