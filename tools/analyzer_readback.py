@@ -50,7 +50,9 @@ def _positive_int(value: object, label: str) -> int:
     return value
 
 
-def _sha(value: object, label: str) -> str:
+def exact_sha(value: object, label: str) -> str:
+    """``value`` if it is an exact 40-character lowercase commit SHA; otherwise
+    ``AnalyzerReadbackError``, a ``ValueError``."""
     text = _required_text(value, label)
     if _SHA40.fullmatch(text) is None:
         raise AnalyzerReadbackError(f"{label} must be an exact 40-character SHA")
@@ -303,8 +305,10 @@ def build_readback(
         raise AnalyzerReadbackError(
             "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage"
         )
-    requested = _sha(requested_head, "requested head")
-    observed = None if observed_head is None else _sha(observed_head, "observed head")
+    requested = exact_sha(requested_head, "requested head")
+    observed = (
+        None if observed_head is None else exact_sha(observed_head, "observed head")
+    )
     if normalized_coverage["status"] == "COMPLETE" and observed != requested:
         raise AnalyzerReadbackError(
             "complete readback must bind the requested exact head"

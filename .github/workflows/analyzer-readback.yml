@@ -1,6 +1,16 @@
 name: Authenticated analyzer readback
 
+# Decision 0107: the readback runs for every Pull Request head once Gnostoa
+# verification completes, again on a `gnostoa-analyzer-readback` repository_dispatch
+# request, and by hand. Every run executes main's code in the `analyzer-readback`
+# environment, which admits only main. An event's fields are identifiers only: the
+# runner re-reads the Pull Request and refuses a head that does not match.
 on:
+  workflow_run:
+    workflows: ["Gnostoa verification"]
+    types: [completed]
+  repository_dispatch:
+    types: [gnostoa-analyzer-readback]
   workflow_dispatch:
     inputs:
       pull_number:
@@ -20,7 +30,14 @@ permissions:
 
 jobs:
   readback:
-    if: github.ref == 'refs/heads/main'
+    # `workflow_run` matches the triggering workflow by name, so a same-named
+    # workflow on any branch could start this job: only a pull_request run of
+    # verification.yml counts (Decision 0096 rule 7).
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name != 'workflow_run'
+          || (github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.path == '.github/workflows/verification.yml'))
     environment: analyzer-readback
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -40,13 +57,29 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      # Secret-free: each event field reaches only this step, through the
+      # environment, and leaves it only once validated.
+      - name: Resolve the readback subject
+        id: subject
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_PULL: ${{ inputs.pull_number }}
+          DISPATCH_HEAD: ${{ inputs.head }}
+          REQUEST_PULL: ${{ github.event.client_payload.pull_number }}
+          REQUEST_HEAD: ${{ github.event.client_payload.head }}
+          RUN_PULLS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
       - name: Read exact-head analyzer evidence
+        if: steps.subject.outputs.pull_number != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
           CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
-          PULL_NUMBER: ${{ inputs.pull_number }}
-          REQUESTED_HEAD: ${{ inputs.head }}
+          PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
+          REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
         run: |
           set -eu
           PYTHONPATH=. python ci/analyzer_readback.py \
@@ -55,8 +88,9 @@ jobs:
             --head "${REQUESTED_HEAD}" \
             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
       - name: Upload non-secret analyzer readback
+        if: steps.subject.outputs.pull_number != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-analyzer-readback-${{ inputs.pull_number }}-${{ inputs.head }}
+          name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
           if-no-files-found: error
