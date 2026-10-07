@@ -61,8 +61,8 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
 - **Its documented behaviour** (AWS, preview):
   - It reviews on its own only when a Pull Request opens or reopens.
   - `/q review` asks for a review.
-  - `/q` with free text makes it commit to the Pull Request's source branch, and
-    its "Commit suggestion" commits a fix.
+  - `/q` with free text makes it commit to the Pull Request's source branch.
+  - "Commit suggestion" lets a user commit one of its suggested fixes.
   - `/q dev`, or the `Amazon Q development agent` label, makes it implement an
     Issue and open a Pull Request from a branch it creates.
   - Feature development cannot be switched off: "Feature development
@@ -89,9 +89,14 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
   environments:
   - `analyzer-readback` and `claude-review` admit only `main` (Decision 0097);
   - `vf0-admission` admits one named branch and requires the owner's approval.
-- **Publishing.** Six workflows publish images with `packages: write` and
-  `id-token: write`, all only on a push to `main`. `publish-oci.yml` runs only from
-  `main`'s own workflow, and pins `v0.2.0`'s tag object and commit.
+- **Publishing.** Seven workflows publish images with `packages: write` and
+  `id-token: write`:
+  - Six run only on a push to `main`.
+  - The seventh, `publish-oci.yml`, runs only when dispatched. A dispatch is no
+    ref write, so the rulesets below do not govern it. Its own `authorize` job
+    does: it admits only the owner as both the actor and the triggering actor, a
+    first run attempt, and `main`'s own workflow on `main`. Its publishing job
+    pins `v0.2.0`'s tag object and commit.
 - **Agent publication** fails closed on a foreign commit: a push that is not a
   fast-forward, or whose lease does not match, is refused.
 
@@ -101,10 +106,12 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
   writer, an app included, could merge a green Pull Request whose conversations
   were resolved, its own too.
 - **Every other ref.** An app with `contents` and `workflows` write could create
-  branches and tags, commit to a Pull Request's branch, and add a workflow file. GitHub runs such a file on push, with the write token permissions it declares
-for itself, before any review. Provider CI verifies content, by design, not who
-wrote a commit. The Work Item and Decision gates are procedure, not a provider
-control on another author's change.
+  branches and tags, commit to a Pull Request's branch, and add a workflow file.
+  GitHub runs such a file on push, with the write token permissions it declares
+  for itself, before any review.
+
+Provider CI verifies content, by design, not who wrote a commit. The Work Item and
+Decision gates are procedure, not a provider control on another author's change.
 
 ## Decision
 
@@ -118,19 +125,33 @@ The owner created two repository rulesets on 2026-10-07:
 So only an actor with the repository admin role can create, update, force-push or
 delete any branch or tag. That includes merging into `main`, which updates it.
 Requiring an approval instead would block every merge: Pull Requests are opened as
-the owner, who cannot approve their own. Any app outside the bypass list cannot commit, create a
-branch or tag, or merge: Amazon Q's `/q dev`, its label, `/q` with free text and
-"Commit suggestion" all fail. AWS's troubleshooting page confirms the mechanism:
-branch protection rules prevent Amazon Q from creating its branch.
+the owner, who cannot approve their own.
+
+Any app outside the bypass list cannot commit, create a branch or tag, or merge.
+Amazon Q's `/q dev`, its label and `/q` with free text each make Amazon Q write,
+so the rules refuse them. That refusal is inferred, not exercised; two facts
+support it:
+- the probe below showed the rules evaluated for every writer;
+- AWS's troubleshooting page states that branch protection rules prevent Amazon Q
+  from creating its branch.
+
+**"Commit suggestion" is different.** GitHub records the person who applies a
+suggestion as the commit's committer. An administrator's click is therefore an
+administrator's write, and it succeeds through the bypass. The rulesets do not stop
+it; the procedure below does.
 
 **What stays possible**, since it is no ref write: reviews, comments, Issues,
 labels, check runs, and dispatching or re-running workflows. The controls above
-bound each of these: required checks bound to GitHub Actions, secrets in
-environments, and publishing only from `main`.
+bound each of these:
+- required checks bound to GitHub Actions;
+- secrets in environments;
+- publishing only on a push to `main`, or through `publish-oci.yml`'s
+  `authorize` job, which refuses a dispatch or re-run by anyone but the owner.
 
 **How agents use Amazon Q** within the review cycle: they post exactly
-`/q review`. They never post any other `/q` text, never apply its label, and never
-use "Commit suggestion".
+`/q review`. They never post any other `/q` text, and never apply its label. They
+never use "Commit suggestion" either, which the rulesets would not stop: an agent
+acts as the administrator.
 
 The JSON, as imported:
 
@@ -173,6 +194,10 @@ The tag ruleset is the same, with `"name": "Only admins write tags"` and
   put it: that token holds no Administration, Deployments, Environments or Secrets
   permission. If agents move to an account of their own, that account needs a
   bypass entry, or must work from a fork.
+- **The bypass follows the role, not the person.** Any account later given the
+  admin role inherits it, and with it unrestricted ref writes. Today the owner is
+  the only collaborator (`GET repos/ktogias/gnostoa/collaborators`, 2026-10-07).
+  Granting admin to anyone else is therefore also a change to this control.
 - **A writer outside the bypass needs an entry first.** Today none exists: no
   workflow runs `git push` or requests `contents: write`. Dependabot would need one
   if its security updates are enabled.
