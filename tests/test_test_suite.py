@@ -72,9 +72,7 @@ class TestSuiteOwnerTests(unittest.TestCase):
             process.pid = 4242
             process.wait.side_effect = [
                 # An exception the stub raises, not a process: nothing is run.
-                subprocess.TimeoutExpired(
-                    cmd="suite", timeout=1
-                ),  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                subprocess.TimeoutExpired("suite", 1),  # nosemgrep
                 -9,
             ]
             self.assertEqual(test_suite.TIMED_OUT, test_suite.run(ROOT))
@@ -103,9 +101,7 @@ class TestSuiteOwnerTests(unittest.TestCase):
             process = popen.return_value.__enter__.return_value
             process.wait.side_effect = [
                 # An exception the stub raises, not a process: nothing is run.
-                subprocess.TimeoutExpired(
-                    cmd="suite", timeout=1
-                ),  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                subprocess.TimeoutExpired("suite", 1),  # nosemgrep
                 0,
             ]
             self.assertEqual(test_suite.TIMED_OUT, test_suite.run(ROOT))
