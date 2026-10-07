@@ -105,6 +105,19 @@ as exit `-11`, and the parent recorded UNKNOWN for all 127.
 - **Upstream's case:** the 5-byte SIGSEGV of tree-sitter-bash#337, `{𱡀`, did not
   reproduce through the Python binding with either pair. It is recorded as not
   reproduced, not as safe.
+- **What the dependency smoke can and cannot guard (Codex on #394).**
+  - `stress_probe.py` re-parsed every command, pipeline, subshell and substitution
+    of the 168 shell surfaces of this branch at `9ff6c79` during the walk, to a
+    depth of 3.
+    That made 14,350 parses, every tree kept alive, and nodes read after each
+    nested parse. It did not crash 0.26.0 either, in three runs, nor 0.25.2.
+  - So the crash needs the gate's own path, which #369's reader rebuilds and
+    `main` does not have yet. The dependency smoke cannot reproduce it.
+  - The guard until then is the exact pin, and the smoke's assertion of the
+    installed versions.
+  - **An upgrade of either package must re-run the reader over the corpus**, the
+    path that crashed, before it is admitted. This covers #369's tests as well as
+    the smoke.
 
 ## The evidence scripts' limits
 
@@ -142,6 +155,36 @@ measurements taken on the frozen subject:
 - **Timeouts.** The `shfmt` adapter in `evaluate314.py` sets no timeout. Every run
   completed with the results above. Decision 0108's items 9 and 10 bound the
   rebuilt reader's worker, including its timeout.
+
+### `stress_probe.py`
+
+Interleaves nested parses with node access, without the reader's policy: each
+command, pipeline, subshell and substitution is parsed again during the walk, to a
+depth of 3, and every tree is kept alive. SHA-256 `a34ba9077284334f…`. Output: 14,350 parses,
+exit 0, with both 0.25.2 and 0.26.0, three runs each.
+
+````text
+import json, sys
+import tree_sitter_bash
+from tree_sitter import Language, Parser
+LANGUAGE = Language(tree_sitter_bash.language())
+TREES = []
+count = {"parses": 0}
+def walk(source, depth):
+    tree = Parser(LANGUAGE).parse(source)
+    TREES.append(tree)
+    count["parses"] += 1
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in ("command", "redirected_statement", "pipeline", "subshell", "command_substitution") and depth < 3:
+            walk(node.text, depth + 1)                     # a nested parse during the walk
+            _ = (node.type, node.start_point, node.text, node.parent, node.next_sibling)  # node access after it
+        stack.extend(node.children)
+for script in json.load(sys.stdin):
+    walk(script.encode(), 0)
+print(json.dumps(count))
+````
 
 ### `audit_oracle.py`
 

@@ -83,6 +83,12 @@ def _probe(scripts: list[str]) -> dict[str, object]:
     return answer
 
 
+def _masked_expression(match: re.Match[str]) -> str:
+    """An Actions expression as underscores of its own width, each line break kept,
+    so the shell's lines stay where they were (CodeAnt on #394)."""
+    return re.sub(r"[^\n]", "_", match.group(0))
+
+
 def _masked(match: re.Match[str]) -> str:
     """A placeholder as a plain word of its own width: `<ref>` becomes `_ref_`."""
     return "_" + match.group(0)[1:-1] + "_"
@@ -125,9 +131,7 @@ def _github_runs(path: Path, document: object) -> list[str]:
                     raise AssertionError(
                         f"{path}: a `{node['shell']}` step; extend this extraction"
                     )
-                found.append(
-                    EXPRESSION.sub(lambda match: "_" * len(match.group(0)), node["run"])
-                )
+                found.append(EXPRESSION.sub(_masked_expression, node["run"]))
             stack.extend(value for key, value in node.items() if key != "run")
         elif isinstance(node, list):
             stack.extend(node)
@@ -278,7 +282,11 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
 class ShellParserDependencyTests(unittest.TestCase):
     def test_the_pinned_pair_is_installed(self) -> None:
         """`tree-sitter` 0.26.0 segfaulted with this grammar in the evaluation, so
-        the pair is pinned together; the grammar's ABI is the runtime's."""
+        the pair is pinned together; the grammar's ABI is the runtime's.
+
+        This smoke cannot reproduce that crash: it needs the reader's nested parses
+        (the assessment's "The tree-sitter 0.26.0 crash"). Changing either version
+        here therefore also needs the reader re-run over the corpus first."""
         self.assertEqual("0.25.2", metadata.version("tree-sitter"))
         self.assertEqual("0.25.1", metadata.version("tree-sitter-bash"))
         self.assertEqual(15, _probe([])["abi"])
@@ -397,6 +405,22 @@ class SurfaceExtractionTests(unittest.TestCase):
                 sorted(["echo " + "_" * 17, "git status"]),
                 sorted(_workflow_runs(path)),
             )
+
+    def test_a_multi_line_expression_keeps_its_line_breaks(self) -> None:
+        """Masking keeps each newline, so the shell's lines stay where they were
+        (CodeAnt on #394)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "w.yml"
+            path.write_text(
+                "steps:\n  - run: |\n      echo ${{ fromJSON(\n        x) }}\n"
+                "      git status\n",
+                "utf-8",
+            )
+            [run] = _workflow_runs(path)
+            self.assertEqual(
+                "echo " + "_" * 13 + "\n" + "_" * 7 + "\ngit status\n", run
+            )
+            self.assertEqual(3, run.count("\n"))
 
     def test_a_step_in_another_language_or_broken_yaml_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
