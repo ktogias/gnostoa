@@ -50,6 +50,15 @@ Start with `README.md`. Load only the route required by the task.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 
+Before writing any helper or new code, look the responsibility up in
+`policy/owned-responsibilities.yaml` and extend the owner it names; never write it
+again. Running Git, resolving an executable, building a subprocess's environment
+and reading a commit's content belong to `tools/trusted_execution.py`; running
+authority code joins them with PR B of #368. `knowledge reuse-check`, run by the `fast`, `regression`
+and `extended` profiles, both git hooks and provider CI, refuses a new copy (Decision 0102, #368). When a review
+finding or an owner decision adds a responsibility, look it up again before writing
+the fix.
+
 Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
 before new code or implementation, apply **Prior-art and reuse checkpoint** in
 `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`. Reuse applicable

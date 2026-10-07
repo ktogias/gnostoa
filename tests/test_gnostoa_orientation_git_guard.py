@@ -9,8 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+ORIENTATION_PATH = ROOT / "tasks/gnostoa_orientation.py"
 SPEC = importlib.util.spec_from_file_location(
-    "gnostoa_self_orientation_git_guard", ROOT / "tasks/gnostoa_orientation.py"
+    "gnostoa_self_orientation_git_guard", ORIENTATION_PATH
 )
 assert SPEC is not None and SPEC.loader is not None
 orientation = importlib.util.module_from_spec(SPEC)
@@ -72,6 +73,124 @@ def _git(root: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+class OrientationGitExecutableTests(unittest.TestCase):
+    def test_a_git_planted_first_on_the_caller_s_path_is_not_run(self) -> None:
+        """A bare `git` resolved through the caller's `PATH` would run whatever is
+        first there (CodeAnt on #369); orientation runs the owner's trusted Git."""
+        import os
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = Path(scratch)
+            root = base / "repo"
+            root.mkdir()
+            _git(root, "init", "--quiet")
+            _git(
+                root,
+                "-c",
+                "user.name=a",
+                "-c",
+                "user.email=a@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "c",
+            )
+            planted = base / "bin"
+            planted.mkdir()
+            marker = base / "planted-git-ran"
+            fake = planted / "git"
+            fake.write_text(
+                f'#!/bin/sh\nprintf x > {marker}\nexec /usr/bin/git "$@"\n',
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            with patch.dict(
+                os.environ, {"PATH": f"{planted}:{os.environ.get('PATH', '')}"}
+            ):
+                orientation._git_output(  # skipcq: PYL-W0212
+                    root, "rev-parse", "HEAD"
+                )
+            self.assertFalse(marker.exists(), "the git planted on PATH ran")
+
+
+class OrientationGitEnvironmentTests(unittest.TestCase):
+    def test_no_loader_variable_reaches_the_trusted_git(self) -> None:
+        """The caller's `LD_PRELOAD` survived the scrub and was honored when Git
+        started (CodeAnt on #369); macOS reads `DYLD_*` the same way."""
+        caller = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/home/caller",
+            "GIT_DIR": "/elsewhere",
+            "LD_PRELOAD": "/opt/injected/x.so",
+            "LD_LIBRARY_PATH": "/opt/injected",
+            "DYLD_INSERT_LIBRARIES": "/opt/injected/x.dylib",
+        }
+        with patch.dict("os.environ", caller, clear=True):
+            environment = orientation._git_environment()  # skipcq: PYL-W0212
+        self.assertEqual("/usr/bin:/bin", environment["PATH"])
+        for name in (
+            "GIT_DIR",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+        ):
+            with self.subTest(name=name):
+                self.assertNotIn(name, environment)
+
+
+class OrientationOwnerLoadFailureTests(unittest.TestCase):
+    def test_an_owner_that_cannot_load_is_an_orientation_error(self) -> None:
+        """The owner was loaded before the `try`, so a load failure escaped raw
+        (CodeRabbit on #369)."""
+        with (
+            patch.object(
+                orientation,
+                "_trusted_execution",
+                side_effect=ImportError("cannot load"),
+            ),
+            self.assertRaises(orientation.OrientationError),
+        ):
+            orientation._git_output(ROOT, "rev-parse", "HEAD")  # skipcq: PYL-W0212
+
+
+class OrientationOwnerBindingTests(unittest.TestCase):
+    def test_the_owner_is_this_checkout_s_whatever_comes_first_on_the_path(
+        self,
+    ) -> None:
+        """A `tools` package earlier on `PYTHONPATH` stood in for the owner when the
+        checkout was already on the path (Codex on #369)."""
+        import os
+        import sys
+
+        with tempfile.TemporaryDirectory() as scratch:
+            shadow = Path(scratch) / "tools"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("", encoding="utf-8")
+            (shadow / "trusted_execution.py").write_text(
+                "SHADOW = True\n", encoding="utf-8"
+            )
+            probe = (
+                "import importlib.util\n"
+                f"spec = importlib.util.spec_from_file_location('o', {str(ORIENTATION_PATH)!r})\n"
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+                "print(m._trusted_execution().__file__)\n"
+            )
+            result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [sys.executable, "-c", probe],
+                capture_output=True,
+                text=True,
+                check=True,
+                # Away from the checkout, whose directory `-c` would put first.
+                cwd="/",
+                env={**os.environ, "PYTHONPATH": f"{scratch}{os.pathsep}{ROOT}"},
+            )
+            self.assertEqual(
+                str((ROOT / "tools" / "trusted_execution.py").resolve()),
+                str(Path(result.stdout.strip()).resolve()),
+            )
 
 
 class OrientationGitGuardTests(unittest.TestCase):
@@ -177,7 +296,7 @@ class OrientationGitGuardTests(unittest.TestCase):
         self.assertIsInstance(command, list)
         self.assertEqual(
             [
-                "git",
+                orientation._trusted_execution().git_executable(),  # skipcq: PYL-W0212
                 "-c",
                 f"safe.directory={root}",
                 "-C",

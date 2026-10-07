@@ -8,6 +8,7 @@ that carries pytest and are skipped when none exists; they never pull one.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import unittest
@@ -504,6 +505,23 @@ class NoSecondSandboxTests(unittest.TestCase):
         self.assertEqual(
             offenders, [], f"isolation must stay in the runner: {offenders}"
         )
+
+
+# Its tests are its parent's, run again under umask 002, so it defines none of its
+# own.
+class OracleStagingCompilerUnderAGroupUmaskTests(
+    OracleStagingCompilerTests
+):  # skipcq: PTC-W0046
+    """The same compilation under umask 002, the default for a user-private group: the
+    directories the toolkit creates stay closed, so trees are still staged (Amazon
+    Q and Kody on #369). The workspace does not exist yet, so the compiler creates
+    it too."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.workspace = self.root / "new-workspace"
+        previous = os.umask(0o002)
+        self.addCleanup(os.umask, previous)
 
 
 if __name__ == "__main__":

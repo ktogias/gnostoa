@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess  # nosec B404
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +24,41 @@ DOCKER_CLI_VERSION = "26.1.5+dfsg1-9+deb13u1"
 FOCUSED_TEST = "tests/test_review_assurance_p2b_b15_runtime_red.py"
 SMOKE_PATH = "ci/review_b15_runtime_smoke.py"
 DECISION_PATH = "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
+
+
+class B15SmokeImportTests(unittest.TestCase):
+    def test_the_smoke_imports_its_own_checkout_s_owner(self) -> None:
+        """The publication workflows run the smoke by path from a nested checkout with
+        no PYTHONPATH, so `from tools import trusted_execution` found no `tools`, or
+        another one (CodeAnt on #369)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            nested = Path(scratch) / "b15-source"
+            for part in ("ci", "tools"):
+                shutil.copytree(ROOT / part, nested / part)
+            environment = {
+                k: v for k, v in os.environ.items() if not k.startswith("PYTHON")
+            }
+            completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [
+                    sys.executable,
+                    "-c",
+                    "import runpy, sys; sys.argv = ['smoke']; "
+                    "runpy.run_path('b15-source/ci/review_b15_runtime_smoke.py', "
+                    "run_name='imported'); "
+                    "print(sys.modules['tools.trusted_execution'].__file__)",
+                ],
+                cwd=scratch,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertEqual(
+                str((nested / "tools" / "trusted_execution.py").resolve()),
+                str(Path(completed.stdout.strip()).resolve()),
+            )
 
 
 class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):

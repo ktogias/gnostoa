@@ -12,6 +12,25 @@ guardrails:
       - knowledge/lifecycles/evidence-gated-capability-evolution.md
       - knowledge/decisions/0062-require-proportionate-prior-art-and-reuse-review.md
 
+  - id: owned-responsibilities-are-extended-not-copied
+    title: A responsibility the toolkit owns is extended at its owner, never written again
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/deliver-bounded-self-hosted-slice.md#look-up-the-owner-first
+    implementation:
+      - policy/owned-responsibilities.yaml
+      - schemas/owned-responsibilities.schema.json
+      - tools/reuse_check.py#violations
+      - tools/trusted_execution.py
+      - AGENTS.md
+      - knowledge/decisions/0102-own-trusted-execution-in-one-hardened-module.md
+    tests:
+      - tests/test_owned_responsibilities.py::RepositoryTests.test_the_production_tree_holds_no_unowned_copy_and_no_stale_debt
+      - tests/test_owned_responsibilities.py::CheckTests.test_a_planted_copy_is_reported_with_its_place
+      - tests/test_owned_responsibilities.py::CheckTests.test_debt_that_no_longer_matches_is_reported_so_it_only_shrinks
+      - tests/test_trusted_execution.py::CallerTests.test_capsule_materialization_runs_no_filter_of_the_subject_s
+
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
     applies_to: [kit, adopting-projects]

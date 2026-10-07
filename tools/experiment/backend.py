@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from tools import trusted_execution
 
 from .profile import RunnerError
 
@@ -22,7 +23,9 @@ class ProbeResult:
 
 
 def docker_executable() -> str:
-    docker = shutil.which("docker")
+    # A sandbox backend the operator chooses: the operator's PATH, by the owner's
+    # explicit policy (Decision 0102).
+    docker = trusted_execution.operator_executable("docker")
     if docker is None:
         raise RunnerError("docker-cli-unavailable")
     return docker
@@ -34,7 +37,7 @@ def probe_backend(backend: str, *, image: str | None) -> ProbeResult:
 
     oci_reasons: list[str] = []
     if backend in {"auto", "oci"}:
-        docker = shutil.which("docker")
+        docker = trusted_execution.operator_executable("docker")
         if docker is None:
             oci_reasons.append("docker-cli-unavailable")
         else:
@@ -72,7 +75,7 @@ def probe_backend(backend: str, *, image: str | None) -> ProbeResult:
             return ProbeResult("BLOCKED", None, oci_reasons)
 
     if backend in {"auto", "bwrap"}:
-        bwrap = shutil.which("bwrap")
+        bwrap = trusted_execution.operator_executable("bwrap")
         bwrap_reasons = (
             ["bwrap-cli-unavailable"]
             if bwrap is None

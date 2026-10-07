@@ -10,22 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import tarfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from tools import trusted_execution
 from tools.capsule import lock as lock_module
 from tools.capsule import profiles
 from tools.capsule.authority import LaunchAuthority
-
-_GIT_ENV = {
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "PATH": "/usr/bin:/bin",
-}
 
 
 class ExecuteError(RuntimeError):
@@ -43,22 +36,14 @@ class ExecutionResult:
 
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination.parent / f"{destination.name}.tar"
+    # The owner materializes the tree with none of the subject repository's own
+    # attributes or filters (Decision 0102).
     try:
-        with archive.open("wb") as handle:
-            subprocess.run(
-                ["git", "-C", str(repo), "archive", "--format=tar", tree],
-                check=True,
-                stdout=handle,
-                env=_GIT_ENV,
-            )
-        if not hasattr(tarfile, "data_filter"):
-            raise ExecuteError("tarfile-data-filter-unavailable")
-        with tarfile.open(archive) as handle:
-            handle.extractall(destination, filter="data")
-    finally:
-        archive.unlink(missing_ok=True)
+        trusted_execution.extract_tree(repo, tree, destination)
+    # A spec's or lock's tree name is data: a malformed one is a blocker too
+    # (CodeAnt on #369).
+    except (trusted_execution.TrustedExecutionError, ValueError) as exc:
+        raise ExecuteError(str(exc)) from exc
 
 
 def materialize_capsule(
@@ -82,7 +67,7 @@ def materialize_capsule(
     scratch = root / "tmp"
     arm_root = root / "arm"
     for path in (project, evidence, scratch, arm_root):
-        path.mkdir(parents=True, exist_ok=True)
+        trusted_execution.private_directory(path)
 
     store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
     if not any(project.iterdir()):
@@ -162,7 +147,7 @@ def execute_lock(
 ) -> ExecutionResult:
     payload = lock_module.load(lock_path)
     result = ExecutionResult(status="BLOCKED")
-    workspace.mkdir(parents=True, exist_ok=True)
+    trusted_execution.private_directory(workspace)
 
     plan = cast(Mapping[str, Any], payload.get("run_plan") or {})
     entries = cast(Sequence[Mapping[str, Any]], plan.get("runs") or [])

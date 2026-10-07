@@ -341,15 +341,20 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                     },
                     environment,
                 )
+                # The judge's Docker comes from the one owner's strict rule, the
+                # trusted system directories and the component walk, not from
+                # `os.defpath` alone (Decision 0102).
+                from tools import trusted_execution
+
                 with mock.patch.object(
-                    review_current.shutil,
-                    "which",
+                    trusted_execution,
+                    "trusted_executable",
                     return_value="/usr/bin/docker",
-                ) as which:
+                ) as trusted:
                     self.assertEqual(
                         "/usr/bin/docker", review_current._docker_executable()
                     )
-                    which.assert_called_once_with("docker", path=os.defpath)
+                    trusted.assert_called_once_with("docker")
 
     def test_docker_output_bound_terminates_before_process_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

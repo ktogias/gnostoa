@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import re
 import stat
-import subprocess
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tools import trusted_execution
 from tools.capsule.identity import digest_of, digest_text
 
 # Explicit, reviewable option-prefix to distribution table. A pytest option namespace
@@ -86,12 +86,6 @@ version_tuple: VERSION_TUPLE
 __version__ = version = {version!r}
 __version_tuple__ = version_tuple = {version_tuple!r}
 """
-
-_GIT_ENV = {
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "PATH": "/usr/bin:/bin",
-}
 
 
 class PreparationError(RuntimeError):
@@ -438,23 +432,16 @@ def derive_scm_version(repository: Path, commit: str) -> dict[str, object]:
     the local segment of a clean tree. The materialised workspace deliberately carries
     no SCM metadata, so the derivation happens here, against the frozen repository.
     """
-    described = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repository),
-            "describe",
-            "--tags",
-            "--long",
-            "--match",
-            "*[0-9]*",
-            commit,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_GIT_ENV,
-    ).stdout.strip()
+    # A read of the frozen repository, which runs none of its own configured
+    # programs (Codex on #369); a failed one is a preparation error (CodeAnt on #369).
+    try:
+        described = trusted_execution.repository_read(
+            repository, "describe", "--tags", "--long", "--match", "*[0-9]*", commit
+        )
+    # A refused argument comes from the preparation input, so it is a preparation
+    # error too (CodeRabbit on #369).
+    except (trusted_execution.TrustedExecutionError, ValueError) as exc:
+        raise PreparationError(f"git describe failed: {exc}") from exc
     match = re.fullmatch(
         r"(?P<tag>.+)-(?P<distance>\d+)-(?P<node>g[0-9a-f]+)", described
     )

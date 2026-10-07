@@ -72,6 +72,28 @@ result needed for the next owner decision. There is no fixed length limit.
 
 ## Prior-art and reuse checkpoint
 
+### Look up the owner first
+
+Before writing any helper, look the responsibility up in
+[`policy/owned-responsibilities.yaml`](../../policy/owned-responsibilities.yaml)
+and extend the owner it names: never write it again. Examples are running Git,
+resolving an executable, building a subprocess's environment, reading a commit's
+content, running authority code, validating a declaration, loading YAML, talking to
+GitHub and confining a path. `knowledge reuse-check` runs in the `fast`,
+`regression` and `extended` profiles, so in the pre-commit and pre-push hooks and
+in provider CI. It refuses a known responsibility's signature outside its owner,
+the places the registry allows with a reason and the declared debt. Debt names
+the exact lines it owes, so a line it does not name is a new copy and a line that
+has gone must be removed from it (Decision 0102, #368).
+
+A responsibility the registry does not list is not therefore new. Search the source
+for it, in Python, shell, workflows and AGENTS.md alike, before writing it. When you
+create an owner, register it, with the signatures that would mark a copy. A reviewer's
+suggested patch shows where a finding is, not how to design the fix: ask which owner
+the fix belongs to first.
+
+### Then the wider search
+
 Before creating or materially revising an Issue, Decision or PR, and before new
 code or implementation, check existing project work and suitable external
 projects for the same bounded need. Apply this checkpoint before the procedure's
@@ -169,6 +191,9 @@ to is how this gate was missed.
 them without anyone deciding to, so treat these as triggers:
 
 - a third hardening round on the same file;
+- an owner decision or a review finding that adds a responsibility, or whose fix
+  would add a helper: #364 copied the preparation authority when an owner decision
+  added "run from protected main" in its eighth round (#368);
 - decision logic accumulating under a provider-specific directory such as `.github/`,
   beyond a few hundred lines;
 - a reviewer or owner asking where a responsibility belongs.

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -198,19 +200,47 @@ def _within_root(root: Path, locator: str) -> Path:
 
 
 def _git_environment() -> dict[str, str]:
-    environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
-    }
+    # The caller's own checkout, observed with the caller's configuration but none of
+    # its `GIT_*` routing or loader variables: the one owner's (#368; CodeAnt on #369).
+    trusted_execution = _trusted_execution()
+    environment = trusted_execution.caller_git_environment(dict(os.environ))
     environment.update({"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"})
     return environment
+
+
+@functools.lru_cache(maxsize=1)
+def _trusted_execution() -> Any:
+    """Return the toolkit's trusted-execution owner from this script's own checkout.
+
+    It is loaded by its file path: a `tools` package earlier on `sys.path` stood in
+    for it when the checkout was already on the path (Codex on #369). The owner
+    imports only the standard library, so loading it alone is whole.
+    """
+    path = Path(__file__).resolve().parents[1] / "tools" / "trusted_execution.py"
+    spec = importlib.util.spec_from_file_location(
+        "gnostoa_orientation_trusted_execution", path
+    )
+    if spec is None or spec.loader is None:
+        raise OrientationError(f"cannot load the trusted-execution owner: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _git_output(root: Path, *args: str) -> str:
     root = root.resolve()
     try:
+        trusted_execution = _trusted_execution()
+    except (ImportError, OSError, SyntaxError) as exc:
+        # A load failure is the orientation's error, not a raw one (CodeRabbit on #369).
+        raise OrientationError("cannot load the trusted-execution owner") from exc
+    try:
+        # The owner's trusted Git, not whatever is first on the caller's `PATH`
+        # (CodeAnt on #369).
+        git = trusted_execution.git_executable()
         result = subprocess.run(
             [
-                "git",
+                git,
                 "-c",
                 f"safe.directory={root}",
                 "-C",
@@ -223,7 +253,11 @@ def _git_output(root: Path, *args: str) -> str:
             timeout=GIT_TIMEOUT_SECONDS,
             env=_git_environment(),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        trusted_execution.TrustedExecutionError,
+    ) as exc:
         raise OrientationError("cannot observe repository Git subject") from exc
     if result.returncode != 0:
         detail = (

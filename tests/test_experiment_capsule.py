@@ -9,6 +9,7 @@ oracle or identification-key content from #183 is reproduced here.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -1699,6 +1700,20 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
         identities = [entry.id for entry in result.run_plan.entries]
         self.assertEqual(len(set(identities)), len(identities))
+
+
+# Its tests are its parent's, run again under umask 002, so it defines none of its
+# own.
+class LockExecutionUnderAGroupUmaskTests(LockExecutionTests):  # skipcq: PTC-W0046
+    """The same lock's execution under umask 002, the default for a user-private group: the
+    directories the toolkit creates stay closed, so trees are still staged (Amazon
+    Q and Kody on #369). The workspace is the caller's, so it is closed here."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.workspace.chmod(0o700)
+        previous = os.umask(0o002)
+        self.addCleanup(os.umask, previous)
 
 
 if __name__ == "__main__":
