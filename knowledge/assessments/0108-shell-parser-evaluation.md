@@ -126,9 +126,63 @@ measurements taken on the frozen subject:
 - **The child environment.** `parent.py` passes its own environment to the worker.
   It ran once, in a disposable container of the development image. The rebuilt
   reader's worker environment is #369's to bound.
+- **The oracle's independence.** `oracle.py` takes the oracle from tree-sitter's
+  own commands, filtered by the policy, so it cannot show on its own that tree-sitter
+  missed nothing. `audit_oracle.py` checks it against the text alone. It finds every
+  occurrence of the word `git`, including path-qualified ones, in the 127 masked
+  scripts. Of the 79 occurrences, 76 lie inside the oracle's 76 commands. The other 3
+  are not shell executions:
+  - the Dockerfile's `"git=${GIT_PACKAGE_VERSION}"`, a package argument to `apt-get`;
+  - `ci/style`'s `"git",`, inside a Python here-document fed to `python -`;
+  - a comment in the 365 evidence script.
+
+  No shell Git execution that names `git` is missing from the oracle. Commands whose
+  name is not static (the 10 dynamic command words) are UNKNOWN under the policy, and
+  the oracle does not count them (Codex on #394).
 - **Timeouts.** The `shfmt` adapter in `evaluate314.py` sets no timeout. Every run
   completed with the results above. Decision 0108's items 9 and 10 bound the
   rebuilt reader's worker, including its timeout.
+
+### `audit_oracle.py`
+
+Checks the oracle's completeness against the text alone: each occurrence of the word
+`git` in the 127 masked scripts lies either inside a command the oracle counted, or is
+listed. SHA-256 `94f5faf4f4aea242…`. Output: 79 occurrences, 76 inside an oracle command, and the
+3 listed above.
+
+````text
+import json, re, sys
+sys.argv = ["x"]
+exec(open("/spike/corpus_scripts.py").read().split('print(f"{len(masked)} scripts')[0])
+# Every occurrence of the word `git`, found by text alone, independently of any parser.
+WORD = re.compile(r"(?<![\w.$-])git(?![\w-])")
+parser = Parser(Language(tsb.language()))
+covered_total = residual_total = 0
+residual = []
+for path, script in masked:
+    data = script.encode("utf-8")
+    spans = []
+    stack = [parser.parse(data).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "command":
+            argv = ts_argv(node)
+            if argv and argv[0] is not None and sr._runs_git([w if w is not None else "\x00" for w in argv], 0):
+                spans.append((node.start_byte, node.end_byte))
+        stack.extend(node.children)
+    for m in WORD.finditer(script):
+        at = len(script[: m.start()].encode("utf-8"))
+        if any(a <= at < b for a, b in spans):
+            covered_total += 1
+        else:
+            residual_total += 1
+            line_start = script.rfind("\n", 0, m.start()) + 1
+            line_end = script.find("\n", m.start())
+            residual.append((path, script[line_start: line_end if line_end != -1 else None].strip()))
+print("scripts", len(masked), "git words", covered_total + residual_total, "inside an oracle command", covered_total, "elsewhere", residual_total)
+for path, line in residual:
+    print(f"  {path}: {line[:150]}")
+````
 
 ### `audit_docs.py`
 
