@@ -135,7 +135,9 @@ agree.
 **A receipt that binds no exact head fails its run.** When the Pull Request's
 head is not the requested one, before or during the readback, the runner still
 writes its `INCOMPLETE` receipt, naming the reason, and the run uploads it; the
-step then fails. A green run without exact-head evidence would make missing
+step then fails. The step says whether it wrote a receipt, and the upload runs only
+when it did, so a failure that wrote none, such as a provider error, is the run's
+only failure and its error stays the one to read (Claude on #388). A green run without exact-head evidence would make missing
 evidence look like a clean producer (#389). Before this, the runner exited 0
 with that receipt, which was reachable only by hand; the automatic trigger makes
 it reachable whenever a push lands between a verification run's end and its
@@ -145,9 +147,10 @@ readback (Kody on #388).
 cancelled, so a flood of requests waits rather than spending the analyzers' rate
 limits, as `review-current-state.yml`'s runs do. The wait is short. Measured on
 2026-10-07, the workflow's last 20 runs took 16 to 25 seconds each, and 52 at most,
-so the queue drains about three runs a minute. Only a verification run of a Pull
-Request that succeeded or failed adds one; a superseded run is cancelled and adds
-none. The queue's order is not guaranteed, so a request's wait is a measured
+so the queue drains about three runs a minute. Only a verification run that rule 1
+admits adds one; a superseded run is cancelled and adds none. The admitted
+conclusions are listed in rule 1 alone, so this paragraph cannot drift from it
+(CodeRabbit and Kody on #388). The queue's order is not guaranteed, so a request's wait is a measured
 expectation, not an ordering property. A request dropped from a full queue, of one
 running and 100 pending, leaves no receipt, and is sent again (Kody on #388).
 

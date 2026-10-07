@@ -95,17 +95,25 @@ jobs:
           CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
           PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
           REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+        # The step keeps the runner's status, and says whether it wrote a receipt,
+        # so a failure that wrote none uploads nothing (Claude on #388).
         run: |
-          set -eu
+          set -u
+          receipt="${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+          status=0
           PYTHONPATH=. python ci/analyzer_readback.py \
             --repository "${GITHUB_REPOSITORY}" \
             --pull-number "${PULL_NUMBER}" \
             --head "${REQUESTED_HEAD}" \
-            --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+            --output "${receipt}" || status=$?
+          if [ -f "${receipt}" ]; then
+            echo "receipt=written" >> "${GITHUB_OUTPUT}"
+          fi
+          exit "${status}"
       - name: Upload non-secret analyzer readback
         # A receipt that binds no exact head fails the step above, and is uploaded
         # still, so its reason stays readable.
-        if: ${{ success() || steps.readback.outcome == 'failure' }}
+        if: ${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}

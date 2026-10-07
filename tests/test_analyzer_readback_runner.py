@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import traceback
 import unittest
@@ -420,6 +421,58 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     )
                     self.assertTrue(stderr.getvalue().startswith("ERROR: "))
                     connect.assert_not_called()
+
+    def test_the_readback_step_says_whether_it_wrote_a_receipt(self) -> None:
+        """The step keeps the runner's status, and says `receipt=written` only when
+        the receipt exists: a runner that fails before writing one leaves nothing
+        to upload (Claude on #388)."""
+        loaded = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+        [step] = [
+            step
+            for step in loaded["jobs"]["readback"]["steps"]
+            if step.get("id") == "readback"
+        ]
+        for status, writes, said in (
+            (0, True, True),
+            (1, True, True),
+            (2, False, False),
+        ):
+            with (
+                self.subTest(status=status),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                scratch = Path(directory)
+                stubs = scratch / "bin"
+                stubs.mkdir()
+                stub = stubs / "python"
+                touch = 'touch "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"\n'
+                stub.write_text(
+                    "#!/bin/sh\n" + (touch if writes else "") + f"exit {status}\n",
+                    encoding="utf-8",
+                )
+                stub.chmod(0o755)
+                output = scratch / "output"
+                output.touch()
+                result = subprocess.run(
+                    ["/bin/sh", "-c", step["run"]],
+                    cwd=ROOT,
+                    env={
+                        "PATH": f"{stubs}:/usr/bin:/bin",
+                        "RUNNER_TEMP": str(scratch),
+                        "GITHUB_OUTPUT": str(output),
+                        "GITHUB_REPOSITORY": "ktogias/gnostoa",
+                        "PULL_NUMBER": "312",
+                        "REQUESTED_HEAD": HEAD,
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertEqual(
+                    "receipt=written\n" if said else "",
+                    output.read_text(encoding="utf-8"),
+                )
 
     def test_main_fails_visibly_when_the_receipt_binds_no_exact_head(self) -> None:
         """A receipt that binds no exact head is written, so its reason stays
@@ -1047,11 +1100,13 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn("gnostoa-analyzer-readback.json", acquire["run"])
         # The resolver fails when it binds no subject, so no later step runs without
         # one (#389). A receipt that binds no exact head fails its step, and is
-        # uploaded still, so its reason stays readable (Kody on #388).
+        # uploaded still, so its reason stays readable (Kody on #388); a failure that
+        # wrote none uploads nothing, so its own error is the run's only one (Claude
+        # on #388).
         self.assertNotIn("if", acquire)
         self.assertEqual("readback", acquire["id"])
         self.assertEqual(
-            "${{ success() || steps.readback.outcome == 'failure' }}",
+            "${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}",
             steps[upload]["if"],
         )
         self.assertEqual(
