@@ -726,13 +726,16 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             def get(url: str) -> tuple[Any, Mapping[str, str]]:
                 raise AssertionError(f"network must not be reached: {url}")
 
+        # Built before the assertion, so the readback is its only call (SonarCloud
+        # S5778 on #388).
+        network = _NoNetwork()
         for head in ("A" * 40, "a" * 39, HEAD + "\n", "", None, 40):
             with (
                 self.subTest(head=head),
                 self.assertRaisesRegex(runner.RunnerError, "exact 40-character SHA"),
             ):
                 runner.collect_bundle(
-                    _NoNetwork(),
+                    network,
                     repository="ktogias/gnostoa",
                     pull_number=312,
                     requested_head=head,
