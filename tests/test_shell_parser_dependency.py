@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import sys
@@ -19,12 +18,16 @@ from unittest.mock import patch
 
 import yaml
 
+from tools.repository_scope import SOURCE_MANIFEST, candidate_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # GitHub Actions expressions are not shell; each is masked at its own width.
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
 # A shebang's interpreter: its last path part, after `env` and its options.
-SHEBANG = re.compile(rb"\A#![ \t]*(?:\S*/)?(?:env[ \t]+(?:-\S+[ \t]+)*)?([\w.+-]+)")
+SHEBANG = re.compile(
+    rb"\A#![ \t]*(?:\S*/)?(?:env[ \t]+(?:-\S+[ \t]+)*)?[\"']?(?:\S*/)?([\w.+-]+)"
+)
 SHELLS = {b"sh", b"bash", b"dash", b"ash"}
 OTHER_SHELLS = {
     b"zsh",
@@ -46,13 +49,10 @@ INSTRUCTION_FILES = ("AGENTS.md",)
 FENCE = re.compile(r"^```(?:bash|sh|shell)[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
-RUN = re.compile(r"[ \t]*RUN[ \t]+(.*)", re.I)
+RUN = re.compile(r"[ \t]*(?:RUN|SHELL)[ \t]+(.*)", re.I)
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
 CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
-# Directories that hold no source: caches, environments and Git's own metadata.
-PRUNED = {".git", "__pycache__", ".mypy_cache", ".ruff_cache", ".venv", "node_modules"}
-KEPT_DOT_DIRECTORIES = {".github", ".githooks", ".devcontainer"}
 
 
 def _probe(scripts: list[str]) -> dict[str, object]:
@@ -182,6 +182,18 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     )
 
 
+def _check_shell_instruction(argument: str) -> None:
+    """A Dockerfile `SHELL` keeps the `RUN` lines shell only when it names `sh`,
+    `bash`, `dash` or `ash`; another program fails closed (CodeAnt on #394)."""
+    try:
+        argv = json.loads(argument)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"an unreadable SHELL: {argument!r}") from exc
+    program = Path(argv[0]).name if isinstance(argv, list) and argv else ""
+    if program.encode() not in SHELLS:
+        raise AssertionError(f"a `{program}` SHELL; extend this extraction")
+
+
 def _dockerfile_runs(text: str) -> list[str]:
     """Each shell-form `RUN` instruction, as Docker hands it to the shell: its
     continuation lines joined, comment lines inside it dropped, its flags removed.
@@ -198,6 +210,9 @@ def _dockerfile_runs(text: str) -> list[str]:
         if match is None:
             continue
         command = match.group(1)
+        if match.group(0).lstrip()[:5].upper() == "SHELL":
+            _check_shell_instruction(command)
+            continue
         while command.endswith("\\") and index < len(lines):
             line = lines[index]
             index += 1
@@ -213,21 +228,15 @@ def _dockerfile_runs(text: str) -> list[str]:
 
 
 def _files(root: Path) -> list[Path]:
-    """Every regular file under ``root``, but in caches, environments and Git's
-    metadata."""
-    found: list[Path] = []
-    for directory, names, files in os.walk(root):
-        names[:] = sorted(
-            name
-            for name in names
-            if name not in PRUNED
-            and (not name.startswith(".") or name in KEPT_DOT_DIRECTORIES)
-        )
-        for name in sorted(files):
-            path = Path(directory) / name
-            if path.is_file() and not path.is_symlink():
-                found.append(path)
-    return found
+    """The repository's candidate files, from their owner: Git's tracked files in a
+    checkout, or the runtime image's source manifest (`tools/repository_scope.py`).
+    A hidden source directory is read like any other; an untracked file is not
+    (Codex on #394)."""
+    return [
+        path
+        for relative in candidate_paths(root)
+        if (path := root / relative).is_file() and not path.is_symlink()
+    ]
 
 
 def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
@@ -266,6 +275,11 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
             head = handle.read(256).removeprefix(BOM)
         shebang = SHEBANG.match(head)
         if shebang is None:
+            if head.startswith(b"#!"):
+                # A shebang this cannot read is not passed over (CodeAnt on #394).
+                raise AssertionError(
+                    f"{name}: an unreadable shebang; extend this extraction"
+                )
             continue
         interpreter = shebang.group(1)
         if interpreter in SHELLS:
@@ -277,6 +291,19 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
                 f"{name}: a `{interpreter.decode()}` script; extend this extraction"
             )
     return surfaces
+
+
+def _declared(root: Path, *, unlisted: tuple[str, ...] = ()) -> Path:
+    """``root`` with a source manifest listing its files, but ``unlisted``."""
+    names = sorted(
+        relative
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.name != SOURCE_MANIFEST
+        and (relative := path.relative_to(root).as_posix()) not in unlisted
+    )
+    (root / SOURCE_MANIFEST).write_bytes(b"".join(n.encode() + b"\0" for n in names))
+    return root
 
 
 class ShellParserDependencyTests(unittest.TestCase):
@@ -393,6 +420,18 @@ class SurfaceExtractionTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "escape directive"):
             _dockerfile_runs("# escape=`\nRUN true\n")
 
+    def test_a_dockerfile_shell_override_is_honoured_or_fails_closed(self) -> None:
+        """A `SHELL` instruction to bash or sh keeps the `RUN` lines shell; to
+        another program it fails closed (CodeAnt on #394)."""
+        self.assertEqual(
+            ["git status"],
+            _dockerfile_runs(
+                'SHELL ["/bin/bash", "-o", "pipefail", "-c"]\nRUN git status\n'
+            ),
+        )
+        with self.assertRaisesRegex(AssertionError, "a `pwsh` SHELL"):
+            _dockerfile_runs('SHELL ["pwsh", "-Command"]\nRUN Write-Output hi\n')
+
     def test_a_workflow_step_is_read_with_its_expressions_masked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "w.yml"
@@ -446,24 +485,30 @@ class SurfaceExtractionTests(unittest.TestCase):
             (root / "deep" / "er").mkdir(parents=True)
             (root / "deep" / "er" / "tool").write_bytes(BOM + b"#!/bin/sh\ngit gc\n")
             (root / "deep" / "data.bin").write_bytes(b"\xff\xfe")
-            (root / ".cache").mkdir()
-            (root / ".cache" / "tool").write_text("#!/bin/sh\nskipped\n", "utf-8")
+            # A hidden source directory is read; an untracked file is not (Codex on
+            # #394).
+            (root / ".husky").mkdir()
+            (root / ".husky" / "pre-commit").write_text(
+                "#!/bin/sh\ngit diff\n", "utf-8"
+            )
+            (root / "scratch").write_text("#!/bin/sh\nuntracked\n", "utf-8")
             self.assertEqual(
                 {
                     ".github/workflows/w.yml#0": "git status",
                     "AGENTS.md#0": "git log _ref_\n",
                     "Dockerfile#0": "git fetch",
                     "deep/er/tool": "#!/bin/sh\ngit gc\n",
+                    ".husky/pre-commit": "#!/bin/sh\ngit diff\n",
                 },
-                _shell_surfaces(root),
+                _shell_surfaces(_declared(root, unlisted=("scratch",))),
             )
             (root / "deep" / "er" / "tool").write_bytes(b"#!/bin/sh\n\xff\n")
             with self.assertRaises(UnicodeDecodeError):
-                _shell_surfaces(root)
+                _shell_surfaces(_declared(root, unlisted=("scratch",)))
             (root / "deep" / "er" / "tool").unlink()
             (root / "Makefile").write_text("all:\n\tgit status\n", "utf-8")
             with self.assertRaisesRegex(AssertionError, "Makefile: a Make recipe"):
-                _shell_surfaces(root)
+                _shell_surfaces(_declared(root, unlisted=("scratch",)))
 
     def test_a_probe_answer_that_is_not_json_is_reported(self) -> None:
         answer = SimpleNamespace(returncode=0, stdout="warn", stderr="")
@@ -513,7 +558,7 @@ class SurfaceExtractionTests(unittest.TestCase):
                     self.subTest(name=name),
                     self.assertRaisesRegex(AssertionError, "a container file"),
                 ):
-                    _shell_surfaces(root)
+                    _shell_surfaces(_declared(root))
 
 
 class InterpreterAndCiShapeTests(unittest.TestCase):
@@ -541,7 +586,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                     ".gitlab-ci.yml#2": "git gc",
                     "ci/github-actions.yml#0": "git log",
                 },
-                _shell_surfaces(root),
+                _shell_surfaces(_declared(root)),
             )
             (root / "ci" / "other.yml").write_text(
                 "pipeline:\n  steps:\n    - script: git status\n", "utf-8"
@@ -549,7 +594,27 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 AssertionError, "other.yml: shell in an unknown"
             ):
-                _shell_surfaces(root)
+                _shell_surfaces(_declared(root))
+
+    def test_a_checkout_s_tracked_files_are_the_universe(self) -> None:
+        """In a Git checkout the tracked files are read, wherever they sit, and an
+        untracked one is not; the runtime image's source manifest stands in for Git
+        where there is none."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".husky").mkdir()
+            (root / ".husky" / "hook").write_text("#!/bin/sh\ngit a\n", "utf-8")
+            (root / "scratch").write_text("#!/bin/sh\ngit b\n", "utf-8")
+            git = ["git", "-c", "init.defaultBranch=main", "-C", str(root)]
+            for argv in (["init", "-q"], ["add", ".husky/hook"]):
+                subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            self.assertEqual({".husky/hook"}, set(_shell_surfaces(root)))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "listed").write_text("#!/bin/sh\ngit c\n", "utf-8")
+            (root / "unlisted").write_text("#!/bin/sh\ngit d\n", "utf-8")
+            (root / ".gnostoa-source-files").write_bytes(b"listed\0")
+            self.assertEqual({"listed"}, set(_shell_surfaces(root)))
 
     def test_a_shebang_is_classified_by_its_interpreter(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -559,14 +624,21 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "b": b"#!/usr/local/bin/bash\ngit b\n",
                 "c": b"#!/usr/bin/env -S bash -e\ngit c\n",
                 "d": b"#! /bin/dash\ngit d\n",
+                "e": b'#!/usr/bin/env -S "bash -e"\ngit e\n',
                 "p": b"#!/usr/bin/env python3\nprint()\n",
             }
             for name, content in scripts.items():
                 (root / name).write_bytes(content)
-            self.assertEqual({"a", "b", "c", "d"}, set(_shell_surfaces(root)))
+            self.assertEqual(
+                {"a", "b", "c", "d", "e"}, set(_shell_surfaces(_declared(root)))
+            )
+            (root / "u").write_bytes(b"#!\ngit u\n")
+            with self.assertRaisesRegex(AssertionError, "u: an unreadable shebang"):
+                _shell_surfaces(_declared(root))
+            (root / "u").unlink()
             (root / "z").write_bytes(b"#!/usr/bin/env zsh\ngit z\n")
             with self.assertRaisesRegex(AssertionError, "z: a `zsh` script"):
-                _shell_surfaces(root)
+                _shell_surfaces(_declared(root))
 
 
 class RetainedEvidenceTests(unittest.TestCase):

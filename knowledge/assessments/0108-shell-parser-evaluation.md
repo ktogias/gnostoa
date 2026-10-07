@@ -86,6 +86,27 @@ corrects that.
     nested escaped backticks;
   - mvdan/sh fails 5, every one an incomplete line fragment that it refuses.
 
+## License, SBOM and notice evidence
+
+Decision 0108's item 14 asks the dependency PR for this evidence. It comes from the
+`extended` suite's quality evidence (`ci/quality_evidence.py`), run on #394's branch
+rebased onto `9e45bd6`:
+
+| Package | Version | Declared license | License file | SBOM component |
+|---|---|---|---|---|
+| `tree-sitter` | 0.25.2 | MIT | `LICENSE` | `pkg:pypi/tree-sitter@0.25.2` |
+| `tree-sitter-bash` | 0.25.1 | MIT | `LICENSE` | `pkg:pypi/tree-sitter-bash@0.25.1` |
+
+- **Inventories:** both rows appear in the runtime and in the development license
+  inventory, and both CycloneDX SBOMs (runtime and development) list both
+  components.
+- **Notices:** each wheel ships its license file in its metadata, as PyYAML's and
+  jsonschema's do. `THIRD_PARTY_NOTICES` covers CPython only (Decision 0037), so it
+  does not change.
+- **Compatibility:** MIT is compatible with Gnostoa's Apache-2.0 distribution.
+  This is unlike bashlex and ShellCheck (GPLv3), which Decision 0108's item 13
+  rejects.
+
 ## The worker boundary
 
 One worker process parsed all 127 scripts in 0.51 s, against 0.05 s in-process, the
