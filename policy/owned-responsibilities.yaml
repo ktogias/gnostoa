@@ -109,8 +109,11 @@ responsibilities:
       - id: git-shell-command
         # A literal command handed to a shell helper named through an imported
         # name, a module alias, or on another line than the command, where no line
-        # shows it. The command is read as a line is, by this entry's own line
-        # patterns, so a line no pattern marks is judged this way (Codex on #369).
+        # shows it, and the shell text of a script, a Dockerfile, a Makefile, a
+        # workflow or an AGENTS.md. Each is judged by this entry's own line patterns,
+        # as a line is, and by the shell command reader of Decision 0105, which
+        # reads command positions with a tokenizer. New shell forms are the
+        # reader's, never this file's patterns (the owner, 2026-10-07).
         structure: shell-command-indirect
         means: a command run outside the owner, handed to a shell where no line shows it
       - id: executable-lookup-indirect

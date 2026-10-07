@@ -308,6 +308,9 @@ here.
    Round 38 reads a `case` arm's commands after its `)`, `archive` as an argument
    list's own word with Git's default format, and a template given as a word of
    its own.
+   From round 39 on, a shell command's position is read by the shell command
+   reader of Decision 0105, not by new pattern forms, at the owner's choice of
+   2026-10-07.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and

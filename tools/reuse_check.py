@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
-from tools import trusted_execution
+from tools import shell_reader, trusted_execution
 from tools.knowledge_common import KnowledgeFormatError, load_yaml
 from tools.schema_validation import schema_errors
 
@@ -707,42 +707,15 @@ def _shell_commands(tree: ast.AST) -> dict[int, tuple[str, ...]]:
     return {line: tuple(texts) for line, texts in found.items()}
 
 
-# The shells an argument list may name at its head, by the name it runs under.
-_SHELLS = frozenset({"sh", "bash", "dash", "ksh", "zsh", "ash"})
-# A shell's options that take the next word as their value, as `-O extglob` does
-# (Codex on #369).
-_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
-
-
 def _shell_argv_command(words: list[ast.expr]) -> tuple[int, str] | None:
-    """`["sh", "-c", "git status"]`: the command an argument list hands its shell
-    with a short option carrying `c`, as `-lc`, wherever the list stands (Codex on
-    #369). A long option is skipped, and an option that takes a value, as `-o` or
-    `-O`, takes its word."""
-    head = _text(words[0]) if words else None
-    if head is None or head.rsplit("/", 1)[-1] not in _SHELLS:
+    """`["sh", "-c", "git status"]`: the command an argument list hands a shell,
+    after any wrappers before it, as `["env", "bash", "-c", ...]`, wherever the list
+    stands (Codex on #369). The shell reader peels them (Decision 0105)."""
+    texts = [None if (found := _literal(word)) is None else found[1] for word in words]
+    handed = shell_reader.handed_command(texts)
+    if handed is None:
         return None
-    index = _command_index(words)
-    return None if index is None else _literal(words[index])
-
-
-def _command_index(words: list[ast.expr]) -> int | None:
-    """Where the word a shell's `-c` names stands, read past the options before it;
-    None if a word that is no option comes first, or no word follows."""
-    index = 1
-    while index < len(words):
-        option = _text(words[index])
-        if option is None:
-            return None
-        if option in _VALUE_OPTIONS:
-            index += 2
-        elif not option.startswith("-"):
-            return None
-        elif not option.startswith("--") and "c" in option:
-            return index + 1 if index + 1 < len(words) else None
-        else:
-            index += 1
-    return None
+    return words[handed[0]].lineno, handed[1]
 
 
 def _text(node: ast.expr) -> str | None:
@@ -867,7 +840,7 @@ def _structural_lines(
         if not relative.endswith(".py") and not (
             first.startswith(b"#!") and b"python" in first
         ):
-            return {}, {}
+            return {}, _shell_text(handle, relative, data, wanted)
         data += handle.read(_STRUCTURE_LIMIT_BYTES + 1 - len(data))
     if len(data) > _STRUCTURE_LIMIT_BYTES:
         raise KnowledgeFormatError(f"{relative}: too large to check its structure")
@@ -884,6 +857,24 @@ def _structural_lines(
         for name in wanted
         if name in _STRUCTURES
     }, _shell_commands(tree) if _SHELL_COMMAND in wanted else {}
+
+
+def _shell_text(
+    handle: IO[bytes], relative: str, data: bytes, wanted: frozenset[str]
+) -> dict[int, tuple[str, ...]]:
+    """A shell-ish file's shell text, by line, for the shell command reader
+    (Decision 0105): a script, a Dockerfile, a Makefile, a workflow or an
+    `AGENTS.md`. A file too large to read whole cannot pass as clean."""
+    first = data.split(b"\n", 1)[0].decode("utf-8-sig", errors="replace")
+    if _SHELL_COMMAND not in wanted or not shell_reader.is_shell_source(
+        relative, first
+    ):
+        return {}
+    data += handle.read(_STRUCTURE_LIMIT_BYTES + 1 - len(data))
+    if len(data) > _STRUCTURE_LIMIT_BYTES:
+        raise KnowledgeFormatError(f"{relative}: too large to read its shell text")
+    text = data.decode("utf-8-sig", errors="replace")
+    return shell_reader.shell_lines(relative, text.splitlines())
 
 
 def _covers(places: tuple[Place, ...], path: str, signature: str) -> bool:
@@ -935,7 +926,11 @@ def _matched(
     command handed to a shell counts only where no line pattern already did, so no
     line is marked twice."""
     lined = {s.id for s in entry.signatures if s.pattern and s.pattern.search(text)}
-    shell = not lined and _runs_as_a_line(entry, commands.get(number, ()))
+    handed = commands.get(number, ())
+    shell = not lined and (
+        _runs_as_a_line(entry, handed)
+        or any(shell_reader.runs_git(command) for command in handed)
+    )
     return [
         s.id
         for s in entry.signatures

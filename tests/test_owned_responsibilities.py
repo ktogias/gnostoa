@@ -12,6 +12,7 @@ import io
 import os
 import pathlib
 import re
+import shlex
 import subprocess  # nosec B404
 import tempfile
 import time
@@ -19,7 +20,7 @@ import tracemalloc
 import unittest
 from unittest import mock
 
-from tools import reuse_check, trusted_execution
+from tools import reuse_check, shell_reader, trusted_execution
 from tools.knowledge_common import KnowledgeFormatError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -117,6 +118,260 @@ def _findings_with_the_real_registry(files: dict[str, str]) -> list[str]:
         for f in found
         if any(re.match(rf"{re.escape(name)}:\d+:", f) for name in files)
     ]
+
+
+def _git_runs(files: dict[str, str]) -> set[str]:
+    """Each `path:line` where a signature of running Git marks a line."""
+    return {
+        ":".join(f.split(":")[:2])
+        for f in _findings_with_the_real_registry(files)
+        if "git-execution" in f or "git-shell-command" in f
+    }
+
+
+class ShellReaderTests(unittest.TestCase):
+    """The shell command reader, Decision 0105: positions, peeled words, sources."""
+
+    def test_a_command_position_after_any_separator_or_word_runs_git(self) -> None:
+        cases = {
+            "ci/a.sh": "if true; then git status; fi\n",
+            "ci/b.sh": '"git" status\n',
+            "ci/c.sh": "\\git status\n",
+            "ci/d.sh": "sh -c 'if true; then git gc; fi'\n",
+            "ci/e.sh": "true && { LC_ALL=C time git log; }\n",
+        }
+        self.assertEqual({f"{name}:1" for name in cases}, _git_runs(cases))
+
+    def test_python_hands_a_shell_its_command_through_a_wrapper(self) -> None:
+        """`["env", "bash", "-c", "git status"]` reaches a shell through a wrapper
+        (Codex on #369)."""
+        cases = {
+            "tools/a.py": 'import subprocess\nsubprocess.run(["env", "bash", "-c", "git status"])\n',
+            "tools/b.py": 'run(["/usr/bin/env", "-i", "sh", "-c", "git fetch"])\n',
+            "tools/c.py": 'from os import system\nsystem("if true; then git gc; fi")\n',
+        }
+        self.assertEqual(
+            {"tools/a.py:2", "tools/b.py:1", "tools/c.py:2"}, _git_runs(cases)
+        )
+
+    def test_each_source_of_shell_text_is_read(self) -> None:
+        cases = {
+            ".github/workflows/w.yml": (
+                "jobs:\n  j:\n    steps:\n      - run: |\n"
+                "          echo start\n          if true; then git fetch; fi\n"
+            ),
+            "Dockerfile": "FROM x\nRUN set -e; if true; then git clone y; fi\n",
+            "Makefile": "all:\n\tif true; then git gc; fi\n",
+            "AGENTS.md": "Run:\n\n```bash\nif true; then git status; fi\n```\n",
+            "ci/tool": "#!/bin/sh\nif true; then git log; fi\n",
+        }
+        self.assertEqual(
+            {
+                ".github/workflows/w.yml:6",
+                "Dockerfile:2",
+                "Makefile:2",
+                "AGENTS.md:4",
+                "ci/tool:2",
+            },
+            _git_runs(cases),
+        )
+
+    def test_text_that_only_names_git_is_no_command(self) -> None:
+        cases = {
+            "ci/a.sh": "echo git status\n",
+            "ci/b.sh": "printf '%s\\n' 'if true; then git gc; fi'\n",
+            "ci/c.sh": "grep -r git .\n",
+            "ci/d.sh": "# if true; then git status; fi\n",
+            "ci/e.sh": "git_status=1\n",
+            "AGENTS.md": "Prose: if true; then git status; fi\n",
+            "tools/a.py": 'run(["env", "bash", "-c", "make test"])\n',
+        }
+        self.assertEqual(set(), _git_runs(cases))
+
+
+class ShellReaderUnitTests(unittest.TestCase):
+    """Each branch of the shell command reader, Decision 0105."""
+
+    def test_each_word_before_a_command_is_peeled(self) -> None:
+        runs = (
+            "git status",
+            "/usr/bin/git fetch",
+            '"git" log',
+            "\\git gc",
+            "@git status",
+            "`git rev-parse HEAD`",
+            "`git`",
+            "x=$(git describe)",
+            "if git diff; then",
+            "then git status",
+            "! git diff --quiet",
+            "{ git status; }",
+            "while git fetch; do",
+            "until git pull; do",
+            "true && git push",
+            "false || git fetch",
+            "a | git apply",
+            "x & git gc",
+            "(git gc)",
+            "case m in a) git gc ;; esac",
+            "A=1 B=2 git log",
+            "env git status",
+            "env -i git status",
+            "env -u GIT_DIR git status",
+            "env A=1 git status",
+            "env -S 'git status'",
+            "env --split-string='git log'",
+            "sudo -u builder git fetch",
+            "timeout -s KILL 10 git fetch",
+            "nice -n 5 git gc",
+            "xargs -0 git add",
+            "command -p git status",
+            "flock /var/lock/x git gc",
+            "stdbuf -oL git log",
+            "time -p git status",
+            "exec git status",
+            "nohup git fetch",
+            "sh -c 'git status'",
+            "bash -lc 'git fetch'",
+            "bash -O extglob -c 'git log'",
+            "bash --norc -c 'git gc'",
+            "bash -o pipefail -c 'git status'",
+            "sh -c 'sh -c \"git status\"'",
+            "echo ok\ngit status",
+        )
+        for text in runs:
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        names = (
+            "echo git status",
+            "grep git file",
+            "git_dir=x",
+            "printf 'git status'",
+            "# git status",
+            "make git",
+            "sh script.sh",
+            "sh -c",
+            "bash -c 'echo git'",
+            "sudo make",
+            "env",
+            "nice -n 5 make git",
+            "timeout 10 python3 tool.py",
+            "'unterminated git",
+            "time",
+            "env -S",
+            "",
+        )
+        for text in names:
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
+    def test_nesting_is_followed_to_a_bound(self) -> None:
+        text = "git status"
+        for _ in range(4):
+            text = f"sh -c {shlex.quote(text)}"
+        self.assertTrue(shell_reader.runs_git(text))
+        self.assertFalse(shell_reader.runs_git(f"sh -c {shlex.quote(text)}"))
+
+    def test_an_argument_list_hands_its_shell_a_command(self) -> None:
+        cases = (
+            (["sh", "-c", "git status"], (2, "git status")),
+            (["env", "bash", "-c", "git status"], (3, "git status")),
+            (["/usr/bin/env", "-i", "sh", "-c", "x"], (4, "x")),
+            (["env", "-S", "git status"], (2, "git status")),
+            (["env", "--split-string=git log"], (1, "git log")),
+            (["sh", "script.sh"], None),
+            ([None, "-c", "x"], None),
+            (["python3", "-c", "x"], None),
+            (["sh", "-c"], None),
+            (["env", None, "sh", "-c", "x"], None),
+            (["sh", None, "-c", "x"], None),
+            (["sh", "-c", None], None),
+        )
+        for argv, handed in cases:
+            with self.subTest(argv=argv):
+                self.assertEqual(handed, shell_reader.handed_command(argv))
+
+    def test_each_source_keeps_its_own_lines(self) -> None:
+        cases: tuple[tuple[str, list[str], dict[int, tuple[str, ...]]], ...] = (
+            ("ci/a.sh", ["x", "git status"], {1: ("x",), 2: ("git status",)}),
+            (
+                "ci/tool",
+                ["#!/usr/bin/env bash", "git gc"],
+                {1: ("#!/usr/bin/env bash",), 2: ("git gc",)},
+            ),
+            (
+                "Dockerfile",
+                [
+                    "FROM a",
+                    "RUN a \\",
+                    "  && git clone x",
+                    'RUN ["git", "x"]',
+                    "ENV X=1",
+                ],
+                {2: ("a \\",), 3: ("  && git clone x",)},
+            ),
+            ("Makefile", ["all:", "\tgit gc", "git: all"], {2: ("git gc",)}),
+            (
+                ".github/workflows/w.yml",
+                [
+                    "      - run: git status",
+                    '      - run: "git log"',
+                    "      - run: |",
+                    "          git fetch",
+                    "",
+                    "          git gc",
+                    "      - name: x",
+                ],
+                {
+                    1: ("git status",),
+                    2: ("git log",),
+                    4: ("          git fetch",),
+                    5: ("",),
+                    6: ("          git gc",),
+                },
+            ),
+            (
+                "docs/AGENTS.md",
+                [
+                    "prose git status",
+                    "```bash",
+                    "git status",
+                    "```",
+                    "```console",
+                    "$ git log",
+                    "```",
+                    "```python",
+                    "git = 1",
+                    "```",
+                ],
+                {3: ("git status",), 6: ("git log",)},
+            ),
+            ("README.txt", ["git status"], {}),
+        )
+        for relative, lines, found in cases:
+            with self.subTest(relative=relative):
+                self.assertEqual(found, shell_reader.shell_lines(relative, lines))
+
+    def test_a_shell_source_is_known_by_its_name_or_shebang(self) -> None:
+        for relative, first, shell in (
+            ("ci/a.sh", "", True),
+            ("ci/a.bash", "", True),
+            ("ci/tool", "#!/bin/sh", True),
+            ("ci/tool", "#!/usr/bin/env bash", True),
+            ("ci/tool", "#!/usr/bin/env python3", False),
+            ("ci/tool", "#!/usr/bin/python3", False),
+            ("Dockerfile", "", True),
+            ("Dockerfile.dev", "", True),
+            ("x.Dockerfile", "", True),
+            ("Makefile", "", True),
+            ("rules.mk", "", True),
+            (".github/workflows/w.yaml", "", True),
+            ("docs/w.yml", "", False),
+            ("sub/AGENTS.md", "", True),
+            ("README.md", "", False),
+        ):
+            with self.subTest(relative=relative, first=first):
+                self.assertEqual(shell, shell_reader.is_shell_source(relative, first))
 
 
 class UnreadableTreeTests(unittest.TestCase):
@@ -450,6 +705,7 @@ class StructuralSignatureTests(unittest.TestCase):
                 2,
             ),
             ('from os import system\nsystem("cd /srv\\ngit fetch")\n', 2),
+            ('from os import system\nsystem("echo ok\\nGIT=git")\n', 2),
         )
         for source, line in cases:
             with self.subTest(source=source):

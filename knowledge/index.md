@@ -110,6 +110,7 @@ inherited, copied or loaded by adopting projects.
 - [Separate the agent review pipeline into a provider- and agent-neutral core and adapters](decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md)
 - [Own trusted execution in one hardened module, and refuse new copies](decisions/0102-own-trusted-execution-in-one-hardened-module.md)
 - [Run the regression and smoke suites beside extended, behind the same regression gate](decisions/0103-run-the-regression-and-smoke-suites-beside-extended-behind-the-regression-gate.md)
+- [Read shell command positions with a tokenizer in the reuse check](decisions/0105-read-shell-command-positions-with-a-tokenizer-in-the-reuse-check.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
