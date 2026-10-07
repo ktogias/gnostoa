@@ -935,6 +935,11 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch'",
             "github.event_name == 'repository_dispatch'",
             "github.event_name == 'workflow_run'",
+            # A run that a later push superseded is cancelled, and its head is no
+            # longer the Pull Request's, so it reads nothing (Kody on #388). A failed
+            # run still reads its head's analyzers. Each admitted conclusion is named.
+            "github.event.workflow_run.conclusion == 'success'",
+            "github.event.workflow_run.conclusion == 'failure'",
             "github.event.workflow_run.event == 'pull_request'",
             "github.event.workflow_run.path == '.github/workflows/verification.yml'",
         ):

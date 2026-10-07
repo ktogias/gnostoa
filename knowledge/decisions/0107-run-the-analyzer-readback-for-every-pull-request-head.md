@@ -66,7 +66,13 @@ admits only `main`. That job now starts in three ways:
    these hold:
    - the ref is `refs/heads/main`;
    - the triggering run's event is `pull_request`;
-   - the triggering run's path is `.github/workflows/verification.yml`.
+   - the triggering run's path is `.github/workflows/verification.yml`;
+   - the triggering run succeeded or failed. A run that a later push superseded is
+     cancelled, and its head is no longer the Pull Request's, so its readback
+     would only spend the analyzers' rate limits (Kody on #388). A run that failed
+     still reads its head's analyzers, since that head stays the Pull Request's
+     until the next push. Each admitted conclusion is named; for any other, a
+     readback is requested.
 
    It reads the run's `head_sha`, and its `pull_requests` when that list holds
    exactly one Pull Request. A fork's run has none, and a head shared by two Pull
@@ -75,7 +81,9 @@ admits only `main`. That job now starts in three ways:
    like a clean producer (#389). For a `pull_request` run, `head_sha` is
    the Pull Request's own head, not its merge ref: measured on 2026-10-07, each of
    #384's and #369's last three verification runs carried exactly that round's
-   head.
+   head. On #388's heads `6a0c150` and `b697c79` too, the run's `head_sha` was
+   the branch commit; `pull_requests[].head.sha` is the Pull Request's head when
+   the event is read, which a later push may already have moved.
 2. **On request**, on `repository_dispatch` of type `gnostoa-analyzer-readback`,
    whose payload names `pull_number` and `head`. An agent sends it with the token it
    already holds: `POST /repos/{owner}/{repo}/dispatches` needs Contents write,
