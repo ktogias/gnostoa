@@ -1,0 +1,193 @@
+---
+type: Decision
+title: Confine every branch and tag write to repository administrators
+description: Two repository rulesets let only the repository admin role create, update, force-push or delete any branch or tag, so an installed app with write access, such as Amazon Q Developer, cannot place unreviewed code or workflows on any ref. Records the measured app permissions, the controls that already held, the gap they left, the rulesets and their verification.
+status: draft
+generated:
+  by: anthropic/claude-opus-5-5
+  at: "2026-10-07T09:42:00Z"
+sources:
+  - id: work-item
+    resource: https://github.com/ktogias/gnostoa/issues/383
+    title: Record the rulesets that confine ref writes to repository administrators
+  - id: app-permissions
+    resource: https://api.github.com/apps/amazon-q-developer
+    title: The Amazon Q Developer GitHub App's permissions and events
+  - id: q-for-github
+    resource: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/amazon-q-for-github.html
+    title: Amazon Q Developer for GitHub (Preview), its agents and slash commands
+  - id: q-code-reviews
+    resource: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/github-code-reviews.html
+    title: Reviewing code with Amazon Q Developer in GitHub, with its role prerequisite
+  - id: q-configuration
+    resource: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/github-configuration.html
+    title: Configuring registered installation details, which cannot change feature development
+  - id: q-troubleshooting
+    resource: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/github-troubleshooting.html
+    title: Branch protection rules prevent Amazon Q from creating a branch
+  - id: credentials-boundary
+    resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5979363503
+    title: The owner's agent credentials boundary of 2026-10-04
+  - id: provider-enforcement-0013
+    resource: ./0013-defer-provider-enforcement-while-private.md
+    title: Provider enforcement deferred while the repository was private
+  - id: claude-credential-0097
+    resource: ./0097-scope-the-claude-credential-to-the-protected-branch.md
+    title: The Claude credential scoped to the protected branch through an environment
+x-project-knowledge:
+  id: kit.decision.0106.confine-every-branch-and-tag-write-to-repository-administrators
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: references
+      target: /decisions/0013-defer-provider-enforcement-while-private.md
+    - kind: references
+      target: /decisions/0097-scope-the-claude-credential-to-the-protected-branch.md
+---
+
+# Confine every branch and tag write to repository administrators
+
+## Context
+
+On 2026-10-07 the owner installed Amazon Q Developer to add its review to the agent
+review cycle of Gnostoa-self Pull Requests. Measured that day:
+
+- **The app's permissions** (`GET /apps/amazon-q-developer`) are write on
+  `actions`, `checks`, `contents`, `issues`, `pull_requests` and `workflows`, and
+  read on `administration`, `metadata` and `organization_administration`. An
+  installer accepts them whole; it cannot narrow them.
+- **Its documented behaviour** (AWS, preview):
+  - It reviews on its own only when a Pull Request opens or reopens.
+  - `/q review` asks for a review.
+  - `/q` with free text makes it commit to the Pull Request's source branch, and
+    its "Commit suggestion" commits a fix.
+  - `/q dev`, or the `Amazon Q development agent` label, makes it implement an
+    Issue and open a Pull Request from a branch it creates.
+  - Feature development cannot be switched off: "Feature development
+    configuration cannot currently be modified". Only reviews can be toggled, and
+    only after registering the installation with an AWS account.
+  - A role gate of Write, Maintain or Admin is documented for starting a review.
+    None is documented for `/q dev`.
+- **The repository is public**, so anyone can open an Issue or comment.
+
+**What already held**, read back on 2026-10-07:
+
+- **`main`.** Its required checks, `policy`, `fast`, `regression` and `smoke`, are
+  bound to GitHub Actions (`app_id` 15368) and enforced for everyone, so a check run
+  another app posts cannot satisfy them. `CODEOWNERS` assigns every path to the
+  owner. The ruleset "Require CodeQL on main" applies.
+- **Secrets.** The workflows use three secrets, and all of them live in
+  environments:
+  - `analyzer-readback` and `claude-review` admit only `main` (Decision 0097);
+  - `vf0-admission` admits one named branch and requires the owner's approval.
+- **Publishing.** Six workflows publish images with `packages: write` and
+  `id-token: write`, all only on a push to `main`. `publish-oci.yml` runs only from
+  `main`'s own workflow, and pins `v0.2.0`'s tag object and commit.
+- **Agent publication** fails closed on a foreign commit: a push that is not a
+  fast-forward, or whose lease does not match, is refused.
+
+**The gap was every other ref.** An app with `contents` and `workflows` write could
+create branches and tags, commit to a Pull Request's branch, and add a workflow
+file. GitHub runs such a file on push, with the write token permissions it declares
+for itself, before any review. Provider CI verifies content, by design, not who
+wrote a commit. The Work Item and Decision gates are procedure, not a provider
+control on another author's change.
+
+## Decision
+
+The owner created two repository rulesets on 2026-10-07:
+
+| Id | Name | Target | Rules | Bypass |
+|---|---|---|---|---|
+| `24640984` | Only admins write branches | every branch, `~ALL` | creation, update without fetch-and-merge, deletion, non-fast-forward | the repository admin role, always |
+| `24640985` | Only admins write tags | every tag, `~ALL` | the same | the same |
+
+So only an actor with the repository admin role can create, update, force-push or
+delete any branch or tag. Any app outside the bypass list cannot commit, create a
+branch or tag, or merge: Amazon Q's `/q dev`, its label, `/q` with free text and
+"Commit suggestion" all fail. AWS's troubleshooting page confirms the mechanism:
+branch protection rules prevent Amazon Q from creating its branch.
+
+**What stays possible**, since it is no ref write: reviews, comments, Issues,
+labels, check runs, and dispatching or re-running workflows. The controls above
+bound each of these: required checks bound to GitHub Actions, secrets in
+environments, and publishing only from `main`.
+
+**How agents use Amazon Q** within the review cycle: they post exactly
+`/q review`. They never post any other `/q` text, never apply its label, and never
+use "Commit suggestion".
+
+The JSON, as imported:
+
+```json
+{
+  "name": "Only admins write branches",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ],
+  "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
+  "rules": [
+    { "type": "creation" },
+    { "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
+    { "type": "deletion" },
+    { "type": "non_fast_forward" }
+  ]
+}
+```
+
+The tag ruleset is the same, with `"name": "Only admins write tags"` and
+`"target": "tag"`.
+
+## Alternatives not chosen
+
+- **Allow-listing Amazon Q**, as AWS's troubleshooting page suggests: that grants
+  the writes this Decision removes.
+- **Relying on `main`'s protection alone**: it leaves every other ref open.
+- **Disabling Q's features in the AWS console**: feature development cannot be
+  disabled.
+- **Uninstalling Amazon Q**: it gives up its review, which is the reason it was
+  installed.
+
+## Consequences
+
+- **The rulesets do not constrain agents.** Bypass follows the user's role, not the
+  token: agents act through the owner's restricted personal access token, whose user
+  is the repository admin. The agent boundary stays where the credentials boundary
+  put it: that token holds no Administration, Deployments, Environments or Secrets
+  permission. If agents move to an account of their own, that account needs a
+  bypass entry, or must work from a fork.
+- **A writer outside the bypass needs an entry first.** Today none exists: no
+  workflow runs `git push` or requests `contents: write`. Dependabot would need one
+  if its security updates are enabled.
+- **The rulesets live in the provider.** This record and its JSON are their source.
+  Changing them needs the owner and a token with Administration write, which agents
+  do not hold.
+- **Two facts remain for the owner to confirm.** The agents' token cannot read
+  either of them:
+  - that no secret is defined at repository level, outside an environment;
+  - that `main` requires a code owner's review.
+
+## Verification
+
+Read back and exercised on 2026-10-07:
+
+- **The rulesets.** `GET repos/ktogias/gnostoa/rulesets/{24640984,24640985}`
+  returned:
+  - `enforcement: active`;
+  - `include: ["~ALL"]`;
+  - the four rules;
+  - `bypass_actors: [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]`.
+- **They apply to any branch name.** `GET repos/ktogias/gnostoa/rules/branches/probe-anything`
+  listed `creation`, `update`, `deletion` and `non_fast_forward` from `24640984`.
+- **They are evaluated for agents too.** A push creating, then deleting, a
+  temporary branch through the agents' token succeeded, with GitHub reporting:
+  - `Bypassed rule violations … Cannot create ref due to creations being restricted`;
+  - `Cannot delete this branch`.
+
+  So the rules are evaluated, and only the admin bypass let the push through.
+- **Amazon Q's refusal was not exercised.** That would have needed giving it a
+  write command.
