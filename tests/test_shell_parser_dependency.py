@@ -1,5 +1,10 @@
 """The pinned shell parser pair is installed, compatible, and reads the constructs
-the shell reader relies on (Decision 0108)."""
+the shell reader relies on (Decision 0108).
+
+The surface extraction below is interim. Decision 0108's item 1 makes host-language
+extraction the reader's own (#369), and nothing on `main` owns it yet. When #369
+lands, this smoke consumes the reader's extraction and these helpers are deleted, so
+the two cannot drift apart (Claude on #394)."""
 
 from __future__ import annotations
 
