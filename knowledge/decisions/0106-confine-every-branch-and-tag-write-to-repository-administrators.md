@@ -34,6 +34,9 @@ sources:
   - id: provider-enforcement-0013
     resource: ./0013-defer-provider-enforcement-while-private.md
     title: Provider enforcement deferred while the repository was private
+  - id: analyzer-readback-0091
+    resource: ./0091-add-authenticated-provider-neutral-analyzer-readback.md
+    title: The analyzer-readback environment, which must admit only main
   - id: claude-credential-0097
     resource: ./0097-scope-the-claude-credential-to-the-protected-branch.md
     title: The Claude credential scoped to the protected branch through an environment
@@ -46,6 +49,8 @@ x-project-knowledge:
   relations:
     - kind: references
       target: /decisions/0013-defer-provider-enforcement-while-private.md
+    - kind: references
+      target: /decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
     - kind: references
       target: /decisions/0097-scope-the-claude-credential-to-the-protected-branch.md
 ---
@@ -88,10 +93,13 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
   "Do not allow bypassing the above settings" is on, and force pushes and
   deletions are off. The ruleset "Require CodeQL on main" applies. `CODEOWNERS`
   assigns every path to the owner.
-- **Secrets.** The workflows use three secrets, and all of them live in
-  environments:
-  - `analyzer-readback` and `claude-review` admit only `main` (Decision 0097);
-  - `vf0-admission` admits one named branch and requires the owner's approval.
+- **Secrets.** The workflows use three secrets, and all of them live in two
+  environments that admit only `main`:
+  - `analyzer-readback` holds two of them (Decision 0091);
+  - `claude-review` holds the third (Decision 0097).
+
+  A third environment, `vf0-admission`, holds no secret, as the owner's read below
+  shows. It admits one named branch and requires the owner's approval.
 - **Publishing.** Seven workflows publish images with `packages: write` and
   `id-token: write`:
   - Six run only on a push to `main`.
@@ -160,7 +168,11 @@ bound each of these:
 never use "Commit suggestion" either, which the rulesets would not stop: an agent
 acts as the administrator.
 
-The JSON, as imported:
+**The provider is authoritative.** The JSON below is evidence of what the owner
+imported on 2026-10-07, not the rulesets' source. Their current state is read back
+from the provider: `GET repos/ktogias/gnostoa/rulesets/{id}`.
+
+The branch ruleset, `24640984`, as imported:
 
 ```json
 {
@@ -180,8 +192,25 @@ The JSON, as imported:
 }
 ```
 
-The tag ruleset is the same, with `"name": "Only admins write tags"` and
-`"target": "tag"`.
+The tag ruleset, `24640985`, as imported:
+
+```json
+{
+  "name": "Only admins write tags",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ],
+  "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
+  "rules": [
+    { "type": "creation" },
+    { "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
+    { "type": "deletion" },
+    { "type": "non_fast_forward" }
+  ]
+}
+```
 
 ## Alternatives not chosen
 
@@ -201,6 +230,15 @@ The tag ruleset is the same, with `"name": "Only admins write tags"` and
   put it: that token holds no Administration, Deployments, Environments or Secrets
   permission. If agents move to an account of their own, that account needs a
   bypass entry, or must work from a fork.
+- **An agent steered by what it reviews stays the residual risk.** Decision 0097
+  names it as the realistic case. "Commit suggestion" adds no path for an agent:
+  - GitHub offers it in its web interface;
+  - agents here work without the owner's browser (credentials boundary);
+  - so an agent could apply a suggestion only by writing the change itself, and
+    that is any agent write.
+
+  The rulesets do not constrain such a write. The agents' procedure and change
+  control do.
 - **The bypass follows the role, not the person.** Any account later given the
   admin role inherits it, and with it unrestricted ref writes. Today the owner is
   the only collaborator (`GET repos/ktogias/gnostoa/collaborators`, 2026-10-07).
@@ -208,9 +246,10 @@ The tag ruleset is the same, with `"name": "Only admins write tags"` and
 - **A writer outside the bypass needs an entry first.** Today none exists: no
   workflow runs `git push` or requests `contents: write`. Dependabot would need one
   if its security updates are enabled.
-- **The rulesets live in the provider.** This record and its JSON are their source.
-  Changing them needs the owner and a token with Administration write, which agents
-  do not hold.
+- **The rulesets live in the provider, which is authoritative.** This record is
+  evidence of their state on 2026-10-07; a later change shows in a read-back, not
+  here. Changing them needs the owner and a token with Administration write, which
+  agents do not hold.
 
 ## Verification
 
