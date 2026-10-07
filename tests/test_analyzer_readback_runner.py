@@ -6,16 +6,20 @@ import importlib.util
 import io
 import json
 import os
+import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import tempfile
 import traceback
 import unittest
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+import yaml
+
+from tools import github_events
 from tools.analyzer_readback import canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +35,15 @@ if spec is None or spec.loader is None:
     raise RuntimeError("analyzer readback runner module is unavailable")
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+
+SUBJECT_PATH = ROOT / "ci" / "analyzer_readback_subject.py"
+subject_spec = importlib.util.spec_from_file_location(
+    "gnostoa_analyzer_readback_subject", SUBJECT_PATH
+)
+if subject_spec is None or subject_spec.loader is None:
+    raise RuntimeError("analyzer readback subject resolver is unavailable")
+subject_resolver = importlib.util.module_from_spec(subject_spec)
+subject_spec.loader.exec_module(subject_resolver)
 
 
 class _GitHubFake:
@@ -409,6 +422,124 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                     self.assertTrue(stderr.getvalue().startswith("ERROR: "))
                     connect.assert_not_called()
 
+    def test_the_readback_step_says_whether_it_wrote_a_receipt(self) -> None:
+        """The step keeps the runner's status, and says `receipt=written` only when
+        the receipt exists: a runner that fails before writing one leaves nothing
+        to upload (Claude on #388)."""
+        loaded = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+        [step] = [
+            step
+            for step in loaded["jobs"]["readback"]["steps"]
+            if step.get("id") == "readback"
+        ]
+        for status, writes, said in (
+            (0, True, True),
+            (1, True, True),
+            (2, False, False),
+        ):
+            with (
+                self.subTest(status=status),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                scratch = Path(directory)
+                stubs = scratch / "bin"
+                stubs.mkdir()
+                stub = stubs / "python"
+                touch = 'touch "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"\n'
+                stub.write_text(
+                    "#!/bin/sh\n" + (touch if writes else "") + f"exit {status}\n",
+                    encoding="utf-8",
+                )
+                stub.chmod(0o755)
+                output = scratch / "output"
+                output.touch()
+                # The script travels on stdin to an absolute shell, as the Claude
+                # workflows' step harnesses do, so the argv is static: the step under
+                # test is the repository's own committed text, not an input.
+                result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    ["/bin/sh", "-s"],
+                    input=step["run"],
+                    cwd=ROOT,
+                    env={
+                        "PATH": f"{stubs}:/usr/bin:/bin",
+                        "RUNNER_TEMP": str(scratch),
+                        "GITHUB_OUTPUT": str(output),
+                        "GITHUB_REPOSITORY": "ktogias/gnostoa",
+                        "PULL_NUMBER": "312",
+                        "REQUESTED_HEAD": HEAD,
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    # A step that blocks fails the test rather than hanging the suite
+                    # (Kody on #388).
+                    timeout=60,
+                )
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertEqual(
+                    "receipt=written\n" if said else "",
+                    output.read_text(encoding="utf-8"),
+                )
+
+    def test_main_fails_visibly_when_the_receipt_binds_no_exact_head(self) -> None:
+        """A receipt that binds no exact head is written, so its reason stays
+        readable, and fails the run: a green run without exact-head evidence would
+        make missing evidence look like a clean producer (Kody on #388, #389)."""
+        urls = _github_urls()
+        for reason, routes in (
+            ("GITHUB_SUBJECT_MISMATCH", {urls["pr"]: [_pr(OTHER)]}),
+            (
+                "GITHUB_SUBJECT_CHANGED_DURING_READBACK",
+                {
+                    urls["pr"]: [_pr(), _pr(OTHER)],
+                    urls["statuses"]: [],
+                    urls["checks"]: {"check_runs": []},
+                    urls["comments"]: [],
+                },
+            ),
+        ):
+            with (
+                self.subTest(reason=reason),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory) / "readback.json"
+                stderr = io.StringIO()
+                with (
+                    patch.dict(os.environ, {}, clear=True),
+                    patch.object(
+                        runner.GitHubReadClient,
+                        "from_environment",
+                        return_value=_GitHubFake(routes),
+                    ),
+                    patch.object(
+                        http.client.HTTPSConnection,
+                        "connect",
+                        side_effect=AssertionError("network forbidden"),
+                    ),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    result = runner.main(
+                        [
+                            "--repository",
+                            "ktogias/gnostoa",
+                            "--pull-number",
+                            "312",
+                            "--head",
+                            HEAD,
+                            "--output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(1, result)
+                bundle = json.loads(output.read_text())
+                self.assertEqual("INCOMPLETE", bundle["subject_binding"])
+                self.assertEqual(reason, bundle["reason"])
+                self.assertEqual(
+                    f"ERROR: the readback binds no exact head ({reason});"
+                    " its receipt records why\n",
+                    stderr.getvalue(),
+                )
+
     def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
         for provider, token_name, peer_type, peer in (
             (
@@ -580,6 +711,34 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     repository=repository,
                     pull_number=312,
                     requested_head=HEAD,
+                    deepsource=None,
+                    codacy=None,
+                    observed_at=OBSERVED,
+                )
+
+    def test_a_requested_head_that_is_no_exact_sha_is_refused(self) -> None:
+        """The runner refuses before it reads anything, with its own error: one
+        exact-SHA check, the readback's, serves it and the resolver (Claude on
+        #388)."""
+
+        class _NoNetwork:
+            @staticmethod
+            def get(url: str) -> tuple[Any, Mapping[str, str]]:
+                raise AssertionError(f"network must not be reached: {url}")
+
+        # Built before the assertion, so the readback is its only call (SonarCloud
+        # S5778 on #388).
+        network = _NoNetwork()
+        for head in ("A" * 40, "a" * 39, HEAD + "\n", "", None, 40):
+            with (
+                self.subTest(head=head),
+                self.assertRaisesRegex(runner.RunnerError, "exact 40-character SHA"),
+            ):
+                runner.collect_bundle(
+                    network,
+                    repository="ktogias/gnostoa",
+                    pull_number=312,
+                    requested_head=head,
                     deepsource=None,
                     codacy=None,
                     observed_at=OBSERVED,
@@ -849,46 +1008,295 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         ):
             self.assertIn(path, section)
 
-    def test_workflow_is_manual_read_only_and_secrets_are_step_scoped(self) -> None:
+    def test_workflow_runs_after_verification_on_request_and_by_hand(self) -> None:
+        """The readback runs for every Pull Request head once Gnostoa verification
+        completes, on a repository_dispatch request, and by hand (#387). The secret
+        step reads only a subject the secret-free step has validated."""
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("workflow_dispatch:", workflow)
+        loaded = yaml.safe_load(workflow)
+        triggers = loaded.get("on", loaded.get(True))
+        self.assertEqual(
+            {"workflow_dispatch", "workflow_run", "repository_dispatch"}, set(triggers)
+        )
+        self.assertEqual(
+            ["Gnostoa verification"], triggers["workflow_run"]["workflows"]
+        )
+        self.assertEqual(["completed"], triggers["workflow_run"]["types"])
+        self.assertEqual(
+            ["gnostoa-analyzer-readback"], triggers["repository_dispatch"]["types"]
+        )
         self.assertNotIn("pull_request:", workflow)
-        for permission in (
-            "contents: read",
-            "pull-requests: read",
-            "statuses: read",
-            "checks: read",
-        ):
-            self.assertIn(permission, workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("pull-requests: write", workflow)
-        self.assertIn("timeout-minutes: 15", workflow)
-        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("environment: analyzer-readback", workflow)
-        self.assertIn("ref: ${{ github.sha }}", workflow)
-        self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("Bind trusted main execution source", workflow)
-        self.assertIn("EXECUTOR_REF: ${{ github.ref }}", workflow)
-        self.assertIn("EXECUTOR_SHA: ${{ github.sha }}", workflow)
-        self.assertIn('test "${EXECUTOR_REF}" = "refs/heads/main"', workflow)
-        self.assertIn('test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', workflow)
-        bind = workflow.index("Bind trusted main execution source")
-        secrets = workflow.index("DEEPSOURCE_API_TOKEN")
-        self.assertLess(bind, secrets)
-        self.assertIn(
-            "DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}", workflow
+        self.assertNotIn("pull_request_target", workflow)
+        self.assertEqual(
+            {
+                "contents": "read",
+                "pull-requests": "read",
+                "statuses": "read",
+                "checks": "read",
+            },
+            loaded["permissions"],
         )
-        self.assertIn("CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}", workflow)
-        self.assertIn(
+        # Readbacks queue, one at a time, and none is cancelled: a flood of requests
+        # waits rather than spending the analyzers' rate limits (Amazon Q on #388),
+        # as review-current-state.yml's runs do (Decision 0086).
+        self.assertEqual(
+            {
+                "group": "gnostoa-analyzer-readback",
+                "cancel-in-progress": False,
+                "queue": "max",
+            },
+            loaded["concurrency"],
+        )
+        job = loaded["jobs"]["readback"]
+        # The whole condition is pinned, so no arm can be added, dropped or regrouped
+        # unseen (Kody on #388):
+        # - `workflow_run` matches a workflow by name, so a same-named workflow on
+        #   any branch could start it: only a pull_request run of verification.yml
+        #   counts;
+        # - each admitted event is named, so a trigger added later is not admitted
+        #   by default (Amazon Q on #388);
+        # - a run that a later push superseded is cancelled, and its head is no
+        #   longer the Pull Request's, so it reads nothing (Kody on #388). A run that
+        #   failed or timed out leaves its head the Pull Request's, so it is still
+        #   read (CodeAnt on #388). Each admitted conclusion is named.
+        self.assertEqual(
+            "github.ref == 'refs/heads/main'"
+            " && (github.event_name == 'workflow_dispatch'"
+            " || github.event_name == 'repository_dispatch'"
+            " || (github.event_name == 'workflow_run'"
+            " && (github.event.workflow_run.conclusion == 'success'"
+            " || github.event.workflow_run.conclusion == 'failure'"
+            " || github.event.workflow_run.conclusion == 'timed_out')"
+            " && github.event.workflow_run.event == 'pull_request'"
+            " && github.event.workflow_run.path"
+            " == '.github/workflows/verification.yml'))",
+            " ".join(job["if"].split()),
+        )
+        self.assertEqual("analyzer-readback", job["environment"])
+        self.assertEqual(15, job["timeout-minutes"])
+        steps = job["steps"]
+        names = [step.get("name", step.get("uses", "")) for step in steps]
+        bind = names.index("Bind trusted main execution source")
+        subject = names.index("Resolve the readback subject")
+        read = names.index("Read exact-head analyzer evidence")
+        upload = names.index("Upload non-secret analyzer readback")
+        self.assertLess(bind, subject)
+        self.assertLess(subject, read)
+        self.assertLess(read, upload)
+        # The checkout takes its event's own revision, main's `github.sha`, which the
+        # binding step verifies; naming a ref is what a fork's code would need
+        # (SonarCloud S7631 on #388, Decision 0096 rule 11).
+        checkout = steps[0]
+        self.assertNotIn("ref", checkout["with"])
+        self.assertIs(False, checkout["with"]["persist-credentials"])
+        resolve = steps[subject]
+        self.assertEqual("subject", resolve["id"])
+        self.assertNotIn("secrets.", yaml.safe_dump(resolve))
+        self.assertIn("python ci/analyzer_readback_subject.py", resolve["run"])
+        self.assertIn('>> "${GITHUB_OUTPUT}"', resolve["run"])
+        acquire = steps[read]
+        expected = (
+            ("GITHUB_TOKEN", "github.token"),
+            ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
+            ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
+            ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
+            ("REQUESTED_HEAD", "steps.subject.outputs.head"),
+        )
+        self.assertEqual({name for name, _ in expected}, set(acquire["env"]))
+        for name, expression in expected:
+            self.assertEqual(f"${{{{ {expression} }}}}", acquire["env"][name], name)
+        self.assertIn('--pull-number "${PULL_NUMBER}"', acquire["run"])
+        self.assertIn('--head "${REQUESTED_HEAD}"', acquire["run"])
+        self.assertIn("gnostoa-analyzer-readback.json", acquire["run"])
+        # The resolver fails when it binds no subject, so no later step runs without
+        # one (#389). A receipt that binds no exact head fails its step, and is
+        # uploaded still, so its reason stays readable (Kody on #388); a failure that
+        # wrote none uploads nothing, so its own error is the run's only one (Claude
+        # on #388).
+        self.assertNotIn("if", acquire)
+        self.assertEqual("readback", acquire["id"])
+        self.assertEqual(
+            "${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}",
+            steps[upload]["if"],
+        )
+        self.assertEqual(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-            workflow,
+            steps[upload]["uses"],
         )
-        self.assertIn("PULL_NUMBER: ${{ inputs.pull_number }}", workflow)
-        self.assertIn("REQUESTED_HEAD: ${{ inputs.head }}", workflow)
-        self.assertIn('--pull-number "${PULL_NUMBER}"', workflow)
-        self.assertIn('--head "${REQUESTED_HEAD}"', workflow)
-        self.assertNotIn("--head '${{ inputs.head }}'", workflow)
-        self.assertIn("gnostoa-analyzer-readback.json", workflow)
+        self.assertEqual(
+            "gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}"
+            "-${{ steps.subject.outputs.head }}",
+            steps[upload]["with"]["name"],
+        )
+        # An event's own fields reach no step but the secret-free resolver.
+        for index, step in enumerate(steps):
+            if index != subject:
+                text = yaml.safe_dump(step)
+                for field in ("inputs.", "client_payload", "workflow_run."):
+                    self.assertNotIn(field, text, (names[index], field))
+        bind_step = steps[bind]
+        self.assertIn('test "${EXECUTOR_REF}" = "refs/heads/main"', bind_step["run"])
+        self.assertIn(
+            'test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', bind_step["run"]
+        )
+
+
+def _resolve(environ: dict[str, str]) -> dict[str, str]:
+    """The resolver's subject, typed: the module is loaded from its path."""
+    return cast(dict[str, str], subject_resolver.resolve(environ))
+
+
+class SubjectResolutionTests(unittest.TestCase):
+    """The secret-free step turns the triggering event into one exact subject, or
+    none (#387). Every field is an identifier, validated before it is written."""
+
+    def test_each_trigger_yields_its_subject(self) -> None:
+        for environ in (
+            {
+                "EVENT_NAME": "workflow_dispatch",
+                "DISPATCH_PULL": "384",
+                "DISPATCH_HEAD": HEAD,
+            },
+            {
+                "EVENT_NAME": "repository_dispatch",
+                "REQUEST_PULL": "384",
+                "REQUEST_HEAD": HEAD,
+            },
+            {
+                "EVENT_NAME": "workflow_run",
+                "RUN_PULLS": json.dumps([{"number": 384, "head": {"sha": OTHER}}]),
+                "RUN_HEAD": HEAD,
+            },
+        ):
+            with self.subTest(event=environ["EVENT_NAME"]):
+                self.assertEqual(
+                    {"pull_number": "384", "head": HEAD}, _resolve(environ)
+                )
+
+    def test_a_run_without_exactly_one_pull_request_fails_visibly(self) -> None:
+        """A fork's run carries no Pull Request; a head shared by two leaves the
+        subject ambiguous. Either fails, visibly: a run that finished green without a
+        receipt would make missing evidence look like a clean producer (#389). A
+        dispatch can still name one."""
+        for pulls in ("[]", "null", json.dumps([{"number": 1}, {"number": 2}])):
+            with self.subTest(pulls=pulls):
+                environ = {
+                    "EVENT_NAME": "workflow_run",
+                    "RUN_PULLS": pulls,
+                    "RUN_HEAD": HEAD,
+                }
+                with self.assertRaises(ValueError):
+                    _resolve(environ)
+
+    def test_a_field_that_is_no_identifier_is_refused(self) -> None:
+        bad_heads = ("A" * 40, "a" * 39, HEAD + "\npull_number=1", "", HEAD + " ")
+        bad_pulls = (
+            "0",
+            "-3",
+            "1.5",
+            "384\nhead=x",
+            "",
+            " 384",
+            "384 ",
+            "0x10",
+            "1" * 11,
+            # An Arabic-Indic digit after an ASCII one, which `int` reads as 12: only
+            # ASCII digits count.
+            "1٢",
+        )
+        for head in bad_heads:
+            with self.subTest(head=head), self.assertRaises(ValueError):
+                _resolve(
+                    {
+                        "EVENT_NAME": "repository_dispatch",
+                        "REQUEST_PULL": "384",
+                        "REQUEST_HEAD": head,
+                    }
+                )
+        for pull in bad_pulls:
+            with self.subTest(pull=pull), self.assertRaises(ValueError):
+                _resolve(
+                    {
+                        "EVENT_NAME": "workflow_dispatch",
+                        "DISPATCH_PULL": pull,
+                        "DISPATCH_HEAD": HEAD,
+                    }
+                )
+        for environ in (
+            {"EVENT_NAME": "workflow_run", "RUN_PULLS": "{}", "RUN_HEAD": HEAD},
+            {
+                "EVENT_NAME": "workflow_run",
+                "RUN_PULLS": json.dumps([{"number": 7}]),
+                "RUN_HEAD": "x",
+            },
+            {"EVENT_NAME": "push"},
+            {},
+        ):
+            with self.subTest(environ=environ), self.assertRaises(ValueError):
+                _resolve(environ)
+
+    def test_the_step_writes_only_validated_outputs(self) -> None:
+        for environ, expected, status in (
+            (
+                {
+                    "EVENT_NAME": "repository_dispatch",
+                    "REQUEST_PULL": "384",
+                    "REQUEST_HEAD": HEAD,
+                },
+                f"pull_number=384\nhead={HEAD}\n",
+                0,
+            ),
+            (
+                {"EVENT_NAME": "workflow_run", "RUN_PULLS": "[]", "RUN_HEAD": HEAD},
+                "",
+                2,
+            ),
+            ({"EVENT_NAME": "repository_dispatch", "REQUEST_PULL": "x"}, "", 2),
+        ):
+            with self.subTest(environ=environ):
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    patch.dict(os.environ, environ, clear=True),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(err),
+                ):
+                    self.assertEqual(status, subject_resolver.main())
+                self.assertEqual(expected, out.getvalue())
+
+
+class WorkflowRunPullsTests(unittest.TestCase):
+    """One parser of `workflow_run.pull_requests`, shared by the L1 reconciler and
+    the readback (#387)."""
+
+    def test_numbers_are_kept_once_in_order(self) -> None:
+        payload = json.dumps([{"number": 301}, {"number": 302}, {"number": 301}])
+        self.assertEqual([301, 302], github_events.workflow_run_pull_numbers(payload))
+        for empty in ("", "null", "[]"):
+            with self.subTest(empty=empty):
+                self.assertEqual([], github_events.workflow_run_pull_numbers(empty))
+
+    def test_an_exact_sha_is_the_only_head(self) -> None:
+        """One exact-SHA check for an event's head, which the resolver and the
+        runner share (Claude on #388)."""
+        self.assertEqual(HEAD, github_events.exact_sha(HEAD, "head"))
+        # A number whose digits spell a SHA is still no SHA: JSON may carry one.
+        for value in ("A" * 40, "a" * 39, HEAD + "\n", "", None, 40, int("1" * 40)):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "head must be an exact"),
+            ):
+                github_events.exact_sha(value, "head")
+
+    def test_a_malformed_list_is_refused(self) -> None:
+        for raw in (
+            "{",
+            "{}",
+            "[1]",
+            json.dumps([{"number": 0}]),
+            json.dumps([{"number": True}]),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                github_events.workflow_run_pull_numbers(raw)
 
 
 if __name__ == "__main__":

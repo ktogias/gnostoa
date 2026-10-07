@@ -583,6 +583,7 @@ guardrails:
       - ci/review_github_current_state.py
       - .github/workflows/review-current-state.yml
       - tools/github_rest.py
+      - tools/github_events.py
     tests:
       - tests/test_review_reconcile_l1.py
       - tests/test_review_reconcile_l1_followups.py
@@ -603,8 +604,11 @@ guardrails:
       - tools/analyzer_deepsource.py
       - tools/analyzer_codacy.py
       - ci/analyzer_readback.py
+      - ci/analyzer_readback_subject.py
+      - knowledge/decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md
       - .github/workflows/analyzer-readback.yml
       - tools/github_rest.py
+      - tools/github_events.py
     tests:
       - tests/test_analyzer_readback.py
       - tests/test_analyzer_readback_runner.py

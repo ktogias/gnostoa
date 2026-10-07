@@ -1,6 +1,16 @@
 name: Authenticated analyzer readback
 
+# Decision 0107: the readback runs for every Pull Request head once Gnostoa
+# verification completes, again on a `gnostoa-analyzer-readback` repository_dispatch
+# request, and by hand. Every run executes main's code in the `analyzer-readback`
+# environment, which admits only main. An event's fields are identifiers only: the
+# runner re-reads the Pull Request and refuses a head that does not match.
 on:
+  workflow_run:
+    workflows: ["Gnostoa verification"]
+    types: [completed]
+  repository_dispatch:
+    types: [gnostoa-analyzer-readback]
   workflow_dispatch:
     inputs:
       pull_number:
@@ -18,16 +28,37 @@ permissions:
   statuses: read
   checks: read
 
+# Readbacks queue, one at a time, and none is cancelled: a flood of requests waits
+# rather than spending the analyzers' rate limits, as review-current-state.yml's
+# runs do (Decision 0086).
+concurrency:
+  group: gnostoa-analyzer-readback
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   readback:
-    if: github.ref == 'refs/heads/main'
+    # Each admitted event is named. `workflow_run` matches the triggering workflow
+    # by name, so a same-named workflow on any branch could start this job: only a
+    # pull_request run of verification.yml counts (Decision 0096 rule 7).
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name == 'workflow_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || (github.event_name == 'workflow_run'
+              && (github.event.workflow_run.conclusion == 'success'
+                  || github.event.workflow_run.conclusion == 'failure'
+                  || github.event.workflow_run.conclusion == 'timed_out')
+              && github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.path == '.github/workflows/verification.yml'))
     environment: analyzer-readback
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # No ref is named: the checkout takes its event's own revision, main's
+      # `github.sha`, which the next step verifies (Decision 0096 rule 11).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Bind trusted main execution source
         env:
@@ -40,23 +71,51 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      # Secret-free: each event field reaches only this step, through the
+      # environment, and leaves it only once validated. A run that binds no subject
+      # fails here, visibly, rather than finishing green without a receipt (#389).
+      - name: Resolve the readback subject
+        id: subject
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_PULL: ${{ inputs.pull_number }}
+          DISPATCH_HEAD: ${{ inputs.head }}
+          REQUEST_PULL: ${{ github.event.client_payload.pull_number }}
+          REQUEST_HEAD: ${{ github.event.client_payload.head }}
+          RUN_PULLS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
       - name: Read exact-head analyzer evidence
+        id: readback
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
           CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
-          PULL_NUMBER: ${{ inputs.pull_number }}
-          REQUESTED_HEAD: ${{ inputs.head }}
+          PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
+          REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+        # The step keeps the runner's status, and says whether it wrote a receipt,
+        # so a failure that wrote none uploads nothing (Claude on #388).
         run: |
-          set -eu
+          set -u
+          receipt="${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+          status=0
           PYTHONPATH=. python ci/analyzer_readback.py \
             --repository "${GITHUB_REPOSITORY}" \
             --pull-number "${PULL_NUMBER}" \
             --head "${REQUESTED_HEAD}" \
-            --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+            --output "${receipt}" || status=$?
+          if [ -f "${receipt}" ]; then
+            echo "receipt=written" >> "${GITHUB_OUTPUT}"
+          fi
+          exit "${status}"
       - name: Upload non-secret analyzer readback
+        # A receipt that binds no exact head fails the step above, and is uploaded
+        # still, so its reason stays readable.
+        if: ${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-analyzer-readback-${{ inputs.pull_number }}-${{ inputs.head }}
+          name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
           if-no-files-found: error

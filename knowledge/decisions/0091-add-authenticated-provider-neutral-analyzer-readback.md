@@ -294,6 +294,11 @@ ordinary verification workflow: analyzer availability must not become a
 candidate correctness gate, and fork/PR secret semantics must not alter the
 meaning of repository CI.
 
+**Amended by Decision 0107 (2026-10-07).** The same job now also runs when Gnostoa
+verification completes for a Pull Request, and on a `gnostoa-analyzer-readback`
+`repository_dispatch` request. The `workflow_dispatch` route and this section's
+other rules are unchanged. It stays a dedicated surface outside candidate CI.
+
 ### 9. Dogfood and Q0 handoff
 
 The first dogfood target is PR #312 because it exercised both analyzer visibility

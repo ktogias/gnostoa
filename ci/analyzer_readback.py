@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import analyzer_codacy, analyzer_deepsource, github_rest
+from tools import analyzer_codacy, analyzer_deepsource, github_events, github_rest
 from tools.analyzer_readback import (
     AnalyzerReadbackError,
     build_readback,
@@ -26,7 +26,6 @@ _TIMEOUT_SECONDS = 30
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 40
 _MAX_ITEMS = 10_000
-_SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
@@ -137,9 +136,12 @@ def _mapping(value: object, label: str) -> Mapping[str, Any]:
 
 
 def _exact_head(value: object, label: str) -> str:
-    if not isinstance(value, str) or _SHA40.fullmatch(value) is None:
-        raise RunnerError(f"{label} must be an exact 40-character SHA")
-    return value
+    """The shared exact-SHA check, refused as this runner's error (Claude on
+    #388)."""
+    try:
+        return github_events.exact_sha(value, label)
+    except ValueError as exc:
+        raise RunnerError(f"{label} must be an exact 40-character SHA") from exc
 
 
 def _repository(value: str) -> tuple[str, str]:
@@ -553,7 +555,21 @@ def main(argv: list[str] | None = None) -> int:
     except (RunnerError, ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    return 0
+    return _bound_status(bundle)
+
+
+def _bound_status(bundle: dict[str, Any]) -> int:
+    """0 when ``bundle`` binds the exact requested head, else 1: a green run without
+    exact-head evidence would make missing evidence look like a clean producer
+    (#389). The receipt is written either way, so its reason stays readable."""
+    if bundle["subject_binding"] == "BOUND":
+        return 0
+    print(
+        f"ERROR: the readback binds no exact head ({bundle['reason']});"
+        " its receipt records why",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":

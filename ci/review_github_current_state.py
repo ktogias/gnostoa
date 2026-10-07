@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import github_rest
+from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
@@ -1291,29 +1291,11 @@ def publish_entry(
 
 
 def _workflow_run_pull_numbers(raw: str) -> list[int]:
-    if not raw:
-        return []
+    """The shared parser's numbers, its refusal raised as this adapter's (#387)."""
     try:
-        loaded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ProviderReadError("workflow_run.pull_requests is invalid JSON") from exc
-    if loaded is None:
-        return []
-    if not isinstance(loaded, list):
-        raise ProviderReadError("workflow_run.pull_requests must be an array")
-
-    numbers: list[int] = []
-    for item in loaded:
-        if not isinstance(item, dict):
-            raise ProviderReadError("workflow_run.pull_requests items must be objects")
-        number = item.get("number")
-        if type(number) is not int or number <= 0:
-            raise ProviderReadError(
-                "workflow_run.pull_requests contains an invalid Pull Request number"
-            )
-        if number not in numbers:
-            numbers.append(number)
-    return numbers
+        return github_events.workflow_run_pull_numbers(raw)
+    except ValueError as exc:
+        raise ProviderReadError(str(exc)) from exc
 
 
 def _open_pull_numbers(
