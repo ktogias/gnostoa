@@ -85,7 +85,7 @@ class Registry:
     path: Path
     responsibilities: tuple[Responsibility, ...]
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
+    def __iter__(self) -> Iterator[Responsibility]:
         return iter(self.responsibilities)
 
 

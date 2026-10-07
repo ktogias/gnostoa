@@ -67,7 +67,7 @@ def materialize_capsule(
     scratch = root / "tmp"
     arm_root = root / "arm"
     for path in (project, evidence, scratch, arm_root):
-        path.mkdir(parents=True, exist_ok=True)
+        trusted_execution.private_directory(path)
 
     store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
     if not any(project.iterdir()):
@@ -147,7 +147,7 @@ def execute_lock(
 ) -> ExecutionResult:
     payload = lock_module.load(lock_path)
     result = ExecutionResult(status="BLOCKED")
-    workspace.mkdir(parents=True, exist_ok=True)
+    trusted_execution.private_directory(workspace)
 
     plan = cast(Mapping[str, Any], payload.get("run_plan") or {})
     entries = cast(Sequence[Mapping[str, Any]], plan.get("runs") or [])

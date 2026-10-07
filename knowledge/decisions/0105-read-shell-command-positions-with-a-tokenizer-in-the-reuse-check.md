@@ -57,13 +57,18 @@ The reuse check gains one **shell command reader**:
    `punctuation_chars`, so `;`, `&&`, `||`, `|`, `&`, `(`, `)` and `;;` are tokens
    of their own. `#` begins a comment. Quotes are removed, as the shell removes
    them.
-2. **Command positions.** A command starts at the start of the text, after an
-   opening backtick, which a closing one ends (round 45), after a
+2. **Command positions.** A command starts at the start of the text, after a
    control operator or a group's `(`, `{` or `)`, and after a reserved word that
    introduces one: `if`, `then`, `elif`, `else`, `do`, `while`, `until`, `!`,
    `time` and `exec`. A redirection, its target and a descriptor's number before
    it are removed wherever they stand, and a process substitution, `<(...)`,
-   opens a command of its own (round 40).
+   opens a command of its own (round 40). A backquoted command substitution is
+   found before the text is split, since `shlex` keeps no quoting: a backtick
+   opens one unless it is in single quotes or after a backslash, in double quotes
+   too, and the first backtick no backslash precedes closes it, as Bash's manual
+   states. Its command is read on its own, to the bounded depth, and it leaves a
+   word in the text around it, so `x=`date` git status` runs Git and
+   `` `date` git `` does not (rounds 45 and 46).
 3. **What precedes the command word is peeled:**
    - assignments, `NAME=value`;
    - Make's recipe prefixes, `@`, `-` and `+`;
@@ -78,7 +83,8 @@ The reuse check gains one **shell command reader**:
 4. **A shell with `-c`** (`sh`, `bash`, `dash`, `ksh`, `zsh` or `ash`) runs its
    command string, which is read the same way, to a bounded depth. Its options are
    peeled first, including those that take a value: `-o`, `+o`, `-O`, `+O`,
-   `--rcfile` and `--init-file`.
+   `--rcfile` and `--init-file`. `eval` runs its arguments, joined, as a command
+   (round 46).
 5. **Git** is a command word whose name, after its path, is `git`.
 
 **Sources of shell text:**
@@ -93,7 +99,11 @@ The reuse check gains one **shell command reader**:
   standard input. Another program's body, as `python3 <<EOF`'s, is data. One
   here-document per instruction is read (round 44), on its first line or a
   continuation line, and judged by the command it follows, after any control
-  operator (round 45);
+  operator (round 45), or on an earlier continuation line; after a group, as in
+  `{ cat; } <<EOF`, by the group's first command (round 46). The exec form's JSON
+  list is read as the argument list it runs, which may hand a shell its command;
+  text that is no JSON list of strings is the shell form, as Docker reads it
+  (round 46);
 - a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
   found by composing the file as YAML with PyYAML, already a dependency, rather
   than by a pattern for the key. Any spelling of the key, a flow mapping, any block
@@ -135,8 +145,7 @@ residual work under #365.
   That includes a `then` after a `;`, a quoted or escaped command word, and a
   wrapper before a shell in an argument list.
 - **The reader's limits are stated.** A command word that only a variable
-  expands to, as `$GIT status`, is not followed, and neither are `eval` and
-  aliases. Text `shlex` cannot split, such as an unterminated quote, is read as
+  expands to, as `$GIT status`, is not followed, and neither are aliases. Text `shlex` cannot split, such as an unterminated quote, is read as
   far as it splits. A quoted control character, as `'('`, is read as the
   operator it spells, since `shlex` removes the quotes before the reader sees the
   word. A wrapper's option value that names a command, as the user in
@@ -154,6 +163,9 @@ residual work under #365.
 
 - **`bashlex`:** a full bash parser, but GPL-3.0+, which is incompatible with this
   Apache-2.0 toolkit's distribution.
+- **`shlex` with the backtick as punctuation:** measured in round 46, it reads a
+  backtick in double quotes as a character, so it misses ``echo "`git log`"``, and
+  it splits `x=a`date`b` into three words.
 - **`tree-sitter-bash`:** MIT, but it needs a new dependency, and `pyproject.toml`
   is frozen preparation authority in a candidate.
 - **More regular-expression forms:** the owner chose against continuing.

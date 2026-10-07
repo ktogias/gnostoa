@@ -308,6 +308,41 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(names=text):
                 self.assertFalse(shell_reader.runs_git(text))
 
+    def test_a_quoted_or_escaped_backtick_is_a_character(self) -> None:
+        """A backtick in single quotes, or after a backslash, is a character, which
+        opens no substitution; in double quotes it opens one. A substitution is part
+        of the word it stands in, so `x=a`date`b` is one assignment (Codex, Kody
+        and Claude on #369)."""
+        for text in (
+            "echo 'see ` lonely' ; x=`git status`",
+            "x=`date` git status",
+            "x=a`date`b git status",
+            # A backslash in single quotes is a character; a single quote in double
+            # quotes is one too.
+            "echo 'a\\' ; x=`git status`",
+            'echo "it\'s" ; x=`git status`',
+            "echo `echo \\`git status\\``",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        for text in (
+            "echo '`git status`'",
+            "echo \\`git status\\`",
+            'echo "\\`git status\\`"',
+            "echo 'see ` lonely'",
+        ):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
+    def test_eval_runs_its_arguments(self) -> None:
+        """`eval` joins its arguments and runs them as a command (Codex on #369)."""
+        for text in ("eval 'git status'", "eval git status", 'eval "x=1; git fetch"'):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        for text in ("eval 'echo git'", "echo eval git"):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
     def test_a_backtick_substitution_runs_a_command_of_its_own(self) -> None:
         """A backquoted region is a command substitution, which runs its own
         command, an argument's or not, quoted in double quotes too. Its closing
@@ -428,12 +463,15 @@ class ShellReaderUnitTests(unittest.TestCase):
                 self.assertEqual({len(head) + 2, len(head) + 3}, set(found))
 
     def test_a_dockerfile_instruction_takes_any_whitespace(self) -> None:
-        """`RUN` and its shell text may be separated by a tab as by a space, and the
-        exec form stays no shell text either way (Claude on #369)."""
+        """`RUN` and its text may be separated by a tab as by a space, in the shell
+        form and in the exec form, which runs its argument list (Claude and CodeAnt
+        on #369)."""
         lines = ["FROM a", "RUN\tgit clone x && make", 'RUN\t["git", "x"]']
         found = shell_reader.shell_lines("Dockerfile", lines)
-        self.assertEqual({2}, set(found))
-        self.assertTrue(shell_reader.runs_git(found[2][0]))
+        self.assertEqual({2, 3}, set(found))
+        for number in (2, 3):
+            with self.subTest(line=number):
+                self.assertTrue(shell_reader.runs_git(found[number][0]))
 
     def test_a_run_instruction_s_options_are_no_command(self) -> None:
         """`RUN --mount=...` and its other options come before the shell text, as
@@ -448,8 +486,10 @@ class ShellReaderUnitTests(unittest.TestCase):
             "RUN",
         ]
         found = shell_reader.shell_lines("Dockerfile", lines)
-        self.assertEqual({2, 3, 4, 6}, set(found))
-        for number in (2, 3, 4):
+        # The exec form runs its argument list, after the options too (CodeAnt on
+        # #369).
+        self.assertEqual({2, 3, 4, 5, 6}, set(found))
+        for number in (2, 3, 4, 5):
             with self.subTest(line=number):
                 self.assertTrue(shell_reader.runs_git(found[number][0]))
 
@@ -503,6 +543,63 @@ class ShellReaderUnitTests(unittest.TestCase):
         for number in (3, 7, 20):
             with self.subTest(line=number):
                 self.assertTrue(shell_reader.runs_git(found[number][0]))
+
+    def test_an_exec_form_run_is_read_as_its_argument_list(self) -> None:
+        """An exec-form `RUN` runs its JSON list as an argument list, which may hand
+        a shell its command (CodeAnt on #369). A list that is no valid JSON is the
+        shell form, as Docker reads it."""
+        lines = [
+            "FROM a",
+            'RUN ["sh", "-c", "git status"]',
+            'RUN ["echo", "git"]',
+            'RUN ["git", "fetch"]',
+            "RUN [ -f x ] && git gc",
+            'RUN ["git", 1]',
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 4, 5, 6}, set(found))
+        # A list that is not all strings is kept as it stands.
+        self.assertEqual(('["git", 1]',), found[6])
+        for number, runs in ((2, True), (3, False), (4, True), (5, True)):
+            with self.subTest(line=number):
+                self.assertIs(runs, shell_reader.runs_git(found[number][0]))
+
+    def test_a_group_s_here_document_is_judged_by_the_group_s_command(self) -> None:
+        """A here-document after a group goes to the group, so its first command
+        judges the body (Kody on #369)."""
+        lines = [
+            "FROM a",
+            "RUN { cat; } <<EOF",
+            "git status",
+            "EOF",
+            "RUN ( bash ) <<EOF",
+            '"git" log',
+            "EOF",
+            "RUN { cat; bash; } <<EOF",
+            "git gc",
+            "EOF",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        # The group's first command reads the document: `cat`, not `bash`.
+        self.assertEqual({2, 5, 6, 8}, set(found))
+        self.assertTrue(shell_reader.runs_git(found[6][0]))
+
+    def test_a_here_document_s_command_may_be_on_an_earlier_line(self) -> None:
+        """The command a here-document follows may stand on an earlier continuation
+        line; it reads the body still, whatever the body's first line names (Claude
+        on #369)."""
+        lines = [
+            "FROM a",
+            "RUN echo a && \\",
+            "    bash \\",
+            "    <<EOF",
+            "#!/usr/bin/env python3",
+            '"git" status',
+            "EOF",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertIn(6, found)
+        self.assertTrue(shell_reader.runs_git(found[6][0]))
 
     def test_a_continued_or_chained_heredoc_is_read_too(self) -> None:
         """A here-document opened on a `RUN` continuation line, or after a control
@@ -609,7 +706,7 @@ class ShellReaderUnitTests(unittest.TestCase):
                     'RUN ["git", "x"]',
                     "ENV X=1",
                 ],
-                {2: ("a \\",), 3: ("  && git clone x",)},
+                {2: ("a \\",), 3: ("  && git clone x",), 4: ("git x",)},
             ),
             ("Makefile", ["all:", "\tgit gc", "git: all"], {2: ("git gc",)}),
             (

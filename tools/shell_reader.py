@@ -11,6 +11,7 @@ which lines of a file are shell text (`shell_lines`).
 from __future__ import annotations
 
 import bisect
+import json
 import re
 import shlex
 from collections.abc import Iterable, Sequence
@@ -59,7 +60,11 @@ _COMMAND_OPTIONS = {
     "flock": ("-c", "--command"),
 }
 _NAMES = _WRAPPERS | _SHELLS | {"git"}
-_BACKTICK = "`"
+# The word a backquoted command substitution leaves in its place: a name no rule
+# reads, so `` `date` git `` runs no Git, while `x=`date` git` does.
+_SUBSTITUTED = "_"
+# A group's closing token, and the token that opens it.
+_GROUPS = {"}": "{", ")": "("}
 # The shell's redirection operators, as `2>`'s `>`, `>&` or `<<`; and a process
 # substitution's opening. A set, not a pattern, so nothing backtracks (SonarCloud).
 _REDIRECTIONS = frozenset(
@@ -75,33 +80,16 @@ _FENCES = frozenset({"bash", "sh", "shell", "zsh", "console"})
 
 
 def words(text: str) -> list[str]:
-    """The tokens of ``text``, as a shell splits them, as far as they split. A
-    backtick is a token of its own: it opens or closes a command substitution
-    (Codex on #369)."""
+    """The tokens of ``text``, as a shell splits them, as far as they split."""
     lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     found: list[str] = []
     try:
-        for token in lexer:
-            found.extend(_backticks(token))
+        found.extend(lexer)
     except ValueError:
         # An unterminated quote or escape: what split before it still counts.
         pass
     return found
-
-
-def _backticks(token: str) -> list[str]:
-    """``token`` split at its backticks, each backtick kept as a token. A token
-    with a backtick may have been quoted, keeping its spaces, so its parts split at
-    them too; a token without one is unchanged."""
-    if _BACKTICK not in token:
-        return [token]
-    parts: list[str] = []
-    for index, part in enumerate(token.split(_BACKTICK)):
-        if index:
-            parts.append(_BACKTICK)
-        parts.extend(part.split())
-    return parts
 
 
 def runs_git(text: str, depth: int = 0) -> bool:
@@ -111,11 +99,64 @@ def runs_git(text: str, depth: int = 0) -> bool:
     not (CodeAnt on #369)."""
     if depth > _DEPTH:
         return False
-    return any(
-        _runs_git(command, depth)
-        for line in text.split("\n")
-        for command in _commands(words(line))
-    )
+    for line in text.split("\n"):
+        outer, substituted = _substitutions(line)
+        if any(_runs_git(command, depth) for command in _commands(words(outer))):
+            return True
+        if any(runs_git(command, depth + 1) for command in substituted):
+            return True
+    return False
+
+
+def _substitutions(line: str) -> tuple[str, list[str]]:
+    """``line`` with each backquoted command substitution replaced by a word, and the
+    substitutions' commands. A backtick opens one unless it is in single quotes or
+    after a backslash; in double quotes it opens one too. `shlex` keeps no quoting,
+    so it cannot tell these apart (Codex, Kody and Claude on #369)."""
+    outer: list[str] = []
+    substituted: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote != "'" and char == "\\":
+            outer.append(line[index : index + 2])
+            index += 2
+            continue
+        if quote != "'" and char == "`":
+            command, index = _backquoted(line, index + 1)
+            substituted.append(command)
+            outer.append(_SUBSTITUTED)
+            continue
+        quote = _quote(quote, char)
+        outer.append(char)
+        index += 1
+    return "".join(outer), substituted
+
+
+def _quote(quote: str, char: str) -> str:
+    """The quote that is open after ``char``, given the one open before it."""
+    if not quote and char in "'\"":
+        return char
+    return "" if char == quote else quote
+
+
+def _backquoted(line: str, index: int) -> tuple[str, int]:
+    """The command of the substitution whose text starts at ``index``, and where its
+    closing backtick ends. As Bash's manual states, the first backtick that no
+    backslash precedes closes it, and in it a backslash before `$`, a backtick or a
+    backslash is removed. An unclosed one runs to the line's end."""
+    command: list[str] = []
+    while index < len(line):
+        char = line[index]
+        if char == "`":
+            return "".join(command), index + 1
+        if char == "\\" and line[index + 1 : index + 2] in ("$", "`", "\\"):
+            char = line[index + 1]
+            index += 1
+        command.append(char)
+        index += 1
+    return "".join(command), index
 
 
 def handed_command(argv: Sequence[str | None]) -> tuple[int, str] | None:
@@ -139,24 +180,13 @@ def _commands(tokens: list[str]) -> list[list[str]]:
     """The simple commands of ``tokens``: its words between separators, without
     their redirections. A redirection, its target and a descriptor's number before
     it are the shell's, wherever they stand, as in `2>/dev/null git fetch`; a
-    process substitution, `<(...)`, opens a command of its own (Codex on #369). So
-    does an opening backtick; its closing one returns to the command around it."""
+    process substitution, `<(...)`, opens a command of its own (Codex on #369)."""
     current: list[str] = []
     found = [current]
-    outer: list[list[str]] = []
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token == _BACKTICK and not outer:
-            # The substitution stands for a word of the command around it, as its
-            # command word in `` `date` git ``.
-            current.append(_BACKTICK)
-            outer.append(current)
-            current = []
-            found.append(current)
-        elif token == _BACKTICK:
-            current = outer.pop()
-        elif token in _SEPARATORS or token in _PROCESS:
+        if token in _SEPARATORS or token in _PROCESS:
             current = []
             found.append(current)
         elif token in _REDIRECTIONS:
@@ -184,6 +214,9 @@ def _runs_git(command: list[str], depth: int) -> bool:
         if name in _SHELLS:
             found = _shell_command(command, index + 1)
             return found is not None and runs_git(found[1], depth + 1)
+        if name == "eval":
+            # `eval` joins its arguments and runs them as a command (Codex on #369).
+            return runs_git(" ".join(command[index + 1 :]), depth + 1)
         if name not in _WRAPPERS:
             return False
         index, nested = _past_wrapper(command, index + 1, name)
@@ -193,8 +226,7 @@ def _runs_git(command: list[str], depth: int) -> bool:
 
 
 def _command_name(word: str) -> str:
-    """A command word's name: after Make's `@`, `-` and `+` prefixes, and its path.
-    A backtick is a token of its own, so no name holds one."""
+    """A command word's name: after Make's `@`, `-` and `+` prefixes, and its path."""
     return word.lstrip("@+-").rsplit("/", 1)[-1]
 
 
@@ -375,12 +407,13 @@ class _Heredoc:
 
 def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
     """Each `RUN` instruction's shell text, and its continuation lines, each on its
-    own line. The exec form, a JSON list, is no shell text. A here-document's body is
-    shell text when a shell reads it (Codex on #369)."""
+    own line. The exec form's JSON list is read as the argument list it runs. A
+    here-document's body is shell text when a shell reads it (Codex on #369)."""
     escape = _escape(lines)
     found: list[tuple[int, str]] = []
     continued = False
     document: _Heredoc | None = None
+    instruction = ""
     for number, text in enumerate(lines, start=1):
         if document is not None:
             document = _heredoc_line(document, number, text, found)
@@ -389,21 +422,37 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
         if rest is None:
             continue
         found.append((number, rest))
-        # A continuation line may open one too (Claude on #369).
-        document = _heredoc(rest)
+        # A continuation line may open one too, and the command it follows may
+        # stand on an earlier line (Claude on #369).
+        instruction = (
+            f"{instruction.removesuffix(escape)} {rest}" if continued else rest
+        )
+        document = _heredoc(instruction)
         continued = document is None and text.endswith(escape)
     return found
 
 
 def _run_text(text: str) -> str | None:
-    """A `RUN` instruction's text past its own options; None for any other line and
-    for the exec form. Any whitespace separates `RUN` from its text (Claude on
+    """A `RUN` instruction's text past its own options; None for any other line. Any whitespace separates `RUN` from its text (Claude on
     #369)."""
     instruction = text.split(None, 1)
     if len(instruction) < 2 or instruction[0].upper() != "RUN":
         return None
     rest = _past_run_options(instruction[1])
-    return None if rest.startswith("[") else rest
+    return _exec_form(rest) if rest.startswith("[") else rest
+
+
+def _exec_form(rest: str) -> str:
+    """An exec-form `RUN`'s JSON list as the command text it runs, which may hand a
+    shell its command (CodeAnt on #369). Text that is no JSON list of strings stays
+    as it is: Docker runs it as the shell form, as in `RUN [ -f x ] && make`."""
+    try:
+        argv = json.loads(rest)
+    except ValueError:
+        return rest
+    if isinstance(argv, list) and all(isinstance(word, str) for word in argv):
+        return shlex.join(argv)
+    return rest
 
 
 def _heredoc(rest: str) -> _Heredoc | None:
@@ -422,11 +471,37 @@ def _heredoc(rest: str) -> _Heredoc | None:
     delimiter = delimiter.removeprefix("-")
     if not delimiter:
         return None
-    before = tokens[:at]
-    starts = [i for i, token in enumerate(before) if token in _BOUNDARIES]
-    command = before[starts[-1] + 1 :] if starts else before
+    command = _heredoc_command(tokens[:at])
     shell = not command or _reads_stdin(command)
     return _Heredoc(delimiter, strip_tabs, shell, bare=not command)
+
+
+def _heredoc_command(before: list[str]) -> list[str]:
+    """The command a here-document goes to: after a group, as in `{ cat; } <<EOF`,
+    the group's first command (Kody on #369); else the command after the last
+    control operator."""
+    opened = _group_start(before)
+    if opened is not None:
+        commands = _commands(before[opened + 1 : -1])
+        return commands[0] if commands else []
+    starts = [i for i, token in enumerate(before) if token in _BOUNDARIES]
+    return before[starts[-1] + 1 :] if starts else before
+
+
+def _group_start(before: list[str]) -> int | None:
+    """Where the group ``before`` ends with opens; None if it ends with none."""
+    closer = before[-1] if before else ""
+    if closer not in _GROUPS:
+        return None
+    depth = 0
+    for index in range(len(before) - 1, -1, -1):
+        if before[index] == closer:
+            depth += 1
+        elif before[index] == _GROUPS[closer]:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
 
 
 def _reads_stdin(command: list[str]) -> bool:

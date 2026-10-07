@@ -1126,6 +1126,48 @@ class ExtractTreeFileSystemTests(unittest.TestCase):
             self.assertEqual([], [p.name for p in base.glob(".out.*")])
 
 
+class PrivateDirectoryTests(unittest.TestCase):
+    def test_the_owner_s_own_directories_are_closed_whatever_the_umask(self) -> None:
+        """Under umask 002, the default for a user-private group, each directory the
+        owner creates to stage a tree is closed still, so the tree is staged (Amazon
+        Q and Kody on #369)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repository, tree, _ = _repository_with_a_local_filter(base)
+            previous = os.umask(0o002)
+            try:
+                trusted_execution.extract_tree(
+                    repository, tree, base / "a" / "b" / "out"
+                )
+                trusted_execution.private_directory(base / "c" / "d")
+            finally:
+                os.umask(previous)
+            for path in (base / "a", base / "a" / "b", base / "c", base / "c" / "d"):
+                with self.subTest(path=path.name):
+                    self.assertEqual(0o700, path.stat().st_mode & 0o777)
+            self.assertEqual(
+                "kept\n", (base / "a" / "b" / "out" / "kept.txt").read_text("utf-8")
+            )
+
+    def test_a_directory_someone_else_may_change_is_named_with_the_remedy(
+        self,
+    ) -> None:
+        """A parent that is open to others is still refused; the error says the
+        directory, or one above it, is at fault, and how to close it (Kody on
+        #369)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repository, tree, _ = _repository_with_a_local_filter(base)
+            (base / "open").mkdir()
+            (base / "open").chmod(0o777)
+            with self.assertRaisesRegex(
+                trusted_execution.TrustedExecutionError,
+                r"open, or a directory above it, may be changed by someone else.*"
+                r"chmod go-w",
+            ):
+                trusted_execution.extract_tree(repository, tree, base / "open" / "out")
+
+
 class CallerTests(unittest.TestCase):
     """The callers that materialized trees themselves now go through the owner."""
 

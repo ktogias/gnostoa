@@ -567,10 +567,12 @@ def _prepare_task(
         "execution_tmp": task_root / "execution" / "tmp",
         "execution_inputs": task_root / "execution" / "inputs",
     }
+    # Closed whatever the umask, so a tree is staged in them (Amazon Q and Kody on
+    # #369).
     for key, path in layout.items():
         if key not in {"subject", "qualification", "execution"}:
-            path.mkdir(parents=True, exist_ok=True)
-    layout["subject"].mkdir(parents=True, exist_ok=True)
+            trusted_execution.private_directory(path)
+    trusted_execution.private_directory(layout["subject"])
 
     repo = Path(task.source.repository)
     reference_repo = (
@@ -1189,7 +1191,7 @@ def prepare(
                 "online preparation is not implemented in v1; dependency acquisition is out of scope"
             )
         root = Path(workspace)
-        root.mkdir(parents=True, exist_ok=True)
+        trusted_execution.private_directory(root)
         root = root.resolve()
         blockers: list[dict[str, object]] = []
         result = PrepareResult(status="BLOCKED", stage=stages.DISCOVERED)

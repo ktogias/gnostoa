@@ -22,6 +22,7 @@ refuses a copy of any of it elsewhere.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -541,6 +542,23 @@ def disposable_git_metadata(
         yield git_dir
 
 
+def private_directory(path: Path) -> None:
+    """Create ``path`` and each missing directory above it, closed to everyone else
+    whatever the umask: a umask only removes permissions, so mode 0o700 stays 0o700.
+    Under umask 002, the default for a user-private group, a plain `mkdir` leaves
+    a directory its group may write, which `trusted_directory` refuses (Amazon Q and
+    Kody on #369). A directory that exists already is left as it is."""
+    missing: list[Path] = []
+    current = path
+    while not os.path.lexists(current) and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        # One created meanwhile is left as it is, for the walk to judge.
+        with contextlib.suppress(FileExistsError):
+            directory.mkdir(mode=0o700)
+
+
 def extract_tree(repository: Path, tree: str, destination: Path) -> None:
     """Materialize the exact tree ``tree`` of ``repository`` into ``destination``.
 
@@ -586,14 +604,15 @@ def extract_tree(repository: Path, tree: str, destination: Path) -> None:
         raise ValueError(f"{tree!r} is not a full {object_format} object name")
     objects = repository_objects(repository)
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        private_directory(destination.parent)
         # The tree is staged beside its destination. Whoever else may write the
         # parent, or a directory on the way, could swap the staging directory for a
         # link while the tree is extracted (CodeAnt on #369).
         if trusted_directory(os.path.abspath(destination.parent)) is None:
             raise TrustedExecutionError(
-                f"{destination.parent} may be changed by someone else, so no tree is"
-                " staged in it"
+                f"{destination.parent}, or a directory above it, may be changed by"
+                " someone else, so no tree is staged in it; close it with"
+                " `chmod go-w`, or create it under umask 022 (Kody on #369)"
             )
         staging = Path(
             tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)

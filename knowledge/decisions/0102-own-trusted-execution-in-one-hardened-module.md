@@ -291,7 +291,12 @@ here.
    entry's own line patterns, as the same text on a line would be read. The
    protected route allows one transport, HTTPS for its fixed route. A tree is no
    longer staged in a parent someone else may change: `trusted_directory` walks
-   it as `trusted_path` walks a file. A byte order mark no longer hides a first
+   it as `trusted_path` walks a file. Round 46 creates the directories the owner
+   and the capsule make for a tree closed whatever the umask, through
+   `private_directory`: under umask 002, the default for a user-private group, a
+   plain `mkdir` left them open to the group, and the walk refused them (Amazon Q
+   and Kody on #369). A directory the caller made open is still refused, and the
+   error says it may be one above the parent, and how to close it. A byte order mark no longer hides a first
    line or a Python file, and a common path compared with a literal root counts.
    Every line is measured against the reader's bound, one that ends in the block
    it was read in too.
