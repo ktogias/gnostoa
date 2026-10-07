@@ -1702,7 +1702,9 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(len(set(identities)), len(identities))
 
 
-class LockExecutionUnderAGroupUmaskTests(LockExecutionTests):
+# Its tests are its parent's, run again under umask 002, so it defines none of its
+# own.
+class LockExecutionUnderAGroupUmaskTests(LockExecutionTests):  # skipcq: PTC-W0046
     """The same lock's execution under umask 002, the default for a user-private group: the
     directories the toolkit creates stay closed, so trees are still staged (Amazon
     Q and Kody on #369). The workspace is the caller's, so it is closed here."""

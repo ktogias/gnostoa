@@ -60,7 +60,9 @@ The reuse check gains one **shell command reader**:
 2. **Command positions.** A command starts at the start of the text, after a
    control operator or a group's `(`, `{` or `)`, and after a reserved word that
    introduces one: `if`, `then`, `elif`, `else`, `do`, `while`, `until`, `!`,
-   `time` and `exec`. A redirection, its target and a descriptor's number before
+   `time` and `exec`, and after `coproc`. A name after `coproc` is the coprocess's
+   before a group; before a simple command, Bash takes it for the command word, as
+   measured with `coproc JOB echo hi` (round 47). A redirection, its target and a descriptor's number before
    it are removed wherever they stand, and a process substitution, `<(...)`,
    opens a command of its own (round 40). A backquoted command substitution is
    found before the text is split, since `shlex` keeps no quoting: a backtick
@@ -68,7 +70,9 @@ The reuse check gains one **shell command reader**:
    too, and the first backtick no backslash precedes closes it, as Bash's manual
    states. Its command is read on its own, to the bounded depth, and it leaves a
    word in the text around it, so `x=`date` git status` runs Git and
-   `` `date` git `` does not (rounds 45 and 46).
+   `` `date` git `` does not (rounds 45 and 46). A line ends at a newline outside
+   quotes; a quoted newline is part of its word, and a backslash before a newline
+   continues the line (round 47).
 3. **What precedes the command word is peeled:**
    - assignments, `NAME=value`;
    - Make's recipe prefixes, `@`, `-` and `+`;
@@ -100,10 +104,14 @@ The reuse check gains one **shell command reader**:
   here-document per instruction is read (round 44), on its first line or a
   continuation line, and judged by the command it follows, after any control
   operator (round 45), or on an earlier continuation line; after a group, as in
-  `{ cat; } <<EOF`, by the group's first command (round 46). The exec form's JSON
+  `{ cat; } <<EOF`, by the group's first command (round 46). A redirection before
+  the document, as `2>&1`, and the document's own descriptor, as in `0<<EOF`, are
+  the shell's (round 47). The exec form's JSON
   list is read as the argument list it runs, which may hand a shell its command;
   text that is no JSON list of strings is the shell form, as Docker reads it
-  (round 46);
+  (round 46). An exec form the escape character splits across lines is joined
+  first; an element that spells an operator, as `";"`, is an argument, and
+  separates nothing; a list too deep for `json` is the shell form (round 47);
 - a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
   found by composing the file as YAML with PyYAML, already a dependency, rather
   than by a pattern for the key. Any spelling of the key, a flow mapping, any block

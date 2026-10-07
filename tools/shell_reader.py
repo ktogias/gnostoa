@@ -60,9 +60,10 @@ _COMMAND_OPTIONS = {
     "flock": ("-c", "--command"),
 }
 _NAMES = _WRAPPERS | _SHELLS | {"git"}
-# The word a backquoted command substitution leaves in its place: a name no rule
-# reads, so `` `date` git `` runs no Git, while `x=`date` git` does.
-_SUBSTITUTED = "_"
+# A word no rule reads: what a backquoted command substitution leaves in its place,
+# so `` `date` git `` runs no Git while `x=`date` git` does, and what an exec-form
+# element that spells an operator becomes.
+_PLACEHOLDER = "_"
 # A group's closing token, and the token that opens it.
 _GROUPS = {"}": "{", ")": "("}
 # The shell's redirection operators, as `2>`'s `>`, `>&` or `<<`; and a process
@@ -71,6 +72,8 @@ _REDIRECTIONS = frozenset(
     {"<", ">", ">>", "<<", "<<<", "<&", ">&", "<>", ">|", "&>", "&>>"}
 )
 _PROCESS = frozenset({"<(", ">("})
+# What `shlex` hands the reader as an operator, quoted or not.
+_OPERATORS = _SEPARATORS | _PROCESS | _REDIRECTIONS
 # What ends the command a here-document follows.
 _BOUNDARIES = _SEPARATORS | _PROCESS
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=", re.ASCII)
@@ -94,44 +97,55 @@ def words(text: str) -> list[str]:
 
 def runs_git(text: str, depth: int = 0) -> bool:
     """Whether the shell text ``text`` runs Git at any command position. Each of its
-    lines is read on its own, as a shell runs each line. Only a newline ends one:
+    lines is read on its own, as a shell runs each line. Only a newline outside
+    quotes ends one: a quoted newline is part of its word (Claude on #369), and
     `str.splitlines` also split at U+2028, NEL and form feed, which a shell does
     not (CodeAnt on #369)."""
     if depth > _DEPTH:
         return False
-    for line in text.split("\n"):
-        outer, substituted = _substitutions(line)
-        if any(_runs_git(command, depth) for command in _commands(words(outer))):
-            return True
-        if any(runs_git(command, depth + 1) for command in substituted):
-            return True
-    return False
+    lines, substituted = _substitutions(text)
+    if any(
+        _runs_git(command, depth)
+        for line in lines
+        for command in _commands(words(line))
+    ):
+        return True
+    return any(runs_git(command, depth + 1) for command in substituted)
 
 
-def _substitutions(line: str) -> tuple[str, list[str]]:
-    """``line`` with each backquoted command substitution replaced by a word, and the
-    substitutions' commands. A backtick opens one unless it is in single quotes or
-    after a backslash; in double quotes it opens one too. `shlex` keeps no quoting,
-    so it cannot tell these apart (Codex, Kody and Claude on #369)."""
+def _substitutions(text: str) -> tuple[list[str], list[str]]:
+    """``text``'s lines, each backquoted command substitution replaced by a word, and
+    the substitutions' commands. A backtick opens one unless it is in single quotes
+    or after a backslash; in double quotes it opens one too. `shlex` keeps no
+    quoting, so it cannot tell these apart (Codex, Kody and Claude on #369). A line
+    ends at a newline outside quotes, and a backslash before a newline continues it,
+    as Bash removes both."""
+    lines: list[str] = []
     outer: list[str] = []
     substituted: list[str] = []
     quote = ""
     index = 0
-    while index < len(line):
-        char = line[index]
+    while index < len(text):
+        char = text[index]
         if quote != "'" and char == "\\":
-            outer.append(line[index : index + 2])
+            pair = text[index : index + 2]
+            outer.append("" if pair == "\\\n" else pair)
             index += 2
             continue
         if quote != "'" and char == "`":
-            command, index = _backquoted(line, index + 1)
+            command, index = _backquoted(text, index + 1)
             substituted.append(command)
-            outer.append(_SUBSTITUTED)
+            outer.append(_PLACEHOLDER)
             continue
-        quote = _quote(quote, char)
-        outer.append(char)
+        if char == "\n" and not quote:
+            lines.append("".join(outer))
+            outer = []
+        else:
+            quote = _quote(quote, char)
+            outer.append(char)
         index += 1
-    return "".join(outer), substituted
+    lines.append("".join(outer))
+    return lines, substituted
 
 
 def _quote(quote: str, char: str) -> str:
@@ -183,30 +197,36 @@ def _commands(tokens: list[str]) -> list[list[str]]:
     process substitution, `<(...)`, opens a command of its own (Codex on #369)."""
     current: list[str] = []
     found = [current]
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
+    for token in _unredirected(tokens):
         if token in _SEPARATORS or token in _PROCESS:
             current = []
             found.append(current)
-        elif token in _REDIRECTIONS:
-            if current and current[-1].isdigit():
-                current.pop()
-            index += 1
         else:
             current.append(token)
-        index += 1
     return [command for command in found if command]
+
+
+def _unredirected(tokens: list[str]) -> list[str]:
+    """``tokens`` without their redirections: each, its target and a descriptor's
+    number before it are the shell's, wherever they stand."""
+    found: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _REDIRECTIONS:
+            if found and found[-1].isdigit():
+                found.pop()
+            index += 1
+        else:
+            found.append(token)
+        index += 1
+    return found
 
 
 def _runs_git(command: list[str], depth: int) -> bool:
     """Whether one simple command runs Git: as its command word, after reserved
     words, assignments and wrappers, or through a shell or `env -S`."""
-    index = 0
-    while index < len(command) and (
-        command[index] in _RESERVED or _ASSIGNMENT.match(command[index])
-    ):
-        index += 1
+    index = _past_reserved(command)
     while index < len(command):
         name = _command_name(command[index])
         if name == "git":
@@ -223,6 +243,23 @@ def _runs_git(command: list[str], depth: int) -> bool:
         if nested is not None and runs_git(nested[1], depth + 1):
             return True
     return False
+
+
+def _past_reserved(command: list[str]) -> int:
+    """Where the command word stands, after reserved words and assignments.
+    `coproc` runs the command after it; a name before a group is the coprocess's,
+    while before a simple command Bash takes it for the command word (Codex on
+    #369)."""
+    index = 0
+    while index < len(command):
+        word = command[index]
+        if word == "coproc" and command[index + 2 : index + 3] == ["{"]:
+            index += 2
+        elif word in _RESERVED or word == "coproc" or _ASSIGNMENT.match(word):
+            index += 1
+        else:
+            break
+    return index
 
 
 def _command_name(word: str) -> str:
@@ -414,6 +451,7 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
     continued = False
     document: _Heredoc | None = None
     instruction = ""
+    start = 0
     for number, text in enumerate(lines, start=1):
         if document is not None:
             document = _heredoc_line(document, number, text, found)
@@ -421,6 +459,7 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
         rest = text if continued else _run_text(text)
         if rest is None:
             continue
+        start = start if continued else len(found)
         found.append((number, rest))
         # A continuation line may open one too, and the command it follows may
         # stand on an earlier line (Claude on #369).
@@ -429,6 +468,8 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
         )
         document = _heredoc(instruction)
         continued = document is None and text.endswith(escape)
+        if document is None and not continued:
+            _joined_exec_form(found, start, instruction)
     return found
 
 
@@ -448,11 +489,26 @@ def _exec_form(rest: str) -> str:
     as it is: Docker runs it as the shell form, as in `RUN [ -f x ] && make`."""
     try:
         argv = json.loads(rest)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # A list too deep for `json` is no exec form either (Kody on #369).
         return rest
     if isinstance(argv, list) and all(isinstance(word, str) for word in argv):
-        return shlex.join(argv)
+        # Each element is an argument, so one that spells an operator, as `";"`,
+        # separates nothing (Kody on #369).
+        return shlex.join(_PLACEHOLDER if word in _OPERATORS else word for word in argv)
     return rest
+
+
+def _joined_exec_form(
+    found: list[tuple[int, str]], start: int, instruction: str
+) -> None:
+    """Read an exec form that the escape character split across lines as one JSON
+    list, on its first line (Kody on #369)."""
+    if len(found) - start < 2 or not instruction.startswith("["):
+        return
+    text = _exec_form(instruction)
+    if text != instruction:
+        found[start:] = [(found[start][0], text)]
 
 
 def _heredoc(rest: str) -> _Heredoc | None:
@@ -471,7 +527,9 @@ def _heredoc(rest: str) -> _Heredoc | None:
     delimiter = delimiter.removeprefix("-")
     if not delimiter:
         return None
-    command = _heredoc_command(tokens[:at])
+    # With the document's own redirection, so its descriptor, as in `0<<`, is the
+    # shell's too (CodeAnt on #369).
+    command = _heredoc_command(tokens[: at + 2])
     shell = not command or _reads_stdin(command)
     return _Heredoc(delimiter, strip_tabs, shell, bare=not command)
 
@@ -479,7 +537,9 @@ def _heredoc(rest: str) -> _Heredoc | None:
 def _heredoc_command(before: list[str]) -> list[str]:
     """The command a here-document goes to: after a group, as in `{ cat; } <<EOF`,
     the group's first command (Kody on #369); else the command after the last
-    control operator."""
+    control operator. A redirection before the document, as `2>&1`, is the shell's
+    (Kody on #369)."""
+    before = _unredirected(before)
     opened = _group_start(before)
     if opened is not None:
         commands = _commands(before[opened + 1 : -1])

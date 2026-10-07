@@ -334,6 +334,42 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(names=text):
                 self.assertFalse(shell_reader.runs_git(text))
 
+    def test_a_quoted_newline_ends_no_command(self) -> None:
+        """A newline inside quotes is part of the quoted word, so the quote holds
+        on the next line; only a newline outside quotes ends a command (Claude on
+        #369)."""
+        for text in (
+            "echo 'abc\ndef`git status`ghi'",
+            "echo 'a\nb; git status'",
+            'echo "a\n; git gc"',
+        ):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+        # A backslash before a newline continues the line, as Bash removes both.
+        for text in (
+            "echo a\ngit status",
+            "x='a\nb'\ngit gc",
+            "echo `\ngit fetch`",
+            "x=1 \\\ngit status",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+
+    def test_coproc_runs_the_command_after_it(self) -> None:
+        """`coproc` runs the command after it. A name before a group is the
+        coprocess's; before a simple command, Bash takes it for the command word, so
+        `coproc JOB git fetch` runs `JOB` (measured; Codex on #369)."""
+        for text in (
+            "coproc git status",
+            "coproc JOB { git fetch; }",
+            "coproc { git gc; }",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        for text in ("coproc JOB git fetch", "coproc echo git"):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
     def test_eval_runs_its_arguments(self) -> None:
         """`eval` joins its arguments and runs them as a command (Codex on #369)."""
         for text in ("eval 'git status'", "eval git status", 'eval "x=1; git fetch"'):
@@ -564,6 +600,27 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(line=number):
                 self.assertIs(runs, shell_reader.runs_git(found[number][0]))
 
+    def test_an_exec_form_is_read_across_its_lines_and_as_an_argument_list(
+        self,
+    ) -> None:
+        """An exec form split by the escape character is joined before it is read
+        (Kody on #369). Its elements are arguments, so one that spells an operator,
+        as `";"`, separates nothing (Kody on #369). A list too deep for `json` is
+        the shell form, not a crash (Kody on #369)."""
+        lines = [
+            "FROM a",
+            'RUN ["echo", ";", "git"]',
+            'RUN ["sh", "-c", \\',
+            '    "git status"]',
+            'RUN ["sh", "-c", "a; git gc"]',
+            "RUN " + "[" * 100000,
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 5, 6}, set(found))
+        for number, runs in ((2, False), (3, True), (5, True), (6, False)):
+            with self.subTest(line=number):
+                self.assertIs(runs, shell_reader.runs_git(found[number][0]))
+
     def test_a_group_s_here_document_is_judged_by_the_group_s_command(self) -> None:
         """A here-document after a group goes to the group, so its first command
         judges the body (Kody on #369)."""
@@ -583,6 +640,33 @@ class ShellReaderUnitTests(unittest.TestCase):
         # The group's first command reads the document: `cat`, not `bash`.
         self.assertEqual({2, 5, 6, 8}, set(found))
         self.assertTrue(shell_reader.runs_git(found[6][0]))
+
+    def test_a_redirection_before_a_here_document_is_no_command(self) -> None:
+        """A redirection between the command and its here-document, as `2>&1`, is
+        the shell's, so the command is still judged, after a group too (Kody on
+        #369)."""
+        lines = [
+            "FROM a",
+            "RUN bash 2>&1 <<EOF",
+            '"git" status',
+            "EOF",
+            "RUN ( bash ) 2>&1 <<EOF",
+            '"git" log',
+            "EOF",
+            "RUN cat >/tmp/x <<EOF",
+            "git gc",
+            "EOF",
+            # The document's own descriptor, as `0<<`, is the shell's too (CodeAnt
+            # on #369).
+            "RUN bash 0<<EOF",
+            '"git" fetch',
+            "EOF",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 5, 6, 8, 11, 12}, set(found))
+        for number in (3, 6, 12):
+            with self.subTest(line=number):
+                self.assertTrue(shell_reader.runs_git(found[number][0]))
 
     def test_a_here_document_s_command_may_be_on_an_earlier_line(self) -> None:
         """The command a here-document follows may stand on an earlier continuation
