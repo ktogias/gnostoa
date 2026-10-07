@@ -57,7 +57,8 @@ The reuse check gains one **shell command reader**:
    `punctuation_chars`, so `;`, `&&`, `||`, `|`, `&`, `(`, `)` and `;;` are tokens
    of their own. `#` begins a comment. Quotes are removed, as the shell removes
    them.
-2. **Command positions.** A command starts at the start of the text, after a
+2. **Command positions.** A command starts at the start of the text, after an
+   opening backtick, which a closing one ends (round 45), after a
    control operator or a group's `(`, `{` or `)`, and after a reserved word that
    introduces one: `if`, `then`, `elif`, `else`, `do`, `while`, `until`, `!`,
    `time` and `exec`. A redirection, its target and a descriptor's number before
@@ -90,7 +91,9 @@ The reuse check gains one **shell command reader**:
   43). A here-document's body is shell text when a shell reads it: `RUN <<EOF`
   alone, unless its shebang names no shell, or after a shell that reads its
   standard input. Another program's body, as `python3 <<EOF`'s, is data. One
-  here-document per instruction is read (round 44);
+  here-document per instruction is read (round 44), on its first line or a
+  continuation line, and judged by the command it follows, after any control
+  operator (round 45);
 - a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
   found by composing the file as YAML with PyYAML, already a dependency, rather
   than by a pattern for the key. Any spelling of the key, a flow mapping, any block

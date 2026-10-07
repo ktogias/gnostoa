@@ -59,12 +59,15 @@ _COMMAND_OPTIONS = {
     "flock": ("-c", "--command"),
 }
 _NAMES = _WRAPPERS | _SHELLS | {"git"}
+_BACKTICK = "`"
 # The shell's redirection operators, as `2>`'s `>`, `>&` or `<<`; and a process
 # substitution's opening. A set, not a pattern, so nothing backtracks (SonarCloud).
 _REDIRECTIONS = frozenset(
     {"<", ">", ">>", "<<", "<<<", "<&", ">&", "<>", ">|", "&>", "&>>"}
 )
 _PROCESS = frozenset({"<(", ">("})
+# What ends the command a here-document follows.
+_BOUNDARIES = _SEPARATORS | _PROCESS
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=", re.ASCII)
 # How deep `sh -c` and `env -S` may nest before the reader stops following.
 _DEPTH = 4
@@ -72,16 +75,33 @@ _FENCES = frozenset({"bash", "sh", "shell", "zsh", "console"})
 
 
 def words(text: str) -> list[str]:
-    """The tokens of ``text``, as a shell splits them, as far as they split."""
+    """The tokens of ``text``, as a shell splits them, as far as they split. A
+    backtick is a token of its own: it opens or closes a command substitution
+    (Codex on #369)."""
     lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     found: list[str] = []
     try:
-        found.extend(lexer)
+        for token in lexer:
+            found.extend(_backticks(token))
     except ValueError:
         # An unterminated quote or escape: what split before it still counts.
         pass
     return found
+
+
+def _backticks(token: str) -> list[str]:
+    """``token`` split at its backticks, each backtick kept as a token. A token
+    with a backtick may have been quoted, keeping its spaces, so its parts split at
+    them too; a token without one is unchanged."""
+    if _BACKTICK not in token:
+        return [token]
+    parts: list[str] = []
+    for index, part in enumerate(token.split(_BACKTICK)):
+        if index:
+            parts.append(_BACKTICK)
+        parts.extend(part.split())
+    return parts
 
 
 def runs_git(text: str, depth: int = 0) -> bool:
@@ -119,19 +139,32 @@ def _commands(tokens: list[str]) -> list[list[str]]:
     """The simple commands of ``tokens``: its words between separators, without
     their redirections. A redirection, its target and a descriptor's number before
     it are the shell's, wherever they stand, as in `2>/dev/null git fetch`; a
-    process substitution, `<(...)`, opens a command of its own (Codex on #369)."""
-    found: list[list[str]] = [[]]
+    process substitution, `<(...)`, opens a command of its own (Codex on #369). So
+    does an opening backtick; its closing one returns to the command around it."""
+    current: list[str] = []
+    found = [current]
+    outer: list[list[str]] = []
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in _SEPARATORS or token in _PROCESS:
-            found.append([])
+        if token == _BACKTICK and not outer:
+            # The substitution stands for a word of the command around it, as its
+            # command word in `` `date` git ``.
+            current.append(_BACKTICK)
+            outer.append(current)
+            current = []
+            found.append(current)
+        elif token == _BACKTICK:
+            current = outer.pop()
+        elif token in _SEPARATORS or token in _PROCESS:
+            current = []
+            found.append(current)
         elif token in _REDIRECTIONS:
-            if found[-1] and found[-1][-1].isdigit():
-                found[-1].pop()
+            if current and current[-1].isdigit():
+                current.pop()
             index += 1
         else:
-            found[-1].append(token)
+            current.append(token)
         index += 1
     return [command for command in found if command]
 
@@ -160,9 +193,9 @@ def _runs_git(command: list[str], depth: int) -> bool:
 
 
 def _command_name(word: str) -> str:
-    """A command word's name: after Make's `@`, `-` and `+` prefixes, a backtick and
-    its path."""
-    return word.lstrip("@+-`").rstrip("`").rsplit("/", 1)[-1]
+    """A command word's name: after Make's `@`, `-` and `+` prefixes, and its path.
+    A backtick is a token of its own, so no name holds one."""
+    return word.lstrip("@+-").rsplit("/", 1)[-1]
 
 
 def _past_wrapper(
@@ -352,14 +385,12 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
         if document is not None:
             document = _heredoc_line(document, number, text, found)
             continue
-        if continued:
-            found.append((number, text))
-        else:
-            rest = _run_text(text)
-            if rest is None:
-                continue
-            found.append((number, rest))
-            document = _heredoc(rest)
+        rest = text if continued else _run_text(text)
+        if rest is None:
+            continue
+        found.append((number, rest))
+        # A continuation line may open one too (Claude on #369).
+        document = _heredoc(rest)
         continued = document is None and text.endswith(escape)
     return found
 
@@ -378,8 +409,10 @@ def _run_text(text: str) -> str | None:
 def _heredoc(rest: str) -> _Heredoc | None:
     """The here-document a `RUN` text opens, if any. A shell reads its body when it
     stands alone, as `RUN <<EOF`, or after a shell that reads its standard input, as
-    `RUN bash -e <<EOF`; another program's body, as `python3 <<EOF`'s, is data. One
-    here-document per instruction is read."""
+    `RUN bash -e <<EOF`; another program's body, as `python3 <<EOF`'s, is data. The
+    command is the one the document follows, after any control operator, as in
+    `apt-get update && bash <<EOF` (Claude on #369). One here-document per
+    instruction is read."""
     tokens = words(rest)
     if "<<" not in tokens:
         return None
@@ -389,7 +422,9 @@ def _heredoc(rest: str) -> _Heredoc | None:
     delimiter = delimiter.removeprefix("-")
     if not delimiter:
         return None
-    command = tokens[:at]
+    before = tokens[:at]
+    starts = [i for i, token in enumerate(before) if token in _BOUNDARIES]
+    command = before[starts[-1] + 1 :] if starts else before
     shell = not command or _reads_stdin(command)
     return _Heredoc(delimiter, strip_tabs, shell, bare=not command)
 

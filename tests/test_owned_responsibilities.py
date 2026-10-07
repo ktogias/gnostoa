@@ -308,6 +308,25 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(names=text):
                 self.assertFalse(shell_reader.runs_git(text))
 
+    def test_a_backtick_substitution_runs_a_command_of_its_own(self) -> None:
+        """A backquoted region is a command substitution, which runs its own
+        command, an argument's or not, quoted in double quotes too. Its closing
+        backtick returns to the command around it (Codex on #369)."""
+        for text in (
+            "echo `git status`",
+            'echo "`git log`"',
+            "x=`git rev-parse HEAD`",
+            "echo a`git gc`b",
+            "echo `cd /srv; git fetch`",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        # After the closing backtick, `git` is the outer command's argument, even
+        # where the substitution's own command is a wrapper.
+        for text in ("echo `date` git", "echo `date`", "`date` git", "echo `nice` git"):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
     def test_flock_s_lock_file_comes_before_its_command(self) -> None:
         """`flock` takes its lock file, a relative path too, before the command it
         runs, and hands the value of `-c` to a shell (Codex on #369)."""
@@ -482,6 +501,30 @@ class ShellReaderUnitTests(unittest.TestCase):
         found = shell_reader.shell_lines("Dockerfile", lines)
         self.assertEqual({2, 3, 4, 6, 7, 9, 12, 16, 19, 20, 22}, set(found))
         for number in (3, 7, 20):
+            with self.subTest(line=number):
+                self.assertTrue(shell_reader.runs_git(found[number][0]))
+
+    def test_a_continued_or_chained_heredoc_is_read_too(self) -> None:
+        """A here-document opened on a `RUN` continuation line, or after a control
+        operator, is read by the command it follows, as `bash` reads its body
+        (Claude on #369). `cat`'s body is data wherever it opens."""
+        lines = [
+            "FROM a",
+            "RUN apt-get update && \\",
+            "    bash <<EOF",
+            '"git" status',
+            "EOF",
+            "RUN apt-get update && bash <<EOF",
+            '"git" log',
+            "EOF",
+            "RUN apt-get update && \\",
+            "    cat <<'EOF' > /tmp/x.sh",
+            "git clone x",
+            "EOF",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 4, 6, 7, 9, 10}, set(found))
+        for number in (4, 7):
             with self.subTest(line=number):
                 self.assertTrue(shell_reader.runs_git(found[number][0]))
 
