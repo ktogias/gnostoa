@@ -55,7 +55,10 @@ instructions.
 - Each `${{ … }}` is masked by underscores of the same width.
 - That gives 127 scripts from 27 files.
 - [The JSON evidence](./0108-shell-parser-evaluation.json) lists each script with its
-  masked SHA-256 and the oracle's count per file.
+  masked SHA-256. It also holds the oracle: its 76 Git commands, each with its file
+  and argv, the count per file, and the SHA-256 of the bytes `oracle.py` wrote.
+  Decision 0108's item 12 requires that SHA-256; the first revision omitted it
+  (CodeRabbit on #394).
 
 A first pass kept the YAML indentation. That left each here-document's terminator
 off column 0, and mvdan/sh rightly refused nine documents as unclosed
@@ -134,7 +137,7 @@ file that raised, and each corpus file with a BOM or a CR. SHA-256
 `87328a813624da41…`. Output: 672 tracked files, 27 with shell surfaces, no BOM, no
 CR, and 19 files that raised, each `shebang=False archive=True`.
 
-````python
+````text
 import sys
 
 sys.path.insert(0, "/repo")
@@ -166,11 +169,16 @@ for name, kind, magic in raised:
 These scripts are evaluation tooling, not repository code. Each is given with its
 SHA-256 and the role it played. `gate.py` and `crash_doc.py` load `spike.py`.
 
+Each block holds the script's exact bytes, fenced as `text` so that no formatter
+rewrites them; `tests/test_shell_parser_dependency.py` checks each block against its
+SHA-256. An earlier revision fenced them as Python, and the repository's formatter
+reflowed them, so their bytes no longer matched their digests (Codex on #394).
+
 ### `evaluate314.py`
 
 The two adapters, tree-sitter-bash and mvdan/sh 3.14.1, over shell_reader's policy, and the run of the reader's suite. SHA-256 `ffb69eeae78604e3…`.
 
-````python
+````text
 """Evaluate two shell parsers as the structure behind shell_reader's own policy.
 
 Each adapter turns shell text into the argument lists of the commands it executes,
@@ -243,13 +251,7 @@ def ts_static(node) -> str | None:
     if t == "string":
         if any(c.type != "string_content" for c in node.named_children):
             return None
-        return (
-            "".join(c.text.decode() for c in node.named_children)
-            .replace('\\"', '"')
-            .replace("\\\\", "\\")
-            .replace("\\$", "$")
-            .replace("\\`", "`")
-        )
+        return "".join(c.text.decode() for c in node.named_children).replace('\\"', '"').replace("\\\\", "\\").replace("\\$", "$").replace("\\`", "`")
     if t == "concatenation":
         parts = [ts_static(c) for c in node.named_children]
         return None if any(p is None for p in parts) else "".join(parts)
@@ -263,11 +265,7 @@ def ts_argv(command) -> list[str | None]:
     for child in command.named_children:
         if child.type == "variable_assignment" or "redirect" in child.type:
             continue
-        target = (
-            child.named_children[0]
-            if child.type == "command_name" and child.named_children
-            else child
-        )
+        target = child.named_children[0] if child.type == "command_name" and child.named_children else child
         argv.append(ts_static(target))
     return argv
 
@@ -295,17 +293,11 @@ def ts_analyse(text: str) -> Analysis:
         if node.type == "command":
             result.commands.append(ts_argv(node))
         if node.type == "redirected_statement":
-            redirect = next(
-                (c for c in node.named_children if c.type == "heredoc_redirect"), None
-            )
+            redirect = next((c for c in node.named_children if c.type == "heredoc_redirect"), None)
             body_node = node.child_by_field_name("body")
             if redirect is not None and body_node is not None:
                 first = ts_first_command(body_node)
-                body = "".join(
-                    c.text.decode()
-                    for c in redirect.named_children
-                    if c.type == "heredoc_body"
-                )
+                body = "".join(c.text.decode() for c in redirect.named_children if c.type == "heredoc_body")
                 if first is not None:
                     result.stdin_bodies.append((ts_argv(first), body))
         stack.extend(node.named_children)
@@ -391,13 +383,7 @@ def sh_hdoc_text(word) -> str:
 
 def sh_analyse(text: str) -> Analysis:
     result = Analysis()
-    done = subprocess.run(
-        [SHFMT, "--to-json", "-ln", "bash"],
-        input=text,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    done = subprocess.run([SHFMT, "--to-json", "-ln", "bash"], input=text, capture_output=True, text=True, check=False)
     if done.returncode != 0:
         result.unsupported.append(done.stderr.strip()[:80])
         return result
@@ -419,9 +405,7 @@ def sh_analyse(text: str) -> Analysis:
                     first = sh_first_call(node.get("Cmd"))
                     if first is not None:
                         argv = [sh_static(w) for w in first.get("Args") or []]
-                        result.stdin_bodies.append(
-                            (argv, sh_hdoc_text(redirect["Hdoc"]))
-                        )
+                        result.stdin_bodies.append((argv, sh_hdoc_text(redirect["Hdoc"])))
         if kind == "CoprocClause":
             # coproc NAME stmt: the statement is visited as any other.
             pass
@@ -448,26 +432,16 @@ def run_suite(name: str) -> None:
 
         loader = unittest.TestLoader()
         suite = unittest.TestSuite(
-            [
-                loader.loadTestsFromTestCase(t.ShellReaderTests),
-                loader.loadTestsFromTestCase(t.ShellReaderUnitTests),
-            ]
+            [loader.loadTestsFromTestCase(t.ShellReaderTests), loader.loadTestsFromTestCase(t.ShellReaderUnitTests)]
         )
         result = unittest.TestResult()
         result.failfast = False
         # Count each subTest failure on its own.
         suite.run(result)
-        failures = [
-            (str(test), err.strip().splitlines()[-1][:160])
-            for test, err in result.failures + result.errors
-        ]
-        print(
-            f"== {name}: ran {result.testsRun} tests; {len(failures)} failing (test or subtest)"
-        )
+        failures = [(str(test), err.strip().splitlines()[-1][:160]) for test, err in result.failures + result.errors]
+        print(f"== {name}: ran {result.testsRun} tests; {len(failures)} failing (test or subtest)")
         for test, last in failures:
-            print(
-                f"   {test.split('(')[0]} {test[test.find('(', test.find(')')) :][:120]} -> {last[:60]}"
-            )
+            print(f"   {test.split("(")[0]} {test[test.find("(", test.find(")")):][:120]} -> {last[:60]}")
     finally:
         sr.runs_git = original  # type: ignore[assignment]
 
@@ -481,19 +455,15 @@ if __name__ == "__main__":
 
 Whole-script extraction, each workflow `run:` value through YAML, and the per-parser corpus results. SHA-256 `b5601f954a15ed72…`.
 
-````python
+````text
 """Whole scripts, extracted properly: each workflow or action `run:` value through
 YAML, so its block indentation is gone; other files as the reader's joined lines."""
-
 import json, re, sys, yaml
-
 sys.argv = ["x"]
 exec(open("/spike/evaluate314.py").read().split("ADAPTERS = {")[0])
 mask = re.compile(r"\$\{\{.*?\}\}", re.S)
 docs = json.load(open("/spike/corpus.json"))
 scripts = []
-
-
 def runs(node, path):
     if isinstance(node, dict):
         for k, v in node.items():
@@ -504,8 +474,6 @@ def runs(node, path):
     elif isinstance(node, list):
         for v in node:
             runs(v, path)
-
-
 for d in docs:
     p = d["path"]
     if p.startswith(".github/") and p.endswith((".yml", ".yaml")):
@@ -514,13 +482,8 @@ for d in docs:
         scripts.append((p, d["text"]))
 masked = [(p, mask.sub(lambda m: "_" * len(m.group(0)), s)) for p, s in scripts]
 print(f"{len(masked)} scripts from {len({p for p, _ in masked})} files")
-for name, analyse in (
-    ("tree-sitter-bash 0.25.1", ts_analyse),
-    ("mvdan/sh 3.14.1", sh_analyse),
-):
-    git = 0
-    problems = []
-    dynamic = 0
+for name, analyse in (("tree-sitter-bash 0.25.1", ts_analyse), ("mvdan/sh 3.14.1", sh_analyse)):
+    git = 0; problems = []; dynamic = 0
     for p, s in masked:
         a = analyse(s)
         if a.unsupported:
@@ -528,48 +491,29 @@ for name, analyse in (
         for argv in a.commands:
             if argv and argv[0] is None:
                 dynamic += 1
-            elif argv and sr._runs_git(
-                [w if w is not None else "\x00" for w in argv], 0
-            ):
+            elif argv and sr._runs_git([w if w is not None else "\x00" for w in argv], 0):
                 git += 1
-    print(
-        f"{name}: git commands {git}; scripts with a parse problem {len(problems)} {sorted(set(problems))}; dynamic command words {dynamic}"
-    )
+    print(f"{name}: git commands {git}; scripts with a parse problem {len(problems)} {sorted(set(problems))}; dynamic command words {dynamic}")
 ````
 
 ### `diff_parsers.py`
 
 The per-script differences between the two parsers. SHA-256 `480dcaf0fa826d93…`.
 
-````python
+````text
 import json, re, sys, yaml
-
 sys.argv = ["x"]
 exec(open("/spike/corpus_scripts.py").read().split('print(f"{len(masked)} scripts')[0])
-
-
 def gits(analyse, s):
     out = []
     for argv in analyse(s).commands:
-        if (
-            argv
-            and argv[0] is not None
-            and sr._runs_git([w if w is not None else "\x00" for w in argv], 0)
-        ):
+        if argv and argv[0] is not None and sr._runs_git([w if w is not None else "\x00" for w in argv], 0):
             out.append(" ".join(w if w is not None else "<dyn>" for w in argv)[:70])
     return out
-
-
 for p, s in masked:
     a, b = gits(ts_analyse, s), gits(sh_analyse, s)
     if sorted(a) != sorted(b):
-        print(
-            p,
-            "\n  tree-sitter only:",
-            sorted(set(a) - set(b)),
-            "\n  mvdan/sh only:",
-            sorted(set(b) - set(a)),
-        )
+        print(p, "\n  tree-sitter only:", sorted(set(a) - set(b)), "\n  mvdan/sh only:", sorted(set(b) - set(a)))
         print("  counts", len(a), len(b))
 ````
 
@@ -577,23 +521,17 @@ for p, s in masked:
 
 The 76-entry oracle of Git commands. SHA-256 `aae47ef9efc4942b…`.
 
-````python
+````text
 import json, re, sys, yaml
-
 sys.argv = ["x"]
 exec(open("/spike/corpus_scripts.py").read().split('print(f"{len(masked)} scripts')[0])
 oracle = []
 for p, s in masked:
     for argv in ts_analyse(s).commands:
-        if (
-            argv
-            and argv[0] is not None
-            and sr._runs_git([w if w is not None else "\x00" for w in argv], 0)
-        ):
+        if argv and argv[0] is not None and sr._runs_git([w if w is not None else "\x00" for w in argv], 0):
             oracle.append({"path": p, "argv": argv})
 json.dump(oracle, open("/spike/oracle.json", "w"), indent=0)
 from collections import Counter
-
 for p, n in sorted(Counter(o["path"] for o in oracle).items()):
     print(f"{n:3} {p}")
 print("total", len(oracle))
@@ -603,15 +541,11 @@ print("total", len(oracle))
 
 The 27-document corpus at the frozen subject. SHA-256 `1be5a431d9a94d79…`.
 
-````python
+````text
 import hashlib, json, subprocess, sys
-
 sys.path.insert(0, "/repo")
 from tools import shell_reader as sr
-
-files = subprocess.run(
-    ["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True
-).stdout.split()
+files = subprocess.run(["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 out = []
 for name in files:
     try:
@@ -622,14 +556,7 @@ for name in files:
     if found:
         numbers = sorted(found)
         text = "\n".join(found[n][0] for n in numbers)
-        out.append(
-            {
-                "path": name,
-                "lines": numbers,
-                "text": text,
-                "sha256": hashlib.sha256(text.encode()).hexdigest(),
-            }
-        )
+        out.append({"path": name, "lines": numbers, "text": text, "sha256": hashlib.sha256(text.encode()).hexdigest()})
 json.dump(out, open("/spike/corpus.json", "w"), indent=1)
 print(len(out), "documents")
 ````
@@ -638,11 +565,9 @@ print(len(out), "documents")
 
 The bounded parser worker. SHA-256 `6487d0c626e07593…`.
 
-````python
+````text
 """Parser worker: reads a JSON list of scripts on stdin, writes one analysis per script."""
-
 import json, os, signal, sys
-
 exec(open("/spike/evaluate314.py").read().split("ADAPTERS = {")[0])
 scripts = json.load(sys.stdin)
 if os.environ.get("CRASH"):
@@ -650,13 +575,7 @@ if os.environ.get("CRASH"):
 out = []
 for s in scripts:
     a = ts_analyse(s)
-    out.append(
-        {
-            "commands": a.commands,
-            "unsupported": a.unsupported,
-            "stdin": [[argv, body] for argv, body in a.stdin_bodies],
-        }
-    )
+    out.append({"commands": a.commands, "unsupported": a.unsupported, "stdin": [[argv, body] for argv, body in a.stdin_bodies]})
 json.dump(out, sys.stdout)
 ````
 
@@ -664,27 +583,17 @@ json.dump(out, sys.stdout)
 
 The worker's timing and its crash handling, against in-process parsing. SHA-256 `1d062b85079dd122…`.
 
-````python
+````text
 import json, os, re, subprocess, sys, time, yaml
-
 exec(open("/spike/corpus_scripts.py").read().split('print(f"{len(masked)} scripts')[0])
 batch = [s for _, s in masked]
 for crash in ("", "1"):
     started = time.perf_counter()
     env = dict(os.environ, CRASH=crash)
     try:
-        done = subprocess.run(
-            [sys.executable, "/spike/worker.py"],
-            input=json.dumps(batch),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
+        done = subprocess.run([sys.executable, "/spike/worker.py"], input=json.dumps(batch), capture_output=True, text=True, timeout=60, env=env)
         if done.returncode != 0:
-            verdict = (
-                f"UNKNOWN for all {len(batch)} scripts: worker exited {done.returncode}"
-            )
+            verdict = f"UNKNOWN for all {len(batch)} scripts: worker exited {done.returncode}"
         else:
             result = json.loads(done.stdout)
             verdict = f"{len(result)} analyses"
@@ -702,7 +611,7 @@ print(f"in-process: {time.perf_counter() - started:.2f}s for the whole batch")
 
 The first spike, which gate.py and crash_doc.py load. SHA-256 `cf8b602985d031e7…`.
 
-````python
+````text
 """Spike: tree-sitter-bash for structure, shell_reader's own argv policy for meaning.
 
 Not repository code. Compares the current ad-hoc reader with a parser-backed reader
@@ -774,9 +683,7 @@ def static(node: Node) -> str | None:
     return None
 
 
-def analyse(
-    text: str, depth: int = 0, result: ShellAnalysis | None = None
-) -> ShellAnalysis:
+def analyse(text: str, depth: int = 0, result: ShellAnalysis | None = None) -> ShellAnalysis:
     result = result or ShellAnalysis()
     if depth > 4:
         result.unsupported.append("depth")
@@ -791,9 +698,7 @@ def analyse(
 
 def _walk(node: Node, depth: int, result: ShellAnalysis) -> None:
     if node.is_error or node.is_missing:
-        result.unsupported.append(
-            f"{node.type}: {node.text.decode(errors='replace')[:40]!r}"
-        )
+        result.unsupported.append(f"{node.type}: {node.text.decode(errors='replace')[:40]!r}")
     if node.type == "command":
         _command(node, depth, result)
     if node.type == "redirected_statement":
@@ -818,11 +723,7 @@ def _command(command: Node, depth: int, result: ShellAnalysis) -> None:
     if argv and argv[0] == DYNAMIC:
         result.dynamic_commands.append(command.text.decode(errors="replace")[:60])
         return
-    if (
-        any(word == DYNAMIC for word in argv)
-        and argv
-        and sr._command_name(argv[0]) in {"eval", *sr._SHELLS}
-    ):
+    if any(word == DYNAMIC for word in argv) and argv and sr._command_name(argv[0]) in {"eval", *sr._SHELLS}:
         result.dynamic_commands.append(command.text.decode(errors="replace")[:60])
     # The policy is shell_reader's: wrappers, shells' -c, eval, coproc. Its
     # recursion into a command string re-enters this parser-backed reader.
@@ -831,15 +732,11 @@ def _command(command: Node, depth: int, result: ShellAnalysis) -> None:
 
 
 def _heredocs(statement: Node, depth: int, result: ShellAnalysis) -> None:
-    body = next(
-        (c for c in statement.named_children if c.type == "heredoc_redirect"), None
-    )
+    body = next((c for c in statement.named_children if c.type == "heredoc_redirect"), None)
     commands = [c for c in statement.named_children if c.type == "command"]
     if body is None or not commands:
         return
-    text = "".join(
-        c.text.decode() for c in body.named_children if c.type == "heredoc_body"
-    )
+    text = "".join(c.text.decode() for c in body.named_children if c.type == "heredoc_body")
     argv = _argv(commands[0])
     if argv and argv[0] != DYNAMIC and sr._reads_stdin(argv):
         analyse(text, depth + 1, result)
@@ -855,68 +752,32 @@ _ADHOC = sr.runs_git
 sr.runs_git = ts_runs_git  # type: ignore[assignment]
 
 CORPUS: list[tuple[str, bool]] = [
-    ("git status", True),
-    ("sudo git status", True),
-    ("x=1 git status", True),
-    ("echo $(git status)", True),
-    ("echo `git status`", True),
-    ("echo '`git status`'", False),
-    ("echo \\`git status\\`", False),
-    ('echo "\\`git status\\`"', False),
-    ("echo '$(git status)'", False),
-    ('echo "$(git status)"', True),
-    ("eval 'git status'", True),
-    ("eval 'echo git'", False),
-    ("x=`date` git status", True),
-    ("x=a`date`b git status", True),
-    ("`date` git", False),
-    ("echo `date` git", False),
-    ("echo 'see ` lonely' ; x=`git status`", True),
-    ("echo 'a\\' ; x=`git status`", True),
-    ('echo "it\'s" ; x=`git status`', True),
+    ("git status", True), ("sudo git status", True), ("x=1 git status", True),
+    ("echo $(git status)", True), ("echo `git status`", True),
+    ("echo '`git status`'", False), ("echo \\`git status\\`", False),
+    ('echo "\\`git status\\`"', False), ("echo '$(git status)'", False),
+    ('echo "$(git status)"', True), ("eval 'git status'", True), ("eval 'echo git'", False),
+    ("x=`date` git status", True), ("x=a`date`b git status", True), ("`date` git", False),
+    ("echo `date` git", False), ("echo 'see ` lonely' ; x=`git status`", True),
+    ("echo 'a\\' ; x=`git status`", True), ("echo \"it's\" ; x=`git status`", True),
     ("echo `echo \\`git status\\``", True),
-    ("echo 'abc\ndef`git status`ghi'", False),
-    ("echo 'a\nb; git status'", False),
-    ('echo "a\n; git gc"', False),
-    ("echo a\ngit status", True),
-    ("x=1 \\\ngit status", True),
-    ("coproc git status", True),
-    ("coproc JOB { git fetch; }", True),
-    ("coproc JOB git fetch", False),
-    ("{ git gc; }", True),
-    ("( git gc )", True),
-    ("if true; then git pull; fi", True),
-    ("a | git log", True),
-    ("a && git log || b", True),
-    ("! git diff", True),
-    ("2>/dev/null git fetch", True),
-    (">out git status", True),
-    ("cat <(git log)", True),
-    ("time git status", True),
-    ("exec git gc", True),
-    ("sh -c 'git status'", True),
-    ('bash -c "echo; git fetch"', True),
-    ("env -S 'git status'", True),
-    ("flock /tmp/l git gc", True),
-    ("timeout 5 git fetch", True),
-    ("nice -n 5 git gc", True),
-    ("sudo -u git echo ok", False),
-    ("chrt -f 99 grep git", False),
-    ("echo git status", False),
-    ("grep git file", False),
-    ("# git status", False),
-    ("echo 'git status'", False),
-    ("case x in y) git gc;; esac", True),
-    ("f() { git log; }", True),
-    ("[[ -n $(git status) ]]", True),
-    ('bash <<EOF\n"git" status\nEOF', True),
-    ("cat <<EOF\ngit status\nEOF", False),
-    ("bash 2>&1 <<EOF\ngit status\nEOF", True),
-    ("( bash ) <<EOF\ngit log\nEOF", True),
-    ("{ cat; } <<EOF\ngit gc\nEOF", False),
-    ("bash 0<<EOF\ngit fetch\nEOF", True),
-    ("$GIT status", False),
-    ("cmd=git; $cmd status", False),
+    ("echo 'abc\ndef`git status`ghi'", False), ("echo 'a\nb; git status'", False),
+    ('echo "a\n; git gc"', False), ("echo a\ngit status", True), ("x=1 \\\ngit status", True),
+    ("coproc git status", True), ("coproc JOB { git fetch; }", True), ("coproc JOB git fetch", False),
+    ("{ git gc; }", True), ("( git gc )", True), ("if true; then git pull; fi", True),
+    ("a | git log", True), ("a && git log || b", True), ("! git diff", True),
+    ("2>/dev/null git fetch", True), (">out git status", True), ("cat <(git log)", True),
+    ("time git status", True), ("exec git gc", True), ("sh -c 'git status'", True),
+    ("bash -c \"echo; git fetch\"", True), ("env -S 'git status'", True),
+    ("flock /tmp/l git gc", True), ("timeout 5 git fetch", True), ("nice -n 5 git gc", True),
+    ("sudo -u git echo ok", False), ("chrt -f 99 grep git", False),
+    ("echo git status", False), ("grep git file", False), ("# git status", False),
+    ("echo 'git status'", False), ("case x in y) git gc;; esac", True),
+    ("f() { git log; }", True), ("[[ -n $(git status) ]]", True),
+    ("bash <<EOF\n\"git\" status\nEOF", True), ("cat <<EOF\ngit status\nEOF", False),
+    ("bash 2>&1 <<EOF\ngit status\nEOF", True), ("( bash ) <<EOF\ngit log\nEOF", True),
+    ("{ cat; } <<EOF\ngit gc\nEOF", False), ("bash 0<<EOF\ngit fetch\nEOF", True),
+    ("$GIT status", False), ("cmd=git; $cmd status", False),
 ]
 
 
@@ -928,20 +789,14 @@ def compare() -> None:
         rows.append((text, expected, adhoc, a.runs_git, a.verdict))
     wrong_adhoc = [r for r in rows if r[2] != r[1]]
     wrong_ts = [r for r in rows if r[3] != r[1]]
-    print(
-        f"corpus {len(rows)}: ad-hoc wrong {len(wrong_adhoc)}, parser-backed wrong {len(wrong_ts)}"
-    )
+    print(f"corpus {len(rows)}: ad-hoc wrong {len(wrong_adhoc)}, parser-backed wrong {len(wrong_ts)}")
     for text, expected, adhoc, ts, verdict in rows:
         if adhoc != expected or ts != expected or verdict == "UNKNOWN":
-            print(
-                f"  expected={expected!s:5} adhoc={adhoc!s:5} parser={ts!s:5} {verdict:7} {text!r}"
-            )
+            print(f"  expected={expected!s:5} adhoc={adhoc!s:5} parser={ts!s:5} {verdict:7} {text!r}")
 
 
 def scan() -> None:
-    files = subprocess.run(
-        ["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True
-    ).stdout.split()
+    files = subprocess.run(["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True).stdout.split()
     texts = []
     for name in files:
         try:
@@ -966,25 +821,12 @@ def scan() -> None:
         if adhoc != a.runs_git:
             disagree.append((name, number, text, adhoc, a.runs_git))
     elapsed = time.perf_counter() - started
-    print(
-        f"repo surfaces: {len(texts)} shell texts in {len({t[0] for t in texts})} files, parsed in {elapsed:.2f}s"
-    )
-    print(
-        f"  parse errors: {errors}; UNKNOWN (dynamic or unparsed): {len(unknown)}; ad-hoc vs parser disagree: {len(disagree)}"
-    )
+    print(f"repo surfaces: {len(texts)} shell texts in {len({t[0] for t in texts})} files, parsed in {elapsed:.2f}s")
+    print(f"  parse errors: {errors}; UNKNOWN (dynamic or unparsed): {len(unknown)}; ad-hoc vs parser disagree: {len(disagree)}")
     for row in unknown[:25]:
         print("  UNKNOWN", row[0], row[1], repr(row[2][:70]), row[3][:1], row[4])
     for row in disagree[:25]:
-        print(
-            "  DIFF",
-            row[0],
-            row[1],
-            repr(row[2][:70]),
-            "adhoc",
-            row[3],
-            "parser",
-            row[4],
-        )
+        print("  DIFF", row[0], row[1], repr(row[2][:70]), "adhoc", row[3], "parser", row[4])
 
 
 if __name__ == "__main__":
@@ -995,9 +837,7 @@ if __name__ == "__main__":
 def scan_documents() -> None:
     """Each file's shell lines, joined in order, parsed as one script: a run block or
     a RUN instruction keeps its continuation lines together."""
-    files = subprocess.run(
-        ["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True
-    ).stdout.split()
+    files = subprocess.run(["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True).stdout.split()
     docs = []
     for name in files:
         try:
@@ -1017,9 +857,7 @@ def scan_documents() -> None:
             dynamic.append((name, a.dynamic_commands[:3]))
         adhoc_git += _ADHOC(text)
         parser_git += a.runs_git
-    print(
-        f"documents: {len(docs)}; with a parse error: {len(errors)}; with a dynamic command word: {len(dynamic)}"
-    )
+    print(f"documents: {len(docs)}; with a parse error: {len(errors)}; with a dynamic command word: {len(dynamic)}")
     print(f"  documents read as running Git: ad-hoc {adhoc_git}, parser {parser_git}")
     for row in errors:
         print("  ERROR", row)
@@ -1035,21 +873,12 @@ if __name__ == "__main__" and "--documents" in sys.argv:
 
 The reproducer that segfaults with tree-sitter 0.26.0 and passes with 0.25.2. SHA-256 `167f850f7c9cb297…`.
 
-````python
+````text
 import re, subprocess, sys, yaml
-
 exec(open("/spike/spike.py").read().split("CORPUS: list")[0])
 reg = yaml.safe_load(open("/repo/policy/owned-responsibilities.yaml"))
-patterns = [
-    re.compile(s["pattern"])
-    for r in reg["responsibilities"]
-    if r["id"] == "trusted-execution"
-    for s in r.get("signatures") or []
-    if s.get("pattern") and s.get("id") == "git-execution"
-]
-files = subprocess.run(
-    ["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True
-).stdout.split()
+patterns = [re.compile(s["pattern"]) for r in reg["responsibilities"] if r["id"] == "trusted-execution" for s in r.get("signatures") or [] if s.get("pattern") and s.get("id") == "git-execution"]
+files = subprocess.run(["git", "-C", "/repo", "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 total = net = reader = neither = 0
 missed = []
 for name in files:
@@ -1073,11 +902,7 @@ for name in files:
             collected.append((node.start_point.row, _argv(node)))
         stack.extend(node.named_children)
     for row, argv in collected:
-        if (
-            argv
-            and argv[0] != DYNAMIC
-            and sr._runs_git([w if w != DYNAMIC else "_" for w in argv], 0)
-        ):
+        if argv and argv[0] != DYNAMIC and sr._runs_git([w if w != DYNAMIC else "_" for w in argv], 0):
             original = numbers[row] if row < len(numbers) else None
             text = lines[original - 1] if original else ""
             total += 1
@@ -1088,9 +913,7 @@ for name in files:
             if not (by_net or by_reader):
                 neither += 1
                 missed.append((name, original, text.strip()[:100]))
-print(
-    f"git commands the parser finds: {total}; caught by the line net: {net}; by the reader: {reader}; by neither: {neither}"
-)
+print(f"git commands the parser finds: {total}; caught by the line net: {net}; by the reader: {reader}; by neither: {neither}")
 for m in missed:
     print("  MISSED", m)
 ````
@@ -1099,9 +922,8 @@ for m in missed:
 
 A single-document check, which does not reproduce the crash. SHA-256 `0d3c1f0b0c68454f…`.
 
-````python
+````text
 import json, sys, faulthandler
-
 faulthandler.enable()
 exec(open("/spike/spike.py").read().split("CORPUS: list")[0])
 docs = json.load(open("/spike/corpus.json"))

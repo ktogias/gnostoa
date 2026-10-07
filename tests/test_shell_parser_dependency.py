@@ -3,6 +3,7 @@ the shell reader relies on (Decision 0108)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import tomllib
 import unittest
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -31,6 +33,7 @@ PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 RUN = re.compile(r"[ \t]*RUN[ \t]+(.*)", re.I)
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
+CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
 # Directories that hold no source: caches, environments and Git's own metadata.
 PRUNED = {".git", "__pycache__", ".mypy_cache", ".ruff_cache", ".venv", "node_modules"}
 KEPT_DOT_DIRECTORIES = {".github", ".githooks", ".devcontainer"}
@@ -52,12 +55,21 @@ def _probe(scripts: list[str]) -> dict[str, object]:
             f"the parser probe exited {done.returncode}: {done.stderr[-2000:]}"
         )
     try:
-        answer: dict[str, object] = json.loads(done.stdout)
+        answer = json.loads(done.stdout)
     except json.JSONDecodeError as exc:
         raise AssertionError(
             f"the parser probe answered no JSON ({exc}): {done.stdout[-2000:]!r}"
         ) from exc
+    if not isinstance(answer, dict) or set(answer) != {"abi", "facts"}:
+        raise AssertionError(
+            f"the parser probe answered another shape: {done.stdout[-2000:]!r}"
+        )
     return answer
+
+
+def _masked(match: re.Match[str]) -> str:
+    """A placeholder as a plain word of its own width: `<ref>` becomes `_ref_`."""
+    return "_" + match.group(0)[1:-1] + "_"
 
 
 def _facts(scripts: list[str]) -> list[dict[str, object]]:
@@ -67,7 +79,8 @@ def _facts(scripts: list[str]) -> list[dict[str, object]]:
 
 def _workflow_runs(path: Path) -> list[str]:
     """Each shell `run:` value of a workflow or action, with its expressions masked.
-    A step in another language fails closed: this reads shell only."""
+    A step, or a job's or workflow's default, in another language fails closed:
+    this reads shell only."""
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except yaml.YAMLError as exc:
@@ -77,6 +90,13 @@ def _workflow_runs(path: Path) -> list[str]:
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
+            default = node.get("defaults")
+            if isinstance(default, dict) and isinstance(default.get("run"), dict):
+                shell = default["run"].get("shell", "bash")
+                if shell not in ("bash", "sh"):
+                    raise AssertionError(
+                        f"{path}: a `{shell}` default; extend this extraction"
+                    )
             if isinstance(node.get("run"), str):
                 if node.get("shell", "bash") not in ("bash", "sh"):
                     raise AssertionError(
@@ -143,9 +163,10 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
     """Every shell surface of the kinds the frozen corpus held (Decision 0108):
     - each workflow or action `run:` value;
     - each shell script, by its shebang, anywhere;
-    - each shell fence of the instruction files;
+    - each shell fence of the instruction files, its placeholders masked;
     - each shell-form `RUN` of the Dockerfile.
-    A Make recipe fails closed: none is tracked, and none was in the corpus."""
+    A Make recipe or another container file fails closed: none is tracked, and none
+    was in the corpus."""
     surfaces: dict[str, str] = {}
     for path in _files(root):
         name = path.relative_to(root).as_posix()
@@ -158,8 +179,10 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
         if name in INSTRUCTION_FILES:
             text = path.read_text(encoding="utf-8-sig")
             for index, fence in enumerate(FENCE.findall(text)):
-                surfaces[f"{name}#{index}"] = fence
+                surfaces[f"{name}#{index}"] = PLACEHOLDER.sub(_masked, fence)
             continue
+        if CONTAINER_FILE.match(path.name) and path.name != "Dockerfile":
+            raise AssertionError(f"{name}: a container file; extend this extraction")
         if path.name == "Dockerfile":
             text = path.read_text(encoding="utf-8-sig")
             for index, run in enumerate(_dockerfile_runs(text)):
@@ -229,9 +252,9 @@ class ShellParserDependencyTests(unittest.TestCase):
         self.assertEqual(['"git" status\n'], heredoc["heredocs"])
 
     def test_every_shell_surface_parses_without_an_unexpected_error(self) -> None:
-        """Every surface kind of the frozen corpus parses with no error but the
-        instruction fences' placeholders, which are documentation, not shell
-        (Codex, Kody and CodeAnt on #394)."""
+        """Every surface kind of the frozen corpus parses with no error. The
+        instruction fences' placeholders are documentation, not shell, so each is
+        masked at its own width first (Codex, Kody and CodeAnt on #394)."""
         surfaces = _shell_surfaces()
         self.assertGreater(len(surfaces), 50)
         for kind in (
@@ -248,13 +271,15 @@ class ShellParserDependencyTests(unittest.TestCase):
         broken = {
             name for name, found in zip(surfaces, facts, strict=True) if found["errors"]
         }
-        placeholders = {
-            name
-            for name, text in surfaces.items()
-            if name.startswith(INSTRUCTION_FILES) and PLACEHOLDER.search(text)
-        }
-        self.assertTrue(placeholders)
-        self.assertEqual(placeholders, broken)
+        # With its placeholders masked, every surface, the instruction fences
+        # included, parses with no error at all (Codex and CodeAnt on #394).
+        self.assertEqual(set(), broken)
+        self.assertTrue(
+            any(
+                name.startswith(INSTRUCTION_FILES) and "_exact-" in text
+                for name, text in surfaces.items()
+            )
+        )
 
 
 class SurfaceExtractionTests(unittest.TestCase):
@@ -320,7 +345,7 @@ class SurfaceExtractionTests(unittest.TestCase):
             self.assertEqual(
                 {
                     ".github/workflows/w.yml#0": "git status",
-                    "AGENTS.md#0": "git log <ref>\n",
+                    "AGENTS.md#0": "git log _ref_\n",
                     "Dockerfile#0": "git fetch",
                     "deep/er/tool": "#!/bin/sh\ngit gc\n",
                 },
@@ -335,14 +360,92 @@ class SurfaceExtractionTests(unittest.TestCase):
                 _shell_surfaces(root)
 
     def test_a_probe_answer_that_is_not_json_is_reported(self) -> None:
-        answer = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="warn", stderr=""
-        )
+        answer = SimpleNamespace(returncode=0, stdout="warn", stderr="")
         with (
             patch("subprocess.run", return_value=answer),
             self.assertRaisesRegex(AssertionError, "answered no JSON.*'warn'"),
         ):
             _probe([])
+
+    def test_a_probe_answer_of_another_shape_is_reported(self) -> None:
+        """Amazon Q on #394: a missing key is named, not a bare KeyError."""
+        for stdout in ('{"facts": []}', "[]", '{"abi": 15, "facts": [], "x": 1}'):
+            answer = SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+            with (
+                self.subTest(stdout=stdout),
+                patch("subprocess.run", return_value=answer),
+                self.assertRaisesRegex(AssertionError, "answered another shape"),
+            ):
+                _probe([])
+
+    def test_a_default_shell_in_another_language_fails_closed(self) -> None:
+        """A step inherits the job's or the workflow's `defaults.run.shell`
+        (Claude on #394)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "w.yml"
+            for document in (
+                "defaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    steps:\n"
+                "      - run: Get-Content x\n",
+                "jobs:\n  j:\n    defaults:\n      run:\n        shell: python\n"
+                "    steps:\n      - run: print(1)\n",
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, "a `(pwsh|python)` default"),
+                ):
+                    _workflow_runs(path)
+
+    def test_a_dockerfile_variant_fails_closed(self) -> None:
+        """Only `Dockerfile` itself is read; another container file fails closed
+        rather than going unread (Claude on #394)."""
+        for name in ("Dockerfile.ci", "build.Dockerfile", "Containerfile"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / name).write_text("FROM a\nRUN true\n", "utf-8")
+                with (
+                    self.subTest(name=name),
+                    self.assertRaisesRegex(AssertionError, "a container file"),
+                ):
+                    _shell_surfaces(root)
+
+
+class RetainedEvidenceTests(unittest.TestCase):
+    """The assessment's retained evidence is the evidence it names (Codex and
+    CodeRabbit on #394)."""
+
+    ASSESSMENT = ROOT / "knowledge/assessments/0108-shell-parser-evaluation.md"
+    EVIDENCE = ROOT / "knowledge/assessments/0108-shell-parser-evaluation.json"
+
+    def test_each_retained_script_hashes_to_its_declared_digest(self) -> None:
+        text = self.ASSESSMENT.read_text(encoding="utf-8")
+        sections = re.findall(
+            r"^### `([^`]+)`\n(.*?)^````(\w*)\n(.*?)^````\n", text, re.M | re.S
+        )
+        self.assertGreaterEqual(len(sections), 11)
+        for name, prose, fence, code in sections:
+            with self.subTest(script=name):
+                declared = re.search(r"SHA-256\s+`([0-9a-f]{16})…`", prose)
+                self.assertIsNotNone(declared)
+                # A `text` fence keeps formatters away from the retained bytes.
+                self.assertEqual("text", fence)
+                digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+                self.assertTrue(digest.startswith(declared.group(1)))  # type: ignore[union-attr]
+
+    def test_the_oracle_is_retained_with_its_digest(self) -> None:
+        evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))
+        oracle = evidence["oracle"]["entries"]
+        self.assertEqual(76, len(oracle))
+        # `oracle.py` wrote it with `json.dump(oracle, …, indent=0)`, so those bytes
+        # are what its digest names.
+        self.assertEqual(
+            evidence["oracle"]["sha256"],
+            hashlib.sha256(json.dumps(oracle, indent=0).encode("utf-8")).hexdigest(),
+        )
+        counts: dict[str, int] = {}
+        for entry in oracle:
+            counts[entry["path"]] = counts.get(entry["path"], 0) + 1
+        self.assertEqual(evidence["oracle_git_commands_per_file"], counts)
 
 
 if __name__ == "__main__":
