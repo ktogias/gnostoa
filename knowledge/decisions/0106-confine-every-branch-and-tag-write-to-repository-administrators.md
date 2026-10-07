@@ -28,6 +28,9 @@ sources:
   - id: suggested-changes
     resource: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/incorporating-feedback-in-your-pull-request
     title: The person who applies a suggested change is the commit's committer
+  - id: ruleset-rules
+    resource: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+    title: What each ruleset rule refuses to anyone without bypass permission
   - id: credentials-boundary
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5979363503
     title: The owner's agent credentials boundary of 2026-10-04
@@ -261,6 +264,14 @@ Read back and exercised on 2026-10-07:
   - `include: ["~ALL"]`;
   - the four rules;
   - `bypass_actors: [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]`.
+- **Role 5 is the admin role.** The provider names it: GraphQL
+  `repository.rulesets.bypassActors` returned, for both rulesets,
+  `repositoryRoleDatabaseId: 5` and `repositoryRoleName: "admin"`, with
+  `bypassMode: ALWAYS`.
+- **What the rules refuse.** GitHub's documentation defines each rule. For
+  example, "Restrict creations" reads: "Only users with bypass permissions can
+  create branches or tags whose name matches the pattern you specify". "Restrict
+  updates" and "Restrict deletions" read the same for pushing and deleting.
 - **They apply to any branch name.** `GET repos/ktogias/gnostoa/rules/branches/probe-anything`
   listed `creation`, `update`, `deletion` and `non_fast_forward` from `24640984`.
 - **They are evaluated for agents too.** A push creating, then deleting, a
