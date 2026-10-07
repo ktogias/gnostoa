@@ -206,9 +206,13 @@ here.
    detector. Python's standard `ast` is used, not Semgrep or a pylint plugin, which
    would add a runtime dependency to a check that runs offline in the installed image.
    The first detector, `relative-to-under-value-error`, marks a `relative_to` call
-   in a `try` that catches `ValueError`: the common way to confine a path, which no
-   line pattern can tell from a relative path computed for display (Codex on #369;
-   the owner chose it on 2026-10-06). The 15 existing sites are debt under #376. A
+   in a `try` with a handler that names `ValueError`, or a base of it, `Exception`
+   or `BaseException`, directly or as an attribute, or that is a bare `except:`.
+   That is the common way to confine a path, which no line pattern can tell from a
+   relative path computed for display (Codex on #369; the owner chose it on
+   2026-10-06). A handler that names an alias of `ValueError` is not followed:
+   under the owner's scope bound, the check guards accidental copies, and an
+   aliased exception is no ordinary shape (CodeAnt on #369). The 15 existing sites are debt under #376. A
    Python file that does not parse makes the check fail. So does a line over 1 MiB,
    and a `.git` entry Git cannot read, in the root or above it: neither passes as a
    clean tree. Production includes an `AGENTS.md` in any directory. An object store
@@ -301,6 +305,9 @@ here.
    or a subshell that opens a line.
    Round 37 reads Make's own forms: the recipe prefixes `@`, `-` and `+`,
    `$(shell ...)`, and a variable bound to Git, as `GIT := git`.
+   Round 38 reads a `case` arm's commands after its `)`, `archive` as an argument
+   list's own word with Git's default format, and a template given as a word of
+   its own.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and

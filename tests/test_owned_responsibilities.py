@@ -1157,6 +1157,34 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(unmarked=line):
                 self.assertFalse(pattern.search(line))
 
+    def test_a_case_arm_runs_its_command(self) -> None:
+        """Each arm of a `case` is `PATTERN) COMMANDS`, so the text after `)` runs
+        (Codex on #369)."""
+        pattern = _pattern("trusted-execution", "git-execution")
+        for line in (
+            "  check) git status ;;",
+            "  a|b) git fetch ;;",
+            'case "$m" in x) git gc ;; esac',
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
+        self.assertFalse(pattern.search("  check) echo ok ;;"))
+
+    def test_an_archive_or_a_template_named_as_its_own_word_is_seen(self) -> None:
+        """`["archive", tree]` uses Git's default format, and `"--template", empty`
+        names the template as its own word (Codex on #369)."""
+        for signature, line in (
+            ("tree-archive", 'trusted_execution.run_git(["archive", tree], cwd=d)'),
+            ("tree-archive", 'run_git(["archive", "--prefix=x/", tree])'),
+            ("disposable-metadata", 'run_git(["init", "--bare", "--template", empty])'),
+            ("disposable-metadata", "git init --bare --template /srv/empty repo"),
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(_pattern("trusted-execution", signature).search(line))
+        self.assertFalse(
+            _pattern("trusted-execution", "tree-archive").search('{"archive": 1}')
+        )
+
     def test_git_s_other_bare_options_run_it(self) -> None:
         """`git --exec-path` runs Git with no subcommand, as `--version` does
         (CodeAnt on #369)."""
