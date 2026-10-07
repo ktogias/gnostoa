@@ -60,7 +60,9 @@ The reuse check gains one **shell command reader**:
 2. **Command positions.** A command starts at the start of the text, after a
    control operator or a group's `(`, `{` or `)`, and after a reserved word that
    introduces one: `if`, `then`, `elif`, `else`, `do`, `while`, `until`, `!`,
-   `time` and `exec`.
+   `time` and `exec`. A redirection, its target and a descriptor's number before
+   it are removed wherever they stand, and a process substitution, `<(...)`,
+   opens a command of its own (round 40).
 3. **What precedes the command word is peeled:**
    - assignments, `NAME=value`;
    - Make's recipe prefixes, `@`, `-` and `+`;
@@ -109,8 +111,10 @@ residual work under #365.
 - **The reader's limits are stated.** A command word that only a variable
   expands to, as `$GIT status`, is not followed, and neither are `eval` and
   aliases. Text `shlex` cannot split, such as an unterminated quote, is read as
-  far as it splits. Under the owner's scope bound of 2026-10-05, the check guards
-  accidental copies, not obfuscation.
+  far as it splits. A quoted control character, as `'('`, is read as the
+  operator it spells, since `shlex` removes the quotes before the reader sees the
+  word. Under the owner's scope bound of 2026-10-05, the check guards accidental
+  copies, not obfuscation.
 - **Linear by construction.** A token walk with bounded recursion replaces
   nested regular expressions, so no backtracking is introduced.
 

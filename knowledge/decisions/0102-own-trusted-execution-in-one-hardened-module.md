@@ -311,6 +311,10 @@ here.
    From round 39 on, a shell command's position is read by the shell command
    reader of Decision 0105, not by new pattern forms, at the owner's choice of
    2026-10-07.
+   Round 40 adds Git's `GIT_TEMPLATE_DIR`, `GIT_EXTERNAL_DIFF` and
+   `GIT_REPLACE_REF_BASE` to the Git environment, and the naive prefix comparison
+   of two paths' text, as `str(candidate).startswith(str(root))`, to path
+   confinement.
    A class body runs where it stands, so its calls are the `try`'s own; only
    function and lambda bodies wait. The structural signature reads the `try`'s own lines and follows no call:
    `relative_to` in a function is not seen there, even in one the `try` defines and

@@ -265,6 +265,32 @@ class ShellReaderUnitTests(unittest.TestCase):
             with self.subTest(names=text):
                 self.assertFalse(shell_reader.runs_git(text))
 
+    def test_a_redirection_before_the_command_is_no_command(self) -> None:
+        """`>/srv/out git status` redirects, then runs Git: a redirection, its target
+        and a descriptor's number are the shell's, wherever they stand (Codex on
+        #369). A process substitution opens a command of its own."""
+        for text in (
+            ">/srv/out git status",
+            "2>/dev/null git fetch",
+            "2>&1 git log",
+            "<input git apply",
+            "x=1 >>log git gc",
+            "<<EOF git hash-object --stdin",
+            "cat <(git log)",
+            "diff <(git show a) <(git show b)",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        for text in (
+            ">git status",
+            "echo > git",
+            "echo ok\u2028git status",
+            "echo ok\x0cgit status",
+            "echo ok\x85git status",
+        ):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+
     def test_nesting_is_followed_to_a_bound(self) -> None:
         text = "git status"
         for _ in range(4):
@@ -655,6 +681,12 @@ class StructuralSignatureTests(unittest.TestCase):
             ("ok = root in path.parents\n", 1),
             ("ok = root not in path.resolve().parents\n", 1),
             ("import os\nok = str(p).startswith(str(r) + os.sep)\n", 2),
+            ("ok = str(candidate).startswith(str(root))\n", 1),
+            (
+                "import os\nok = os.path.realpath(p).startswith(os.path.realpath(r))\n",
+                2,
+            ),
+            ("ok = p.as_posix().startswith(os.fspath(root))\n", 1),
             ('import os\nok = p.startswith(f"{r}{os.sep}")\n', 2),
         )
         for source, line in cases:
@@ -672,6 +704,10 @@ class StructuralSignatureTests(unittest.TestCase):
             "ok = name.startswith(prefix + '/')\n",
             "import os\npath = os.path.join(root + os.sep, name)\n",
             "ok = len(paths) == count\n",
+            "ok = name.startswith(prefix)\n",
+            "ok = str(x).startswith('ab')\n",
+            "ok = line.startswith(str(n))\n",
+            "ok = name(x).startswith(prefix(y))\n",
             "import os\nok = os.path.commonprefix(names) == 'pre'\n",
         ):
             with self.subTest(unmarked=source):
@@ -717,6 +753,7 @@ class StructuralSignatureTests(unittest.TestCase):
                 )
         for source in (
             'from subprocess import run\nrun("make test", shell=True)\n',
+            'from os import system\nsystem("echo ok\\u2028GIT=git")\n',
             "from os import system\nsystem(command)\n",
             'import subprocess\nsubprocess.run("git status", shell=True)\n',
             'from subprocess import run\nrun(["git", "status"])\n',
@@ -1364,6 +1401,20 @@ class RepositoryTests(unittest.TestCase):
         for line in ("LC_ALL=C python3 tool.py", "x=1 y=2", "FOO=bar github status"):
             with self.subTest(unmarked=line):
                 self.assertFalse(pattern.search(line))
+
+    def test_git_s_security_relevant_variables_build_an_environment(self) -> None:
+        """`GIT_TEMPLATE_DIR` runs a template's hooks, `GIT_EXTERNAL_DIFF` runs a
+        program on diff and `GIT_REPLACE_REF_BASE` substitutes objects; each set
+        outside the owner builds a Git environment (Claude on #369)."""
+        pattern = _pattern("trusted-execution", "git-environment")
+        for line in (
+            'environment["GIT_TEMPLATE_DIR"] = attacker_dir',
+            'env["GIT_EXTERNAL_DIFF"] = "/srv/evil"',
+            "GIT_REPLACE_REF_BASE=refs/replace-mine git log",
+            'os.environ.get("GIT_TEMPLATE_DIR")',
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(pattern.search(line))
 
     def test_the_shell_s_own_lookup_is_a_signature(self) -> None:
         """`$(which git)` and `$(type -P git)` resolve an executable as `command -v`

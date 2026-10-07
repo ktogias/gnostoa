@@ -475,7 +475,9 @@ def _is_plain_text(node: ast.expr) -> bool:
 
 
 def _starts_with_the_separator(node: ast.AST) -> bool:
-    """`path.startswith(root + os.sep)`, or the same prefix as an f-string."""
+    """`path.startswith(root + os.sep)`, or the same prefix as an f-string; and
+    the classic naive form, `str(candidate).startswith(str(root))`, where both
+    sides are a path's text (Claude on #369)."""
     if not (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -484,12 +486,22 @@ def _starts_with_the_separator(node: ast.AST) -> bool:
     ):
         return False
     prefix = node.args[0]
+    if _path_text(node.func.value) and _path_text(prefix):
+        return True
     if isinstance(prefix, ast.BinOp) and isinstance(prefix.op, ast.Add):
         return _is_separator(prefix.right)
     if isinstance(prefix, ast.JoinedStr) and prefix.values:
         last = prefix.values[-1]
         return isinstance(last, ast.FormattedValue) and _is_separator(last.value)
     return False
+
+
+# Calls that turn a path into its text, for a comparison by prefix.
+_PATH_TEXT = frozenset({"str", "fspath", "realpath", "abspath", "normpath", "as_posix"})
+
+
+def _path_text(node: ast.expr) -> bool:
+    return isinstance(node, ast.Call) and _called(node) in _PATH_TEXT
 
 
 def _is_separator(node: ast.AST) -> bool:
@@ -947,7 +959,7 @@ def _runs_as_a_line(entry: Responsibility, commands: tuple[str, ...]) -> bool:
     return any(
         s.pattern.search(line)
         for command in commands
-        for line in command.splitlines()
+        for line in command.split("\n")
         for s in entry.signatures
         if s.pattern is not None
     )

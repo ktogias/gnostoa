@@ -47,6 +47,10 @@ _VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 # `env -S` splits its value into the command it runs.
 _SPLIT_STRING = frozenset({"-S", "--split-string"})
 _NAMES = _WRAPPERS | _SHELLS | {"git"}
+# A redirection operator, as `>`, `2>`'s `>`, `>&`, `<<` or `&>`; and a process
+# substitution's opening, as `<(`.
+_REDIRECTION = re.compile(r"[<>&|]*[<>][<>&|]*")
+_PROCESS = re.compile(r"[<>]\(")
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=", re.ASCII)
 # How deep `sh -c` and `env -S` may nest before the reader stops following.
 _DEPTH = 4
@@ -70,12 +74,14 @@ def words(text: str) -> list[str]:
 
 def runs_git(text: str, depth: int = 0) -> bool:
     """Whether the shell text ``text`` runs Git at any command position. Each of its
-    lines is read on its own, as a shell runs each line."""
+    lines is read on its own, as a shell runs each line. Only a newline ends one:
+    `str.splitlines` also split at U+2028, NEL and form feed, which a shell does
+    not (CodeAnt on #369)."""
     if depth > _DEPTH:
         return False
     return any(
         _runs_git(command, depth)
-        for line in text.splitlines()
+        for line in text.split("\n")
         for command in _commands(words(line))
     )
 
@@ -98,13 +104,23 @@ def handed_command(argv: Sequence[str | None]) -> tuple[int, str] | None:
 
 
 def _commands(tokens: list[str]) -> list[list[str]]:
-    """The simple commands of ``tokens``: its words between separators."""
+    """The simple commands of ``tokens``: its words between separators, without
+    their redirections. A redirection, its target and a descriptor's number before
+    it are the shell's, wherever they stand, as in `2>/dev/null git fetch`; a
+    process substitution, `<(...)`, opens a command of its own (Codex on #369)."""
     found: list[list[str]] = [[]]
-    for token in tokens:
-        if token in _SEPARATORS:
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _SEPARATORS or _PROCESS.fullmatch(token):
             found.append([])
+        elif _REDIRECTION.fullmatch(token):
+            if found[-1] and found[-1][-1].isdigit():
+                found[-1].pop()
+            index += 1
         else:
             found[-1].append(token)
+        index += 1
     return [command for command in found if command]
 
 
