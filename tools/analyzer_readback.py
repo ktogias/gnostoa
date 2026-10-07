@@ -57,11 +57,6 @@ def _sha(value: object, label: str) -> str:
     return text
 
 
-# The exact-SHA check, a ``ValueError`` on refusal, public for the readback's subject
-# resolver (#387).
-exact_sha = _sha
-
-
 def normalize_repository(value: object) -> str:
     text = _required_text(value, "repository")
     parts = text.split("/")
@@ -349,3 +344,8 @@ def canonical_json(value: object) -> str:
         ensure_ascii=True,
         allow_nan=False,
     )
+
+
+# The exact-SHA check, a ``ValueError`` on refusal, public for the readback's subject
+# resolver (#387). It stands last, so no existing line moves.
+exact_sha = _sha

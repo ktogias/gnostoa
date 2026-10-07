@@ -16,6 +16,7 @@ from tools.analyzer_readback import (
     build_readback,
     canonical_json,
     coverage,
+    exact_sha,
     normalize_repository,
 )
 
@@ -26,7 +27,6 @@ _TIMEOUT_SECONDS = 30
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 40
 _MAX_ITEMS = 10_000
-_SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
@@ -137,9 +137,12 @@ def _mapping(value: object, label: str) -> Mapping[str, Any]:
 
 
 def _exact_head(value: object, label: str) -> str:
-    if not isinstance(value, str) or _SHA40.fullmatch(value) is None:
-        raise RunnerError(f"{label} must be an exact 40-character SHA")
-    return value
+    """The readback's one exact-SHA check, refused as this runner's error (Claude
+    on #388)."""
+    try:
+        return exact_sha(value, label)
+    except AnalyzerReadbackError as exc:
+        raise RunnerError(f"{label} must be an exact 40-character SHA") from exc
 
 
 def _repository(value: str) -> tuple[str, str]:

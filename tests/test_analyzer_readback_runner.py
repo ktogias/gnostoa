@@ -597,6 +597,31 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     observed_at=OBSERVED,
                 )
 
+    def test_a_requested_head_that_is_no_exact_sha_is_refused(self) -> None:
+        """The runner refuses before it reads anything, with its own error: one
+        exact-SHA check, the readback's, serves it and the resolver (Claude on
+        #388)."""
+
+        class _NoNetwork:
+            @staticmethod
+            def get(url: str) -> tuple[Any, Mapping[str, str]]:
+                raise AssertionError(f"network must not be reached: {url}")
+
+        for head in ("A" * 40, "a" * 39, HEAD + "\n", "", None, 40):
+            with (
+                self.subTest(head=head),
+                self.assertRaisesRegex(runner.RunnerError, "exact 40-character SHA"),
+            ):
+                runner.collect_bundle(
+                    _NoNetwork(),
+                    repository="ktogias/gnostoa",
+                    pull_number=312,
+                    requested_head=head,
+                    deepsource=None,
+                    codacy=None,
+                    observed_at=OBSERVED,
+                )
+
     def test_head_movement_discards_provider_evidence(self) -> None:
         urls = _github_urls()
         github = _GitHubFake(
