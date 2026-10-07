@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import ast
 import errno
+import io
 import os
 import re
 import stat
@@ -304,11 +305,16 @@ def _lines(root: Path, relative: str) -> Iterator[str]:
     if descriptor is None:
         return
     with os.fdopen(descriptor, "rb") as handle:
-        for number, line in enumerate(_byte_lines(handle, relative)):
-            # A byte order mark stood before a first line's command, so no line
-            # start matched it (CodeAnt on #369).
-            codec = "utf-8-sig" if number == 0 else "utf-8"
-            yield line.decode(codec, errors="replace")
+        yield from _decoded(_byte_lines(handle, relative))
+
+
+def _decoded(lines: Iterator[bytes]) -> Iterator[str]:
+    """Each line, decoded as the check reads every line."""
+    for number, line in enumerate(lines):
+        # A byte order mark stood before a first line's command, so no line start
+        # matched it (CodeAnt on #369).
+        codec = "utf-8-sig" if number == 0 else "utf-8"
+        yield line.decode(codec, errors="replace")
 
 
 def _byte_lines(handle: IO[bytes], relative: str) -> Iterator[bytes]:
@@ -885,8 +891,11 @@ def _shell_text(
     data += handle.read(_STRUCTURE_LIMIT_BYTES + 1 - len(data))
     if len(data) > _STRUCTURE_LIMIT_BYTES:
         raise KnowledgeFormatError(f"{relative}: too large to read its shell text")
-    text = data.decode("utf-8-sig", errors="replace")
-    return shell_reader.shell_lines(relative, text.splitlines())
+    # Its lines end where the line patterns' lines end: `str.splitlines` also ended
+    # one at U+2028 or NEL, so a later command was reported a line late (CodeAnt on
+    # #369).
+    lines = list(_decoded(_byte_lines(io.BytesIO(data), relative)))
+    return shell_reader.shell_lines(relative, lines)
 
 
 def _covers(places: tuple[Place, ...], path: str, signature: str) -> bool:

@@ -69,7 +69,10 @@ The reuse check gains one **shell command reader**:
    - wrappers, by name or path: `env`, `command`, `sudo`, `timeout`, `nice`,
      `nohup`, `xargs`, `stdbuf`, `ionice`, `setsid`, `chrt`, `flock` and `time`.
      Their options are peeled too, together with the word an option takes and the
-     leading number or path some take.
+     leading number some take. `flock`'s first word that is no option is its lock
+     file; any other path is the command a wrapper runs, as in
+     `sudo /usr/bin/make`. An option whose value is a command is read as one: `env -S`
+     and `flock -c` (round 41).
 4. **A shell with `-c`** (`sh`, `bash`, `dash`, `ksh`, `zsh` or `ash`) runs its
    command string, which is read the same way, to a bounded depth. Its options are
    peeled first, including those that take a value: `-o`, `+o`, `-O`, `+O`,
@@ -77,16 +80,23 @@ The reuse check gains one **shell command reader**:
 5. **Git** is a command word whose name, after its path, is `git`.
 
 **Sources of shell text:**
-- a shell script, by its suffix or a shell shebang;
+- a shell script, by its suffix or a shell shebang, `env`'s options in it
+  included;
 - `RUN` in a `Dockerfile`;
-- a workflow step's `run:`, on its line or as a block;
+- a workflow's `run` value, found by composing the workflow as YAML with PyYAML,
+  already a dependency, rather than by a pattern for the key: any spelling of the
+  key, a flow mapping, any block indicator and an alias's anchor are read as YAML
+  reads them (round 41). A block's lines are read each on its own; another value is
+  read as YAML decodes it, on the line it starts on. A workflow YAML cannot read is
+  read whole, so it cannot pass as clean;
 - a Make recipe line;
 - a fenced shell block in an `AGENTS.md`;
 - the commands Python hands to a shell: a string literal given to a shell helper,
   and an argument list, which is read as its words already are.
 
 Each physical line is read on its own, so a command is reported on the line
-that holds it, as the line patterns report it. A continuation line starts a
+that holds it, as the line patterns report it. A line ends where the line
+patterns' lines end, at CR or LF only (round 41). A continuation line starts a
 command position of its own. A Dockerfile's `RUN` keeps its continuation lines.
 
 **The signature** is the existing `git-shell-command`. Its structure,

@@ -10,9 +10,12 @@ which lines of a file are shell text (`shell_lines`).
 
 from __future__ import annotations
 
+import bisect
 import re
 import shlex
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+
+import yaml
 
 # Words that open a command position without being the command. `time` and `exec`
 # are wrappers, since options can follow them.
@@ -44,19 +47,26 @@ _WRAPPERS = frozenset(
 _SHELLS = frozenset({"sh", "bash", "dash", "ksh", "zsh", "ash"})
 # A shell's options that take the next word as their value, as `-O extglob` does.
 _VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
-# `env -S` splits its value into the command it runs.
-_SPLIT_STRING = frozenset({"-S", "--split-string"})
+# Wrappers whose first word that is no option is an operand of their own, as
+# `flock`'s lock file is, before the command they run (Codex on #369).
+_OPERANDS = frozenset({"flock"})
+# A wrapper's options whose value is the command it runs: `env -S` splits its value
+# into one, and `flock -c` hands its value to a shell (Codex on #369).
+_COMMAND_OPTIONS = {
+    "env": ("-S", "--split-string"),
+    "flock": ("-c", "--command"),
+}
 _NAMES = _WRAPPERS | _SHELLS | {"git"}
-# A redirection operator, as `>`, `2>`'s `>`, `>&`, `<<` or `&>`; and a process
-# substitution's opening, as `<(`.
-_REDIRECTION = re.compile(r"[<>&|]*[<>][<>&|]*")
-_PROCESS = re.compile(r"[<>]\(")
+# The shell's redirection operators, as `2>`'s `>`, `>&` or `<<`; and a process
+# substitution's opening. A set, not a pattern, so nothing backtracks (SonarCloud).
+_REDIRECTIONS = frozenset(
+    {"<", ">", ">>", "<<", "<<<", "<&", ">&", "<>", ">|", "&>", "&>>"}
+)
+_PROCESS = frozenset({"<(", ">("})
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=", re.ASCII)
 # How deep `sh -c` and `env -S` may nest before the reader stops following.
 _DEPTH = 4
 _FENCES = frozenset({"bash", "sh", "shell", "zsh", "console"})
-_BLOCK = re.compile(r"[|>][-+]?\d*\s*(?:#.*)?")
-_RUN = re.compile(r"(\s*)(?:-\s+)?run:\s*(.*)")
 
 
 def words(text: str) -> list[str]:
@@ -97,7 +107,7 @@ def handed_command(argv: Sequence[str | None]) -> tuple[int, str] | None:
             return _shell_command(argv, index + 1)
         if name not in _WRAPPERS:
             return None
-        index, nested = _past_wrapper(argv, index + 1)
+        index, nested = _past_wrapper(argv, index + 1, name)
         if nested is not None:
             return nested
     return None
@@ -112,9 +122,9 @@ def _commands(tokens: list[str]) -> list[list[str]]:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in _SEPARATORS or _PROCESS.fullmatch(token):
+        if token in _SEPARATORS or token in _PROCESS:
             found.append([])
-        elif _REDIRECTION.fullmatch(token):
+        elif token in _REDIRECTIONS:
             if found[-1] and found[-1][-1].isdigit():
                 found[-1].pop()
             index += 1
@@ -141,7 +151,7 @@ def _runs_git(command: list[str], depth: int) -> bool:
             return found is not None and runs_git(found[1], depth + 1)
         if name not in _WRAPPERS:
             return False
-        index, nested = _past_wrapper(command, index + 1)
+        index, nested = _past_wrapper(command, index + 1, name)
         if nested is not None and runs_git(nested[1], depth + 1):
             return True
     return False
@@ -154,46 +164,49 @@ def _command_name(word: str) -> str:
 
 
 def _past_wrapper(
-    argv: Sequence[str | None], index: int
+    argv: Sequence[str | None], index: int, name: str
 ) -> tuple[int, tuple[int, str] | None]:
-    """Where the command after a wrapper's options and arguments stands, and the
-    command `env -S` names, if any. An option's word, a number, a path and an
-    assignment are the wrapper's own."""
+    """Where the command after the wrapper ``name``'s options and arguments stands,
+    and the command an option of it names, if any. An option's word, a number, an
+    assignment and the operand `flock` takes are the wrapper's own."""
+    operand = name in _OPERANDS
     while index < len(argv):
         word = argv[index]
         if word is not None and word.rsplit("/", 1)[-1] in _NAMES:
             break
-        split = _split_string(argv, index)
-        if split is not None:
-            return split
+        nested = _command_option(argv, index, _COMMAND_OPTIONS.get(name, ()))
+        if nested is not None:
+            return nested
         if not _wrapper_word(word, argv[index - 1] if index else None):
-            break
+            if not operand:
+                break
+            operand = False
         index += 1
     return index, None
 
 
-def _split_string(
-    argv: Sequence[str | None], index: int
+def _command_option(
+    argv: Sequence[str | None], index: int, options: tuple[str, ...]
 ) -> tuple[int, tuple[int, str] | None] | None:
-    """`env -S value` or `--split-string=value`: where the command after it stands,
-    and the command its value names; None for any other word."""
+    """An option of ``options`` with its value, as `-S value` or
+    `--split-string=value`: where the command after it stands, and the command its
+    value names; None for any other word."""
     word = argv[index]
-    if word in _SPLIT_STRING and index + 1 < len(argv):
+    if word in options and index + 1 < len(argv):
         value = argv[index + 1]
         return index + 2, None if value is None else (index + 1, value)
-    if word is not None and word.startswith("--split-string="):
-        return index + 1, (index, word.split("=", 1)[1])
+    for option in options:
+        if word is not None and word.startswith(f"{option}="):
+            return index + 1, (index, word.split("=", 1)[1])
     return None
 
 
 def _wrapper_word(word: str | None, previous: str | None) -> bool:
-    """Whether a word is a wrapper's own: an option, an assignment, a number, a
-    path, or the word an option before it takes."""
+    """Whether a word is a wrapper's own: an option, an assignment, a number, or
+    the word an option before it takes. A path is the command the wrapper runs, as
+    in `sudo /usr/bin/make`; `flock`'s lock file is its operand (round 41)."""
     if word is not None and (
-        word.startswith(("-", "+"))
-        or _ASSIGNMENT.match(word)
-        or word[:1].isdigit()
-        or word.startswith("/")
+        word.startswith(("-", "+")) or _ASSIGNMENT.match(word) or word[:1].isdigit()
     ):
         return True
     return previous is not None and previous.startswith("-")
@@ -243,7 +256,7 @@ def shell_lines(relative: str, lines: list[str]) -> dict[int, tuple[str, ...]]:
     elif _is_dockerfile(name):
         texts = _dockerfile(lines)
     elif _is_makefile(name):
-        texts = [(n, t[1:]) for n, t in enumerate(lines, 1) if t[:1] == "\t"]
+        texts = [(n, t[1:]) for n, t in enumerate(lines, 1) if t.startswith("\t")]
     elif _is_workflow(relative, name):
         texts = _workflow(lines)
     elif name == "AGENTS.md":
@@ -260,8 +273,11 @@ def _shell_shebang(first: str) -> bool:
     if not first.startswith("#!"):
         return False
     parts = first[2:].split()
-    if parts and parts[0].rsplit("/", 1)[-1] == "env" and len(parts) > 1:
-        parts = parts[1:]
+    if parts and parts[0].rsplit("/", 1)[-1] == "env":
+        # `env`'s options and assignments come before the program, as `-S` and `-i`
+        # do (CodeAnt on #369). The line is already split into words, so `-S` names
+        # no command of its own here.
+        parts = parts[_past_wrapper(parts, 1, "")[0] :]
     return bool(parts) and parts[0].rsplit("/", 1)[-1] in _SHELLS
 
 
@@ -301,34 +317,61 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def _workflow(lines: list[str]) -> list[tuple[int, str]]:
-    """Each workflow `run:` value: one line, or a block's more-indented lines."""
+    """Each workflow `run` value, where YAML finds it, so any spelling of the key, a
+    flow mapping, any block indicator and an alias's anchor are read as YAML reads
+    them (Codex and CodeAnt on #369). A block's lines are read each on its own;
+    another value is read as YAML decodes it, on the line it starts on. A workflow
+    YAML cannot read is read whole, so it cannot pass as clean."""
+    try:
+        values = _run_values(yaml.compose_all("\n".join(lines), Loader=yaml.SafeLoader))
+    except (yaml.YAMLError, RecursionError):
+        return list(enumerate(lines, start=1))
+    # Where each line starts. YAML also ends a line at NEL or U+2028, so a line is
+    # found by its offset, never by YAML's count.
+    starts = [0]
+    for line in lines[:-1]:
+        starts.append(starts[-1] + len(line) + 1)
     found: list[tuple[int, str]] = []
-    index = 0
-    while index < len(lines):
-        match = _RUN.fullmatch(lines[index])
-        index += 1
-        if match is None:
+    for node in values:
+        first = bisect.bisect_right(starts, node.start_mark.index)
+        if node.style not in ("|", ">"):
+            found.append((first, node.value))
             continue
-        indent, value = len(match.group(1)), match.group(2).strip()
-        if not _BLOCK.fullmatch(value):
-            found.append((index, _unquoted(value)))
-            continue
-        block: list[tuple[int, str]] = []
-        while index < len(lines) and (
-            not lines[index].strip()
-            or len(lines[index]) - len(lines[index].lstrip()) > indent
-        ):
-            block.append((index + 1, lines[index]))
-            index += 1
-        found.extend(block)
+        end = node.end_mark.index
+        last = bisect.bisect_right(starts, end)
+        if end == starts[last - 1]:
+            last -= 1
+        found.extend(
+            (number, lines[number - 1]) for number in range(first + 1, last + 1)
+        )
     return found
 
 
-def _unquoted(value: str) -> str:
-    """A YAML scalar's text, without the quotes around it."""
-    if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
+def _run_values(documents: Iterable[yaml.Node | None]) -> list[yaml.ScalarNode]:
+    """Each scalar a `run` key names, once. An alias is its anchor's node, so each
+    node is walked once, however often it is named, and a recursive one ends."""
+    walked: set[int] = set()
+    found: dict[int, yaml.ScalarNode] = {}
+    stack: list[yaml.Node] = [
+        document for document in documents if document is not None
+    ]
+    while stack:
+        node = stack.pop()
+        if id(node) in walked:
+            continue
+        walked.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if (
+                    isinstance(key, yaml.ScalarNode)
+                    and key.value == "run"
+                    and isinstance(value, yaml.ScalarNode)
+                ):
+                    found[id(value)] = value
+                stack.append(value)
+        elif isinstance(node, yaml.SequenceNode):
+            stack.extend(node.value)
+    return list(found.values())
 
 
 def _fenced(lines: list[str]) -> list[tuple[int, str]]:

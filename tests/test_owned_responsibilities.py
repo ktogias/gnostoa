@@ -255,6 +255,10 @@ class ShellReaderUnitTests(unittest.TestCase):
             "sudo make",
             "env",
             "nice -n 5 make git",
+            # A path after a wrapper is the command it runs, not the wrapper's own:
+            # only `flock` takes one, its lock file (round 41).
+            "sudo /usr/bin/make git",
+            "nohup ./build.sh git",
             "timeout 10 python3 tool.py",
             "'unterminated git",
             "time",
@@ -276,6 +280,12 @@ class ShellReaderUnitTests(unittest.TestCase):
             "<input git apply",
             "x=1 >>log git gc",
             "<<EOF git hash-object --stdin",
+            "<<<text git hash-object --stdin",
+            "&>/dev/null git gc",
+            "&>>log git gc",
+            ">|out git status",
+            "<>file git status",
+            "<&3 git apply",
             "cat <(git log)",
             "diff <(git show a) <(git show b)",
         ):
@@ -290,6 +300,71 @@ class ShellReaderUnitTests(unittest.TestCase):
         ):
             with self.subTest(names=text):
                 self.assertFalse(shell_reader.runs_git(text))
+
+    def test_flock_s_lock_file_comes_before_its_command(self) -> None:
+        """`flock` takes its lock file, a relative path too, before the command it
+        runs, and hands the value of `-c` to a shell (Codex on #369)."""
+        for text in (
+            "flock lockfile git status",
+            "flock ./lockfile git status",
+            "flock -w 5 lockfile git status",
+            "flock lockfile -c 'git status'",
+            "flock lockfile --command 'git status'",
+        ):
+            with self.subTest(runs=text):
+                self.assertTrue(shell_reader.runs_git(text))
+        for text in (
+            "flock lockfile make",
+            "flock lockfile echo git",
+            "flock 9",
+            "flock lockfile -c make",
+        ):
+            with self.subTest(names=text):
+                self.assertFalse(shell_reader.runs_git(text))
+        self.assertEqual(
+            (3, "git status"),
+            shell_reader.handed_command(["flock", "lk", "-c", "git status"]),
+        )
+
+    def test_a_workflow_is_read_as_yaml_reads_it(self) -> None:
+        """A workflow's `run` value is found where YAML finds it: a key with space
+        before its colon or in quotes, a flow mapping, any block indicator, and the
+        anchor an alias names (Codex and CodeAnt on #369). A workflow YAML cannot
+        read is read whole, so it cannot pass as clean."""
+        lines = [
+            "jobs:",
+            "  j:",
+            "    env: {X: &c 'git gc'}",
+            "    steps:",
+            "      - run : '\"git\" status'",
+            '      - "run": git log',
+            "      - {name: x, run: git fetch}",
+            "      - run: |2-",
+            "            git show",
+            "      - run: *c",
+            "      - name: git status",
+            "        with: {args: git status}",
+            "    defaults: {run: {shell: bash}}",
+        ]
+        found = shell_reader.shell_lines(".github/workflows/w.yml", lines)
+        self.assertEqual({3, 5, 6, 7, 9}, set(found))
+        for number in found:
+            with self.subTest(line=number):
+                self.assertTrue(any(shell_reader.runs_git(t) for t in found[number]))
+        for name, text, expected in (
+            # A folded block is read a line at a time, as a literal one is.
+            ("folded", ["- run: >-", "    git notes", "    show"], {2, 3}),
+            # A line is found by its offset: YAML also ends one at U+2028.
+            ("separator", ["name: 'a\u2028b'", "run: '\"git\" status'"], {2}),
+            ("recursive", ["x: &a [*a]", "run: git status"], {2}),
+            # What YAML cannot read is read whole: it does not parse, or it nests
+            # past the interpreter's recursion.
+            ("broken", ["x: [", "git status"], {1, 2}),
+            ("deep", ["x: " + "[" * 5000 + "]" * 5000, "git status"], {1, 2}),
+        ):
+            with self.subTest(workflow=name):
+                found = shell_reader.shell_lines(".github/workflows/w.yml", text)
+                self.assertEqual(expected, set(found))
 
     def test_nesting_is_followed_to_a_bound(self) -> None:
         text = "git status"
@@ -385,6 +460,9 @@ class ShellReaderUnitTests(unittest.TestCase):
             ("ci/tool", "#!/bin/sh", True),
             ("ci/tool", "#!/usr/bin/env bash", True),
             ("ci/tool", "#!/usr/bin/env python3", False),
+            ("ci/tool", "#!/usr/bin/env -S bash -e", True),
+            ("ci/tool", "#!/usr/bin/env -i sh", True),
+            ("ci/tool", "#!/usr/bin/env -S python3 -u", False),
             ("ci/tool", "#!/usr/bin/python3", False),
             ("Dockerfile", "", True),
             ("Dockerfile.dev", "", True),
@@ -460,6 +538,17 @@ class StructuralSignatureTests(unittest.TestCase):
             ),
             found,
         )
+
+    def test_shell_text_counts_lines_as_the_line_patterns_do(self) -> None:
+        """A line ends at CR or LF only, as `_lines` ends it: `str.splitlines` also
+        ended one at U+2028 or NEL, so a later command was reported a line late
+        (CodeAnt on #369)."""
+        for separator in ("\u2028", "\x85"):
+            with self.subTest(separator=repr(separator)):
+                self.assertEqual(
+                    {"ci/a.sh:2"},
+                    _git_runs({"ci/a.sh": f'echo a{separator}b\n"git" status\n'}),
+                )
 
     def test_a_line_number_counts_lines_as_python_does(self) -> None:
         """`str.splitlines` also breaks at a form feed, U+2028 or NEL inside one Python

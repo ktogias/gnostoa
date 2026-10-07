@@ -127,8 +127,9 @@ class Document:
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
-    """Load YAML refusing duplicate keys: registry id `yaml-loading`; use this, never
-    `yaml.safe_load` on a declaration yourself."""
+    """Load YAML refusing a key written twice: registry id `yaml-loading`; use this,
+    never `yaml.safe_load` on a declaration yourself. Two keys of different types
+    that Python holds equal, as `true` and `1`, are not yet refused (#382)."""
     try:
         value = yaml.load(path.read_text(encoding="utf-8"), Loader=KnowledgeLoader)
     except (OSError, yaml.YAMLError) as exc:
