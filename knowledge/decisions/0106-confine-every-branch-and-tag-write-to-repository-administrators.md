@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Confine every branch and tag write to repository administrators
-description: Two repository rulesets let only the repository admin role create, update, force-push or delete any branch or tag, so an installed app with write access, such as Amazon Q Developer, cannot place unreviewed code or workflows on any ref. Records the measured app permissions, the controls that already held, the gap they left, the rulesets and their verification.
+description: Two repository rulesets let only the repository admin role create, update, force-push or delete any branch or tag, so an installed app with write access, such as Amazon Q Developer, cannot place unreviewed code or workflows on any ref, or merge into main. Records the measured app permissions, the controls that already held, the gap they left, the rulesets and their verification.
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -75,9 +75,16 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
 **What already held**, read back on 2026-10-07:
 
 - **`main`.** Its required checks, `policy`, `fast`, `regression` and `smoke`, are
-  bound to GitHub Actions (`app_id` 15368) and enforced for everyone, so a check run
-  another app posts cannot satisfy them. `CODEOWNERS` assigns every path to the
-  owner. The ruleset "Require CodeQL on main" applies.
+  bound to GitHub Actions (`app_id` 15368), so a check run another app posts cannot
+  satisfy them. Its classic protection, as the owner read it in the settings, also
+  requires:
+  - a Pull Request;
+  - up-to-date branches;
+  - resolved conversations.
+
+  "Do not allow bypassing the above settings" is on, and force pushes and
+  deletions are off. The ruleset "Require CodeQL on main" applies. `CODEOWNERS`
+  assigns every path to the owner.
 - **Secrets.** The workflows use three secrets, and all of them live in
   environments:
   - `analyzer-readback` and `claude-review` admit only `main` (Decision 0097);
@@ -88,9 +95,13 @@ review cycle of Gnostoa-self Pull Requests. Measured that day:
 - **Agent publication** fails closed on a foreign commit: a push that is not a
   fast-forward, or whose lease does not match, is refused.
 
-**The gap was every other ref.** An app with `contents` and `workflows` write could
-create branches and tags, commit to a Pull Request's branch, and add a workflow
-file. GitHub runs such a file on push, with the write token permissions it declares
+**The gap was every other ref, and merging into `main`.**
+
+- **Merging.** `main` requires no approval and no code owner's review. So any
+  writer, an app included, could merge a green Pull Request whose conversations
+  were resolved, its own too.
+- **Every other ref.** An app with `contents` and `workflows` write could create
+  branches and tags, commit to a Pull Request's branch, and add a workflow file. GitHub runs such a file on push, with the write token permissions it declares
 for itself, before any review. Provider CI verifies content, by design, not who
 wrote a commit. The Work Item and Decision gates are procedure, not a provider
 control on another author's change.
@@ -105,7 +116,9 @@ The owner created two repository rulesets on 2026-10-07:
 | `24640985` | Only admins write tags | every tag, `~ALL` | the same | the same |
 
 So only an actor with the repository admin role can create, update, force-push or
-delete any branch or tag. Any app outside the bypass list cannot commit, create a
+delete any branch or tag. That includes merging into `main`, which updates it.
+Requiring an approval instead would block every merge: Pull Requests are opened as
+the owner, who cannot approve their own. Any app outside the bypass list cannot commit, create a
 branch or tag, or merge: Amazon Q's `/q dev`, its label, `/q` with free text and
 "Commit suggestion" all fail. AWS's troubleshooting page confirms the mechanism:
 branch protection rules prevent Amazon Q from creating its branch.
@@ -166,10 +179,6 @@ The tag ruleset is the same, with `"name": "Only admins write tags"` and
 - **The rulesets live in the provider.** This record and its JSON are their source.
   Changing them needs the owner and a token with Administration write, which agents
   do not hold.
-- **Two facts remain for the owner to confirm.** The agents' token cannot read
-  either of them:
-  - that no secret is defined at repository level, outside an environment;
-  - that `main` requires a code owner's review.
 
 ## Verification
 
@@ -189,5 +198,10 @@ Read back and exercised on 2026-10-07:
   - `Cannot delete this branch`.
 
   So the rules are evaluated, and only the admin bypass let the push through.
+- **The owner's read of the settings**, which the agents' token cannot read:
+  - No repository secret is defined, for Actions or for Dependabot.
+  - Only environments hold any. `claude-review` holds `CLAUDE_CODE_OAUTH_TOKEN`,
+    and `analyzer-readback` holds `CODACY_API_TOKEN` and `DEEPSOURCE_API_TOKEN`.
+  - `main`'s protection is as stated under Context.
 - **Amazon Q's refusal was not exercised.** That would have needed giving it a
   write command.
