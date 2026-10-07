@@ -187,7 +187,7 @@ def _shebang_words(head: bytes, name: str) -> set[str]:
                 words += shlex.split(words[index + 1])
             elif word.startswith("-S") and len(word) > 2:
                 words += shlex.split(word[2:])
-    except (UnicodeDecodeError, ValueError) as exc:
+    except ValueError as exc:  # UnicodeDecodeError included
         raise AssertionError(
             f"{name}: an unreadable shebang; extend this extraction"
         ) from exc
