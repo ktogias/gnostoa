@@ -25,6 +25,9 @@ sources:
   - id: q-troubleshooting
     resource: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/github-troubleshooting.html
     title: Branch protection rules prevent Amazon Q from creating a branch
+  - id: suggested-changes
+    resource: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/incorporating-feedback-in-your-pull-request
+    title: The person who applies a suggested change is the commit's committer
   - id: credentials-boundary
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5979363503
     title: The owner's agent credentials boundary of 2026-10-04
@@ -135,10 +138,14 @@ support it:
 - AWS's troubleshooting page states that branch protection rules prevent Amazon Q
   from creating its branch.
 
-**"Commit suggestion" is different.** GitHub records the person who applies a
-suggestion as the commit's committer. An administrator's click is therefore an
-administrator's write, and it succeeds through the bypass. The rulesets do not stop
-it; the procedure below does.
+**"Commit suggestion" is different.** GitHub documents that "the person who
+applies the suggested changes will be a co-author and the committer of the
+commit". An administrator's click is therefore an administrator's write, and it
+succeeds through the bypass. The rulesets do not stop it:
+- **for agents**, the procedure below does;
+- **for the owner**, a click is an owner's change like any other. This Decision
+  does not restrict it. Change control governs it as it governs every change: a
+  normal change needs a Work Item and a Decision first.
 
 **What stays possible**, since it is no ref write: reviews, comments, Issues,
 labels, check runs, and dispatching or re-running workflows. The controls above
