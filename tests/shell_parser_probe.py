@@ -2,8 +2,9 @@
 
 The compatibility smoke runs this as a child, so a native crash in the parser fails
 the test that asked, rather than the test runner (Decision 0108). It reads a JSON
-list of scripts on standard input and writes, for each, the command names it found,
-whether the tree holds an error or a missing node, and the here-document bodies.
+list of scripts on standard input and writes the grammar's ABI and, for each script,
+the command names it found, whether the tree holds an error or a missing node, and the
+here-document bodies.
 """
 
 from __future__ import annotations
@@ -37,8 +38,16 @@ def facts(source: bytes) -> dict[str, object]:
 
 
 def main() -> int:
+    # Standard input is the test's own `json.dumps`; anything else fails this child,
+    # which the test reports with its standard error.
     scripts = json.load(sys.stdin)
-    json.dump([facts(script.encode("utf-8")) for script in scripts], sys.stdout)
+    json.dump(
+        {
+            "abi": LANGUAGE.abi_version,
+            "facts": [facts(script.encode("utf-8")) for script in scripts],
+        },
+        sys.stdout,
+    )
     return 0
 
 

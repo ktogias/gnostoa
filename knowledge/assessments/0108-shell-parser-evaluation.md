@@ -103,6 +103,64 @@ as exit `-11`, and the parent recorded UNKNOWN for all 127.
   reproduce through the Python binding with either pair. It is recorded as not
   reproduced, not as safe.
 
+## The evidence scripts' limits
+
+The spike scripts below are kept exactly as they ran, each bound by its SHA-256.
+Editing one would leave the recorded results without the code that produced them.
+They are evaluation tooling: Decision 0108's rules bind the reader that #369
+rebuilds, not these scripts.
+
+Review on #394 raised four questions about them. Each is answered here, with
+measurements taken on the frozen subject:
+
+- **Files that `docs.py` skipped.** Its `try` passes over any file that raises.
+  At the frozen subject, 19 of the 672 tracked files raised `UnicodeDecodeError`.
+  Every one is a binary archive: 18 gzip or tar files and one zip file. None
+  starts with `#!`. The 27 files with shell surfaces are the corpus's 27.
+- **BOM and line endings.** None of the 27 files starts with a UTF-8 BOM, and none
+  holds a CR. Reading them as `utf-8` and splitting on `\n` therefore changed no
+  corpus text.
+- **The child environment.** `parent.py` passes its own environment to the worker.
+  It ran once, in a disposable container of the development image. The rebuilt
+  reader's worker environment is #369's to bound.
+- **Timeouts.** The `shfmt` adapter in `evaluate314.py` sets no timeout. Every run
+  completed with the results above. Decision 0108's items 9 and 10 bound the
+  rebuilt reader's worker, including its timeout.
+
+### `audit_docs.py`
+
+Re-runs `docs.py`'s reading over the frozen subject's tracked files. It records each
+file that raised, and each corpus file with a BOM or a CR. SHA-256
+`87328a813624da41…`. Output: 672 tracked files, 27 with shell surfaces, no BOM, no
+CR, and 19 files that raised, each `shebang=False archive=True`.
+
+````python
+import sys
+
+sys.path.insert(0, "/repo")
+from tools import shell_reader as sr
+
+files = open("/frozen/files.txt").read().split()
+raised, corpus, bom, cr = [], [], [], []
+for name in files:
+    raw = open(f"/repo/{name}", "rb").read()
+    try:
+        found = sr.shell_lines(name, raw.decode("utf-8").split("\n"))
+    except Exception as exc:
+        raised.append((name, type(exc).__name__, raw[:2]))
+        continue
+    if found:
+        corpus.append(name)
+        bom += [name] if raw.startswith(b"\xef\xbb\xbf") else []
+        cr += [name] if b"\r" in raw else []
+print("tracked files:", len(files), "files with shell surfaces:", len(corpus))
+print("corpus files with a BOM:", bom, "with a CR:", cr)
+print("files that raised:", len(raised))
+for name, kind, magic in raised:
+    archive = magic in (b"\x1f\x8b", b"PK") or name.endswith(".tar")
+    print(f"  {kind} {name} shebang={magic == b'#!'} archive={archive}")
+````
+
 ## Spike scripts
 
 These scripts are evaluation tooling, not repository code. Each is given with its
