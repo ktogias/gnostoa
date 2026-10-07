@@ -71,7 +71,7 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
     def test_fast_suite_runs_the_pre_registered_review_assurance_oracle(self) -> None:
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
         fast = verify.split("  fast)", 1)[1].split("    ;;", 1)[0]
-        self.assertIn("python -m unittest discover -s tests -v", fast)
+        self.assertIn("python -m tools.test_suite", fast)
         self.assertIn("python tests/test_review_assurance.py", fast)
 
     def test_malformed_evaluator_result_fails_closed(self) -> None:

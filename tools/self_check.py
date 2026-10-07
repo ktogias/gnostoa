@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-import unittest
 from pathlib import Path
 
+from . import test_suite
 from .check_change_policy import check_change_policy
 from .check_ci_policy import check_ci_policy
 from .check_guardrails import check_guardrails
@@ -28,9 +28,8 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
     passed = True
 
     if run_tests:
-        suite = unittest.defaultTestLoader.discover(str(root / "tests"))
-        result = unittest.TextTestRunner(verbosity=2).run(suite)
-        passed = result.wasSuccessful() and passed
+        # In parallel processes, as every run of the suite (Decision 0109).
+        passed = test_suite.run(root) == 0 and passed
 
     for name, profile, bundle in BUNDLES:
         _, issues = validate_bundle(root / profile, root / bundle, project_root=root)

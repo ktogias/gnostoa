@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tempfile
 import unittest
 from email.message import Message
@@ -467,8 +468,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             package_metadata["Name"] = "example"
             package_metadata["License-Expression"] = "MIT"
             distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
+            commands: list[list[str]] = []
 
             def fake_run(command, *, root, environment=None, stdout=None):
+                commands.append(list(command))
                 if command[2:4] == ["pip", "install"]:
                     report = Path(command[command.index("--report") + 1])
                     report.write_text(json.dumps(_pip_report()), encoding="utf-8")
@@ -565,6 +568,13 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 ),
             ):
                 summary_path = collect_quality_evidence(root, output)
+            # Coverage is measured through the test-suite owner, in parallel, with the
+            # same measurement as before (Decision 0109).
+            from tools import test_suite
+
+            self.assertIn(
+                test_suite.command(sys.executable, coverage_source="tools"), commands
+            )
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             self.assertEqual("abc123", summary["source"]["revision"])

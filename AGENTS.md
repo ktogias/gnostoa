@@ -324,7 +324,7 @@ below only as an explicit restricted-environment or parity fallback, and state
 why the container route was not used:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m tools.test_suite
 python -m tools.validate_bundle --profile guidance/profile.yaml --bundle guidance
 python -m tools.validate_bundle --profile knowledge/profile.yaml --bundle knowledge
 python -m tools.check_guardrails

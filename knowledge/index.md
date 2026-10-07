@@ -110,6 +110,7 @@ inherited, copied or loaded by adopting projects.
 - [Separate the agent review pipeline into a provider- and agent-neutral core and adapters](decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md)
 - [Run the regression and smoke suites beside extended, behind the same regression gate](decisions/0103-run-the-regression-and-smoke-suites-beside-extended-behind-the-regression-gate.md)
 - [Run the analyzer readback for every Pull Request head, and again on request](decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md)
+- [Run the test suite in parallel processes through one owner](decisions/0109-run-the-test-suite-in-parallel-processes-through-one-owner.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

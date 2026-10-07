@@ -15,6 +15,7 @@ requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0,<7",
   "jsonschema>=4.23,<5",
+  "unittest-parallel>=1.8.6,<2",
 ]
 
 [project.optional-dependencies]

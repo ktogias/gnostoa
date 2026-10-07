@@ -25,7 +25,7 @@ case "${suite}" in
     python ci/security_scan.py
     ;;
   fast)
-    python -m unittest discover -s tests -v
+    python -m tools.test_suite
     PYTHONPATH=. python tests/test_review_assurance.py
     ;;
   regression)
