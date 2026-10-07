@@ -940,8 +940,10 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn('--pull-number "${PULL_NUMBER}"', acquire["run"])
         self.assertIn('--head "${REQUESTED_HEAD}"', acquire["run"])
         self.assertIn("gnostoa-analyzer-readback.json", acquire["run"])
+        # The resolver fails when it binds no subject, so no later step runs without
+        # one, and none needs its own condition (#389).
         for step in (acquire, steps[upload]):
-            self.assertEqual("steps.subject.outputs.pull_number != ''", step["if"])
+            self.assertNotIn("if", step)
         self.assertEqual(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             steps[upload]["uses"],
@@ -996,9 +998,11 @@ class SubjectResolutionTests(unittest.TestCase):
                     {"pull_number": "384", "head": HEAD}, _resolve(environ)
                 )
 
-    def test_a_run_without_exactly_one_pull_request_reads_nothing(self) -> None:
+    def test_a_run_without_exactly_one_pull_request_fails_visibly(self) -> None:
         """A fork's run carries no Pull Request; a head shared by two leaves the
-        subject ambiguous. Either reads nothing, and a dispatch can name one."""
+        subject ambiguous. Either fails, visibly: a run that finished green without a
+        receipt would make missing evidence look like a clean producer (#389). A
+        dispatch can still name one."""
         for pulls in ("[]", "null", json.dumps([{"number": 1}, {"number": 2}])):
             with self.subTest(pulls=pulls):
                 environ = {
@@ -1006,7 +1010,8 @@ class SubjectResolutionTests(unittest.TestCase):
                     "RUN_PULLS": pulls,
                     "RUN_HEAD": HEAD,
                 }
-                self.assertEqual({}, _resolve(environ))
+                with self.assertRaises(ValueError):
+                    _resolve(environ)
 
     def test_a_field_that_is_no_identifier_is_refused(self) -> None:
         bad_heads = ("A" * 40, "a" * 39, HEAD + "\npull_number=1", "", HEAD + " ")
@@ -1069,7 +1074,7 @@ class SubjectResolutionTests(unittest.TestCase):
             (
                 {"EVENT_NAME": "workflow_run", "RUN_PULLS": "[]", "RUN_HEAD": HEAD},
                 "",
-                0,
+                2,
             ),
             ({"EVENT_NAME": "repository_dispatch", "REQUEST_PULL": "x"}, "", 2),
         ):

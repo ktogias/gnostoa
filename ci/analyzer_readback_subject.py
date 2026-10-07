@@ -2,7 +2,9 @@
 
 A secret-free workflow step runs this before any analyzer credential is injected.
 It reads the triggering event's fields from its environment and prints one validated
-subject, a Pull Request number and an exact head, as step outputs, or nothing.
+subject, a Pull Request number and an exact head, as step outputs. When it can bind
+none, it fails: a run that finished green without a receipt would make missing
+evidence look like a clean producer (#389).
 
 Each field is an identifier only. The runner re-reads the Pull Request from the
 provider, and refuses a head that does not match (Decisions 0091 and 0107). Every
@@ -11,7 +13,7 @@ value is validated before it is printed, so no field can add an output of its ow
 - `workflow_dispatch`: `DISPATCH_PULL`, `DISPATCH_HEAD`, from the owner's inputs.
 - `repository_dispatch`: `REQUEST_PULL`, `REQUEST_HEAD`, from the request's payload.
 - `workflow_run`: `RUN_PULLS`, the run's `pull_requests` as JSON, and `RUN_HEAD`. A
-  run with no Pull Request, as a fork's, or with more than one reads nothing.
+  run with no Pull Request, as a fork's, or with more than one binds none.
 """
 
 from __future__ import annotations
@@ -34,13 +36,17 @@ def _pull_number(value: str) -> int:
 
 
 def resolve(environ: Mapping[str, str]) -> dict[str, str]:
-    """The subject the event names, as step outputs; empty when it names none."""
+    """The subject the event names, as step outputs; ``ValueError`` when it names
+    none, or a field is no identifier."""
     event = environ.get("EVENT_NAME", "")
     if event == "workflow_run":
         numbers = github_events.workflow_run_pull_numbers(environ.get("RUN_PULLS", ""))
         head = exact_sha(environ.get("RUN_HEAD", ""), "workflow_run head")
         if len(numbers) != 1:
-            return {}
+            raise ValueError(
+                f"the run names {len(numbers)} Pull Requests, not one: "
+                "no exact-head readback can be bound"
+            )
         return {"pull_number": str(numbers[0]), "head": head}
     fields = {
         "workflow_dispatch": ("DISPATCH_PULL", "DISPATCH_HEAD"),
@@ -59,8 +65,6 @@ def main() -> int:
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    if not subject:
-        print("No single Pull Request to read for this event.", file=sys.stderr)
     for key, value in subject.items():
         print(f"{key}={value}")
     return 0

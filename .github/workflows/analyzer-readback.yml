@@ -61,7 +61,8 @@ jobs:
         with:
           python-version: "3.12"
       # Secret-free: each event field reaches only this step, through the
-      # environment, and leaves it only once validated.
+      # environment, and leaves it only once validated. A run that binds no subject
+      # fails here, visibly, rather than finishing green without a receipt (#389).
       - name: Resolve the readback subject
         id: subject
         env:
@@ -76,7 +77,6 @@ jobs:
           set -eu
           PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
       - name: Read exact-head analyzer evidence
-        if: steps.subject.outputs.pull_number != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
@@ -91,7 +91,6 @@ jobs:
             --head "${REQUESTED_HEAD}" \
             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
       - name: Upload non-secret analyzer readback
-        if: steps.subject.outputs.pull_number != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}

@@ -70,7 +70,9 @@ admits only `main`. That job now starts in three ways:
 
    It reads the run's `head_sha`, and its `pull_requests` when that list holds
    exactly one Pull Request. A fork's run has none, and a head shared by two Pull
-   Requests is ambiguous; neither is read. For a `pull_request` run, `head_sha` is
+   Requests is ambiguous. Either run fails, visibly, since it can produce no
+   exact-head receipt: a green run without one would make missing evidence look
+   like a clean producer (#389). For a `pull_request` run, `head_sha` is
    the Pull Request's own head, not its merge ref: measured on 2026-10-07, each of
    #384's and #369's last three verification runs carried exactly that round's
    head.
@@ -144,6 +146,11 @@ parser is factored into it, so both read the field the same way.
   - the shared parser.
 - **The token's capability, measured on 2026-10-07.** A `repository_dispatch` of an
   unhandled type returned `204 No Content` and started no workflow.
-- **After integration**, still to show:
-  - one automatic readback for a Pull Request head;
-  - one `repository_dispatch` readback.
+- **After integration.** Merged code is not yet a working producer, because the
+  new triggers run only from `main`. The readback becomes operational, as #389
+  asks, only once each of these has been shown, in order:
+  1. the source is integrated;
+  2. an automatic run is observed for a Pull Request head, and its artifact is
+     read back for that exact head;
+  3. a `repository_dispatch` rerun is observed, and its artifact is read back for
+     that exact head.
