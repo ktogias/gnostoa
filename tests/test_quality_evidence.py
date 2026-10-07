@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import tempfile
 import unittest
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from tools.quality_evidence import (
     QualityEvidenceError,
@@ -531,6 +530,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
 
             with (
                 patch("tools.quality_evidence._run", side_effect=fake_run),
+                patch("tools.quality_evidence.test_suite.run", return_value=0) as suite,
                 patch(
                     "tools.quality_evidence._git_state",
                     return_value={"revision": "abc123", "tracked_tree_dirty": False},
@@ -569,11 +569,9 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             ):
                 summary_path = collect_quality_evidence(root, output)
             # Coverage is measured through the test-suite owner, in parallel, with the
-            # same measurement as before (Decision 0109).
-            from tools import test_suite
-
-            self.assertIn(
-                test_suite.command(sys.executable, coverage_source="tools"), commands
+            # same measurement as before and its bound (Decision 0109).
+            suite.assert_called_once_with(
+                root.resolve(), coverage_source="tools", environment=ANY
             )
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -701,6 +699,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
 
             with (
                 patch("tools.quality_evidence._run", side_effect=fake_run),
+                patch("tools.quality_evidence.test_suite.run", return_value=0),
                 patch(
                     "tools.quality_evidence._git_state",
                     return_value={"revision": "abc123", "tracked_tree_dirty": False},

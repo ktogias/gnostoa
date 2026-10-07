@@ -7,10 +7,12 @@ the command from here, so they cannot drift apart.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess  # nosec B404 -- the argv below is literal, with this interpreter
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 RUNNER = "unittest_parallel"
@@ -39,23 +41,75 @@ def command(
     return argv
 
 
-def run(root: Path) -> int:
+def run(
+    root: Path,
+    *,
+    coverage_source: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> int:
     """Run the suite of the repository at ``root`` with this interpreter; its exit
-    status, or `TIMED_OUT` when it runs past `TIMEOUT_SECONDS`. The runner starts a
-    session of its own, so a stop ends its worker processes too, not only it."""
+    status, or `TIMED_OUT` when it runs past `TIMEOUT_SECONDS`.
+
+    The runner and its workers stay in the caller's process group, so the caller's
+    own containment reaches them all: preparation's kill of its focused group (Codex
+    on #392), a CI job's end, a terminal's Ctrl+C. Past the bound, or on any error
+    while waiting, this owner kills the runner's descendants and then the runner, and
+    the error is raised again (Amazon Q and CodeReviewBot.ai on #392).
+    """
     with subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        command(sys.executable), cwd=root, start_new_session=True
+        command(sys.executable, coverage_source=coverage_source),
+        cwd=root,
+        env=None if environment is None else dict(environment),
     ) as process:
         try:
             return process.wait(timeout=TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            _stop(process)
             print(
                 f"ERROR: the test suite ran past {TIMEOUT_SECONDS} s and was stopped",
                 file=sys.stderr,
             )
             return TIMED_OUT
+        except BaseException:
+            _stop(process)
+            raise
+
+
+def _stop(process: subprocess.Popen[bytes]) -> None:
+    """Kill the runner's descendants, deepest first, then the runner, and reap it. A
+    process may have ended before its kill."""
+    for pid in [*_descendants(process.pid), process.pid]:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    process.wait()
+
+
+def _descendants(pid: int) -> list[int]:
+    """The processes under ``pid``, deepest first. None where the system keeps no
+    record of a process's children: the caller's containment then stops them."""
+    found: list[int] = []
+    pending = [pid]
+    while pending:
+        children = _children(pending.pop())
+        found.extend(children)
+        pending.extend(children)
+    return found[::-1]
+
+
+def _children(pid: int) -> list[int]:
+    """The children of ``pid``, as Linux records them for each of its threads."""
+    try:
+        tasks = os.listdir(f"/proc/{pid}/task")
+    except OSError:
+        return []
+    children: list[int] = []
+    for task in tasks:
+        try:
+            with open(f"/proc/{pid}/task/{task}/children", encoding="ascii") as handle:
+                children.extend(int(word) for word in handle.read().split())
+        except (OSError, ValueError):
+            continue
+    return children
 
 
 def main() -> int:

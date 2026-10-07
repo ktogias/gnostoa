@@ -1080,10 +1080,13 @@ def collect_quality_evidence(
     )
     # The same branch coverage of `tools`, measured in the suite's parallel
     # processes and combined (Decision 0109).
-    statuses["coverage_run"] = _run(
-        test_suite.command(python, coverage_source="tools"),
-        root=root,
-        environment=environment,
+    # Through the owner, so the coverage run has the suite's bound too (CodeAnt on
+    # #392).
+    print(
+        "+ " + " ".join(test_suite.command(python, coverage_source="tools")), flush=True
+    )
+    statuses["coverage_run"] = test_suite.run(
+        root, coverage_source="tools", environment=environment
     )
     statuses["coverage_floor"] = _run(
         [
