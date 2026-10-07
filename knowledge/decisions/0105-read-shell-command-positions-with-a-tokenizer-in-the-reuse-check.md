@@ -68,9 +68,10 @@ The reuse check gains one **shell command reader**:
    - Make's recipe prefixes, `@`, `-` and `+`;
    - wrappers, by name or path: `env`, `command`, `sudo`, `timeout`, `nice`,
      `nohup`, `xargs`, `stdbuf`, `ionice`, `setsid`, `chrt`, `flock` and `time`.
-     Their options are peeled too, together with the word an option takes and the
-     leading number some take. `flock`'s first word that is no option is its lock
-     file; any other path is the command a wrapper runs, as in
+     Their options are peeled too, together with the word an option takes. The
+     first positional word of `flock`, `timeout` and `chrt` is their operand,
+     however it is spelt: a lock file, a duration such as `.5s`, or a priority
+     (round 43). Any other path is the command a wrapper runs, as in
      `sudo /usr/bin/make`. An option whose value is a command is read as one: `env -S`
      and `flock -c` (round 41).
 4. **A shell with `-c`** (`sh`, `bash`, `dash`, `ksh`, `zsh` or `ash`) runs its
@@ -84,7 +85,9 @@ The reuse check gains one **shell command reader**:
   splits it, and `env`'s options in it are skipped (round 42);
 - `RUN` in a `Dockerfile`, with the lines its escape character continues: a
   backslash, or the backtick its `escape` parser directive names. A directive
-  counts only before any other line (round 42);
+  counts only before any other line (round 42). Any whitespace separates `RUN` from
+  its text, and `RUN`'s own options, as `--mount=type=cache`, are skipped (round
+  43);
 - a workflow's `run` value, or a composite action's in its `action.yml` (round 42),
   found by composing the file as YAML with PyYAML, already a dependency, rather
   than by a pattern for the key. Any spelling of the key, a flow mapping, any block
@@ -128,8 +131,11 @@ residual work under #365.
   aliases. Text `shlex` cannot split, such as an unterminated quote, is read as
   far as it splits. A quoted control character, as `'('`, is read as the
   operator it spells, since `shlex` removes the quotes before the reader sees the
-  word. Under the owner's scope bound of 2026-10-05, the check guards accidental
-  copies, not obfuscation.
+  word. A wrapper's option value that names a command, as the user in
+  `sudo -u git echo ok`, is read as that command. The reader does not know which
+  options take a value, and `sudo -E git status` is spelt the same way, so it
+  reports rather than misses (round 43). Under the owner's scope bound of
+  2026-10-05, the check guards accidental copies, not obfuscation.
 - **Linear by construction.** A token walk with bounded recursion replaces
   nested regular expressions, so no backtracking is introduced.
 

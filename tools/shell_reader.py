@@ -47,9 +47,10 @@ _WRAPPERS = frozenset(
 _SHELLS = frozenset({"sh", "bash", "dash", "ksh", "zsh", "ash"})
 # A shell's options that take the next word as their value, as `-O extglob` does.
 _VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
-# Wrappers whose first word that is no option is an operand of their own, as
-# `flock`'s lock file is, before the command they run (Codex on #369).
-_OPERANDS = frozenset({"flock"})
+# Wrappers whose first word that is no option is an operand of their own, however it
+# is spelt, before the command they run: `flock`'s lock file, `timeout`'s duration,
+# as `.5s`, and `chrt`'s priority (Codex on #369).
+_OPERANDS = frozenset({"flock", "timeout", "chrt"})
 # A wrapper's options whose value is the command it runs: `env -S` splits its value
 # into one, and `flock -c` hands its value to a shell (Codex on #369).
 _COMMAND_OPTIONS = {
@@ -167,8 +168,8 @@ def _past_wrapper(
     argv: Sequence[str | None], index: int, name: str
 ) -> tuple[int, tuple[int, str] | None]:
     """Where the command after the wrapper ``name``'s options and arguments stands,
-    and the command an option of it names, if any. An option's word, a number, an
-    assignment and the operand `flock` takes are the wrapper's own."""
+    and the command an option of it names, if any. An option's word, an assignment
+    and the operand some wrappers take are the wrapper's own."""
     operand = name in _OPERANDS
     while index < len(argv):
         word = argv[index]
@@ -177,12 +178,21 @@ def _past_wrapper(
         nested = _command_option(argv, index, _COMMAND_OPTIONS.get(name, ()))
         if nested is not None:
             return nested
-        if not _wrapper_word(word, argv[index - 1] if index else None):
-            if not operand:
-                break
+        previous = argv[index - 1] if index else None
+        if operand and _positional(word, previous):
             operand = False
+        elif not _wrapper_word(word, previous):
+            break
         index += 1
     return index, None
+
+
+def _positional(word: str | None, previous: str | None) -> bool:
+    """Whether a word is a positional one: no option, and not the word an option
+    before it takes. A word whose text is unknown counts."""
+    if previous is not None and previous.startswith("-"):
+        return False
+    return word is None or not word.startswith(("-", "+"))
 
 
 def _command_option(
@@ -202,12 +212,11 @@ def _command_option(
 
 
 def _wrapper_word(word: str | None, previous: str | None) -> bool:
-    """Whether a word is a wrapper's own: an option, an assignment, a number, or
-    the word an option before it takes. A path is the command the wrapper runs, as
-    in `sudo /usr/bin/make`; `flock`'s lock file is its operand (round 41)."""
-    if word is not None and (
-        word.startswith(("-", "+")) or _ASSIGNMENT.match(word) or word[:1].isdigit()
-    ):
+    """Whether a word is a wrapper's own: an option, an assignment, or the word an
+    option before it takes. A path is the command the wrapper runs, as in
+    `sudo /usr/bin/make`; a lock file, a duration or a priority is an operand,
+    which `_positional` reads."""
+    if word is not None and (word.startswith(("-", "+")) or _ASSIGNMENT.match(word)):
         return True
     return previous is not None and previous.startswith("-")
 
@@ -313,12 +322,25 @@ def _dockerfile(lines: list[str]) -> list[tuple[int, str]]:
         if continued:
             found.append((number, text))
         else:
-            head, _, rest = text.strip().partition(" ")
-            if head.upper() != "RUN" or rest.lstrip().startswith("["):
+            # Any whitespace separates an instruction from its text (Claude on #369).
+            instruction = text.split(None, 1)
+            if len(instruction) < 2 or instruction[0].upper() != "RUN":
+                continue
+            rest = _past_run_options(instruction[1])
+            if rest.startswith("["):
                 continue
             found.append((number, rest))
         continued = text.endswith(escape)
     return found
+
+
+def _past_run_options(text: str) -> str:
+    """A `RUN` instruction's text after its own options, as `--mount=type=cache` or
+    `--network=none`, which Docker reads before the shell text (Codex on #369)."""
+    while text.startswith("--"):
+        parts = text.split(None, 1)
+        text = parts[1] if len(parts) > 1 else ""
+    return text
 
 
 def _escape(lines: list[str]) -> str:

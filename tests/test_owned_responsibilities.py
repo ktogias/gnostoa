@@ -223,6 +223,12 @@ class ShellReaderUnitTests(unittest.TestCase):
             "env --split-string='git log'",
             "sudo -u builder git fetch",
             "timeout -s KILL 10 git fetch",
+            # `timeout`'s duration is its operand, however it is spelt (Codex on #369).
+            "timeout .5s git status",
+            "timeout infinity git fetch",
+            # `chrt`'s priority is its operand too.
+            "chrt 99 git status",
+            "chrt -f 99 git gc",
             "nice -n 5 git gc",
             "xargs -0 git add",
             "command -p git status",
@@ -259,6 +265,7 @@ class ShellReaderUnitTests(unittest.TestCase):
             # only `flock` takes one, its lock file (round 41).
             "sudo /usr/bin/make git",
             "nohup ./build.sh git",
+            "timeout 10 make git",
             "timeout 10 python3 tool.py",
             "'unterminated git",
             "time",
@@ -401,6 +408,32 @@ class ShellReaderUnitTests(unittest.TestCase):
                 found = shell_reader.shell_lines("Dockerfile", lines)
                 self.assertEqual({len(head) + 2, len(head) + 3}, set(found))
 
+    def test_a_dockerfile_instruction_takes_any_whitespace(self) -> None:
+        """`RUN` and its shell text may be separated by a tab as by a space, and the
+        exec form stays no shell text either way (Claude on #369)."""
+        lines = ["FROM a", "RUN\tgit clone x && make", 'RUN\t["git", "x"]']
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2}, set(found))
+        self.assertTrue(shell_reader.runs_git(found[2][0]))
+
+    def test_a_run_instruction_s_options_are_no_command(self) -> None:
+        """`RUN --mount=...` and its other options come before the shell text, as
+        the repository's own Dockerfile writes them (Codex on #369)."""
+        lines = [
+            "FROM a",
+            "RUN --mount=type=cache,target=/x git status",
+            "RUN --network=none --security=sandbox git gc && \\",
+            "  git fetch",
+            'RUN --mount=type=cache ["git", "x"]',
+            "RUN --network=none",
+            "RUN",
+        ]
+        found = shell_reader.shell_lines("Dockerfile", lines)
+        self.assertEqual({2, 3, 4, 6}, set(found))
+        for number in (2, 3, 4):
+            with self.subTest(line=number):
+                self.assertTrue(shell_reader.runs_git(found[number][0]))
+
     def test_a_fence_of_tildes_holds_shell_too(self) -> None:
         """A fence opens with three or more backticks or tildes, and only as many of
         the same character close it (CodeAnt on #369)."""
@@ -456,6 +489,8 @@ class ShellReaderUnitTests(unittest.TestCase):
             (["python3", "-c", "x"], None),
             (["sh", "-c"], None),
             (["env", None, "sh", "-c", "x"], None),
+            # A duration only known at run time is still `timeout`'s operand.
+            (["timeout", None, "sh", "-c", "x"], (4, "x")),
             (["sh", None, "-c", "x"], None),
             (["sh", "-c", None], None),
         )
