@@ -580,6 +580,28 @@ class MergeGateRecordTests(unittest.TestCase):
         # The minting script is never copied from the agent host, which may be the
         # compromised one (CodeAnt on #400).
         self.assertIn("never copied from the agent host", procedure)
+        self.assertIn("kept offline with the key", runbook)
+        # Its trusted source is GitHub's own documentation, step by step (cubic on
+        # #400).
+        for step in (
+            "generating-a-json-web-token-jwt-for-a-github-app",
+            "generating-an-installation-access-token-for-a-github-app",
+            "GET /repos/ktogias/gnostoa/installation",
+            "POST /app/installations/<installation>/access_tokens",
+            '"repositories": ["gnostoa"]',
+            "`iss` the App ID 5230732",
+        ):
+            with self.subTest(step=step):
+                self.assertIn(step, procedure)
+        # Break glass bypasses R-main's approvals only; the classic protection still
+        # requires the checks and resolved conversations (Codex on #400).
+        bypass = runbook[
+            runbook.index("**What it bypasses") : runbook.index(
+                "If a required check itself is broken"
+            )
+        ]
+        self.assertNotIn("thread resolution and R-main's checks", bypass)
+        self.assertIn("the four checks and resolved conversations", bypass)
         # Where `<head>` comes from (Claude on #400).
         self.assertIn("`<head>` is the head the owner has just reviewed", procedure)
         # The last resort removes one broken check, which the read-back before the
@@ -726,6 +748,17 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(2, flat.count(phrase))
         self.assertNotIn("last trusted identity", flat)
+        # The credential's creation date is read before it is revoked, which erases
+        # it (Claude on #400).
+        self.assertEqual(
+            2,
+            flat.count(
+                "record the compromised credential's creation date before revoking it"
+            ),
+        )
+        # A break-glass merge carries no approval, so it passes against the owner's
+        # offline record of it, which no agent identity can edit (Claude on #400).
+        self.assertIn("the owner's offline record of each break glass", flat)
         self.assertIn("a collaborator on this repository alone", runbook)
         self.assertIn("account-wide", runbook)
         decision = " ".join(DECISION.read_text(encoding="utf-8").split())

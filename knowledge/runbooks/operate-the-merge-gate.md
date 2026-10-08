@@ -372,12 +372,14 @@ Break glass is never for skipping a review that is late, or a finding nobody wan
 to fix. A review thread is never the reason either: the owner can resolve any
 thread, with the reason in a reply.
 
-**What it bypasses: only R-main.** That means the code-owner approval, the last-push
-approval, thread resolution and R-main's checks.
+**What it bypasses: only R-main.** That means the code-owner approval and the
+last-push approval. R-main's thread resolution and checks duplicate the classic
+protection's, which still apply.
 
 **What it does not bypass:**
-- the classic protection, which still requires the four checks, and whatever else
-  it requires (Preconditions);
+- the classic protection, which still requires the four checks and resolved
+  conversations, and whatever else it requires (Preconditions), so an emergency PR's
+  threads are resolved first, each with its reason;
 - the CodeQL ruleset.
 
 If a required check itself is broken, break glass does not suffice while the classic
@@ -404,10 +406,22 @@ protection exists. The last resort is then the owner, as admin:
 1. Bring the offline key of `gnostoa-break-glass` (App ID 5230732) to a trusted
    machine.
 2. Have a minting script there, at an absolute path, here
-   `~/break-glass/break-glass-token.sh`. The owner writes it there to the agent
-   helper's description in this runbook, with the break-glass App's ID and key path;
-   it is never copied from the agent host, which may be the compromised one. It
-   prints a one-hour installation token, for capture only.
+   `~/break-glass/break-glass-token.sh`. The owner writes it on that machine, from
+   GitHub's own documentation, and it is never copied from the agent host, which may
+   be the compromised one. It does three things:
+   1. It signs a JWT with the offline key, as
+      [Generating a JSON Web Token (JWT) for a GitHub App](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app)
+      describes: RS256, `iat` 60 seconds in the past, `exp` at most ten minutes on,
+      and `iss` the App ID 5230732.
+   2. With that JWT as its bearer, it finds the App's installation with
+      `GET /repos/ktogias/gnostoa/installation`.
+   3. It requests a token with
+      `POST /app/installations/<installation>/access_tokens` and the body
+      `{"repositories": ["gnostoa"]}`, as
+      [Generating an installation access token for a GitHub App](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+      describes, and prints only the response's `token`, for capture.
+
+   The token lasts one hour.
 3. Read back the classic protection, as the owner, before the merge:
    `GET /repos/ktogias/gnostoa/branches/main/protection`. Once break glass bypasses
    R-main, it is the only layer that still requires the four checks. It must
@@ -455,6 +469,10 @@ protection exists. The last resort is then the owner, as admin:
   PR, the reason, and what was not verified.
 - The merge shows `gnostoa-break-glass[bot]` as its actor in the activity log, so it
   is auditable.
+- The owner adds the merge to a record kept offline with the key: the date, the PR,
+  the head merged and the merge commit. No agent identity can edit it, so a later
+  compromise audit checks break-glass merges against it, since such a merge carries
+  no approval.
 - MA0 Phase 1b's post-merge audit will open this Work Item by itself, for any merge
   whose head lacked a green `merge-admission`.
 
@@ -494,8 +512,8 @@ the gate:
 | Event | Action |
 |---|---|
 | The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
-| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. Before unsuspending, audit every merge into `main` since the earliest suspected exposure; when that is unknown, since the compromised credential was created, which its settings record. A "last good merge" is no anchor, since a compromise can predate it. For each merge, read its actor in the activity log; the owner's latest review on that PR must be `APPROVED`, its `commit_id` the PR's recorded head, and the integrated tree that head's, as the normal merge's steps 8 and 9 require, since an older approval can stand beside a later request for changes. Record any merge that fails a comparison, or that the owner did not approve, in the follow-up, for revert or disposition. Unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
+| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then record the compromised credential's creation date before revoking it, since revoking erases it: the App key's, in App settings → Private keys, and the machine user's token's, in its token settings. Then revoke its private key and the machine user's token. Generate a new key, and a new token, only for a clean host. Before unsuspending, audit every merge into `main` since the earliest suspected exposure; when that is unknown, since the compromised credential was created, which its settings record. A "last good merge" is no anchor, since a compromise can predate it. For each merge, read its actor in the activity log; the owner's latest review on that PR must be `APPROVED`, its `commit_id` the PR's recorded head, and the integrated tree that head's, as the normal merge's steps 8 and 9 require, since an older approval can stand beside a later request for changes. A merge by `gnostoa-break-glass[bot]` carries no approval, so it passes only if the owner's offline record of each break glass names it, with its head and merge commit. Record any merge that fails a comparison, or that the owner did not approve, in the follow-up, for revert or disposition. Unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
-| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, and generate a new one offline. The App bypasses R-main, so a stolen key may already have merged: audit every merge into `main` since the earliest suspected exposure; when that is unknown, since the compromised credential was created, which its settings record. A "last good merge" is no anchor, since a compromise can predate it. For each merge, read its actor in the activity log; the owner's latest review on that PR must be `APPROVED`, its `commit_id` the PR's recorded head, and the integrated tree that head's, as the normal merge's steps 8 and 9 require, since an older approval can stand beside a later request for changes. Any merge by `gnostoa-break-glass[bot]` that the owner did not make, or that fails a comparison, is recorded in the emergency follow-up, for revert or disposition. Then read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
+| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then record the compromised credential's creation date before revoking it, since deleting it erases it: the key's, in App settings → Private keys. Then delete the key, and generate a new one offline. The App bypasses R-main, so a stolen key may already have merged: audit every merge into `main` since the earliest suspected exposure; when that is unknown, since the compromised credential was created, which its settings record. A "last good merge" is no anchor, since a compromise can predate it. For each merge, read its actor in the activity log; the owner's latest review on that PR must be `APPROVED`, its `commit_id` the PR's recorded head, and the integrated tree that head's, as the normal merge's steps 8 and 9 require, since an older approval can stand beside a later request for changes. A merge by `gnostoa-break-glass[bot]` carries no approval, so it passes only if the owner's offline record of each break glass names it, with its head and merge commit. Any merge by `gnostoa-break-glass[bot]` that the owner did not make, or that fails a comparison, is recorded in the emergency follow-up, for revert or disposition. Then read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
 | An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |
