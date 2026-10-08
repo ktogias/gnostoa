@@ -34,7 +34,8 @@ SHEBANG_WORD = re.compile(r"(?:^|(?<=[\s/=\"']))(?:-S)?([a-z]+)(?=$|[\s\"'])")
 SHELLS = {"sh", "bash", "dash", "ash"}
 OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
-CI_KEY = re.compile(r"^\s*(?:-\s*)?(?:run|script|before_script|after_script)\s*:", re.M)
+# Anywhere in the text, so a flow-style mapping is found too (CodeAnt on #394).
+CI_KEY = re.compile(r"(?<![\w-])(?:run|script|before_script|after_script)\s*:")
 GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
@@ -192,6 +193,16 @@ def _shebang_words(head: bytes, name: str) -> set[str]:
     return set(SHEBANG_WORD.findall(line))
 
 
+def _exec_form(command: str) -> bool:
+    """Whether a `RUN` is in exec form: a JSON list of strings. A shell command that
+    starts with `[`, such as a test, is shell (CodeAnt on #394)."""
+    try:
+        argv = json.loads(command)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(argv, list) and all(isinstance(word, str) for word in argv)
+
+
 def _check_shell_instruction(argument: str) -> None:
     """A Dockerfile `SHELL` keeps the `RUN` lines shell only when it names `sh`,
     `bash`, `dash` or `ash`; another program fails closed (CodeAnt on #394)."""
@@ -229,7 +240,7 @@ def _dockerfile_runs(text: str) -> list[str]:
             if not line.lstrip().startswith("#"):
                 command = command[:-1] + line
         command = RUN_FLAGS.sub("", command)
-        if command.lstrip().startswith("["):
+        if _exec_form(command):
             continue
         if "<<" in command:
             raise AssertionError("a RUN here-document; extend this extraction")
@@ -368,6 +379,9 @@ class ShellParserDependencyTests(unittest.TestCase):
                 self.assertEqual(0, found["errors"])
         [heredoc] = _facts(['bash 2>&1 <<EOF\n"git" status\nEOF\n'])
         self.assertEqual(['"git" status\n'], heredoc["heredocs"])
+        # In source order (CodeAnt on #394).
+        facts = _facts(["cat <<A\none\nA\ncat <<B\ntwo\nB\n"])
+        self.assertEqual(["one\n", "two\n"], facts[0]["heredocs"])
 
     def test_every_shell_surface_parses_without_an_unexpected_error(self) -> None:
         """Every surface kind of the frozen corpus parses with no error. The
@@ -417,6 +431,13 @@ class SurfaceExtractionTests(unittest.TestCase):
             "run true\n"
         )
         self.assertEqual(["set -eux;     echo 'a b'", "true"], _dockerfile_runs(text))
+        # Exec form is a JSON list of strings; a shell test is not (CodeAnt on #394).
+        self.assertEqual(
+            ["[ -f marker ] && git status"],
+            _dockerfile_runs(
+                'RUN ["sh", "-c", "x"]\nRUN [ -f marker ] && git status\n'
+            ),
+        )
 
     def test_a_run_here_document_or_another_escape_fails_closed(self) -> None:
         with self.assertRaisesRegex(AssertionError, "here-document"):
@@ -589,11 +610,15 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "jobs:\n  j:\n    steps:\n      - run: git log\n", "utf-8"
             )
             (root / "ci" / "policy.yml").write_text("checks:\n  - name: x\n", "utf-8")
+            (root / "ci" / "flow.yml").write_text(
+                'stages: [t]\njob: {stage: t, script: "git describe"}\n', "utf-8"
+            )
             self.assertEqual(
                 {
                     ".gitlab-ci.yml#0": "git fetch",
                     ".gitlab-ci.yml#1": "git status\necho ok",
                     ".gitlab-ci.yml#2": "git gc",
+                    "ci/flow.yml#0": "git describe",
                     "ci/github-actions.yml#0": "git log",
                 },
                 _shell_surfaces(_declared(root)),

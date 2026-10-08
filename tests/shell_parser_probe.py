@@ -33,7 +33,8 @@ def facts(source: bytes) -> dict[str, object]:
             names.append(node.text.decode("utf-8", "replace"))
         if node.type == "heredoc_body" and node.text is not None:
             bodies.append(node.text.decode("utf-8", "replace"))
-        stack.extend(node.children)
+        # Reversed, so the walk visits nodes in source order (CodeAnt on #394).
+        stack.extend(reversed(node.children))
     return {"names": sorted(names), "errors": errors, "heredocs": bodies}
 
 
