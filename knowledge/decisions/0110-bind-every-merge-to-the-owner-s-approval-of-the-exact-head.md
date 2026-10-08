@@ -151,5 +151,5 @@ reimplementing it.
   approvals with one maintainer.** Write-capable non-human actors now open and merge
   PRs, so a code-owner approval is required. This Decision is the stricter
   specialization that Decision 0013 deferred to, and both now say so. Gnostoa's
-  change-control policy still inherits the core's zero approvals; aligning it is
-  #401.
+  change-control policy requires the code owner's approval for every class except
+  emergency, as R-main does (#401).

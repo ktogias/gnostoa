@@ -2734,9 +2734,31 @@ class ChangeControlTests(unittest.TestCase):
                 change_class["verification"]["failing_evidence"],
                 class_id,
             )
-            self.assertEqual(0, change_class["minimum_approvals"], class_id)
 
+        # Each class's approval is bound to R-main's record by its owner, the merge-gate
+        # record's test (Claude on #404: one reader of R-main, not two).
         emergency = policy["change_classes"]["emergency"]
+        self.assertEqual(0, emergency["minimum_approvals"])
+        self.assertFalse(emergency["code_owner_approval"])
+        # The maintainer step says the same, emergency included (CodeAnt and Sourcery
+        # on #404).
+        maintain = " ".join(
+            (ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "Every merge into Gnostoa's `main` except an emergency one needs the code "
+            "owner's approval",
+            maintain,
+        )
+        self.assertIn("an emergency merges through break glass", maintain)
+        # Linked, as the runbook links its other Decisions (cubic on #404).
+        self.assertIn(
+            "[`Decision 0110`](../decisions/"
+            "0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)",
+            maintain,
+        )
         self.assertEqual("required-follow-up", emergency["work_item"])
         self.assertTrue(emergency["decision_record"])
         self.assertEqual(

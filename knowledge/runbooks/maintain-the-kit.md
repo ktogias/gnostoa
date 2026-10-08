@@ -63,8 +63,12 @@ x-project-knowledge:
    inside it.
 12. Exercise `./ci/verify fast`, regression and applicable conditional suites.
 13. Inspect the final diff and semantic impact. Community contributions receive
-    maintainer review; satisfy independent approvals only when a future
-    specialization requires them.
+    maintainer review. Every merge into Gnostoa's `main` except an emergency one
+    needs the code owner's approval in GitHub, as `policy/change-control.yaml` and
+    R-main require
+    ([`Decision 0110`](../decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md));
+    an emergency merges through break glass, which bypasses R-main, and its
+    follow-up is mandatory.
 
 For a Gnostoa source-only release, follow
 [Publish a source-only release](publish-source-only-release.md).
