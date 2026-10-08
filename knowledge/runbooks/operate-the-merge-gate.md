@@ -210,14 +210,30 @@ owner.
 
 **Rules on the host:**
 - A token is never printed, logged or passed on a command line. It is captured into
-  `GH_TOKEN` for one command, and never with xtrace (`set -x`) on, nor in a recorded
+  `GH_TOKEN` inside one of the functions below, for one `gh` command, and never with xtrace (`set -x`) on, nor in a recorded
   session: under xtrace, the shell prints the command as expanded, token included.
 - The host's `PATH` is trusted. It resolves every program that holds a token or the App's key: `gh`,
   `git`, `cat`, `curl`, `openssl` and `python3`. A host whose `PATH` cannot be
   trusted is compromised (Recovery).
-- `gh` acts as the App: `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh …`.
-  Review triggers act as the machine user:
-  `GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) gh …`.
+- `gh` runs only through two functions, defined once per shell: `as_app` acts as
+  the App, and `as_machine_user`, for review triggers, as the machine user. Each
+  body is a subshell. It makes an empty configuration directory first, so no program
+  but `gh` runs while the token is set. A failed or empty mint stops it before `gh`,
+  rather than letting `gh` fall back to a stored login, as a `gh` command prefixed
+  with a captured token would.
+  The token never exists in the calling shell, even when a command is interrupted:
+  ```sh
+  as_app() (
+    GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
+      && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+      && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+  )
+  as_machine_user() (
+    GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
+      && GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) \
+      && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+  )
+  ```
 - Every helper and the token file are named by their full path, so they work from
   any directory, including an agent's isolated clone.
 - Commits in an agent's clone are authored by
@@ -276,14 +292,12 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    is read first (`--slurp`), since `--jq` with `--paginate` runs once per page and
    could choose a page's last review instead of the latest:
    ```sh
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate --slurp \
+   as_app api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate --slurp \
      | jq -r '[.[][] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh pr merge <N> --squash --match-head-commit <approved>
+   as_app pr merge <N> --squash --match-head-commit <approved>
    ```
    Between the two, the App reads the PR's head,
-   `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh pr view <N> --json headRefOid --jq .headRefOid`.
+   `as_app pr view <N> --json headRefOid --jq .headRefOid`.
    Stop unless `<approved>`, the PR's head and the seal are one SHA. No provider gate
    yet checks the approval's `commit_id` against the merged head: the platform keeps
    an approval across a push that leaves the diff unchanged. This step is that check
@@ -294,20 +308,16 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    PR's head. The agent checks two things instead. First, that the PR's recorded
    head equals `<approved>`, and reads the new commit `<merge>`:
    ```sh
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh pr view <N> --json headRefOid,mergeCommit --jq .headRefOid
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh pr view <N> --json headRefOid,mergeCommit --jq .mergeCommit.oid
+   as_app pr view <N> --json headRefOid,mergeCommit --jq .headRefOid
+   as_app pr view <N> --json headRefOid,mergeCommit --jq .mergeCommit.oid
    ```
    The first prints the PR's recorded head, the second `<merge>`. Second, that
    `<merge>` integrated that head. The branch was up to date with `main`, so the two
    trees are one. If the trees differ, stop: the squash carries something the owner
    did not approve. Record it on the Work Item and tell the owner:
    ```sh
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh api repos/ktogias/gnostoa/commits/<merge> --jq .commit.tree.sha
-   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh api repos/ktogias/gnostoa/commits/<approved> --jq .commit.tree.sha
+   as_app api repos/ktogias/gnostoa/commits/<merge> --jq .commit.tree.sha
+   as_app api repos/ktogias/gnostoa/commits/<approved> --jq .commit.tree.sha
    ```
    It records the outcome on the Work Item. A Work Item that
    survives the merge was only referenced (`Refs`, never a closing keyword).
@@ -337,8 +347,8 @@ If a required check itself is broken, break glass does not suffice while the cla
 protection exists. The last resort is then the owner, as admin:
 1. Read back the whole protection before changing it,
    `GET /repos/ktogias/gnostoa/branches/main/protection`, and keep the result.
-2. Change that protection temporarily, for the one merge. The security log records
-   the change.
+2. Remove only the broken check from it, for the one merge. The security log
+   records the change.
 3. Merge, as below.
 4. Restore the protection at once, whether the merge succeeded or not: re-enter the
    settings step 1 read back, in Settings → Branches → the `main` rule, not only the
@@ -359,24 +369,31 @@ protection exists. The last resort is then the owner, as admin:
    for capture only.
 3. Read back the classic protection, as the owner, before the merge:
    `GET /repos/ktogias/gnostoa/branches/main/protection`. Once break glass bypasses
-   R-main, it is the only layer that still requires the four checks. If it no
-   longer requires them, stop, and restore it to require the four checks (`policy`,
-   `fast`, `regression` and `smoke` from app 15368, strict, with
-   `enforcement_level: everyone`), as Preconditions records, before going on.
+   R-main, it is the only layer that still requires the four checks. It must
+   require them, as Preconditions records (`policy`, `fast`, `regression` and
+   `smoke` from app 15368, strict, with `enforcement_level: everyone`), except in the
+   last resort, where it must differ from Preconditions by exactly the check the
+   owner removed. Any other difference: stop, and restore it to require the four
+   checks, as Preconditions records, before going on.
 4. Merge the exact head, capturing the token for this one command, with xtrace off
    and outside any recorded session. Run the script by its absolute path, never a
    relative one, so that no same-named script in the current directory runs while
    the key is present. The command line and the shell's history then hold `$(...)`,
-   never the token. Each step runs only if the one before succeeded, and `gh` runs
-   with an empty configuration directory, so a failed or empty mint stops the merge
+   never the token. `<head>` is the head the owner has just reviewed, read from
+   `GET /repos/ktogias/gnostoa/pulls/<N>` (`head.sha`) and recorded in the
+   follow-up; GitHub refuses the merge if the head has moved since. Each step runs
+   only if the one before succeeded, and `gh` runs
+   with an empty configuration directory, made before the mint so that no other
+   program runs while the token is set. So a failed or empty mint stops the merge
    instead of letting `gh` fall back to a stored login, which would merge as the
    owner rather than as `gnostoa-break-glass[bot]`. The block runs in a subshell, so
    the token never exists in the interactive shell. Interrupting it, for example
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   ( GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
-     && export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT \
+   ( GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
+     && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
+     && export GH_TOKEN && gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )
    ```
 5. Remove the key from the machine.

@@ -110,6 +110,11 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn("never with `--admin`", prose)
         # The one exception is named where the rule is (CodeAnt on #400).
         self.assertIn("except through break glass", prose)
+        # The summary does not read as GitHub binding the head (Claude on #400).
+        self.assertIn(
+            "until Phase 1b, the App checks that the approval's `commit_id` is that head",
+            prose,
+        )
 
     def test_no_command_carries_a_token_or_a_bare_helper(self) -> None:
         """A token reaches `gh` only through `$(...)`, never as a literal in a
@@ -150,6 +155,44 @@ class MergeGateRecordTests(unittest.TestCase):
                         match.group(0).endswith(f"~/.config/gnostoa-agent/{name}"),
                         match.group(0),
                     )
+
+    def test_gh_runs_only_after_a_checked_mint(self) -> None:
+        """`GH_TOKEN=$(...) gh` still runs `gh` when the mint fails, which then falls
+        back to a stored login (Codex on #400). So `gh` runs only through two
+        functions whose bodies are subshells: the configuration directory first,
+        then the mint, checked, then `gh` alone holds the token, which never exists
+        in the calling shell (Codex and CodeAnt on #400)."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        blocks = [
+            " ".join(block.replace("\\\n", " ").split())
+            for block in re.findall(r"```sh\n(.*?)```", text, re.S)
+        ]
+        guard = (
+            "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR && GH_TOKEN={} "
+            '&& test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@" )'
+        )
+        self.assertIn(
+            "as_app() ( "
+            + guard.format("$(~/.config/gnostoa-agent/bin/agent-token.sh)")
+            + " as_machine_user() ( "
+            + guard.format("$(cat ~/.config/gnostoa-agent/machine-user-token)"),
+            blocks,
+        )
+        for path in (RUNBOOK, ROOT / "AGENTS.md"):
+            with self.subTest(path=path.name):
+                self.assertIsNone(
+                    re.search(
+                        r"GH_TOKEN=\$\([^)]*\)\s*(?:\\\s*)?gh\b",
+                        path.read_text(encoding="utf-8"),
+                    )
+                )
+        # Every `gh` a command block runs is one of the two bodies or break glass.
+        for block in blocks:
+            for call in re.findall(r"(?<![\w-])gh (\S+)", block):
+                with self.subTest(block=block[:60], call=call):
+                    self.assertIn(call, {'"$@"', "api"})
+                    if call == "api":
+                        self.assertIn("break-glass-token.sh", block)
 
     def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
         """Bash prints a command's expansion under xtrace, token included, so no
@@ -221,12 +264,14 @@ class MergeGateRecordTests(unittest.TestCase):
             """select(.state == "APPROVED") | .commit_id'""",
             merge,
         )
-        self.assertIn("gh pr merge <N> --squash --match-head-commit <approved>", merge)
+        self.assertIn(
+            "as_app pr merge <N> --squash --match-head-commit <approved>", merge
+        )
         # The comparison is a step, not a hope (CodeAnt on #400).
         self.assertIn(
             "Stop unless `<approved>`, the PR's head and the seal are one SHA", merge
         )
-        self.assertIn("gh pr view <N> --json headRefOid --jq .headRefOid", merge)
+        self.assertIn("as_app pr view <N> --json headRefOid --jq .headRefOid", merge)
         # A squash merge makes a new commit, so after it the PR's recorded head is
         # compared with `<approved>`, and the new commit's tree with that head's
         # (Codex on #400).
@@ -273,12 +318,17 @@ class MergeGateRecordTests(unittest.TestCase):
         # In a subshell, so the token never exists in the interactive shell, an
         # interruption cannot leave it there, and the block's status is the
         # merge's (Codex and CodeAnt on #400).
+        # The empty configuration directory is made before the mint, so no program
+        # but `gh` runs while the token is set (CodeAnt on #400).
         command = (
-            '( GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
-            "&& export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT "
+            "( GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR "
+            '&& GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
+            "&& export GH_TOKEN && gh api -X PUT "
             "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )"
         )
         self.assertIn("never exists in the interactive shell", procedure)
+        # Where `<head>` comes from (Claude on #400).
+        self.assertIn("`<head>` is the head the owner has just reviewed", procedure)
         blocks = [
             " ".join(block.replace("\\\n", " ").split())
             for block in re.findall(
@@ -286,6 +336,14 @@ class MergeGateRecordTests(unittest.TestCase):
             )
         ]
         self.assertIn(command, blocks)
+        # The last resort removes one broken check, which the read-back before the
+        # merge then expects, rather than restoring it (CodeAnt on #400).
+        self.assertIn("Remove only the broken check from it", runbook)
+        self.assertIn(
+            "except in the last resort, where it must differ from Preconditions by "
+            "exactly the check the owner removed",
+            procedure,
+        )
         # Restoring has a stated target (Claude on #400), and happens whether the
         # merge succeeded or not (CodeAnt on #400).
         self.assertIn("restore it to require the four checks", procedure)
@@ -489,12 +547,20 @@ class MergeGateRecordTests(unittest.TestCase):
                 "requires the code owner's approval of the exact head",
                 "A later push dismisses the approval",
                 "without the owner's approval of the head",
+                # A push that keeps the diff may keep the approval (Codex on #400).
+                "Every push, and every move of `main`, requires a new approval",
             ):
                 with self.subTest(record=name, claim=claim):
                     self.assertNotIn(claim, text)
         self.assertIn(
             "binding it to the exact head is the merge procedure's step until Phase 1b",
             records[RUNBOOK.name],
+        )
+        # A whole sentence (cubic on #400).
+        self.assertIn(
+            "Binding the approval to the exact head is the merge procedure's step "
+            "until Phase 1b",
+            records[DECISION.name],
         )
 
     def test_every_decision_cited_exists(self) -> None:

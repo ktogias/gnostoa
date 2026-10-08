@@ -90,7 +90,8 @@ causes:
 
 - **No actor can merge without the owner's approval, except through break glass,**
   which only the owner can use, and which the runbook bounds and audits. Binding the
-  approval to the exact head is the merge procedure's until Phase 1b, as below. Calibration showed the App refused both with and without `--admin`.
+  approval to the exact head is the merge procedure's step until Phase 1b, as
+  below. Calibration showed the App refused both with and without `--admin`.
 - **What the platform does not yet enforce.** Until Phase 1b it does not check:
   - the approval's `commit_id` against the merged head, since the platform keeps an
     approval across a push that leaves the diff unchanged; the merge procedure
@@ -103,7 +104,9 @@ causes:
 
   These remain in the agent's convergence report, which the owner reads before
   approving.
-- **More approvals.** Every push, and every move of `main`, requires a new approval.
+- **More approvals.** Every push that changes the diff, and every move of `main`,
+  requires a new approval. A push that leaves the diff unchanged may keep it, so the
+  merge procedure compares the approval's `commit_id` with the head.
 - **The classic protection stays until Phase 1b.** Break glass cannot bypass it.
 
 ## What this supersedes or revises
