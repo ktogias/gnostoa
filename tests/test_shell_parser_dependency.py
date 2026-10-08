@@ -76,6 +76,35 @@ OTHER_SHELLS = {
 }
 # A multi-call binary runs the applet its first argument names, such as `sh`.
 MULTI_CALL = {"busybox", "toybox"}
+# Programs that run a command given among their own arguments, each with its own
+# grammar: a declared list (Codex on #396). One outside it is read as a program.
+LAUNCHERS = {
+    "timeout",
+    "nice",
+    "nohup",
+    "setsid",
+    "stdbuf",
+    "ionice",
+    "chrt",
+    "taskset",
+    "flock",
+    "chroot",
+    "unshare",
+    "nsenter",
+    "sudo",
+    "doas",
+    "su",
+    "runuser",
+    "gosu",
+    "su-exec",
+    "setpriv",
+    "tini",
+    "dumb-init",
+    "xargs",
+    "time",
+    "strace",
+    "watch",
+}
 
 # The YAML keys that hold shell in a CI definition. They are looked for in the
 # loaded document, wherever and however written: flow style (CodeAnt on #394), quoted,
@@ -756,9 +785,20 @@ def _follow_launchers(words: list[str], name: str, *, split: bool) -> list[str]:
         elif launcher in MULTI_CALL:
             words = words[1:]
         else:
-            return words
+            return _refuse_launched_shell(words, name)
     if words and (Path(words[0]).name == "env" or Path(words[0]).name in MULTI_CALL):
         raise _refuse(name, "a launcher chain beyond the bound")
+    return words
+
+
+def _refuse_launched_shell(words: list[str], name: str) -> list[str]:
+    """`words` unchanged, unless they are a launcher whose own grammar this reader
+    does not read, and a shell, `env` or a multi-call binary follows it among its
+    words: that shell runs, so it fails closed (Codex on #396)."""
+    launcher = Path(words[0]).name if words else ""
+    runners = SHELLS | OTHER_SHELLS | MULTI_CALL | {"env"}
+    if launcher in LAUNCHERS and any(Path(word).name in runners for word in words[1:]):
+        raise _refuse(name, f"a `{launcher}` launcher of a shell")
     return words
 
 
@@ -986,6 +1026,13 @@ def _check_shell_instruction(argument: str) -> None:
         raise AssertionError(
             f"a SHELL that does not hand RUN to `-c`: {argument!r}; extend this extraction"
         )
+
+
+def _overrides_build_arg(text: str, name: str) -> bool:
+    """Whether `text` passes `--build-arg` for `name`, with its value or from the
+    environment, its word after `=`, a space or a continued line (cubic on #396)."""
+    pattern = rf"--build-arg(?:=|[\s\\]+)[\"']?{re.escape(name)}\b"
+    return re.search(pattern, text) is not None
 
 
 def _dockerfile_runs(text: str) -> list[str]:
@@ -2532,15 +2579,56 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                         names |= set(re.findall(r"\$\{?(\w+)", stage["image"]))
         self.assertEqual({"PYTHON_BASE_IMAGE"}, names)
         for path in files:
+            # This module's own cases below are examples, not a build.
+            if path.resolve() == Path(__file__).resolve():
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
             for name in names:
                 with self.subTest(path=str(path.relative_to(ROOT)), name=name):
-                    self.assertIsNone(
-                        re.search(rf"--build-arg[ =]+[\"']?{name}=", text)
-                    )
+                    self.assertFalse(_overrides_build_arg(text, name))
+        # Every way a build names the argument, its value given or taken from the
+        # environment (cubic on #396).
+        base = "PYTHON_BASE_IMAGE"
+        for text in (
+            f'--build-arg "{base}=x"',
+            f"--build-arg {base}=x",
+            f"--build-arg={base}=x",
+            f"--build-arg {base}",
+            f"--build-arg={base}",
+            f"--build-arg \\\n    {base}",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(_overrides_build_arg(text, base))
+        self.assertFalse(_overrides_build_arg(f"--build-arg {base}_X=y", base))
+
+    def test_a_launcher_of_a_shell_fails_closed(self) -> None:
+        """A launcher such as `timeout`, `nice` or `sudo` runs the command after its
+        own arguments, so a shell it names fails closed, in an exec form and in a
+        shebang alike; one that names no shell runs no shell (Codex on #396)."""
+        for argv in (
+            ["timeout", "10", "sh", "-c", "git x"],
+            ["nice", "-n", "5", "bash", "-c", "git y"],
+            ["sudo", "-u", "app", "/bin/sh", "-c", "git z"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                self.assertRaisesRegex(
+                    AssertionError, f"a `{argv[0]}` launcher of a shell"
+                ),
+            ):
+                _exec_form_shell(argv)
+        self.assertEqual([], _exec_form_shell(["tini", "--", "knowledge"]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "t").write_bytes(b"#!/usr/bin/env -S timeout 10 sh\ngit t\n")
+            declared = _declared(root)
+            with self.assertRaisesRegex(
+                AssertionError, "t: a `timeout` launcher of a shell"
+            ):
+                _shell_surfaces(declared)
 
     def test_a_continuation_follows_buildkit_s_rule(self) -> None:
         """BuildKit continues a line whose escape character is followed only by
@@ -2767,6 +2855,17 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(2, nested.returncode)
         self.assertIn("a JSON list of strings", nested.stderr)
         self.assertNotIn("Traceback", nested.stderr)
+        # An integer past Python's digit limit raises `ValueError` (CodeAnt on #396).
+        digits = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, str(PROBE)],
+            input="[" + "1" * 5000 + "]",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(2, digits.returncode)
+        self.assertNotIn("Traceback", digits.stderr)
         with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
         # The child bounds its own read too, at the same limit, whoever writes to it
