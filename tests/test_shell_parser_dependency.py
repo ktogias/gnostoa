@@ -29,8 +29,6 @@ from tools.repository_scope import SOURCE_MANIFEST, candidate_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
-# GitHub Actions expressions are not shell; each is masked at its own width.
-EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
 # `env`'s documented options: GNU coreutils' `env --help`, and BSD's `-P`.
 ENV_FLAGS = set("i0v")
 ENV_ARGUMENT_FLAGS = set("uCaPS")
@@ -52,7 +50,21 @@ ENV_CHAIN_LIMIT = 3
 # A name shaped like a shell, such as a version-suffixed `bash5`.
 SHELL_LIKE = re.compile(r"\A[a-z]*sh[\d.]*\Z")
 SHELLS = {"sh", "bash", "dash", "ash"}
-OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
+OTHER_SHELLS = {
+    "zsh",
+    "ksh",
+    "mksh",
+    "oksh",
+    "fish",
+    "csh",
+    "tcsh",
+    "yash",
+    "posh",
+    "hush",
+}
+# A multi-call binary runs the applet its first argument names, such as `sh`.
+MULTI_CALL = {"busybox", "toybox"}
+
 # A YAML key that holds shell in a CI definition.
 # Anywhere in the text, so a flow-style mapping is found too (CodeAnt on #394).
 CI_KEY = re.compile(
@@ -111,8 +123,9 @@ BASH_LONG_FLAGS = {
 }
 # The single-letter shell options that take a word: `-o` an option, `-O` a shopt.
 SHELL_OPTION_WORDS = set("oO")
-# A BuildKit here-document word: an optional descriptor, then `<<`.
-HEREDOC_WORD = re.compile(r"\d*<<")
+# A BuildKit here-document word: an optional descriptor, `<<`, an optional `-`, and
+# a name holding no `<` (BuildKit's `frontend/dockerfile/parser`, measured on #396).
+HEREDOC_WORD = re.compile(r"\d*<<-?[^<]*")
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 RUN = re.compile(r"[ \t]*(?:RUN|SHELL)[ \t]+(.*)", re.I)
@@ -149,10 +162,36 @@ def _probe(scripts: list[str]) -> dict[str, object]:
     return answer
 
 
-def _masked_expression(match: re.Match[str]) -> str:
-    """An Actions expression as underscores of its own width, each line break kept,
-    so the shell's lines stay where they were (CodeAnt on #394)."""
-    return re.sub(r"[^\n]", "_", match.group(0))
+def _mask_expressions(run: str, path: Path) -> str:
+    """Each Actions expression as underscores of its own width, each line break
+    kept, so the shell's lines stay where they were (CodeAnt on #394). An
+    expression ends at the first `}}` outside its string literals; an unclosed one
+    fails closed (Codex on #396)."""
+    masked: list[str] = []
+    index = 0
+    while (start := run.find("${{", index)) != -1:
+        end = _expression_end(run, start + 3)
+        if end is None:
+            raise AssertionError(
+                f"{path}: an unclosed expression; extend this extraction"
+            )
+        masked.extend((run[index:start], re.sub(r"[^\n]", "_", run[start:end])))
+        index = end
+    return "".join(masked) + run[index:]
+
+
+def _expression_end(text: str, index: int) -> int | None:
+    """Where an expression ends: after its first `}}` outside a string literal.
+    Strings quote with `'`, and a doubled `''` inside one is a quote (GitHub's
+    expression syntax), so toggling on each `'` reads both."""
+    quoted = False
+    while index < len(text):
+        if text[index] == "'":
+            quoted = not quoted
+        elif not quoted and text.startswith("}}", index):
+            return index + 2
+        index += 1
+    return None
 
 
 def _masked(match: re.Match[str]) -> str:
@@ -217,6 +256,21 @@ def _github_context(
     return default, runner
 
 
+def _step_run(path: Path, step: dict[str, object], shell: object) -> list[str]:
+    """A step's `run`, with its expressions masked, read with its shell. A step
+    without one runs an action; a `run` that is not a string fails closed (Claude on
+    #396)."""
+    if "run" not in step:
+        return []
+    run = step["run"]
+    if not isinstance(run, str):
+        raise AssertionError(
+            f"{path}: a `run` that is not a string; extend this extraction"
+        )
+    _check_step_shell(path, shell)
+    return [_mask_expressions(run, path)]
+
+
 def _check_step_shell(path: Path, shell: object) -> None:
     """A step's shell: its own, else its default, else its runner's. Unknown, or
     neither bash nor sh, it fails closed."""
@@ -230,36 +284,59 @@ def _check_step_shell(path: Path, shell: object) -> None:
 
 
 def _github_runs(path: Path, document: object) -> list[str]:
+    """Each step's `run`, read where GitHub runs one: a workflow's
+    `jobs.<id>.steps[*]`, or a composite action's `runs.steps[*]`. A `run` key
+    elsewhere, such as a variable in `env`, is data (Codex on #396). A step's shell
+    is its own, else its job's or the workflow's `defaults.run.shell`, else its
+    runner's. Another shape on those paths fails closed, and so does a recursive
+    alias along them (CodeAnt on #396)."""
+    if not isinstance(document, dict) or not ("jobs" in document or "runs" in document):
+        if isinstance(document, dict | list) and CI_KEY.search(
+            path.read_text("utf-8-sig")
+        ):
+            raise _refuse(path.name, "shell in an unknown GitHub shape")
+        return []
+    above = _entered(document, frozenset(), path.name)
+    default, _ = _github_context(path, document, None, None)
+    if "runs" in document:
+        runs = _mapping(document["runs"], "runs", path)
+        return _github_steps(path, runs.get("steps", []), above, None)
+    jobs = _mapping(document["jobs"], "jobs", path)
+    above = _entered(jobs, above, path.name)
     found: list[str] = []
-    # Each node with the containers above it, so that a recursive alias, a
-    # container inside itself, fails closed instead of looping (CodeAnt on #396);
-    # and with the nearest `defaults.run.shell` and the job's runner's shell, which a
-    # `run` without `shell` takes in that order (Codex on #396).
-    stack: list[tuple[object, frozenset[int], str | None, str | None]] = [
-        (document, frozenset(), None, None)
-    ]
-    while stack:
-        node, above, default, runner = stack.pop()
-        if isinstance(node, (dict, list)):
-            above = _entered(node, above, path.name)
-        if isinstance(node, dict):
-            default, runner = _github_context(path, node, default, runner)
-            if isinstance(node.get("run"), str):
-                _check_step_shell(path, node.get("shell") or default or runner)
-                found.append(EXPRESSION.sub(_masked_expression, node["run"]))
-            # Reversed onto the stack, so that runs are numbered in source order
-            # (CodeAnt on #396).
-            stack.extend(
-                reversed(
-                    [
-                        (value, above, default, runner)
-                        for key, value in node.items()
-                        if key != "run"
-                    ]
-                )
+    for job in jobs.values():
+        job = _mapping(job, "a job", path)
+        job_default, runner = _github_context(path, job, default, None)
+        found.extend(
+            _github_steps(
+                path,
+                job.get("steps", []),
+                _entered(job, above, path.name),
+                job_default or runner,
             )
-        elif isinstance(node, list):
-            stack.extend((item, above, default, runner) for item in reversed(node))
+        )
+    return found
+
+
+def _mapping(node: object, what: str, path: Path) -> dict[str, object]:
+    if not isinstance(node, dict):
+        noun = "jobs that are" if what == "jobs" else f"{what} that is"
+        raise _refuse(path.name, f"{noun} not a mapping")
+    return node
+
+
+def _github_steps(
+    path: Path, steps: object, above: frozenset[int], shell: str | None
+) -> list[str]:
+    """Each step's `run`, with `shell` the one a step without its own takes."""
+    if not isinstance(steps, list):
+        raise _refuse(path.name, "steps that are not a list")
+    above = _entered(steps, above, path.name)
+    found: list[str] = []
+    for step in steps:
+        step = _mapping(step, "a step", path)
+        _entered(step, above, path.name)
+        found.extend(_step_run(path, step, step.get("shell") or shell))
     return found
 
 
@@ -366,6 +443,8 @@ def _shebang_command(head: bytes, name: str) -> str:
         if not words or Path(words[0]).name != "env":
             break
         words = _env_operands(words[1:], name)
+    if words and Path(words[0]).name in MULTI_CALL:
+        words = words[1:]
     if not words or Path(words[0]).name == "env" or not PROGRAM.fullmatch(words[0]):
         raise _refuse(name, "an unreadable shebang")
     return Path(words[0]).name
@@ -486,7 +565,9 @@ def _exec_form_shell(argv: list[str]) -> list[str]:
     command to that shell; another shell fails closed (cubic on #396). The options
     are read as the shell reads them, up to the first word that is not one. With
     `-c` among them, that word is the command; otherwise it is a script's path
-    (CodeAnt on #396)."""
+    (CodeAnt on #396). A multi-call binary's applet is the program."""
+    if argv and Path(argv[0]).name in MULTI_CALL:
+        argv = argv[1:]
     program = Path(argv[0]).name if argv else ""
     if program in OTHER_SHELLS:
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
@@ -590,16 +671,16 @@ def _dockerfile_runs(text: str) -> list[str]:
         if _exec_form(command):
             runs.extend(_exec_form_shell(json.loads(command)))
             continue
-        # BuildKit reads a here-document from a word, its quotes kept, that starts
-        # with `<<` after an optional descriptor; `<<` inside quotes is text
-        # (CodeAnt on #396).
+        # BuildKit reads a here-document from a whole word, its quotes kept; `<<`
+        # inside quotes, inside a word or as `<<<` is shell (CodeAnt and cubic on
+        # #396).
         try:
             words = shlex.split(command, posix=False)
         except ValueError as exc:
             raise AssertionError(
                 f"an unreadable RUN: {command!r}; extend this extraction"
             ) from exc
-        if any(HEREDOC_WORD.match(word) for word in words):
+        if any(HEREDOC_WORD.fullmatch(word) for word in words):
             raise AssertionError("a RUN here-document; extend this extraction")
         runs.append(command)
     return runs
@@ -886,9 +967,9 @@ class SurfaceExtractionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "w.yml"
             path.write_text(
-                "runs-on: ubuntu-latest\nsteps:\n  - run: |\n"
-                "      echo ${{ fromJSON(\n        x) }}\n"
-                "      git status\n",
+                "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: |\n          echo ${{ fromJSON(\n            x) }}\n"
+                "          git status\n",
                 "utf-8",
             )
             runs = _workflow_runs(path)
@@ -900,7 +981,11 @@ class SurfaceExtractionTests(unittest.TestCase):
     def test_a_step_in_another_language_or_broken_yaml_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "w.yml"
-            path.write_text("steps:\n  - run: print(1)\n    shell: python\n", "utf-8")
+            path.write_text(
+                "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: print(1)\n        shell: python\n",
+                "utf-8",
+            )
             with self.assertRaisesRegex(AssertionError, "`python` step"):
                 _workflow_runs(path)
             path.write_text("steps: [\n", "utf-8")
@@ -912,7 +997,9 @@ class SurfaceExtractionTests(unittest.TestCase):
             root = Path(directory)
             (root / ".github" / "workflows").mkdir(parents=True)
             (root / ".github" / "workflows" / "w.yml").write_text(
-                "runs-on: ubuntu-latest\nsteps:\n  - run: git status\n", "utf-8"
+                "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: git status\n",
+                "utf-8",
             )
             (root / "AGENTS.md").write_text(
                 "x\n```bash\ngit log <ref>\n```\n```python\nprint()\n```\n", "utf-8"
@@ -1287,10 +1374,18 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 _exec_form_shell(argv)
 
     def test_only_a_here_document_word_starts_a_here_document(self) -> None:
-        """BuildKit reads a here-document from a word that starts with `<<`, after
-        an optional descriptor, quotes kept: `<<` inside quotes is text (CodeAnt on
-        #396)."""
-        self.assertEqual(['echo "a << b"'], _dockerfile_runs('RUN echo "a << b"\n'))
+        """BuildKit reads a here-document from a word, quotes kept, that is an
+        optional descriptor, `<<`, an optional `-` and a name holding no `<`.
+        `<<` inside quotes, `cat<<EOF` and a `<<<` here-string are shell; measured
+        against BuildKit (CodeAnt and cubic on #396)."""
+        for line in (
+            'RUN echo "a << b"',
+            'RUN echo "<<EOF"',
+            "RUN cat<<EOF",
+            'RUN cat <<<"here"',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual([line[4:]], _dockerfile_runs(line + "\n"))
         for line in ("RUN cat <<EOF\n", "RUN cat << EOF\n", "RUN cat 3<<-EOF\n"):
             with (
                 self.subTest(line=line),
@@ -1299,6 +1394,130 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 _dockerfile_runs(line)
         with self.assertRaisesRegex(AssertionError, "an unreadable RUN"):
             _dockerfile_runs('RUN echo "unclosed\n')
+
+    def test_a_run_that_is_not_a_string_fails_closed(self) -> None:
+        """A step's `run` is a string; any other value fails closed instead of being
+        skipped. A `defaults.run` mapping of `shell` and `working-directory` is not a
+        step (Claude on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workflow.yml"
+            job = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n"
+            for document in (
+                job + "    steps:\n      - run:\n          - git status\n",
+                job + "    steps:\n      - run: {git: status}\n",
+                job + "    steps:\n      - run: 1\n",
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(
+                        AssertionError, "a `run` that is not a string"
+                    ),
+                ):
+                    _ci_shell(path, under_github=True)
+            path.write_text(
+                job + "    defaults:\n      run:\n        shell: bash\n"
+                "        working-directory: x\n    steps:\n      - run: git log\n",
+                "utf-8",
+            )
+            self.assertEqual(["git log"], _ci_shell(path, under_github=True))
+
+    def test_a_multi_call_binary_runs_its_applet(self) -> None:
+        """`busybox sh` and `toybox sh` run a shell: in a shebang and in an exec-form
+        `RUN` (CodeAnt on #396). Busybox's `hush` is another shell, which fails
+        closed."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, content in (
+                ("q", b"#!/bin/busybox sh\ngit q\n"),
+                ("r", b"#!/usr/bin/env busybox ash\ngit r\n"),
+                ("s", b"#!/usr/bin/toybox sh\ngit s\n"),
+            ):
+                (root / name).write_bytes(content)
+            self.assertEqual({"q", "r", "s"}, set(_shell_surfaces(_declared(root))))
+            for content, reason in (
+                (b"#!/bin/busybox\ngit u\n", "u: an unreadable shebang"),
+                (b"#!/bin/busybox hush\ngit u\n", "u: a `hush` script"),
+            ):
+                (root / "u").write_bytes(content)
+                declared = _declared(root)
+                with (
+                    self.subTest(shebang=content),
+                    self.assertRaisesRegex(AssertionError, reason),
+                ):
+                    _shell_surfaces(declared)
+        self.assertEqual(
+            ["git t"], _exec_form_shell(["/bin/busybox", "sh", "-c", "git t"])
+        )
+        with self.assertRaisesRegex(AssertionError, "an exec-form `hush` RUN"):
+            _exec_form_shell(["busybox", "hush", "-c", "git t"])
+
+    def test_only_a_step_s_run_is_shell(self) -> None:
+        """GitHub runs shell at `jobs.<id>.steps[*].run` and a composite action's
+        `runs.steps[*].run` only; a `run` key elsewhere, such as a variable in
+        `env`, a matrix value or an action's input, is data (Codex on #396). Any
+        other shape on those paths fails closed."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workflow.yml"
+            path.write_text(
+                "on: push\nenv:\n  run: one\njobs:\n  a:\n"
+                "    runs-on: ubuntu-latest\n    env:\n      run: two\n"
+                "    strategy:\n      matrix:\n        include:\n          - run: three\n"
+                "    steps:\n      - run: git a\n        env:\n          run: four\n"
+                "      - uses: some/action@v1\n        with:\n          run: five\n",
+                "utf-8",
+            )
+            self.assertEqual(["git a"], _ci_shell(path, under_github=True))
+            for document, reason in (
+                ("on: push\njobs: [a]\n", "jobs that are not a mapping"),
+                ("on: push\njobs:\n  a: x\n", "a job that is not a mapping"),
+                (
+                    "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: x\n",
+                    "steps that are not a list",
+                ),
+                (
+                    "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n"
+                    "    steps:\n      - x\n",
+                    "a step that is not a mapping",
+                ),
+                (
+                    "runs:\n  using: composite\n  steps: x\n",
+                    "steps that are not a list",
+                ),
+                ("other:\n  run: git x\n", "shell in an unknown GitHub shape"),
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, reason),
+                ):
+                    _ci_shell(path, under_github=True)
+            path.write_text("version: 2\nupdates: []\n", "utf-8")
+            self.assertEqual([], _ci_shell(path, under_github=True))
+
+    def test_an_expression_ends_outside_its_strings(self) -> None:
+        """An Actions expression ends at the first `}}` outside its string
+        literals, which quote with `'` and escape it by doubling; an unclosed one
+        fails closed (Codex on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workflow.yml"
+            job = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+            for expression in (
+                "${{ format('{{Hello {0}!}}', github.actor) }}",
+                "${{ 'it''s }}' }}",
+            ):
+                path.write_text(
+                    job + "      - run: >-\n          echo " + expression + " done\n",
+                    "utf-8",
+                )
+                with self.subTest(expression=expression):
+                    self.assertEqual(
+                        ["echo " + "_" * len(expression) + " done"],
+                        _ci_shell(path, under_github=True),
+                    )
+            path.write_text(job + "      - run: echo ${{ x\n", "utf-8")
+            with self.assertRaisesRegex(AssertionError, "an unclosed expression"):
+                _ci_shell(path, under_github=True)
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
@@ -1500,6 +1719,25 @@ class RetainedEvidenceTests(unittest.TestCase):
                     self.assertTrue(digest.startswith(declared[member.name]))
         # The prose holds no copy that could drift from the archive.
         self.assertNotIn("````text", text)
+
+    def test_the_assessment_prints_the_archive_s_digests(self) -> None:
+        """The digest prefixes the assessment prints are those of the JSON
+        evidence, for the archive and for each script, so neither can go stale
+        (CodeAnt on #396)."""
+        text = self.ASSESSMENT.read_text(encoding="utf-8")
+        scripts = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))["spike_scripts"]
+        [archive] = re.findall(
+            r"spike-scripts\.tar\.gz\)\n\(SHA-256 `([0-9a-f]{16})…`\)", text
+        )
+        self.assertTrue(scripts["sha256"].startswith(archive))
+        printed = dict(
+            re.findall(r"^\| `([\w.]+\.py)` \| `([0-9a-f]{16})…` \|", text, re.M)
+        )
+        full = {member["name"]: member["sha256"] for member in scripts["members"]}
+        self.assertEqual(sorted(full), sorted(printed))
+        for name, digest in printed.items():
+            with self.subTest(script=name):
+                self.assertTrue(full[name].startswith(digest))
 
     def test_the_archive_is_deterministic_and_matches_its_full_digests(self) -> None:
         """The archive and each member match their full SHA-256 in the JSON
