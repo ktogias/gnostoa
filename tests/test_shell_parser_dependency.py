@@ -181,7 +181,11 @@ def _shebang_words(head: bytes, name: str) -> set[str]:
     `=` or a quote, with `env`'s `-S` allowed attached. A shell is recognised by its
     name among them, so no form of `env`'s arguments can hide it; this models no
     argument grammar at all (Codex and CodeAnt on #394). A blank or undecodable line
-    fails closed."""
+    fails closed.
+
+    It over-includes by design: a shell name used as an option's argument, as in
+    `env -u sh perl`, makes a non-shell script parse too. That fails loudly or passes
+    harmlessly, and never hides a shell surface (Claude and CodeAnt on #394)."""
     try:
         line = head[2:].split(b"\n", 1)[0].decode("utf-8")
     except UnicodeDecodeError as exc:
