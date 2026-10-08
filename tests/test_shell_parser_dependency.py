@@ -483,7 +483,7 @@ def _check_gitlab_shells(document: dict[str, object], name: str) -> None:
             continue
         lineage = _gitlab_lineage(document, job, key, name)
         covered.update(base for base, _ in lineage)
-        _check_gitlab_image(_gitlab_image(document, job, lineage), key, name)
+        _check_gitlab_image(_gitlab_image(document, lineage), key, name)
     for key, job in jobs.items():
         if (
             key.startswith(".")
@@ -491,7 +491,7 @@ def _check_gitlab_shells(document: dict[str, object], name: str) -> None:
             and not GITLAB_SHELL.isdisjoint(job)
         ):
             lineage = _gitlab_lineage(document, job, key, name)
-            _check_gitlab_image(_gitlab_image(document, job, lineage), key, name)
+            _check_gitlab_image(_gitlab_image(document, lineage), key, name)
 
 
 def _gitlab_lineage(
@@ -524,17 +524,21 @@ def _gitlab_lineage(
 
 
 def _gitlab_image(
-    document: dict[str, object],
-    job: dict[str, object],
-    lineage: list[tuple[str, dict[str, object]]],
+    document: dict[str, object], lineage: list[tuple[str, dict[str, object]]]
 ) -> object:
     """A job's image: the first its lineage gives, else `default`'s, else the
     deprecated global one, unless `inherit` drops the default (Codex on #396)."""
     for _, current in lineage:
         if "image" in current:
             return current["image"]
-    inherit = job.get("inherit")
-    inherited = inherit.get("default", True) if isinstance(inherit, dict) else True
+    # The nearest `inherit: default` in the lineage, as GitLab merges a base's keys
+    # into the job (Codex on #396).
+    inherited: object = True
+    for _, current in lineage:
+        inherit = current.get("inherit")
+        if isinstance(inherit, dict) and "default" in inherit:
+            inherited = inherit["default"]
+            break
     if inherited is not True and not (
         isinstance(inherited, list) and "image" in inherited
     ):
@@ -573,6 +577,10 @@ def _check_gitlab_image(image: object, key: str, name: str) -> None:
     for variable in variables:
         if variable not in DECLARED_IMAGE_VARIABLES:
             raise _refuse(name, f"`{key}`: an image `{variable}` decides")
+    # A declared variable names the whole image, as the template defines it; one
+    # composed into a larger reference names something else (CodeAnt on #396).
+    if variables and not re.fullmatch(r"\$\{?\w+\}?", reference.strip()):
+        raise _refuse(name, f"`{key}`: an image a declared variable only partly names")
     if not variables and not _linux_image(reference):
         raise _refuse(name, f"`{key}`: an image not known to be Linux")
 
@@ -2122,6 +2130,19 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 (
                     "job:\n  image: $CI_IMAGE\n  script: [git a]\n",
                     "`job`: an image `CI_IMAGE` decides",
+                ),
+                # An `inherit` from a base is the job's too (Codex on #396).
+                (
+                    ".base:\n  inherit: {default: false}\ndefault:\n  image: alpine\n"
+                    "job:\n  extends: .base\n  script: [git a]\n",
+                    "`job`: a GitLab job whose shell its runner decides",
+                ),
+                # A declared variable counts only as the whole reference (CodeAnt on
+                # #396).
+                (
+                    'job:\n  image: "registry.example/${KNOWLEDGE_KIT_IMAGE}"\n'
+                    "  script: [git a]\n",
+                    "`job`: an image a declared variable only partly names",
                 ),
             ):
                 path.write_text(document, "utf-8")
