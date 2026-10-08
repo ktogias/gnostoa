@@ -555,7 +555,9 @@ class MergeGateRecordTests(unittest.TestCase):
             for block in re.findall(r"```sh\n(.*?)```", merge_text, re.S)
             for line in block.splitlines()
         ]
+        # The seal is read too, not remembered from an earlier step (Claude on #400).
         reads = [
+            "as_app api repos/ktogias/gnostoa/issues/<N>/comments --paginate --slurp \\",
             "as_app pr view <N> --json headRefOid --jq .headRefOid",
             "as_app pr view <N> --json title --jq .title > <current-subject> "
             "&& cmp -s <current-subject> <checked-subject>",
@@ -568,6 +570,11 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertLess(commands.index(read), commands.index(line))
         self.assertIn("and both comparisons succeed", merge)
         self.assertIn("Only then does the App merge", merge)
+        self.assertIn(
+            """select(.user.login == "gnostoa-agent[bot]") | .body """
+            """| select(startswith("Exact review candidate: "))""",
+            merge,
+        )
         self.assertLess(merge.index("Only then does the App merge"), merge.index(line))
         self.assertIn("whatever the squash message says", merge)
         # A squash merge makes a new commit, so after it the PR's recorded head is
@@ -913,6 +920,21 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(2, flat.count(phrase))
         self.assertNotIn("last trusted identity", flat)
+        # A compromised App can change an approved PR's title or description without
+        # moving its head, so each audit also checks every merge's effects: the squash
+        # commit, the title and description reconstructed from their history, and the
+        # issues the merge closed; what cannot be reconstructed is UNKNOWN, never clean
+        # (Codex on #400; the owner's bounded correction, 4221436778).
+        for phrase in (
+            "audit each merge's effects, which none of those comparisons covers",
+            "read the squash commit's subject and message, `GET /repos/ktogias/gnostoa/commits/<merge>`, for a closing keyword",
+            "GraphQL `userContentEdits` for the description and `RenamedTitleEvent` for the title",
+            "list every issue closed since then whose closer, GraphQL `ClosedEvent.closer`, is a pull request or a commit",
+            "is recorded as an incident and restored through the follow-up, with the owner's disposition",
+            "the merge's audit is `UNKNOWN`, for the owner to dispose, never clean on its SHA and tree alone",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(2, flat.count(phrase))
         # Each rotation is kept in the owner's offline record, so an audit can reach
         # back past it (Codex on #400).
         self.assertEqual(
@@ -1004,6 +1026,9 @@ class MergeGateRecordTests(unittest.TestCase):
             text = " ".join((decisions / name).read_text(encoding="utf-8").split())
             with self.subTest(decision=name):
                 self.assertIn("*Revised by Decision 0110:*", text)
+                # Break glass bypasses R-main, so no merge rule says "every merge"
+                # (CodeAnt on #400).
+                self.assertNotIn("for every merge,", text)
                 self.assertLess(
                     text.index(rule), text.index("*Revised by Decision 0110:*")
                 )
