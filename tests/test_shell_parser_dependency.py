@@ -888,14 +888,17 @@ def _follow_launchers(words: list[str], name: str, *, split: bool) -> list[str]:
     shebangs and exec forms (Claude on #396); a launcher left after the bound fails
     closed (Codex on #396)."""
     for _ in range(ENV_CHAIN_LIMIT):
-        launcher = Path(words[0]).name if words else ""
+        launcher = _program_stem(words[0]) if words else ""
         if launcher == "env":
             words = _env_operands(words[1:], name, split=split)
         elif launcher in MULTI_CALL:
             words = words[1:]
         else:
             return _refuse_launched_shell(words, name)
-    if words and (Path(words[0]).name == "env" or Path(words[0]).name in MULTI_CALL):
+    # Each launcher however Windows spells it (Codex on #396).
+    if words and (
+        _program_stem(words[0]) == "env" or _program_stem(words[0]) in MULTI_CALL
+    ):
         raise _refuse(name, "a launcher chain beyond the bound")
     # A launcher right after the bound's last wrapper is still one (Codex on #396).
     return _refuse_launched_shell(words, name)
@@ -906,7 +909,7 @@ def _refuse_launched_shell(words: list[str], name: str) -> list[str]:
     its own grammar, which may hand it to a shell without naming one, as `su -c`
     does, or name a shell this reader does not list. So one fails closed, whatever
     follows it (Codex and cubic on #396)."""
-    launcher = Path(words[0]).name if words else ""
+    launcher = _program_stem(words[0]) if words else ""
     if launcher in LAUNCHERS:
         raise _refuse(name, f"a `{launcher}` launcher")
     return words
@@ -2903,6 +2906,18 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             self.assertEqual(
                 {"w": "#!/bin/bash.exe\ngit w\n"}, _shell_surfaces(_declared(root))
             )
+
+    def test_launchers_are_named_as_windows_names_them(self) -> None:
+        """`env`, a multi-call binary and a declared launcher are recognised however
+        Windows spells them (Codex on #396)."""
+        self.assertEqual(
+            ["git x"], _exec_form_shell(["C:\\tools\\env.exe", "bash", "-c", "git x"])
+        )
+        self.assertEqual(
+            ["git y"], _exec_form_shell(["BUSYBOX.EXE", "sh", "-c", "git y"])
+        )
+        with self.assertRaisesRegex(AssertionError, "a `timeout` launcher"):
+            _exec_form_shell(["Timeout.exe", "10", "sh", "-c", "git z"])
 
     def test_a_launcher_fails_closed(self) -> None:
         """A launcher such as `timeout`, `su` or `tini` runs a command by its own
