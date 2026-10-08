@@ -1,5 +1,9 @@
 # Gnostoa
 
+<p align="center">
+  <img src="docs/assets/brand/gnostoa-logo.png" alt="Gnostoa" width="200">
+</p>
+
 Gnostoa is a small Git-native toolkit for project knowledge that must remain
 usable by both people and software agents. It validates structured Markdown and
 YAML, enforces non-weakening project profiles and policy boundaries, and builds

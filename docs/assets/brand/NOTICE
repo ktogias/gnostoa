@@ -1,0 +1,26 @@
+GNOSTOA LOGOS
+
+These files are the Gnostoa project's logos. They are **not licensed under the
+Apache License**, unlike the repository's other material (see
+LICENSING.md at the repository root). All rights in them are reserved by
+Konstantinos Togias.
+
+You may use them unmodified to refer to the Gnostoa project, for example in an
+article, a list of tools, or a link to this repository. Do not modify them, combine
+them with another mark, or use them in a way that suggests endorsement or
+affiliation. This notice is not a claim that `Gnostoa` is a registered trademark.
+
+| File | SHA-256 | What it is |
+|---|---|---|
+| `gnostoa-logo.png` | `89cf604436eafc89…` | The mark and the wordmark, 1254×1254 PNG |
+| `gnostoa-mark.webp` | `dee5e5ad3a700c06…` | The mark alone, WebP; also the icon of the `gnostoa-agent` App |
+| `gnostoa-break-glass-logo.png` | `514a8000b1a1f7c7…` | The break-glass mark with the wordmark, 1254×1254 PNG |
+| `gnostoa-break-glass-mark.png` | `fd9ef460533a47aa…` | The break-glass mark alone, 1254×1254 PNG; also the icon of the `gnostoa-break-glass` App |
+
+PROVENANCE
+
+The logos were generated with an AI image tool under the owner's direction, then
+chosen and approved by the owner. The owner supplied them on 2026-10-08 (#397). The
+files are kept byte for byte as supplied: `tests/test_brand_assets.py` checks each
+one against its full SHA-256. Decision 0111 records their location, terms and
+provenance.
