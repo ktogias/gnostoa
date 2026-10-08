@@ -222,29 +222,34 @@ owner.
   rather than letting `gh` fall back to a stored login, as a `gh` command prefixed
   with a captured token would.
   The token never exists in the calling shell, even when a command is interrupted.
-  On exit, by any path, the body unsets the token and then removes the directory, so
-  `rmdir` never holds the token. It is `rmdir`, which removes only an empty
-  directory: if the caller's `GH_CONFIG_DIR` is read-only, the body's assignment fails
-  and the variable keeps the caller's value, and `rmdir` then leaves that
-  configuration intact. `gh` leaves its own directory empty. These are AGENTS.md's traps for its preparation
-  helper. Define them again after any change to this section, since a shell keeps
-  the definitions it already has:
+  The body traps the same signals as AGENTS.md's preparation helper, `HUP` included.
+  On exit, by any path, it unsets the token and then removes the directory it made:
+  `mktemp`'s own, held in `created` before the clean-up is set, so no directory the
+  caller named is ever removed, even one that is read-only or empty. Each command run
+  while the token is set goes through `command`, so no function or alias of the
+  calling shell, such as a `gh` or `test` function, receives or sees it. Define them
+  again after any change to this section, since a shell keeps the definitions it
+  already has:
   ```sh
   as_app() (
-    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
+    trap 'exit 129' HUP
+    created=$(mktemp -d) || exit
+    trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
+    GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
       && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-      && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+      && command test -n "$GH_TOKEN" && command export GH_TOKEN && command gh "$@"
   )
   as_machine_user() (
-    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
-      && GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) \
-      && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+    trap 'exit 129' HUP
+    created=$(mktemp -d) || exit
+    trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
+    GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
+      && GH_TOKEN=$(command cat ~/.config/gnostoa-agent/machine-user-token) \
+      && command test -n "$GH_TOKEN" && command export GH_TOKEN && command gh "$@"
   )
   ```
 - Every helper and the token file are named by their full path, so they work from
@@ -407,12 +412,14 @@ protection exists. The last resort is then the owner, as admin:
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   ( trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
-     trap 'exit 130' INT
+   ( trap 'exit 130' INT
      trap 'exit 143' TERM
-     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
-     && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
-     && export GH_TOKEN && gh api -X PUT \
+     trap 'exit 129' HUP
+     created=$(mktemp -d) || exit
+     trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
+     GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
+     && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && command test -n "$GH_TOKEN" \
+     && command export GH_TOKEN && command gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )
    ```
 5. Remove the key from the machine.

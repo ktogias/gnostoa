@@ -23,6 +23,23 @@ DECISION = (
 )
 
 
+def _guarded(mint: str) -> str:
+    """The guarded body the runbook writes, up to `gh`, whitespace normalised. Every
+    signal AGENTS.md's helper traps is trapped (Claude on #400). The directory is
+    the one `mktemp` made, held before the clean-up is set, so nothing else is
+    removed (cubic and Claude on #400). Each command run while the token is set goes
+    through `command`, so no function or alias of the calling shell sees it (Codex
+    on #400)."""
+    return (
+        "( trap 'exit 130' INT trap 'exit 143' TERM trap 'exit 129' HUP "
+        "created=$(mktemp -d) || exit "
+        "trap 'command unset GH_TOKEN; rmdir -- \"$created\"' EXIT "
+        "GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR "
+        f'&& GH_TOKEN={mint} && command test -n "$GH_TOKEN" '
+        "&& command export GH_TOKEN && command gh"
+    )
+
+
 class MergeGateRecordTests(unittest.TestCase):
     def _r_main(self) -> dict[str, list[dict[str, object]]]:
         text = RUNBOOK.read_text(encoding="utf-8")
@@ -129,7 +146,8 @@ class MergeGateRecordTests(unittest.TestCase):
         # (cubic and CodeAnt on #400).
         minted = {
             "$(~/.config/gnostoa-agent/bin/agent-token.sh)",
-            "$(cat ~/.config/gnostoa-agent/machine-user-token)",
+            # Through `command`, so no `cat` function sees it (Codex on #400).
+            "$(command cat ~/.config/gnostoa-agent/machine-user-token)",
             "$(~/break-glass/break-glass-token.sh)",
         }
         assigned = re.findall(r"GH_TOKEN=(\$\([^)]*\)|\S*)", text)
@@ -171,19 +189,12 @@ class MergeGateRecordTests(unittest.TestCase):
             " ".join(block.replace("\\\n", " ").split())
             for block in re.findall(r"```sh\n(.*?)```", text, re.S)
         ]
-        # The configuration directory is removed whatever happens, the token unset
-        # first, so `rm` never holds it (Claude and CodeAnt on #400).
-        guard = (
-            'trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- '
-            "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
-            "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR && GH_TOKEN={} "
-            '&& test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@" )'
-        )
         self.assertIn(
-            "as_app() ( "
-            + guard.format("$(~/.config/gnostoa-agent/bin/agent-token.sh)")
-            + " as_machine_user() ( "
-            + guard.format("$(cat ~/.config/gnostoa-agent/machine-user-token)"),
+            "as_app() "
+            + _guarded("$(~/.config/gnostoa-agent/bin/agent-token.sh)")
+            + ' "$@" ) as_machine_user() '
+            + _guarded("$(command cat ~/.config/gnostoa-agent/machine-user-token)")
+            + ' "$@" )',
             blocks,
         )
         for path in (RUNBOOK, ROOT / "AGENTS.md"):
@@ -209,7 +220,9 @@ class MergeGateRecordTests(unittest.TestCase):
         token never reaches the caller; and the configuration directory is gone
         afterwards, whatever happened (Claude and CodeAnt on #400)."""
         text = RUNBOOK.read_text(encoding="utf-8")
-        self.assertIn("Define them again after any change to this section", text)
+        self.assertIn(
+            "Define them again after any change to this section", " ".join(text.split())
+        )
         [block] = [
             b for b in re.findall(r"```sh\n(.*?)```", text, re.S) if "as_app() (" in b
         ]
@@ -283,33 +296,76 @@ class MergeGateRecordTests(unittest.TestCase):
                             "token", seen.read_text(encoding="utf-8").strip()
                         )
                     self.assertEqual([], list((root / "tmp").iterdir()))
-        # A caller's read-only `GH_CONFIG_DIR` keeps its value when the body's
-        # assignment fails; the clean-up then removes only an empty directory, so
-        # the caller's own configuration survives, and `gh` never runs (cubic on
-        # #400).
+        # A caller's read-only `GH_CONFIG_DIR`, populated or empty, survives: the
+        # clean-up removes only the directory `mktemp` made (cubic and Claude on
+        # #400). Functions the caller defines for `gh`, `test` or `cat` never run, so
+        # none sees the token (Codex on #400).
         for interpreter in shells:
+            for populated in (True, False):
+                with (
+                    self.subTest(interpreter=interpreter, populated=populated),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    (root / "bin").mkdir()
+                    kept = root / "caller config"
+                    kept.mkdir()
+                    if populated:
+                        (kept / "hosts.yml").write_text("kept\n", encoding="utf-8")
+                    gh = root / "bin" / "gh"
+                    gh.write_text('#!/bin/sh\ntouch "$GH_SEEN"\n', encoding="utf-8")
+                    gh.chmod(0o755)
+                    mint = root / "mint.sh"
+                    mint.write_text("#!/bin/sh\necho t0ken\n", encoding="utf-8")
+                    mint.chmod(0o755)
+                    script = (
+                        f"readonly GH_CONFIG_DIR={shlex.quote(str(kept))}\n"
+                        + block.replace(
+                            "~/.config/gnostoa-agent/bin/agent-token.sh",
+                            shlex.quote(str(mint)),
+                        )
+                        + "\nas_app api x\necho $?\n"
+                    )
+                    done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                        [interpreter, "-c", script],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                            "GH_SEEN": str(root / "seen"),
+                        },
+                    )
+                    self.assertTrue(kept.is_dir(), done.stderr)
+                    self.assertEqual(populated, (kept / "hosts.yml").is_file())
+                    self.assertFalse((root / "seen").exists())
             with (
-                self.subTest(interpreter=interpreter, case="read-only GH_CONFIG_DIR"),
+                self.subTest(interpreter=interpreter, case="caller functions"),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
                 (root / "bin").mkdir()
-                kept = root / "caller config"
-                kept.mkdir()
-                (kept / "hosts.yml").write_text("kept\n", encoding="utf-8")
                 gh = root / "bin" / "gh"
                 gh.write_text('#!/bin/sh\ntouch "$GH_SEEN"\n', encoding="utf-8")
                 gh.chmod(0o755)
                 mint = root / "mint.sh"
                 mint.write_text("#!/bin/sh\necho t0ken\n", encoding="utf-8")
                 mint.chmod(0o755)
+                (root / "token").write_text("t0ken", encoding="utf-8")
+                shadow = shlex.quote(str(root / "shadowed"))
                 script = (
-                    f"readonly GH_CONFIG_DIR={shlex.quote(str(kept))}\n"
+                    f"gh() {{ touch {shadow}; }}\n"
+                    f"test() {{ touch {shadow}; return 0; }}\n"
+                    f"cat() {{ touch {shadow}; echo t0ken; }}\n"
                     + block.replace(
                         "~/.config/gnostoa-agent/bin/agent-token.sh",
                         shlex.quote(str(mint)),
+                    ).replace(
+                        "~/.config/gnostoa-agent/machine-user-token",
+                        shlex.quote(str(root / "token")),
                     )
-                    + "\nas_app api x\necho $?\n"
+                    + "\nas_app api x\nas_machine_user api x\n"
                 )
                 done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                     [interpreter, "-c", script],
@@ -322,8 +378,8 @@ class MergeGateRecordTests(unittest.TestCase):
                         "GH_SEEN": str(root / "seen"),
                     },
                 )
-                self.assertTrue((kept / "hosts.yml").is_file(), done.stderr)
-                self.assertFalse((root / "seen").exists())
+                self.assertFalse((root / "shadowed").exists(), done.stderr)
+                self.assertTrue((root / "seen").exists(), done.stderr)
 
     def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
         """Bash prints a command's expansion under xtrace, token included, so no
@@ -363,7 +419,8 @@ class MergeGateRecordTests(unittest.TestCase):
         ]
         for program in programs:
             named = re.compile(
-                rf"`{re.escape(program)}`|\$\({re.escape(program)} |\) {re.escape(program)} "
+                rf"`{re.escape(program)}`|\$\((?:command )?{re.escape(program)} "
+                rf"|\) {re.escape(program)} "
             )
             with self.subTest(program=program):
                 self.assertTrue(
@@ -449,17 +506,20 @@ class MergeGateRecordTests(unittest.TestCase):
         # In a subshell, so the token never exists in the interactive shell, an
         # interruption cannot leave it there, and the block's status is the
         # merge's (Codex and CodeAnt on #400).
-        # The empty configuration directory is made before the mint, so no program
-        # but `gh` runs while the token is set (CodeAnt on #400), and removed after,
-        # the token unset first (Claude on #400).
+        # The guarded body, as the two functions have it (CodeAnt, Claude and Codex on
+        # #400).
         command = (
-            '( trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- '
-            "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
-            "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR "
-            '&& GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
-            "&& export GH_TOKEN && gh api -X PUT "
-            "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )"
+            _guarded("$(~/break-glass/break-glass-token.sh)")
+            + " api -X PUT repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash"
+            " -f sha=<head> )"
         )
+        blocks = [
+            " ".join(block.replace("\\\n", " ").split())
+            for block in re.findall(
+                r"```sh\n(.*?)```", RUNBOOK.read_text(encoding="utf-8"), re.S
+            )
+        ]
+        self.assertIn(command, blocks)
         self.assertIn("never exists in the interactive shell", procedure)
         # Where `<head>` comes from (Claude on #400).
         self.assertIn("`<head>` is the head the owner has just reviewed", procedure)
