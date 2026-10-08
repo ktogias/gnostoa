@@ -28,6 +28,10 @@ class MergeGateRecordTests(unittest.TestCase):
         return cast(dict[str, list[dict[str, object]]], json.loads(block.group(1)))
 
     def _rules(self) -> dict[str, dict[str, object]]:
+        # Each rule type once, so a duplicate cannot overwrite the one checked
+        # (CodeAnt on #400).
+        types = [str(rule["type"]) for rule in self._r_main()["rules"]]
+        self.assertEqual(sorted(set(types)), sorted(types))
         return {
             str(rule["type"]): cast(dict[str, object], rule.get("parameters", {}))
             for rule in self._r_main()["rules"]
@@ -189,6 +193,19 @@ class MergeGateRecordTests(unittest.TestCase):
                     program,
                 )
 
+    def test_the_merge_binds_the_sha_the_owner_approved(self) -> None:
+        """The App merges the `commit_id` of the owner's approving review, not the
+        PR's current head, so a push that keeps the diff cannot slip in a commit
+        the owner never saw (Codex on #400)."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        merge = runbook[
+            runbook.index("8. **The merge.**") : runbook.index(
+                "9. **After the merge.**"
+            )
+        ]
+        self.assertIn("`commit_id` of the owner's latest `APPROVED` review", merge)
+        self.assertIn("--match-head-commit <approved>", merge)
+
     def test_break_glass_reads_the_classic_protection_back_first(self) -> None:
         """Break glass leaves the classic protection as the only layer requiring
         the checks, so the owner reads it back before the merge (Codex on #400)."""
@@ -207,6 +224,13 @@ class MergeGateRecordTests(unittest.TestCase):
         # merge succeeded or not (CodeAnt on #400).
         self.assertIn("restore it to require the four checks", procedure)
         self.assertIn("whether the merge succeeded or not", runbook)
+        # The last resort's restore has the same target (Claude on #400).
+        last_resort = runbook[
+            runbook.index("The last resort is then the owner") : runbook.index(
+                "**How.**"
+            )
+        ]
+        self.assertIn("restore it to require the four checks", last_resort)
         # The routine re-verification reads it back too (Claude on #400).
         verify = runbook[
             runbook.index("### Re-verify the gate") : runbook.index("## Recovery")

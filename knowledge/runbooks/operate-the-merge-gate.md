@@ -257,10 +257,17 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
 7. **The owner's approval.** The owner reviews and clicks **Approve** in GitHub on
    that exact head. A later push dismisses the approval, and a move of `main` makes
    the branch out of date. Either needs a new approval.
-8. **The merge.** The App runs:
+8. **The merge.** The App merges the SHA the owner approved, never just the PR's
+   current head. `--match-head-commit` only checks the SHA it is given against the
+   head, and a push that leaves the diff unchanged may not dismiss an approval. So
+   `<approved>` is the `commit_id` of the owner's latest `APPROVED` review, which
+   must also be the owner's latest review and equal the sealed head:
    ```sh
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh pr merge <N> --squash --match-head-commit <head>
+     gh api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate \
+     --jq '[.[] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh pr merge <N> --squash --match-head-commit <approved>
    ```
    GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
    hold. There is no `--admin`, because the App is not a bypass actor of R-main.
@@ -294,8 +301,9 @@ protection exists. The last resort is then the owner, as admin:
 1. Change that protection temporarily, for the one merge. The security log records
    the change.
 2. Merge, as below.
-3. Restore the protection at once, whether the merge succeeded or not, and read it
-   back. After an interrupted session, restoring it is the first thing done.
+3. Restore the protection at once, whether the merge succeeded or not: restore it to
+   require the four checks, as Preconditions records them, and read it back. After
+   an interrupted session, restoring it is the first thing done.
 4. Record both changes, and the read-back, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
