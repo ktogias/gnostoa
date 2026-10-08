@@ -936,11 +936,12 @@ def _env_escape(escape: str, quote: str, name: str) -> str:
     return ENV_ESCAPES[escape]
 
 
-def _other_shell(program: str) -> bool:
-    """Whether `program` is a shell this reader does not read: a listed one, or a
-    shell-like name that is no known shell, with or without `.exe`. One test serves
-    shebangs and exec forms (Codex on #396)."""
-    stem = program.removesuffix(".exe")
+def _other_shell(word: str) -> bool:
+    """Whether the program `word` names is a shell this reader does not read: a
+    listed one, or a shell-like name that is no known shell. One test serves
+    shebangs and exec forms (Codex on #396). A Windows name is a path with either
+    separator, in any case, with or without `.exe` (cubic and Codex on #396)."""
+    stem = re.split(r"[\\/]", word)[-1].casefold().removesuffix(".exe")
     if stem in OTHER_SHELLS:
         return True
     return stem not in SHELLS and SHELL_LIKE.match(stem) is not None
@@ -957,7 +958,7 @@ def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     # `env` and a multi-call binary launch the command after them (Codex on #396).
     argv = _follow_launchers(argv, "RUN", split=False)
     program = Path(argv[0]).name if argv else ""
-    if _other_shell(program):
+    if _other_shell(argv[0] if argv else ""):
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
     if program not in SHELLS:
         return []
@@ -1439,7 +1440,7 @@ def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
     command = Path(words[0]).name
     if command in OTHER_SHELLS:
         raise _refuse(name, f"a `{command}` script")
-    if _other_shell(command):
+    if _other_shell(words[0]):
         raise _refuse(name, f"an unrecognised shell `{command}`")
     if command not in SHELLS:
         return {}
@@ -2627,10 +2628,23 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         """An exec form of a shell this reader does not read fails closed, as a
         shebang of one does: a listed shell, or a shell-like name that is no known
         shell, with or without `.exe` (Codex on #396)."""
-        for program in ("pwsh", "pwsh.exe", "powershell.exe", "cmd.exe", "zsh5"):
+        # Windows names are case-insensitive and may be paths with either separator
+        # (cubic and Codex on #396).
+        for program in (
+            "pwsh",
+            "pwsh.exe",
+            "powershell.exe",
+            "cmd.exe",
+            "zsh5",
+            "CMD.EXE",
+            "PowerShell.exe",
+            "PWSH.EXE",
+            "C:\\Windows\\System32\\cmd.exe",
+            "C:/Program Files/PowerShell/7/pwsh.exe",
+        ):
             with (
                 self.subTest(program=program),
-                self.assertRaisesRegex(AssertionError, f"an exec-form `{program}` RUN"),
+                self.assertRaisesRegex(AssertionError, "an exec-form `.*` RUN"),
             ):
                 _exec_form_shell([program, "-c", "git x"])
         with tempfile.TemporaryDirectory() as directory:
