@@ -29,10 +29,18 @@ gnostoa-break-glass-mark.png
   The break-glass mark alone, 1254x1254 PNG; also the icon of the
   gnostoa-break-glass App.
 
+gnostoa-logo-on-light.png
+  SHA-256 30c13beb92a413721b20044274887a03e82c416c5e7a3c5095945715206c61c5
+  The logo on a white tile, 1254x1254 PNG, for dark backgrounds.
+
 PROVENANCE
 
 The logos were generated with an AI image tool under the owner's direction, then
 chosen and approved by the owner. The owner supplied them on 2026-10-08 (#397). The
 files are kept byte for byte as supplied, and tests/test_brand_assets.py checks
-each one against the digest above. Decision 0111 records their location, terms
+each one against the digest above.
+
+gnostoa-logo-on-light.png is derived from gnostoa-logo.png: the same image,
+unchanged, on a white tile with rounded corners, for dark backgrounds. The owner
+chose it on 2026-10-08 (#399). The terms above apply to it as to the others. Decision 0111 records their location, terms
 and provenance.

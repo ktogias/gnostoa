@@ -42,7 +42,8 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
    - `gnostoa-logo.png`;
    - `gnostoa-mark.webp`;
    - `gnostoa-break-glass-logo.png`;
-   - `gnostoa-break-glass-mark.png`.
+   - `gnostoa-break-glass-mark.png`;
+   - `gnostoa-logo-on-light.png`, derived (item 8).
 2. **Terms (the owner's choice).** The logo files are not licensed under
    Apache-2.0, and all rights in them are reserved. Anyone may use them unmodified to
    refer to the Gnostoa project, without implying endorsement. A notice beside them,
@@ -58,7 +59,7 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
      digest exactly;
    - that `LICENSING.md` points to the notice;
    - that the README's logo resolves, under the title and before the first section.
-5. **Use.** The README shows `gnostoa-logo.png` under its `# Gnostoa` heading, which the brand-identity test requires to come first. Its alt text, `Gnostoa`, names the project wherever the image cannot load.
+5. **Use.** The README shows `gnostoa-logo.png` under its `# Gnostoa` heading, which the brand-identity test requires to come first. On a dark theme it shows `gnostoa-logo-on-light.png` instead, through `<picture>`. Its alt text, `Gnostoa`, names the project wherever the image cannot load.
 6. **The notice is plain text**, as the root `NOTICE` is, because every Markdown file under `docs/` is a navigation projection of canonical knowledge. It holds no Markdown markers.
 7. **The distributions do not carry the logos.** The source distribution and the
    wheel declare `license = "Apache-2.0"`, with `LICENSE` and `NOTICE` as their
@@ -66,6 +67,14 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
    untrue. So the unpacked source distribution's README shows the alt text in place
    of the logo (Greptile on #399). PyPI renders no README, because the project
    declares no `readme` metadata.
+
+8. **The dark-theme tile (the owner's choice, #399).** `gnostoa-logo.png` has a
+   transparent background, so its navy lines vanish on a dark page (Codex on #399),
+   and GitHub strips inline styles. `gnostoa-logo-on-light.png` is that image,
+   unchanged, on a white tile with rounded corners. It was made with Pillow 12.3.0:
+   a white 1254×1254 image whose alpha is a rounded rectangle of radius 156
+   (`width // 8`), alpha-composited under the logo. None of the logo's opaque pixels
+   changed. The notice records it as derived, and its terms are the others'.
 
 ## Consequences
 

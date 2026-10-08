@@ -1,7 +1,10 @@
 # Gnostoa
 
 <p align="center">
-  <img src="docs/assets/brand/gnostoa-logo.png" alt="Gnostoa" width="200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/gnostoa-logo-on-light.png">
+    <img src="docs/assets/brand/gnostoa-logo.png" alt="Gnostoa" width="200">
+  </picture>
 </p>
 
 Gnostoa is a small Git-native toolkit for project knowledge that must remain

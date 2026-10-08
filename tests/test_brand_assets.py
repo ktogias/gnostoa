@@ -17,6 +17,8 @@ LOGOS = {
     "gnostoa-mark.webp": "dee5e5ad3a700c066fb1de2a09a3886ee19340b8035b7c44c9b92cd50140dd3e",  # pragma: allowlist secret -- public asset digest
     "gnostoa-break-glass-logo.png": "514a8000b1a1f7c78e7de77974660268e786506cadc548c7fe6f919a0381883a",  # pragma: allowlist secret -- public asset digest
     "gnostoa-break-glass-mark.png": "fd9ef460533a47aa6f8c3cde0351d72be045a59690ad18274c7bf04a43ceb0c9",  # pragma: allowlist secret -- public asset digest
+    # Derived on 2026-10-08, at the owner's choice: the logo on a white tile (#399).
+    "gnostoa-logo-on-light.png": "30c13beb92a413721b20044274887a03e82c416c5e7a3c5095945715206c61c5",  # pragma: allowlist secret -- public asset digest
 }
 
 
@@ -53,6 +55,9 @@ class BrandAssetTests(unittest.TestCase):
             # third-party material under its own licenses (Codex on #399).
             "which covers the project's other material as LICENSING.md, at the "
             "repository root, describes.",
+            "gnostoa-logo-on-light.png is derived from gnostoa-logo.png: the same "
+            "image, unchanged, on a white tile with rounded corners, for dark "
+            "backgrounds. The owner chose it on 2026-10-08 (#399).",
         ):
             with self.subTest(term=term):
                 self.assertIn(term, prose)
@@ -77,7 +82,18 @@ class BrandAssetTests(unittest.TestCase):
             [("docs/assets/brand/gnostoa-logo.png", "Gnostoa")],
             re.findall(r'<img src="([^"]+)" alt="([^"]*)"', head),
         )
-        self.assertTrue((ROOT / "docs/assets/brand/gnostoa-logo.png").is_file())
+        # On a dark theme, the logo on its light tile, since the logo's background
+        # is transparent and its navy lines vanish there (Codex on #399).
+        self.assertEqual(
+            ["docs/assets/brand/gnostoa-logo-on-light.png"],
+            re.findall(
+                r'<source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)">',
+                head,
+            ),
+        )
+        for image in ("gnostoa-logo.png", "gnostoa-logo-on-light.png"):
+            with self.subTest(image=image):
+                self.assertTrue((BRAND / image).is_file())
 
 
 if __name__ == "__main__":
