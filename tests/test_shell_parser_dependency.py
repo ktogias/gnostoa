@@ -1148,7 +1148,8 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         runs in a subprocess, so the old shape fails by its deadline instead of
         hanging the suite."""
         hostile = "*\t\t\t" * 40 + "x\n"
-        completed = subprocess.run(  # nosec B603 -- this interpreter; literal argv
+        # This interpreter, with a literal argv.
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             [
                 sys.executable,
                 "-c",
