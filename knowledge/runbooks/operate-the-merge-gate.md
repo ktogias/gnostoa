@@ -475,9 +475,9 @@ protection exists. The last resort is then the owner, as admin:
    follow-up; GitHub refuses the merge if the head has moved since. The owner then
    reads its commits' messages from every page of
    `GET /repos/ktogias/gnostoa/pulls/<N>/commits?per_page=100`, and last, just before
-   the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again. That endpoint lists
-   at most 250 commits, so a PR of more than 250 commits cannot be checked this way, so
-   break glass stops.
+   the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again. The commits list
+   stops at 250 without saying so, so the owner stops unless the commits listed number
+   that read's `commits`, at most 250.
    The owner stops unless that read's `head.sha` is still `<head>`, and stops if the
    commits' messages, or that read's `title` or `body`, carry a closing keyword.
    GitHub closes an issue that one names in the description, and the repository

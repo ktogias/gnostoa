@@ -702,7 +702,9 @@ class MergeGateRecordTests(unittest.TestCase):
             # on #400).
             "every page of `GET /repos/ktogias/gnostoa/pulls/<N>/commits?per_page=100`",
             "and last, just before the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again",
-            "a PR of more than 250 commits cannot be checked this way, so break glass stops",
+            # The stop needs the PR's own count, since the list stops at 250 without
+            # saying so (cubic on #400).
+            "stops unless the commits listed number that read's `commits`, at most 250",
             "stops unless that read's `head.sha` is still `<head>`",
             "stops if the commits' messages, or that read's `title` or `body`, carry a closing keyword",
             "the commits' messages and its title from the PR's title or its one",
