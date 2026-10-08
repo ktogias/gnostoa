@@ -49,7 +49,7 @@ causes:
   platform at merge time.
 - **Fail-open signal semantics.**
 - **Approvals were not bound to the exact head.**
-- **The bypass had become the merge path** (Decision 0106, #384).
+- **The bypass had become the merge path** (#384's proposal).
 - **MA0 itself was never shipped**, displaced by feature work.
 
 ## Decision
@@ -87,8 +87,9 @@ causes:
 
 ## Consequences
 
-- **No actor can merge without the owner's approval of the head.** Calibration showed
-  the App refused both with and without `--admin`.
+- **No actor can merge without the owner's approval of the head, except through
+  break glass,** which only the owner can use, and which the runbook bounds and
+  audits. Calibration showed the App refused both with and without `--admin`.
 - **What the platform does not yet enforce.** Until Phase 1b it does not check:
   - the analyzer readback;
   - convergence;
@@ -103,8 +104,8 @@ causes:
 
 ## What this supersedes or revises
 
-- **Decision 0106 (#384, draft).** Its admin-role bypass as the merge path is
-  superseded by items 2 and 4.
+- **#384's proposal** (a draft Decision in that PR, not merged). Its admin-role bypass
+  as the merge path is superseded by items 2 and 4.
 - **MA0 design decisions 2 and 5 (#15, 5979363503).** Decision 2 is revised by item
   3. Decision 5, the agents acting through the owner's account, is superseded by item
   1.

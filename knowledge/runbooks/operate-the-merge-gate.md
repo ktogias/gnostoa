@@ -20,8 +20,9 @@ x-project-knowledge:
 # Operate the merge gate
 
 Under MA0 Phase 1a, no actor can merge into `main` without the owner's approval of
-the exact head. That covers the orchestrating agent, Amazon Q, any review bot and
-any developer. GitHub enforces it; no agent's discipline is relied on.
+the exact head, except through break glass, which only the owner can use. That
+covers the orchestrating agent, Amazon Q, any review bot and any developer. GitHub
+enforces it; no agent's discipline is relied on.
 [Decision 0110](../decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
 records why. The work items are #15, for MA0, and #398, for this record.
 
@@ -70,7 +71,7 @@ Repository permissions, as read back from the App's own `GET /app`:
 | Metadata | read |
 | Everything else, including Administration, Deployments, Environments and Secrets | none |
 
-Its icon is `docs/assets/brand/gnostoa-mark.webp` (#397).
+Its icon is the Gnostoa mark, which #399 adds to the repository (#397).
 
 #### The App `gnostoa-break-glass`
 
@@ -98,10 +99,13 @@ and R-main's code-owner rule makes the owner's approval the only one that counts
 
 **R-main**, `main merge gate (MA0)` (24687961), active on `~DEFAULT_BRANCH`. Its
 only bypass actor is `gnostoa-break-glass`, as an Integration with mode
-`pull_request`. Its rules:
+`pull_request`. Its bypass list and rules, as the API returns them:
 
 ```json
-[
+{"bypass_actors": [
+  {"actor_id": 5230732, "actor_type": "Integration", "bypass_mode": "pull_request"}
+],
+"rules": [
   {"type": "deletion"},
   {"type": "non_fast_forward"},
   {"type": "required_linear_history"},
@@ -125,7 +129,7 @@ only bypass actor is `gnostoa-break-glass`, as an Integration with mode
       {"context": "smoke", "integration_id": 15368}
     ]
   }}
-]
+]}
 ```
 
 The other rulesets:
@@ -136,14 +140,17 @@ The other rulesets:
 | `Only admins write tags` (24640985) | every tag | the admin role | creation, update, deletion, non-fast-forward |
 | `Require CodeQL on main` (23699912) | `~DEFAULT_BRANCH` | none | code scanning: CodeQL, errors and high-or-higher security alerts |
 
-**Who can read what.** The App can read the rulesets but not their bypass lists,
-which need Administration access. The bypass lists above were read back with an
-admin-capable credential on 2026-10-08 (#15, 6050406535).
+**Who can read what.** The App reads each ruleset and its rules, but GitHub omits
+`bypass_actors` from its read, as it does for anyone without Administration access.
+The bypass lists above were read back with an admin-capable credential on
+2026-10-08 (#15, 6050406535).
 
-**Classic branch protection on `main`** stays in force until Phase 1b. It requires
-`policy`, `fast`, `regression` and `smoke`, strict, with conversations resolved and
-no bypass. Read back: `protected: true`, with those four contexts. The protection
-endpoint itself needs Administration access.
+**Classic branch protection on `main`** stays in force until Phase 1b. Read back as
+the App from `GET /repos/ktogias/gnostoa/branches/main`: `protected: true`, and
+required checks `policy`, `fast`, `regression` and `smoke` from app 15368, with
+`enforcement_level: everyone`. Its other settings, such as conversation resolution,
+come only from the protection endpoint, which returns 403 to the App. *The owner
+reads them back in review of this runbook.*
 
 **Repository merge settings:** squash only, auto-merge off, and branches deleted on
 merge.
@@ -161,6 +168,10 @@ owner.
   requested by an `@codex review` comment.
   - Codex accepts that comment from `gnostoa-agent-user` (calibrated on #396). It
     refuses the App's: "create a Codex account and connect to github".
+  - When the machine user opened #400, the connector also answered "To use Codex
+    here, create an environment for this repo", and then reviewed the machine
+    user's `@codex review` (its summary says "Manual request"). So the review ran
+    without an environment.
   - The owner connected the machine user under ChatGPT's GitHub connector
     ("Connect another account"). *The owner confirms this in review of this
     runbook.*
@@ -190,11 +201,15 @@ owner.
 **Rules on the host:**
 - A token is never printed, logged or passed on a command line. It is captured into
   `GH_TOKEN` for one command.
-- `gh` acts as the App: `GH_TOKEN=$(agent-token.sh) gh …`. Review triggers act as the
-  machine user: `GH_TOKEN=$(cat machine-user-token)`.
+- `gh` acts as the App: `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh …`.
+  Review triggers act as the machine user:
+  `GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) gh …`.
+- Every helper and the token file are named by their full path, so they work from
+  any directory, including an agent's isolated clone.
 - Commits in an agent's clone are authored by
   `gnostoa-agent[bot] <339367847+gnostoa-agent[bot]@users.noreply.github.com>`, and
-  pushed with `agent-git.sh push https://github.com/ktogias/gnostoa.git HEAD:<branch>`.
+  pushed with
+  `~/.config/gnostoa-agent/bin/agent-git.sh push https://github.com/ktogias/gnostoa.git HEAD:<branch>`.
 - The repository's activity log shows who pushed. Read it, rather than trusting a
   push that merely succeeded: both the admin and the App can write branches.
 
@@ -205,7 +220,8 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
 ### The normal merge
 
 1. **Branch and commits.** The agent works in an isolated clone and commits as
-   `gnostoa-agent[bot]`. It pushes the branch with `agent-git.sh`.
+   `gnostoa-agent[bot]`. It pushes the branch with
+   `~/.config/gnostoa-agent/bin/agent-git.sh`.
 2. **The PR.** The machine user opens it (`gh pr create` with its token). Never open
    a PR as the owner: the owner could not approve it.
 3. **The seal.** The App posts `Exact review candidate: <40-hex head>`.
@@ -230,7 +246,8 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    the branch out of date. Either needs a new approval.
 8. **The merge.** The App runs:
    ```sh
-   GH_TOKEN=$(agent-token.sh) gh pr merge <N> --squash --match-head-commit <head>
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh pr merge <N> --squash --match-head-commit <head>
    ```
    GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
    hold. There is no `--admin`, because the App is not a bypass actor of R-main.
@@ -244,39 +261,47 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
 example:
 - An urgent fix must merge, and the owner's approval cannot be given. One case is a
   PR that the owner authored.
-- Convergence cannot be reached for a reason outside the change: a reviewer is
-  broken, or a thread cannot be resolved.
+- Convergence cannot be reached for a reason outside the change, such as a broken
+  reviewer.
 
 Break glass is never for skipping a review that is late, or a finding nobody wants
-to fix.
+to fix. A review thread is never the reason either: the owner can resolve any
+thread, with the reason in a reply.
 
 **What it bypasses: only R-main.** That means the code-owner approval, the last-push
 approval, thread resolution and R-main's checks.
 
 **What it does not bypass:**
-- the classic protection, which still requires the four checks and resolved
-  conversations;
+- the classic protection, which still requires the four checks, and whatever else
+  it requires (Preconditions);
 - the CodeQL ruleset.
 
 If a required check itself is broken, break glass does not suffice while the classic
-protection exists. The last resort is then the owner, as admin, changing that
-protection temporarily. That change is recorded in the security log.
+protection exists. The last resort is then the owner, as admin:
+1. Change that protection temporarily, for the one merge. The security log records
+   the change.
+2. Merge, as below.
+3. Restore the protection at once, and read it back.
+4. Record both changes, and the read-back, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
 1. Bring the offline key of `gnostoa-break-glass` (App ID 5230732) to a trusted
    machine.
-2. Mint a one-hour installation token with it, in the same way as
-   `agent-token.sh`, but with that App's ID and key.
-3. Merge the exact head:
+2. Have a minting script there: a copy of the agent host's token helper with the
+   break-glass App's ID and key path, here `break-glass-token.sh`. It prints a
+   one-hour installation token, for capture only.
+3. Merge the exact head, capturing the token for this one command. The command line
+   and the shell's history then hold `$(...)`, never the token:
    ```sh
-   GH_TOKEN=<that token> gh api -X PUT repos/ktogias/gnostoa/pulls/<N>/merge \
-     -f merge_method=squash -f sha=<head>
+   GH_TOKEN=$(./break-glass-token.sh) gh api -X PUT \
+     repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
    ```
 4. Remove the key from the machine.
 
 **After.**
-- Open the emergency follow-up Work Item that `policy/change-control.yaml` requires.
-  It names the PR, the reason, and what was not verified.
+- Open the emergency follow-up Work Item and Decision that
+  `policy/change-control.yaml` requires (`emergency.decision_record`). They name the
+  PR, the reason, and what was not verified.
 - The merge shows `gnostoa-break-glass[bot]` as its actor in the activity log, so it
   is auditable.
 - MA0 Phase 1b's post-merge audit will open this Work Item by itself, for any merge
@@ -302,8 +327,9 @@ After any change to an identity, a permission or a ruleset, and before relying o
 the gate:
 1. Read back each App's `GET /app` with its own JWT.
 2. Read back the installation with `GET /repos/ktogias/gnostoa/installation`.
-3. Read back each ruleset with `GET /repos/ktogias/gnostoa/rulesets/<id>`. The
-   bypass lists need an admin-capable credential.
+3. Read back each ruleset with `GET /repos/ktogias/gnostoa/rulesets/<id>`. The App
+   reads the rules; GitHub omits `bypass_actors` for it, so the owner reads the
+   bypass lists.
 4. Read back the machine user's `GET /user`, its `x-oauth-scopes` header, and its
    expiry in the `github-authentication-token-expiration` header.
 5. Try to merge an unapproved PR as the App, with and without `--admin`. GitHub must
@@ -313,9 +339,9 @@ the gate:
 
 | Event | Action |
 |---|---|
-| The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `machine-user-token`, then revokes the old one. |
+| The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
 | The agent host may be compromised | Revoke `gnostoa-agent`'s private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
-| The break-glass key is lost or exposed | Delete it in the App's settings, and generate a new one offline. |
+| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, generate a new one offline, read the installation back, and only then unsuspend it. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
 | An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |
