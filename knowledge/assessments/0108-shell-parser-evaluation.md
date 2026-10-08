@@ -201,6 +201,30 @@ change the bytes that produced the results. An earlier revision kept them in `te
 fences in this document; that made the code canonical only inside prose (Codex on
 #394). Before that, a Python fence was reflowed by the formatter.
 
+**Immutable evidence, not active code.** The 13 scripts are the original research
+scripts, kept as immutable evidence, not Ruff-clean active code. No test, CI job or
+product path runs them. Archiving them does not mean they received repository-root
+static analysis, by Ruff or any other analyzer, or ordinary Git line-diff review.
+That is a bounded exception for this evidence only, the owner's choice of
+[Option A](https://github.com/ktogias/gnostoa/pull/396#issuecomment-6064178587) on
+Codex's finding. It is no general Ruff exclusion, and the scripts are not reformatted,
+since that would change the bytes that produced the results.
+
+To read them, materialise them read-only in a disposable directory. Nothing runs, and
+the repository is unchanged:
+
+```sh
+dir=$(mktemp -d)
+tar -xzf knowledge/assessments/0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz -C "$dir"
+chmod a-w "$dir"/*.py
+cd "$dir" && sha256sum -- *.py
+```
+
+Each digest printed is the member's full SHA-256 in the JSON evidence
+(`spike_scripts.members`), whose first 16 digits the table below shows.
+`tests/test_shell_parser_dependency.py` runs this block as written and checks each
+file's digest, and that none is writable or executable.
+
 `gate.py` and `crash_doc.py` load `spike.py`. The scripts expect the frozen subject
 at `/repo` and this directory's files at `/spike`.
 

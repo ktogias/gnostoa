@@ -3512,6 +3512,61 @@ class RetainedEvidenceTests(unittest.TestCase):
                         expected[member.name], hashlib.sha256(handle.read()).hexdigest()
                     )
 
+    def test_the_scripts_materialise_read_only_with_their_digests(self) -> None:
+        """Option A, the owner's choice on Codex's P1 (#396, 6064178587): the scripts
+        are immutable evidence, not active code, and the assessment says what the
+        archive does not give them. Its materialisation block, run as written,
+        extracts each original script read-only into a disposable directory, with the
+        digest the JSON evidence records, and runs none of them."""
+        text = self.ASSESSMENT.read_text(encoding="utf-8")
+        flat = " ".join(text.split())
+        for phrase in (
+            "immutable evidence, not Ruff-clean active code",
+            "does not mean they received repository-root static analysis",
+            "or ordinary Git line-diff review",
+            "It is no general Ruff exclusion",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, flat)
+        [block] = [
+            block
+            for block in re.findall(r"```sh\n(.*?)```", text, re.S)
+            if "spike-scripts.tar.gz" in block
+        ]
+        self.assertNotIn("python", block)
+        evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))
+        expected = {
+            member["name"]: member["sha256"]
+            for member in evidence["spike_scripts"]["members"]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                ["/bin/sh", "-c", block],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+                env={"PATH": "/usr/bin:/bin", "TMPDIR": directory},
+            )
+            self.assertEqual(0, done.returncode, done.stderr)
+            printed = {
+                name: digest
+                for digest, name in (line.split() for line in done.stdout.splitlines())
+            }
+            self.assertEqual(expected, printed)
+            [made] = list(Path(directory).iterdir())
+            files = sorted(made.iterdir())
+            self.assertEqual(sorted(expected), [path.name for path in files])
+            for path in files:
+                with self.subTest(script=path.name):
+                    self.assertEqual(
+                        expected[path.name],
+                        hashlib.sha256(path.read_bytes()).hexdigest(),
+                    )
+                    # Read-only and not executable.
+                    self.assertEqual(0, path.stat().st_mode & 0o333)
+
     def test_the_oracle_is_retained_with_its_digest(self) -> None:
         evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))
         oracle = evidence["oracle"]["entries"]
