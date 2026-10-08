@@ -274,6 +274,13 @@ def _probe(scripts: list[str]) -> dict[str, object]:
     here, as an error the test reports. A corpus beyond the input bound is refused
     before it is sent; the answer, which grows with the input, is bounded with it
     (CodeAnt on #396)."""
+    # The scripts' own length first, so an oversized corpus is refused before it is
+    # serialised again (CodeAnt on #396); the payload, which escapes may lengthen,
+    # after.
+    if sum(len(script) for script in scripts) > PROBE_INPUT_LIMIT:
+        raise AssertionError(
+            "a corpus beyond the probe's input bound, before it is serialised"
+        )
     payload = json.dumps(scripts)
     if len(payload) > PROBE_INPUT_LIMIT:
         raise AssertionError(
@@ -494,24 +501,77 @@ def _gitlab_shaped(document: dict[str, object]) -> bool:
 
 
 def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
-    """Each GitLab CI job's (and `default`'s) hook commands, `before_script`,
-    `script` and `after_script`, and the deprecated top-level ones, in document
-    order. A list is the lines the runner's shell runs in turn. A global keyword,
-    such as `variables`, is not a job (Codex on #396); a job that runs is read only
-    in a container image whose shell is known (Codex on #396)."""
+    """Each GitLab CI job's shell, as the runner runs it: the job's effective
+    `before_script` and `script` concatenated into one script, its `after_script`
+    apart, each from the job, its `extends` lineage, then `default` or the
+    deprecated global one, unless `inherit` drops it (Codex on #396); and its hook
+    commands and `run` steps. A template no running job extends, and `default` and
+    the global sections when no job runs, are read alone, so no shell goes unread.
+    A global keyword, such as `variables`, is not a job (Codex on #396); a job that
+    runs is read only in a container image whose shell is known (Codex on #396)."""
     _check_gitlab_shells(document, name)
+    # Hooks run before the clone, so before any script; `run` steps stand in for a
+    # `script` (Codex on #396).
     found: list[str] = []
     for key, value in document.items():
-        if key in GITLAB_KEYS:
+        if isinstance(value, dict) and (key == "default" or key not in GITLAB_GLOBALS):
+            found.extend(_gitlab_hooks(value))
+            found.extend(_gitlab_run_steps(value, key, name))
+    running = [
+        (key, job)
+        for key, job in document.items()
+        if isinstance(job, dict)
+        and key not in GITLAB_GLOBALS
+        and not key.startswith(".")
+        and "trigger" not in job
+    ]
+    covered: set[str] = set()
+    for key, job in running:
+        found.extend(_gitlab_job_scripts(document, key, job, covered, name))
+    found.extend(_gitlab_unrun_scripts(document, covered, bool(running)))
+    return found
+
+
+def _gitlab_job_scripts(
+    document: dict[str, object],
+    key: str,
+    job: dict[str, object],
+    covered: set[str],
+    name: str,
+) -> list[str]:
+    """One running job's shell: its effective `before_script` and `script` as one
+    script, its `after_script` apart (Codex on #396). The lineage it reads joins
+    `covered`."""
+    lineage = _gitlab_lineage(document, job, key, name)
+    covered.update(base for base, _ in lineage)
+    main = [
+        *_script_value(_gitlab_inherited(document, lineage, "before_script")),
+        *_script_value(_gitlab_inherited(document, lineage, "script")),
+    ]
+    found = ["\n".join(main)] if main else []
+    found.extend(_script_value(_gitlab_inherited(document, lineage, "after_script")))
+    return found
+
+
+def _gitlab_unrun_scripts(
+    document: dict[str, object], covered: set[str], running: bool
+) -> list[str]:
+    """The sections no running job takes, read alone so that no shell goes unread:
+    a template no job extends, and, when no job runs, `default`'s and the deprecated
+    global ones."""
+    found: list[str] = []
+    for key, value in document.items():
+        if key in GITLAB_KEYS and not running:
             # A deprecated but valid global lifecycle script (Codex on #396).
             found.extend(_script_value(value))
-        elif isinstance(value, dict) and (
-            key == "default" or key not in GITLAB_GLOBALS
+        elif (
+            isinstance(value, dict)
+            and (key == "default" or key not in GITLAB_GLOBALS)
+            and key not in covered
+            and not (key == "default" and running)
         ):
-            found.extend(_gitlab_hooks(value))
             for script in GITLAB_KEYS:
                 found.extend(_script_value(value.get(script)))
-            found.extend(_gitlab_run_steps(value, key, name))
     return found
 
 
@@ -557,12 +617,32 @@ def _check_gitlab_shells(document: dict[str, object], name: str) -> None:
             _check_gitlab_image(_gitlab_image(document, lineage), key, name)
 
 
+def _refuse_extends_cycle(document: dict[str, object], key: str, name: str) -> None:
+    """Fails closed when `key`'s `extends` chain returns to a job already on it: a
+    cycle, unlike a base two paths reach. Malformed bases are left to the lineage
+    walk, which refuses them."""
+    stack: list[tuple[str, tuple[str, ...]]] = [(key, ())]
+    while stack:
+        current, path = stack.pop()
+        if current in path:
+            raise _refuse(name, f"`{key}`: an `extends` cycle through `{current}`")
+        job = document.get(current)
+        extends = job.get("extends", []) if isinstance(job, dict) else []
+        bases = [extends] if isinstance(extends, str) else extends
+        if isinstance(bases, list):
+            stack.extend(
+                (base, (*path, current)) for base in bases if isinstance(base, str)
+            )
+
+
 def _gitlab_lineage(
     document: dict[str, object], job: dict[str, object], key: str, name: str
 ) -> list[tuple[str, dict[str, object]]]:
     """A job and its `extends` bases, in GitLab's precedence: the job, then its
     last base and that base's own bases, and so on. A base reached twice is read
-    once; an unknown or malformed one fails closed."""
+    once; an unknown or malformed one fails closed, and so does a cycle, which GitLab
+    refuses (CodeAnt on #396)."""
+    _refuse_extends_cycle(document, key, name)
     seen: set[str] = set()
     lineage: list[tuple[str, dict[str, object]]] = []
     pending = [(key, job)]
@@ -586,14 +666,16 @@ def _gitlab_lineage(
     return lineage
 
 
-def _gitlab_image(
-    document: dict[str, object], lineage: list[tuple[str, dict[str, object]]]
+def _gitlab_inherited(
+    document: dict[str, object],
+    lineage: list[tuple[str, dict[str, object]]],
+    keyword: str,
 ) -> object:
-    """A job's image: the first its lineage gives, else `default`'s, else the
+    """A job's `keyword`: the first its lineage gives, else `default`'s, else the
     deprecated global one, unless `inherit` drops the default (Codex on #396)."""
     for _, current in lineage:
-        if "image" in current:
-            return current["image"]
+        if keyword in current:
+            return current[keyword]
     # The nearest `inherit: default` in the lineage, as GitLab merges a base's keys
     # into the job (Codex on #396).
     inherited: object = True
@@ -603,13 +685,20 @@ def _gitlab_image(
             inherited = inherit["default"]
             break
     if inherited is not True and not (
-        isinstance(inherited, list) and "image" in inherited
+        isinstance(inherited, list) and keyword in inherited
     ):
         return None
     default = document.get("default")
-    if isinstance(default, dict) and "image" in default:
-        return default["image"]
-    return document.get("image")
+    if isinstance(default, dict) and keyword in default:
+        return default[keyword]
+    return document.get(keyword)
+
+
+def _gitlab_image(
+    document: dict[str, object], lineage: list[tuple[str, dict[str, object]]]
+) -> object:
+    """A job's image, inherited as any default keyword is."""
+    return _gitlab_inherited(document, lineage, "image")
 
 
 def _linux_image(reference: str) -> bool:
@@ -668,12 +757,15 @@ def _gitlab_hooks(job: dict[str, object]) -> list[str]:
 
 def _script_value(value: object) -> list[str]:
     """A `before_script`, `script` or `after_script` value as shell: a string, or a
-    list of lines."""
+    list of lines; an absent one is nothing. Any other shape fails closed, as GitLab
+    refuses it (CodeAnt on #396)."""
+    if value is None:
+        return []
     if isinstance(value, str):
         return [value]
     if isinstance(value, list):
         return ["\n".join(_script_lines(value))]
-    return []
+    raise AssertionError("a GitLab script of an unread shape; extend this extraction")
 
 
 def _script_lines(value: list[object]) -> list[str]:
@@ -936,12 +1028,19 @@ def _env_escape(escape: str, quote: str, name: str) -> str:
     return ENV_ESCAPES[escape]
 
 
+def _program_stem(word: str) -> str:
+    """The program a word names, as a shell is classified: its basename across both
+    path separators, case-folded, without `.exe`, since Windows names are
+    case-insensitive (cubic and Codex on #396)."""
+    return re.split(r"[\\/]", word)[-1].casefold().removesuffix(".exe")
+
+
 def _other_shell(word: str) -> bool:
     """Whether the program `word` names is a shell this reader does not read: a
     listed one, or a shell-like name that is no known shell. One test serves
     shebangs and exec forms (Codex on #396). A Windows name is a path with either
     separator, in any case, with or without `.exe` (cubic and Codex on #396)."""
-    stem = re.split(r"[\\/]", word)[-1].casefold().removesuffix(".exe")
+    stem = _program_stem(word)
     if stem in OTHER_SHELLS:
         return True
     return stem not in SHELLS and SHELL_LIKE.match(stem) is not None
@@ -960,7 +1059,8 @@ def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     program = Path(argv[0]).name if argv else ""
     if _other_shell(argv[0] if argv else ""):
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
-    if program not in SHELLS:
+    # A supported shell as Windows names it is still that shell (Codex on #396).
+    if _program_stem(argv[0] if argv else "") not in SHELLS:
         return []
     inline, words = _shell_options(argv[1:])
     if words[:1] == ["-"]:
@@ -1817,9 +1917,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             )
             self.assertEqual(
                 {
-                    ".gitlab-ci.yml#0": "git fetch",
-                    ".gitlab-ci.yml#1": "git status\necho ok",
-                    ".gitlab-ci.yml#2": "git gc",
+                    # `default`'s `before_script` runs with the job's `script`, as one
+                    # script; `after_script` apart (Codex on #396).
+                    ".gitlab-ci.yml#0": "git fetch\ngit status\necho ok",
+                    ".gitlab-ci.yml#1": "git gc",
                     "ci/flow.yml#0": "git describe",
                     "ci/github-actions.yml#0": "git log",
                 },
@@ -1900,9 +2001,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             declared = _declared(root)
             self.assertEqual(
                 {
-                    ".gitlab-ci.yml#0": "git a",
+                    # The global `before_script` runs with the job's `script`, as
+                    # one script; the global `after_script` apart (Codex on #396).
+                    ".gitlab-ci.yml#0": "git a\ngit b",
                     ".gitlab-ci.yml#1": "git z",
-                    ".gitlab-ci.yml#2": "git b",
                     "ci/quoted.yml#0": "git c",
                     "ci/order.yml#0": "git first",
                     "ci/order.yml#1": "git second",
@@ -2654,6 +2756,104 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "p: an unrecognised shell"):
                 _shell_surfaces(declared)
 
+    def test_gitlab_rejects_what_gitlab_rejects(self) -> None:
+        """A script field that is neither text nor a list fails closed, as GitLab
+        refuses it (CodeAnt on #396); an absent one is nothing. An `extends` cycle
+        fails closed, as GitLab refuses it, while a base two paths reach is read
+        once (CodeAnt on #396)."""
+        self.assertEqual([], _script_value(None))
+        for value in ({"a": 1}, 3, True):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    AssertionError, "a GitLab script of an unread shape"
+                ),
+            ):
+                _script_value(value)
+        cycle: dict[str, object] = {
+            "a": {"extends": "b", "script": "git a"},
+            "b": {"extends": "c"},
+            "c": {"extends": "a"},
+        }
+        with self.assertRaisesRegex(AssertionError, "an `extends` cycle"):
+            _gitlab_lineage(cycle, cycle["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]
+        diamond: dict[str, object] = {
+            "a": {"extends": ["b", "c"], "script": "git a"},
+            "b": {"extends": "d"},
+            "c": {"extends": "d"},
+            "d": {"before_script": "git d"},
+        }
+        lineage = _gitlab_lineage(diamond, diamond["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]
+        self.assertEqual(["a", "c", "d", "b"], [key for key, _ in lineage])
+
+    def test_a_gitlab_job_runs_its_before_script_and_script_as_one(self) -> None:
+        """GitLab concatenates a job's effective `before_script` and `script` into
+        one shell script, `after_script` running apart; each comes from the job, its
+        `extends` lineage, then `default`, unless `inherit` drops it (Codex on
+        #396). A template no job extends is still read, alone."""
+        cases: list[tuple[dict[str, object], list[str]]] = [
+            (
+                {
+                    "image": "alpine",
+                    "j": {
+                        "before_script": ["if true; then"],
+                        "script": ["git x", "fi"],
+                    },
+                },
+                ["if true; then\ngit x\nfi"],
+            ),
+            (
+                {
+                    "image": "alpine",
+                    ".t": {"before_script": "git a"},
+                    "j": {"extends": ".t", "script": "git b", "after_script": "git c"},
+                },
+                ["git a\ngit b", "git c"],
+            ),
+            (
+                {
+                    "image": "alpine",
+                    "default": {"before_script": "git d"},
+                    "j": {"script": "git e"},
+                },
+                ["git d\ngit e"],
+            ),
+            (
+                {
+                    "image": "alpine",
+                    "default": {"before_script": "git d"},
+                    "j": {
+                        "inherit": {"default": False},
+                        "image": "alpine",
+                        "script": "git e",
+                    },
+                },
+                ["git e"],
+            ),
+            (
+                {
+                    "image": "alpine",
+                    ".u": {"script": "git u"},
+                    "j": {"script": "git j"},
+                },
+                ["git j", "git u"],
+            ),
+        ]
+        for document, expected in cases:
+            with self.subTest(document=document):
+                self.assertEqual(expected, sorted(_gitlab_scripts(document, "x")))
+
+    def test_an_exec_form_names_a_supported_shell_as_windows_does(self) -> None:
+        """A supported shell named as Windows names it, by a backslash path, in any
+        case, or with `.exe`, is still that shell (Codex on #396)."""
+        for argv in (
+            ["C:\\Git\\bin\\bash.exe", "-c", "git x"],
+            ["BASH.EXE", "-c", "git x"],
+            ["C:/Git/bin/sh.exe", "-c", "git x"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(["git x"], _exec_form_shell(argv))
+
     def test_a_launcher_fails_closed(self) -> None:
         """A launcher such as `timeout`, `su` or `tini` runs a command by its own
         grammar, which may hand it to a shell without naming one, as `su -c` does, or
@@ -2925,7 +3125,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(2, digits.returncode)
         self.assertIn("a JSON list of strings", digits.stderr)
         self.assertNotIn("Traceback", digits.stderr)
-        with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
+        with (
+            self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"),
+            patch.object(json, "dumps", side_effect=AssertionError("serialised")),
+        ):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
         # The child bounds its own read too, at the same limit, whoever writes to it
         # (Amazon Q on #396); it reads no more than one character past it.
@@ -2972,8 +3175,9 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "  script: [*s, git b]\n",
                 "utf-8",
             )
+            # One script, `before_script` and `script` concatenated (Codex on #396).
             self.assertEqual(
-                ["git a", "git a\ngit b"], _ci_shell(path, under_github=False)
+                ["git a\ngit a\ngit b"], _ci_shell(path, under_github=False)
             )
 
     def test_a_gitlab_job_named_like_github_s_keys_stays_gitlab(self) -> None:
