@@ -200,7 +200,11 @@ owner.
 
 **Rules on the host:**
 - A token is never printed, logged or passed on a command line. It is captured into
-  `GH_TOKEN` for one command.
+  `GH_TOKEN` for one command, and never with xtrace (`set -x`) on, nor in a recorded
+  session: under xtrace, the shell prints the command as expanded, token included.
+- The host's `PATH` is trusted. It resolves every program that holds a token: `gh`,
+  `git`, `cat`, `curl`, `openssl` and `python3`. A host whose `PATH` cannot be
+  trusted is compromised (Recovery).
 - `gh` acts as the App: `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh …`.
   Review triggers act as the machine user:
   `GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) gh …`.
@@ -300,10 +304,11 @@ protection exists. The last resort is then the owner, as admin:
    `~/break-glass/break-glass-token.sh`: a copy of the agent host's token helper with
    the break-glass App's ID and key path. It prints a one-hour installation token,
    for capture only.
-3. Merge the exact head, capturing the token for this one command. Run the script by
-   its absolute path, never a relative one, so that no same-named script in the
-   current directory runs while the key is present. The command line and the
-   shell's history then hold `$(...)`, never the token:
+3. Merge the exact head, capturing the token for this one command, with xtrace off
+   and outside any recorded session. Run the script by its absolute path, never a
+   relative one, so that no same-named script in the current directory runs while
+   the key is present. The command line and the shell's history then hold `$(...)`,
+   never the token:
    ```sh
    GH_TOKEN=$(~/break-glass/break-glass-token.sh) gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>

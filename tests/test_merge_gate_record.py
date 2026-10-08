@@ -142,6 +142,19 @@ class MergeGateRecordTests(unittest.TestCase):
                         match.group(0),
                     )
 
+    def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
+        """Bash prints a command's expansion under xtrace, token included, so no
+        token command runs with it on or in a recorded session (Claude on #400).
+        The host's PATH resolves every program that holds a token, so it is part of
+        the trust boundary, as recorded (cubic on #400)."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        for phrase in (
+            "never with xtrace (`set -x`) on, nor in a recorded session",
+            "The host's `PATH` is trusted",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, runbook)
+
     def test_break_glass_is_named_as_the_exception_and_closed_after(self) -> None:
         """The guarantee names break glass as its one exception (cubic and CodeAnt on
         #400). Its follow-up has a Work Item and a Decision (Greptile on #400); an
