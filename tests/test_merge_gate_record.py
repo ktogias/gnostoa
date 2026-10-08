@@ -570,9 +570,11 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertLess(commands.index(read), commands.index(line))
         self.assertIn("and both comparisons succeed", merge)
         self.assertIn("Only then does the App merge", merge)
+        # The latest seal, not the first (cubic on #400).
         self.assertIn(
             """select(.user.login == "gnostoa-agent[bot]") | .body """
-            """| select(startswith("Exact review candidate: "))""",
+            """| select(startswith("Exact review candidate: "))] | last | """
+            """split("\\n")[0] | ltrimstr("Exact review candidate: ")'""",
             merge,
         )
         self.assertLess(merge.index("Only then does the App merge"), merge.index(line))
@@ -932,6 +934,11 @@ class MergeGateRecordTests(unittest.TestCase):
             "list every issue closed since then whose closer, GraphQL `ClosedEvent.closer`, is a pull request or a commit",
             "is recorded as an incident and restored through the follow-up, with the owner's disposition",
             "the merge's audit is `UNKNOWN`, for the owner to dispose, never clean on its SHA and tree alone",
+            # Both identities can change issues and pull requests directly, without
+            # a merge, including a seal (Codex and Claude on #400).
+            "list every closure, reopening, title or body edit, comment edit and comment deletion by `gnostoa-agent[bot]` or `gnostoa-agent-user` in the window",
+            "`userContentEdits` on each body and comment, each seal included, and `CommentDeletedEvent`",
+            "since a compromised identity's own round notes are no evidence for it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertEqual(2, flat.count(phrase))
