@@ -590,6 +590,11 @@ class MergeGateRecordTests(unittest.TestCase):
             "POST /app/installations/<installation>/access_tokens",
             '"repositories": ["gnostoa"]',
             "`iss` the App ID 5230732",
+            # The JWT's algorithm and lifetime, which make it acceptable and short
+            # (cubic on #400).
+            "RS256",
+            "`iat` 60 seconds in the past",
+            "`exp` at most ten minutes on",
         ):
             with self.subTest(step=step):
                 self.assertIn(step, procedure)
@@ -646,6 +651,17 @@ class MergeGateRecordTests(unittest.TestCase):
             runbook.index("### Re-verify the gate") : runbook.index("## Recovery")
         ]
         self.assertIn("branches/main/protection", verify)
+        # A read, not a merge attempt: a weakened gate would let the attempt merge
+        # (Codex on #400).
+        flat_verify = " ".join(verify.split())
+        self.assertNotIn("Try to merge an unapproved PR", flat_verify)
+        for phrase in (
+            "mergeStateStatus",
+            "viewerCanMergeAsAdmin",
+            "No merge is attempted",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, flat_verify)
 
     def test_break_glass_is_named_as_the_exception_and_closed_after(self) -> None:
         """The guarantee names break glass as its one exception (cubic and CodeAnt on
@@ -742,12 +758,22 @@ class MergeGateRecordTests(unittest.TestCase):
         flat = " ".join(recovery.split())
         for phrase in (
             "since the earliest suspected exposure",
-            "since the compromised credential was created, which its settings record",
+            # Across rotations, since a routine rotation on a compromised host does
+            # not end the exposure (Codex on #400).
+            "since the earliest credential the compromised host or key could have held, across rotations",
             "the owner's latest review on that PR must be `APPROVED`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertEqual(2, flat.count(phrase))
         self.assertNotIn("last trusted identity", flat)
+        # Each rotation is kept in the owner's offline record, so an audit can reach
+        # back past it (Codex on #400).
+        self.assertEqual(
+            2, flat.count("as the owner's offline record of rotations shows")
+        )
+        self.assertEqual(
+            2, flat.count("in the owner's offline record of rotations first")
+        )
         # The credential's creation date is read before it is revoked, which erases
         # it (Claude on #400).
         self.assertEqual(
