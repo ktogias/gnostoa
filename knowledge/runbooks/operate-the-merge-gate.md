@@ -222,35 +222,46 @@ owner.
   rather than letting `gh` fall back to a stored login, as a `gh` command prefixed
   with a captured token would.
   The token never exists in the calling shell, even when a command is interrupted.
-  The body traps the same signals as AGENTS.md's preparation helper, `HUP` included.
-  On exit, by any path, it unsets the token and then removes the directory it made:
-  `mktemp`'s own, held in `created` before the clean-up is set, so no directory the
-  caller named is ever removed, even one that is read-only or empty. Each command run
-  while the token is set goes through `command`, so no function or alias of the
-  calling shell, such as a `gh` or `test` function, receives or sees it. Define them
-  again after any change to this section, since a shell keeps the definitions it
-  already has:
+  Each body runs in a fresh `/bin/sh`, started by absolute path through `env -i`,
+  which passes on only `PATH`, `HOME` and `TMPDIR`. A name with a slash is never
+  looked up as a function, so no function, alias or variable of the calling shell
+  reaches the body: not a `gh`, `test`, `mktemp` or even `command` function, not
+  `GH_HOST`, `GH_REPO` or `GH_DEBUG`, and not a read-only `GH_CONFIG_DIR`. Inside
+  the fresh shell, nothing can shadow anything, so the body needs no `command`
+  prefix. The calling shell itself, which defines and calls these functions, is
+  trusted, as its `PATH` is: a hostile shell could redefine the functions
+  themselves. The body traps the same signals as AGENTS.md's preparation helper,
+  `HUP` included. On exit, by any path, it unsets the token and then removes the
+  directory `mktemp` made, held in `created` before the clean-up is set, so nothing
+  else is removed. Define them again after any change to this section, since a
+  shell keeps the definitions it already has:
   ```sh
-  as_app() (
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
-    created=$(mktemp -d) || exit
-    trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
-    GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
-      && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-      && command test -n "$GH_TOKEN" && command export GH_TOKEN && command gh "$@"
-  )
-  as_machine_user() (
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
-    created=$(mktemp -d) || exit
-    trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
-    GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
-      && GH_TOKEN=$(command cat ~/.config/gnostoa-agent/machine-user-token) \
-      && command test -n "$GH_TOKEN" && command export GH_TOKEN && command gh "$@"
-  )
+  as_app() {
+    /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+      trap "exit 130" INT
+      trap "exit 143" TERM
+      trap "exit 129" HUP
+      created=$(mktemp -d) || exit
+      trap cleanup EXIT
+      GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
+        && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+        && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+    ' as_app "$@"
+  }
+  as_machine_user() {
+    /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+      trap "exit 130" INT
+      trap "exit 143" TERM
+      trap "exit 129" HUP
+      created=$(mktemp -d) || exit
+      trap cleanup EXIT
+      GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
+        && GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) \
+        && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
+    ' as_machine_user "$@"
+  }
   ```
 - Every helper and the token file are named by their full path, so they work from
   any directory, including an agent's isolated clone.
@@ -407,20 +418,24 @@ protection exists. The last resort is then the owner, as admin:
    with an empty configuration directory, made before the mint so that no other
    program runs while the token is set. So a failed or empty mint stops the merge
    instead of letting `gh` fall back to a stored login, which would merge as the
-   owner rather than as `gnostoa-break-glass[bot]`. The block runs in a subshell, so
-   the token never exists in the interactive shell. Interrupting it, for example
+   owner rather than as `gnostoa-break-glass[bot]`. The block runs in a fresh
+   `/bin/sh`, as the two functions do, so the token never exists in the interactive
+   shell, and nothing of the owner's shell reaches it. Interrupting it, for example
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   ( trap 'exit 130' INT
-     trap 'exit 143' TERM
-     trap 'exit 129' HUP
+   /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+     cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+     trap "exit 130" INT
+     trap "exit 143" TERM
+     trap "exit 129" HUP
      created=$(mktemp -d) || exit
-     trap 'command unset GH_TOKEN; rmdir -- "$created"' EXIT
-     GH_CONFIG_DIR=$created && command export GH_CONFIG_DIR \
-     && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && command test -n "$GH_TOKEN" \
-     && command export GH_TOKEN && command gh api -X PUT \
-     repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )
+     trap cleanup EXIT
+     GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
+       && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
+       && export GH_TOKEN && gh api -X PUT \
+       repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
+   ' break-glass
    ```
 5. Remove the key from the machine.
 
