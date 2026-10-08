@@ -227,6 +227,23 @@ class MergeGateRecordTests(unittest.TestCase):
             "Stop unless `<approved>`, the PR's head and the seal are one SHA", merge
         )
         self.assertIn("gh pr view <N> --json headRefOid --jq .headRefOid", merge)
+        # A squash merge makes a new commit, so after it the PR's recorded head is
+        # compared with `<approved>`, and the new commit's tree with that head's
+        # (Codex on #400).
+        after = runbook[
+            runbook.index("9. **After the merge.**") : runbook.index("### Break glass")
+        ]
+        self.assertNotIn("the merge commit and the head match", after)
+        for phrase in (
+            "--json headRefOid,mergeCommit",
+            "the PR's recorded head equals `<approved>`",
+            "commits/<merge>",
+            "commits/<approved>",
+            "--jq .commit.tree.sha",
+            "the two trees are one",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, after)
         text = RUNBOOK.read_text(encoding="utf-8")
         for command in re.findall(r"```sh\n(.*?)```", text, re.S):
             joined = " ".join(command.replace("\\\n", " ").split())
@@ -255,7 +272,8 @@ class MergeGateRecordTests(unittest.TestCase):
             'GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
             "&& export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT "
             "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> "
-            "unset GH_TOKEN"
+            # The merge's status survives the cleanup (Codex on #400).
+            'status=$? unset GH_TOKEN (exit "$status")'
         )
         blocks = [
             " ".join(block.replace("\\\n", " ").split())
@@ -390,11 +408,24 @@ class MergeGateRecordTests(unittest.TestCase):
         ):
             with self.subTest(surface=surface):
                 self.assertIn(surface, entry["implementation"])
-        self.assertTrue(
-            all(
-                t.startswith("tests/test_merge_gate_record.py::")
-                for t in entry["tests"]
-            )
+        # Exactly the gate's contract tests, so swapping one for an unrelated test
+        # fails (cubic on #400).
+        self.assertEqual(
+            [
+                f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
+                for name in (
+                    "test_r_main_requires_the_code_owner_s_approval_of_the_exact_head",
+                    "test_only_break_glass_bypasses_r_main",
+                    "test_only_the_code_owner_approves",
+                    "test_the_merge_binds_the_sha_the_owner_approved",
+                    # The route in `AGENTS.md` and the Decision's limits, so every
+                    # implementation surface has a test that reads it (Claude on
+                    # #400).
+                    "test_agents_are_routed_to_the_runbook",
+                    "test_phase_1a_states_what_it_does_not_enforce",
+                )
+            ],
+            entry["tests"],
         )
         self.assertEqual(
             {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
@@ -411,6 +442,37 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertIn(
                     "the approval's `commit_id` against the merged head", text
                 )
+
+    def test_the_zero_approval_decisions_are_marked_revised(self) -> None:
+        """Decisions 0013 and 0014 set zero required approvals; each now says that
+        Decision 0110 revised it, and 0110 names both, so no route reads the old
+        rule alone (CodeAnt on #400). The policy file's inherited zero is #401."""
+        decisions = ROOT / "knowledge" / "decisions"
+        for name, rule in (
+            (
+                "0013-defer-provider-enforcement-while-private.md",
+                "Use zero required approvals",
+            ),
+            (
+                "0014-strengthen-gnostoa-self-governance.md",
+                "required formal approvals remain zero",
+            ),
+        ):
+            text = " ".join((decisions / name).read_text(encoding="utf-8").split())
+            with self.subTest(decision=name):
+                self.assertIn("*Revised by Decision 0110:*", text)
+                self.assertLess(
+                    text.index(rule), text.index("*Revised by Decision 0110:*")
+                )
+        revises = " ".join(DECISION.read_text(encoding="utf-8").split())
+        revises = revises[revises.index("## What this supersedes or revises") :]
+        for phrase in (
+            "Decision 0013's zero required approvals",
+            "Decision 0014's",
+            "#401",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, revises)
 
     def test_every_decision_cited_exists(self) -> None:
         """A Decision is cited by number only when it is in the repository; #384's

@@ -113,5 +113,9 @@ causes:
 - **MA0 design decisions 2 and 5 (#15, 5979363503).** Decision 2 is revised by item
   3. Decision 5, the agents acting through the owner's account, is superseded by item
   1.
-- **Decision 0014's premise of zero approvals with one maintainer.** Write-capable
-  non-human actors now open and merge PRs, so a code-owner approval is required.
+- **Decision 0013's zero required approvals, and Decision 0014's premise of zero
+  approvals with one maintainer.** Write-capable non-human actors now open and merge
+  PRs, so a code-owner approval is required. This Decision is the stricter
+  specialization that Decision 0013 deferred to, and both now say so. Gnostoa's
+  change-control policy still inherits the core's zero approvals; aligning it is
+  #401.

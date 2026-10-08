@@ -71,6 +71,8 @@ checks, resolved conversations and force-push/deletion prohibition before
 integration resumes. Use zero required approvals while Gnostoa has one
 maintainer; CODEOWNER and independent approvals activate only through a future
 stricter specialization.
+*Revised by Decision 0110:* write-capable non-human actors now open and merge Pull
+Requests, so R-main requires the code owner's approval of the exact head.
 Reconsider this Decision no later than 2026-08-30 if neither trigger occurs.
 
 ## Consequences

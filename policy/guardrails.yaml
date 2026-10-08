@@ -395,6 +395,8 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_break_glass_bypasses_r_main
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_the_code_owner_approves
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_merge_binds_the_sha_the_owner_approved
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_agents_are_routed_to_the_runbook
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_phase_1a_states_what_it_does_not_enforce
 
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration

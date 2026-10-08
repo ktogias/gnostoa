@@ -287,8 +287,22 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    until Phase 1b's required `merge-admission` check enforces it.
    GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
    hold. There is no `--admin`, because the App is not a bypass actor of R-main.
-9. **After the merge.** The agent confirms that the merge commit and the head match
-   what was approved. It records the outcome on the Work Item. A Work Item that
+9. **After the merge.** A squash merge makes a new commit, so it cannot equal the
+   PR's head. The agent checks two things instead. First, that the PR's recorded
+   head equals `<approved>`, and reads the new commit `<merge>`:
+   ```sh
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh pr view <N> --json headRefOid,mergeCommit
+   ```
+   Second, that `<merge>` integrated that head. The branch was up to date with
+   `main`, so the two trees are one:
+   ```sh
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh api repos/ktogias/gnostoa/commits/<merge> --jq .commit.tree.sha
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh api repos/ktogias/gnostoa/commits/<approved> --jq .commit.tree.sha
+   ```
+   It records the outcome on the Work Item. A Work Item that
    survives the merge was only referenced (`Refs`, never a closing keyword).
 
 ### Break glass
@@ -349,12 +363,16 @@ protection exists. The last resort is then the owner, as admin:
    never the token. Each step runs only if the one before succeeded, and `gh` runs
    with an empty configuration directory, so a failed or empty mint stops the merge
    instead of letting `gh` fall back to a stored login, which would merge as the
-   owner rather than as `gnostoa-break-glass[bot]`:
+   owner rather than as `gnostoa-break-glass[bot]`. The token is cleared whatever
+   happens, and the block still ends with the merge's status, so a failure is not
+   reported as success:
    ```sh
    GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
      && export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
+   status=$?
    unset GH_TOKEN
+   (exit "$status")
    ```
 5. Remove the key from the machine.
 
