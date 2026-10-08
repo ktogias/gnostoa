@@ -2789,6 +2789,22 @@ class ChangeControlTests(unittest.TestCase):
             maintain,
         )
         self.assertIn("an emergency merges through break glass", maintain)
+        # The coverage manifest names this binding: the approval-authority guardrail
+        # lists this test, and the merge gate lists the policy it binds (Codex on
+        # #404; AGENTS.md: update the manifest when coverage changes).
+        guardrails = {
+            entry["id"]: entry
+            for entry in load_yaml(ROOT / "policy" / "guardrails.yaml")["guardrails"]
+        }
+        self.assertIn(
+            "tests/test_tools.py::ChangeControlTests."
+            "test_gnostoa_self_policy_requires_durable_context_and_test_first",
+            guardrails["human-change-approval-authority"]["tests"],
+        )
+        self.assertIn(
+            "policy/change-control.yaml",
+            guardrails["owner-approved-exact-head-merge"]["implementation"],
+        )
         # Linked, as the runbook links its other Decisions (cubic on #404).
         self.assertIn(
             "[`Decision 0110`](../decisions/"
