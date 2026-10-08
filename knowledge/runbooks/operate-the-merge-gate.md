@@ -294,7 +294,8 @@ protection exists. The last resort is then the owner, as admin:
 1. Change that protection temporarily, for the one merge. The security log records
    the change.
 2. Merge, as below.
-3. Restore the protection at once, and read it back.
+3. Restore the protection at once, whether the merge succeeded or not, and read it
+   back. After an interrupted session, restoring it is the first thing done.
 4. Record both changes, and the read-back, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
@@ -307,7 +308,9 @@ protection exists. The last resort is then the owner, as admin:
 3. Read back the classic protection, as the owner, before the merge:
    `GET /repos/ktogias/gnostoa/branches/main/protection`. Once break glass bypasses
    R-main, it is the only layer that still requires the four checks. If it no
-   longer requires them, stop, and restore it first.
+   longer requires them, stop, and restore it to require the four checks (`policy`,
+   `fast`, `regression` and `smoke` from app 15368, strict, with
+   `enforcement_level: everyone`), as Preconditions records, before going on.
 4. Merge the exact head, capturing the token for this one command, with xtrace off
    and outside any recorded session. Run the script by its absolute path, never a
    relative one, so that no same-named script in the current directory runs while
@@ -351,9 +354,12 @@ the gate:
 3. Read back each ruleset with `GET /repos/ktogias/gnostoa/rulesets/<id>`. The App
    reads the rules; GitHub omits `bypass_actors` for it, so the owner reads the
    bypass lists.
-4. Read back the machine user's `GET /user`, its `x-oauth-scopes` header, and its
+4. Read back the classic protection. As the App, `GET /repos/ktogias/gnostoa/branches/main`
+   shows its required checks; as the owner,
+   `GET /repos/ktogias/gnostoa/branches/main/protection` shows the rest.
+5. Read back the machine user's `GET /user`, its `x-oauth-scopes` header, and its
    expiry in the `github-authentication-token-expiration` header.
-5. Try to merge an unapproved PR as the App, with and without `--admin`. GitHub must
+6. Try to merge an unapproved PR as the App, with and without `--admin`. GitHub must
    refuse both.
 
 ## Recovery

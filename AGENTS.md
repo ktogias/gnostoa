@@ -55,8 +55,9 @@ Start with `README.md`. Load only the route required by the task.
   [`knowledge/runbooks/operate-the-merge-gate.md`](knowledge/runbooks/operate-the-merge-gate.md).
   Agents act only as the App `gnostoa-agent` and the machine user
   `gnostoa-agent-user`, never as the owner. A PR is merged only after the owner
-  has approved its exact head in GitHub. The App then merges it with
-  `--match-head-commit`, never with `--admin`.
+  has approved its exact head in GitHub, except through break glass, which only
+  the owner uses. The App then merges it with `--match-head-commit`, never with
+  `--admin`.
 
 Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
 before new code or implementation, apply **Prior-art and reuse checkpoint** in

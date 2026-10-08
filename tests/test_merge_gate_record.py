@@ -41,6 +41,8 @@ class MergeGateRecordTests(unittest.TestCase):
             "dismiss_stale_reviews_on_push",
             "require_last_push_approval",
             "required_review_thread_resolution",
+            # A safeguard the recorded policy holds too (CodeAnt on #400).
+            "require_extra_approval_for_unattributed_changes",
         ):
             with self.subTest(flag=flag):
                 self.assertIs(True, pull_request[flag])
@@ -100,7 +102,10 @@ class MergeGateRecordTests(unittest.TestCase):
     def test_agents_are_routed_to_the_runbook(self) -> None:
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("knowledge/runbooks/operate-the-merge-gate.md", agents)
-        self.assertIn("never with `--admin`", agents)
+        prose = " ".join(agents.split())
+        self.assertIn("never with `--admin`", prose)
+        # The one exception is named where the rule is (CodeAnt on #400).
+        self.assertIn("except through break glass", prose)
 
     def test_no_command_carries_a_token_or_a_bare_helper(self) -> None:
         """A token reaches `gh` only through `$(...)`, never as a literal in a
@@ -169,15 +174,17 @@ class MergeGateRecordTests(unittest.TestCase):
         if rule is None:
             self.fail("the runbook names the programs its trusted PATH resolves")
         programs = re.findall(r"`([\w.]+)`", rule.group(1))
-        host = text[
-            text.index("### The agent host") : text.index("**Rules on the host:**")
-        ]
+        # The host section alone, its table and its rules, where tokens are held;
+        # a command elsewhere, such as `gh pr create`, does not count (cubic on
+        # #400).
+        host = text[text.index("### The agent host") : text.index("## Procedure")]
+        host = " ".join(host.split()).replace(" ".join(rule.group(0).split()), "")
         for program in programs:
             with self.subTest(program=program):
                 self.assertTrue(
-                    re.search(rf"`{re.escape(program)}`", host)
-                    or re.search(
-                        rf"\$\({re.escape(program)} |\b{re.escape(program)} pr ", text
+                    re.search(
+                        rf"`{re.escape(program)}`|\$\({re.escape(program)} |\) {re.escape(program)} ",
+                        host,
                     ),
                     program,
                 )
@@ -187,8 +194,24 @@ class MergeGateRecordTests(unittest.TestCase):
         the checks, so the owner reads it back before the merge (Codex on #400)."""
         runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
         procedure = runbook[runbook.index("**How.**") : runbook.index("**After.**")]
-        self.assertIn("GET /repos/ktogias/gnostoa/branches/main/protection", procedure)
-        self.assertIn("before the merge", procedure)
+        read_back = procedure.find(
+            "GET /repos/ktogias/gnostoa/branches/main/protection"
+        )
+        merge = procedure.find("Merge the exact head")
+        # The read-back is a step before the merge, not merely beside it (cubic on
+        # #400).
+        self.assertNotEqual(-1, read_back)
+        self.assertNotEqual(-1, merge)
+        self.assertLess(read_back, merge)
+        # Restoring has a stated target (Claude on #400), and happens whether the
+        # merge succeeded or not (CodeAnt on #400).
+        self.assertIn("restore it to require the four checks", procedure)
+        self.assertIn("whether the merge succeeded or not", runbook)
+        # The routine re-verification reads it back too (Claude on #400).
+        verify = runbook[
+            runbook.index("### Re-verify the gate") : runbook.index("## Recovery")
+        ]
+        self.assertIn("branches/main/protection", verify)
 
     def test_break_glass_is_named_as_the_exception_and_closed_after(self) -> None:
         """The guarantee names break glass as its one exception (cubic and CodeAnt on
