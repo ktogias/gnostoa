@@ -58,7 +58,7 @@ def _isolated(mint: str, tail: str) -> str:
         'HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" '
         '/bin/sh -c \' cleanup() { unset GH_TOKEN; rm -rf -- "$created"; } '
         'trap "exit 130" INT trap "exit 143" TERM trap "exit 129" HUP '
-        "created=$(mktemp -d) || exit trap cleanup EXIT "
+        "cd / || exit created=$(mktemp -d) || exit trap cleanup EXIT "
         "GH_CONFIG_DIR=$created && export GH_CONFIG_DIR "
         f'&& GH_TOKEN={mint} && test -n "$GH_TOKEN" && export GH_TOKEN && gh {tail}'
     )
@@ -254,6 +254,16 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn(
             "Define them again after any change to this section", " ".join(text.split())
         )
+        # Each body runs its helpers in `/`, and the token helper parses with
+        # isolated Python, so a candidate checkout's modules never load (Codex on
+        # #400).
+        flat = " ".join(text.split())
+        for phrase in (
+            "It then changes to `/`, so no helper runs in a candidate checkout",
+            "reads the token from the response with `python3 -I`, which imports nothing from the working directory",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, flat)
         [block] = [
             b for b in re.findall(r"```sh\n(.*?)```", text, re.S) if "as_app() {" in b
         ]
@@ -289,8 +299,18 @@ class MergeGateRecordTests(unittest.TestCase):
                         if populated:
                             (kept / "hosts.yml").write_text("kept\n", encoding="utf-8")
                         mint = helpers / "agent-token.sh"
-                        mint.write_text(f"#!/bin/sh\n{source}\n", encoding="utf-8")
+                        mint.write_text(
+                            f'#!/bin/sh\npwd > "$HOME/mint-cwd"\n{source}\n',
+                            encoding="utf-8",
+                        )
                         mint.chmod(0o755)
+                        # A candidate checkout as the caller's working directory, with
+                        # a module `python3` would import from it (Codex on #400).
+                        checkout = root / "checkout"
+                        checkout.mkdir()
+                        (checkout / "json.py").write_text(
+                            "raise SystemExit('planted')\n", encoding="utf-8"
+                        )
                         (helpers.parent / "machine-user-token").write_text(
                             source, encoding="utf-8"
                         )
@@ -299,6 +319,7 @@ class MergeGateRecordTests(unittest.TestCase):
                         # and the clean-up still leaves nothing (Claude on #400).
                         gh.write_text(
                             '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
+                            'pwd > "$HOME/gh-cwd"\n'
                             "printf '%s %s|%s|%s\\n' \"${GH_TOKEN:+token}\" "
                             '"${GH_HOST-}" "${GH_REPO-}" "${GH_DEBUG-}" > "$HOME/seen"\n',
                             encoding="utf-8",
@@ -317,6 +338,7 @@ class MergeGateRecordTests(unittest.TestCase):
                             text=True,
                             check=False,
                             timeout=30,
+                            cwd=checkout,
                             env={
                                 "PATH": f"{root / 'bin'}:/usr/bin:/bin",
                                 "HOME": str(root),
@@ -336,6 +358,16 @@ class MergeGateRecordTests(unittest.TestCase):
                             self.assertEqual(
                                 "token ||", seen.read_text(encoding="utf-8").strip()
                             )
+                        # The mint and `gh` run in `/`, never in the checkout.
+                        for ran in ("mint-cwd", "gh-cwd"):
+                            if (root / ran).exists():
+                                self.assertEqual(
+                                    "/",
+                                    (root / ran).read_text(encoding="utf-8").strip(),
+                                )
+                        self.assertEqual(
+                            function == "as_app", (root / "mint-cwd").exists()
+                        )
                         self.assertFalse((root / "shadowed").exists())
                         self.assertTrue(kept.is_dir())
                         self.assertEqual(populated, (kept / "hosts.yml").is_file())
@@ -365,11 +397,22 @@ class MergeGateRecordTests(unittest.TestCase):
                     for name in ("bin", "tmp"):
                         (root / name).mkdir()
                     mint = root / "break-glass" / "break-glass-token.sh"
-                    mint.write_text(f"#!/bin/sh\n{source}\n", encoding="utf-8")
+                    mint.write_text(
+                        f'#!/bin/sh\npwd > "$HOME/mint-cwd"\n{source}\n',
+                        encoding="utf-8",
+                    )
                     mint.chmod(0o755)
+                    # Run from a candidate checkout holding a module `python3` would
+                    # import from it (Codex on #400).
+                    checkout = root / "checkout"
+                    checkout.mkdir()
+                    (checkout / "json.py").write_text(
+                        "raise SystemExit('planted')\n", encoding="utf-8"
+                    )
                     gh = root / "bin" / "gh"
                     gh.write_text(
                         '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
+                        'pwd > "$HOME/gh-cwd"\n'
                         'printf "%s %s\\n" "${GH_TOKEN:+token}" "$*" > "$HOME/seen"\n',
                         encoding="utf-8",
                     )
@@ -393,6 +436,7 @@ class MergeGateRecordTests(unittest.TestCase):
                         text=True,
                         check=False,
                         timeout=30,
+                        cwd=checkout,
                         env={
                             "PATH": "/usr/bin:/bin",
                             "HOME": str(root),
@@ -414,6 +458,12 @@ class MergeGateRecordTests(unittest.TestCase):
                             "-f merge_method=squash -f sha=0123abc",
                             seen.read_text(encoding="utf-8").strip(),
                         )
+                    for ran in ("mint-cwd", "gh-cwd"):
+                        if (root / ran).exists():
+                            self.assertEqual(
+                                "/", (root / ran).read_text(encoding="utf-8").strip()
+                            )
+                    self.assertTrue((root / "mint-cwd").exists())
                     self.assertFalse((root / "shadowed").exists())
                     self.assertEqual([], list((root / "tmp").iterdir()))
 
@@ -715,9 +765,10 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, procedure)
                 self.assertLess(procedure.index(phrase), procedure.index("```sh"))
-        # In order: the commits, the final read, then the stops that compare with
-        # that read, so no stop checks a stale one (Claude on #400).
-        for earlier, later in itertools.pairwise(phrases[:4]):
+        # In order: the commits, the final read, then every stop that compares with
+        # that read, the closing-keyword one included, so no stop checks a stale one
+        # (Claude and cubic on #400).
+        for earlier, later in itertools.pairwise(phrases[:5]):
             with self.subTest(earlier=earlier[:40]):
                 self.assertLess(procedure.index(earlier), procedure.index(later))
         # A failed mint stops the merge: `gh` would otherwise fall back to the

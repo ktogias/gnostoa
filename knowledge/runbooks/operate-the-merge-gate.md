@@ -207,7 +207,7 @@ owner.
 | `~/.config/gnostoa-agent/private-key.pem` | `gnostoa-agent`'s private key | `0600` |
 | `~/.config/gnostoa-agent/machine-user-token` | `gnostoa-agent-user`'s classic token | `0600` |
 | `~/.config/gnostoa-agent/bin/agent-jwt.sh` | prints a nine-minute App JWT, signed with `openssl` (RS256) | `0700` |
-| `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only: it sends the JWT with `curl` and reads the token from the response with `python3` | `0700` |
+| `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only: it sends the JWT with `curl` and reads the token from the response with `python3 -I`, which imports nothing from the working directory | `0700` |
 | `~/.config/gnostoa-agent/bin/agent-git.sh` | runs `git` with the App's token through a credential helper; it blanks the inherited helpers, so no token is ever on a command line or in output | `0700` |
 
 The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `cmp`, `rm` and
@@ -247,7 +247,9 @@ written here.
   the fresh shell, nothing can shadow anything, so the body needs no `command`
   prefix. The calling shell itself, which defines and calls these functions, is
   trusted: a hostile shell could redefine the functions themselves. The body traps the same signals as AGENTS.md's preparation helper,
-  `HUP` included. On exit, by any path, it unsets the token and then removes the
+  `HUP` included. It then changes to `/`, so no helper runs in a candidate checkout,
+  where `python3 -c` would import a planted module such as `json.py` while the token
+  is in hand. On exit, by any path, it unsets the token and then removes the
   directory `mktemp` made, with whatever `gh` wrote there. That directory is held
   in `created` before the clean-up is set, so nothing else is removed. Define them again after any change to this section, since a
   shell keeps the definitions it already has:
@@ -259,6 +261,7 @@ written here.
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
+      cd / || exit
       created=$(mktemp -d) || exit
       trap cleanup EXIT
       GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
@@ -273,6 +276,7 @@ written here.
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
+      cd / || exit
       created=$(mktemp -d) || exit
       trap cleanup EXIT
       GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
@@ -500,6 +504,7 @@ protection exists. The last resort is then the owner, as admin:
      trap "exit 130" INT
      trap "exit 143" TERM
      trap "exit 129" HUP
+     cd / || exit
      created=$(mktemp -d) || exit
      trap cleanup EXIT
      GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
