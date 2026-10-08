@@ -3,16 +3,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib
+import inspect
 import json
 import os
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
 import unittest
 import zipfile
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -48,7 +51,12 @@ from tools.release_smoke import (
 )
 from tools.repository_scope import find_text_matches
 from tools.requirements_lock import locked_requirements
-from tools.validate_bundle import Issue, _validate_links, validate_bundle
+from tools.validate_bundle import (
+    Issue,
+    _canonicalise_markdown_target,
+    _validate_links,
+    validate_bundle,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -2140,6 +2148,8 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         bundle: Path,
         source: Path,
         target: str,
+        *,
+        during: Callable[[], object] | None = None,
     ) -> tuple[list[Issue], list[tuple[str, Path]], list[Path]]:
         issues: list[Issue] = []
         observations: list[tuple[str, Path]] = []
@@ -2151,9 +2161,27 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         original_readlink = os.readlink
         original_resolve = Path.resolve
         original_read_text = Path.read_text
+        # Only the validator's access is observed, wherever it points: the
+        # nearest caller that is not one of these observers, the standard library
+        # or module-less code (the wrapper `autospec` generates) must belong to the
+        # validator's package. Other code in the window is not the validator's,
+        # such as coverage canonicalising a source file through
+        # `os.path.realpath` (#405, #406).
+        validator_package = _validate_links.__module__.partition(".")[0]
+
+        def by_validator() -> bool:
+            frame = inspect.currentframe()
+            while frame is not None:
+                module = frame.f_globals.get("__name__")
+                if frame.f_code not in observers and module is not None:
+                    package = module.partition(".")[0]
+                    if package not in sys.stdlib_module_names:
+                        return package == validator_package
+                frame = frame.f_back
+            return False
 
         def observed_path(value: object) -> Path | None:
-            if isinstance(value, int):
+            if isinstance(value, int) or not by_validator():
                 return None
             try:
                 return Path(value)  # type: ignore[arg-type]
@@ -2183,12 +2211,32 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
             return original_readlink(path, *args, **kwargs)  # type: ignore[arg-type]
 
         def observe_resolve(path: Path, *args: object, **kwargs: object) -> Path:
-            observations.append(("resolve", path))
+            if observed_path(path) is not None:
+                observations.append(("resolve", path))
             return original_resolve(path, *args, **kwargs)
+
+        observers = {
+            observer.__code__
+            for observer in (
+                by_validator,
+                observed_path,
+                observe_lstat,
+                observe_stat,
+                observe_readlink,
+                observe_resolve,
+            )
+        }
 
         def observe_read_text(path: Path, *args: object, **kwargs: object) -> str:
             content_reads.append(path)
             return original_read_text(path, *args, **kwargs)
+
+        def links_after_during(body: str) -> list[str]:
+            # `during` runs inside the validator's own frames, where an
+            # interpreter tracer such as coverage fires (#405).
+            if during is not None:
+                during()
+            return markdown_links(body)
 
         with (
             patch("os.lstat", side_effect=observe_lstat),
@@ -2197,6 +2245,10 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
             patch.object(Path, "resolve", autospec=True, side_effect=observe_resolve),
             patch.object(
                 Path, "read_text", autospec=True, side_effect=observe_read_text
+            ),
+            patch(
+                "tools.validate_bundle.markdown_links",
+                side_effect=links_after_during,
             ),
         ):
             _validate_links(
@@ -2250,6 +2302,53 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 self.assertEqual(expected, issues)
                 self.assertEqual([], observations)
                 self.assertEqual([], content_reads)
+
+    def test_interpreter_activity_in_the_window_is_not_the_validator_s(self) -> None:
+        """Only the validator's filesystem access is observed. Other code running
+        inside the validator's frames is not the validator's, absolute or relative:
+        coverage canonicalising a source file through `os.path.realpath` is an
+        example (#405; CI run 37835021142 recorded ten such `lstat` calls)."""
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _outside = self._fixture(directory)
+            target = "../../outside/probe"
+            issues, observations, content_reads = self._validate_target(
+                project,
+                bundle,
+                source,
+                target,
+                during=lambda: (
+                    os.path.realpath(os.__file__),
+                    os.path.lexists("relative-probe"),
+                ),
+            )
+            self.assertEqual(self._authority_issue(target), issues)
+            self.assertEqual([], observations)
+            self.assertEqual([], content_reads)
+
+    def test_the_validator_s_probes_outside_the_sandbox_are_observed(self) -> None:
+        """A probe by the validator's own code is observed wherever it points, so a
+        validator that resolved a target against the working directory would still
+        be caught (#406). That includes a `Path.resolve` call, whose patch runs
+        through the module-less wrapper `autospec` generates."""
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _outside = self._fixture(directory)
+            beyond = Path(directory).parent
+            missing = beyond / f"{Path(directory).name}-absent.yaml"
+
+            def validator_probes() -> None:
+                _canonicalise_markdown_target(Path(beyond.anchor), beyond)
+                with self.assertRaises(KnowledgeFormatError):
+                    load_profile(missing, project_root=project)
+
+            _issues, observations, _content_reads = self._validate_target(
+                project,
+                bundle,
+                source,
+                "../../outside/probe",
+                during=validator_probes,
+            )
+            self.assertIn(beyond, [path for _operation, path in observations])
+            self.assertIn(("resolve", missing), observations)
 
     def test_outside_symlink_target_is_not_observed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
