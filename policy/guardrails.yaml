@@ -418,6 +418,7 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_0110_specialises_the_neutral_contract_and_defers_phase_1b
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_every_decision_cited_exists
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_decision_and_runbook_link_each_other_and_are_indexed
+      - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
 
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration

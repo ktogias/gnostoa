@@ -1104,11 +1104,18 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertIn(surface, entry["implementation"])
         # Every test of this module, so none is added without being registered, and
         # an unrelated test cannot stand in for one (cubic, CodeAnt and Claude on
-        # #400).
+        # #400); and the one test that binds the policy this gate names, so its
+        # coverage shows that binding (Claude on #404).
         own = sorted(
-            f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
-            for name in dir(MergeGateRecordTests)
-            if name.startswith("test_")
+            [
+                f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
+                for name in dir(MergeGateRecordTests)
+                if name.startswith("test_")
+            ]
+            + [
+                "tests/test_tools.py::ChangeControlTests."
+                "test_gnostoa_self_policy_requires_durable_context_and_test_first"
+            ]
         )
         self.assertEqual(own, sorted(entry["tests"]))
         self.assertEqual(len(own), len(entry["tests"]))

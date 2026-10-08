@@ -2805,6 +2805,13 @@ class ChangeControlTests(unittest.TestCase):
             "policy/change-control.yaml",
             guardrails["owner-approved-exact-head-merge"]["implementation"],
         )
+        # The gate that names the policy also names the test that checks it, so an
+        # audit of the gate's coverage sees the binding (Claude on #404).
+        self.assertIn(
+            "tests/test_tools.py::ChangeControlTests."
+            "test_gnostoa_self_policy_requires_durable_context_and_test_first",
+            guardrails["owner-approved-exact-head-merge"]["tests"],
+        )
         # Linked, as the runbook links its other Decisions (cubic on #404).
         self.assertIn(
             "[`Decision 0110`](../decisions/"
