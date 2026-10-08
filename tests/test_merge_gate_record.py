@@ -942,6 +942,16 @@ class MergeGateRecordTests(unittest.TestCase):
             "`Pull requests: write` allows",
             glass,
         )
+        # Each row's actor filter names that row's identities, and creation, which
+        # is neither a timeline item nor an edit, is listed too (cubic on #400).
+        for row, who in ((host, "one of them"), (glass, "that App")):
+            with self.subTest(who=who):
+                self.assertIn(
+                    f"every event and edit of any kind whose actor is {who} in the "
+                    "window",
+                    row,
+                )
+                self.assertIn(f"every issue and pull request opened by {who}", row)
         self.assertNotIn("every closure, reopening", flat)
         # A compromised App can change an approved PR's title or description without
         # moving its head, so each audit also checks every merge's effects: the squash
