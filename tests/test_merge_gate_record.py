@@ -698,8 +698,11 @@ class MergeGateRecordTests(unittest.TestCase):
         # description are the latest read and the commits lie between two reads of
         # one head (Claude on #400).
         phrases = (
-            "GET /repos/ktogias/gnostoa/pulls/<N>/commits",
+            # Every page, since the endpoint lists 30 a page and at most 250 (Codex
+            # on #400).
+            "every page of `GET /repos/ktogias/gnostoa/pulls/<N>/commits?per_page=100`",
             "and last, just before the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again",
+            "a PR of more than 250 commits cannot be checked this way, so break glass stops",
             "stops unless that read's `head.sha` is still `<head>`",
             "stops if the commits' messages, or that read's `title` or `body`, carry a closing keyword",
             "the commits' messages and its title from the PR's title or its one",
@@ -944,14 +947,20 @@ class MergeGateRecordTests(unittest.TestCase):
         )
         # Each row's actor filter names that row's identities, and creation, which
         # is neither a timeline item nor an edit, is listed too (cubic on #400).
-        for row, who in ((host, "one of them"), (glass, "that App")):
+        # What each row says its identity opened matches its permissions: the
+        # break-glass App has no Issues permission (Claude on #400).
+        for row, who, opened in (
+            (host, "one of them", "every issue and pull request opened by one of them"),
+            (glass, "that App", "every pull request opened by that App"),
+        ):
             with self.subTest(who=who):
                 self.assertIn(
                     f"every event and edit of any kind whose actor is {who} in the "
                     "window",
                     row,
                 )
-                self.assertIn(f"every issue and pull request opened by {who}", row)
+                self.assertIn(opened, row)
+        self.assertNotIn("every issue and pull request opened by that App", glass)
         self.assertNotIn("every closure, reopening", flat)
         # A compromised App can change an approved PR's title or description without
         # moving its head, so each audit also checks every merge's effects: the squash
