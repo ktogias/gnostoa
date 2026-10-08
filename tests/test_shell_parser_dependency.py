@@ -127,11 +127,24 @@ def _load_yaml(path: Path) -> object:
         raise AssertionError(f"{path}: not YAML: {exc}") from exc
 
 
+def _entered(node: object, above: frozenset[int], where: str) -> frozenset[int]:
+    """The containers above a node's children: a container already above is a
+    recursive YAML alias, which fails closed. An anchor merely reused elsewhere is not
+    above itself, and is read."""
+    if id(node) in above:
+        raise AssertionError(f"{where}: a recursive YAML alias; extend this extraction")
+    return above | {id(node)}
+
+
 def _github_runs(path: Path, document: object) -> list[str]:
     found: list[str] = []
-    stack = [document]
+    # Each node with the containers above it, so that a recursive alias, a
+    # container inside itself, fails closed instead of looping (CodeAnt on #396).
+    stack: list[tuple[object, frozenset[int]]] = [(document, frozenset())]
     while stack:
-        node = stack.pop()
+        node, above = stack.pop()
+        if isinstance(node, (dict, list)):
+            above = _entered(node, above, path.name)
         if isinstance(node, dict):
             default = node.get("defaults")
             if isinstance(default, dict) and isinstance(default.get("run"), dict):
@@ -146,9 +159,9 @@ def _github_runs(path: Path, document: object) -> list[str]:
                         f"{path}: a `{node['shell']}` step; extend this extraction"
                     )
                 found.append(EXPRESSION.sub(_masked_expression, node["run"]))
-            stack.extend(value for key, value in node.items() if key != "run")
+            stack.extend((value, above) for key, value in node.items() if key != "run")
         elif isinstance(node, list):
-            stack.extend(node)
+            stack.extend((item, above) for item in node)
     return found
 
 
@@ -175,11 +188,15 @@ def _script_lines(value: list[object]) -> list[str]:
     closed rather than being stringified (CodeAnt on #396). A `!reference` tag never
     reaches here: the YAML load refuses it, and that fails closed (cubic on #396)."""
     lines: list[str] = []
-    stack: list[object] = list(reversed(value))
+    top = _entered(value, frozenset(), "a GitLab script")
+    stack: list[tuple[object, frozenset[int]]] = [
+        (item, top) for item in reversed(value)
+    ]
     while stack:
-        item = stack.pop()
+        item, above = stack.pop()
         if isinstance(item, list):
-            stack.extend(reversed(item))
+            inner = _entered(item, above, "a GitLab script")
+            stack.extend((nested, inner) for nested in reversed(item))
         elif isinstance(item, str):
             lines.append(item)
         else:
@@ -805,6 +822,29 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(AssertionError, "not YAML.*!reference"):
                 _ci_shell(path, under_github=False)
+
+    def test_a_recursive_yaml_alias_fails_closed(self) -> None:
+        """`safe_load` builds self-referential lists and mappings from recursive
+        aliases; both walkers refuse a cycle rather than loop on it, and still read an
+        anchor that is merely reused (CodeAnt on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "w.yml"
+            for document in (
+                "on: push\njobs: &j\n  again: *j\n",
+                "job:\n  script: &s\n    - git a\n    - *s\n",
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, "a recursive YAML alias"),
+                ):
+                    _ci_shell(path, under_github=True)
+            path.write_text(
+                "job:\n  before_script: &s [git a]\n  script: [*s, git b]\n", "utf-8"
+            )
+            self.assertEqual(
+                ["git a", "git a\ngit b"], _ci_shell(path, under_github=False)
+            )
 
     def test_a_gitlab_job_named_like_github_s_keys_stays_gitlab(self) -> None:
         """A workflow has `on` and `jobs`, an action `runs.using`; a GitLab job may
