@@ -65,11 +65,10 @@ OTHER_SHELLS = {
 # A multi-call binary runs the applet its first argument names, such as `sh`.
 MULTI_CALL = {"busybox", "toybox"}
 
-# A YAML key that holds shell in a CI definition.
-# Anywhere in the text, so a flow-style mapping is found too (CodeAnt on #394).
-CI_KEY = re.compile(
-    r"(?<![\w-])[\"']?(?:run|script|before_script|after_script)[\"']?\s*:"
-)
+# The YAML keys that hold shell in a CI definition. They are looked for in the
+# loaded document, wherever and however written: flow style (CodeAnt on #394), quoted,
+# or as an explicit `? key` (Codex on #396).
+CI_KEYS = {"run", "script", "before_script", "after_script"}
 GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
@@ -128,7 +127,9 @@ SHELL_OPTION_WORDS = set("oO")
 HEREDOC_WORD = re.compile(r"\d*<<-?[^<]*")
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
-RUN = re.compile(r"[ \t]*(?:RUN|SHELL)[ \t]+(.*)", re.I)
+# A `RUN` or `SHELL`, also as a trigger that `ONBUILD` defers to a later build
+# (CodeAnt on #396).
+RUN = re.compile(r"[ \t]*(?:ONBUILD[ \t]+)?(?P<instruction>RUN|SHELL)[ \t]+(.*)", re.I)
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
 CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
@@ -211,9 +212,27 @@ def _workflow_runs(path: Path) -> list[str]:
     return _github_runs(path, _load_yaml(path))
 
 
-def _load_yaml(path: Path) -> object:
+class _AnyTagLoader(yaml.SafeLoader):
+    """A safe loader that reads any tag's node as plain data. It only finds keys:
+    a file such as `mkdocs.yml`, whose `!!python/name:` tags the safe loader
+    refuses, is still read for them. Extraction keeps the safe loader, so a tagged
+    CI file, such as one with GitLab's `!reference`, fails closed."""
+
+
+def _untagged(loader: yaml.SafeLoader, _suffix: str, node: yaml.Node) -> object:
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    return loader.construct_scalar(node)  # type: ignore[arg-type]
+
+
+_AnyTagLoader.add_multi_constructor("", _untagged)  # type: ignore[no-untyped-call]
+
+
+def _load_yaml(path: Path, loader: type[yaml.SafeLoader] = yaml.SafeLoader) -> object:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+        return yaml.load(path.read_text(encoding="utf-8-sig"), Loader=loader)  # nosec B506
     except yaml.YAMLError as exc:
         raise AssertionError(f"{path}: not YAML: {exc}") from exc
 
@@ -291,9 +310,7 @@ def _github_runs(path: Path, document: object) -> list[str]:
     runner's. Another shape on those paths fails closed, and so does a recursive
     alias along them (CodeAnt on #396)."""
     if not isinstance(document, dict) or not ("jobs" in document or "runs" in document):
-        if isinstance(document, dict | list) and CI_KEY.search(
-            path.read_text("utf-8-sig")
-        ):
+        if _has_shell_key(document):
             raise _refuse(path.name, "shell in an unknown GitHub shape")
         return []
     above = _entered(document, frozenset(), path.name)
@@ -406,7 +423,7 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     """The shell of a CI definition, read by its shape wherever it sits: a GitHub
     workflow or action, or a GitLab CI file. A YAML file outside `.github` that
     holds a shell key in another shape fails closed (CodeAnt on #394)."""
-    if not under_github and not CI_KEY.search(path.read_text(encoding="utf-8-sig")):
+    if not under_github and not _has_shell_key(_load_yaml(path, _AnyTagLoader)):
         return []
     document = _load_yaml(path)
     if under_github or _github_shaped(document):
@@ -420,6 +437,25 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     raise AssertionError(
         f"{path.name}: shell in an unknown CI shape; extend this extraction"
     )
+
+
+def _has_shell_key(document: object) -> bool:
+    """Whether any mapping in a loaded YAML document has a key that holds shell in a
+    CI definition. Each container is visited once, so a recursive alias ends."""
+    seen: set[int] = set()
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict | list) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, dict):
+            if CI_KEYS.intersection(key for key in node if isinstance(key, str)):
+                return True
+            stack.extend(node.values())
+        else:
+            stack.extend(node)
+    return False
 
 
 def _refuse(name: str, reason: str) -> AssertionError:
@@ -658,8 +694,8 @@ def _dockerfile_runs(text: str) -> list[str]:
         index += 1
         if match is None:
             continue
-        command = match.group(1)
-        if match.group(0).lstrip()[:5].upper() == "SHELL":
+        command = match.group(2)
+        if match["instruction"].upper() == "SHELL":
             _check_shell_instruction(command)
             continue
         while command.endswith("\\") and index < len(lines):
@@ -1518,6 +1554,47 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             path.write_text(job + "      - run: echo ${{ x\n", "utf-8")
             with self.assertRaisesRegex(AssertionError, "an unclosed expression"):
                 _ci_shell(path, under_github=True)
+
+    def test_a_shell_key_is_found_however_it_is_written(self) -> None:
+        """Whether a YAML file holds a shell key is read from its loaded structure,
+        so YAML's explicit-key form counts like any other (Codex on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "explicit.yml"
+            for document in (
+                "job:\n  ? script\n  : git status\n",
+                "job:\n  ? script  # the job's commands\n  : git status\n",
+            ):
+                path.write_text(document, "utf-8")
+                with self.subTest(document=document):
+                    self.assertEqual(
+                        ["git status"], _ci_shell(path, under_github=False)
+                    )
+            path.write_text("other:\n  ? run\n  : git x\n", "utf-8")
+            with self.assertRaisesRegex(AssertionError, "unknown GitHub shape"):
+                _ci_shell(path, under_github=True)
+            # Text that merely mentions a key is not one; a tag the safe loader
+            # refuses, as in mkdocs.yml, does not hide a file's keys.
+            for document in (
+                "note: 'run: and script: are words here'\n",
+                "markdown: !!python/name:pymdownx.superfences.fence_code_format\n",
+            ):
+                path.write_text(document, "utf-8")
+                with self.subTest(document=document):
+                    self.assertEqual([], _ci_shell(path, under_github=False))
+            # A tagged CI file is not read as plain data; it fails closed.
+            path.write_text("job:\n  script: !reference [.setup, script]\n", "utf-8")
+            with self.assertRaisesRegex(AssertionError, "not YAML"):
+                _ci_shell(path, under_github=False)
+
+    def test_an_onbuild_run_is_read(self) -> None:
+        """`ONBUILD RUN` runs its command in a later build, so it is read as a `RUN`
+        (CodeAnt on #396)."""
+        self.assertEqual(
+            ["git status", "git log"],
+            _dockerfile_runs(
+                'ONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
+            ),
+        )
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
