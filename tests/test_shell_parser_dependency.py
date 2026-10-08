@@ -85,7 +85,21 @@ GITLAB_GLOBALS = {
     "spec",
 }
 # What only a GitLab job holds, among the keys this reader knows.
-GITLAB_JOB_SIGNS = {*GITLAB_KEYS, "hooks", "extends"}
+GITLAB_JOB_SIGNS = {*GITLAB_KEYS, "hooks", "extends", "run"}
+# What holds shell in a GitLab job.
+GITLAB_SHELL = {*GITLAB_KEYS, "hooks", "run"}
+# The image variables this repository's GitLab template declares, and why each
+# image runs a POSIX shell. Any other variable leaves a job's image unknown (cubic on
+# #396).
+DECLARED_IMAGE_VARIABLES = {
+    # The Gnostoa runtime image, built on a Linux Python base (`Dockerfile`).
+    "KNOWLEDGE_KIT_IMAGE",
+    # An adopter's verification image, which the template's POSIX `sh` scripts
+    # require (`ci/gitlab-ci.yml`).
+    "PROJECT_VERIFICATION_IMAGE",
+}
+# Fence tags for a shell this parser does not read, beyond the shebang's list.
+FENCE_OTHER_SHELLS = {"powershell", "ps1", "cmd", "bat", "batch"}
 # Microsoft's Windows base images, which run PowerShell.
 WINDOWS_IMAGE = re.compile(r"windows|servercore|nanoserver", re.I)
 BOM = b"\xef\xbb\xbf"
@@ -160,6 +174,15 @@ BASH_LONG_FLAGS = {
 }
 # The single-letter shell options that take a word: `-o` an option, `-O` a shopt.
 SHELL_OPTION_WORDS = set("oO")
+# A stage's base and name, after any flags such as `--platform`; and a global
+# `ARG`, whose default a `FROM` may use.
+FROM_LINE = re.compile(
+    r"[ \t]*FROM[ \t]+(?:--\S+[ \t]+)*(?P<image>\S+)(?:[ \t]+AS[ \t]+(?P<stage>\S+))?[ \t]*",
+    re.I,
+)
+ARG_LINE = re.compile(
+    r"[ \t]*ARG[ \t]+(?P<name>[A-Za-z_]\w*)(?:=(?P<value>\S*))?[ \t]*", re.I
+)
 # A BuildKit here-document word: an optional descriptor, `<<`, an optional `-`, and
 # a name holding no `<` (BuildKit's `frontend/dockerfile/parser`, measured on #396).
 HEREDOC_WORD = re.compile(r"\d*<<-?[^<]*")
@@ -396,6 +419,7 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     order. A list is the lines the runner's shell runs in turn. A global keyword,
     such as `variables`, is not a job (Codex on #396); a job that runs is read only
     in a container image whose shell is known (Codex on #396)."""
+    _check_gitlab_shells(document, name)
     found: list[str] = []
     for key, value in document.items():
         if key in GITLAB_KEYS:
@@ -404,40 +428,100 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
         elif isinstance(value, dict) and (
             key == "default" or key not in GITLAB_GLOBALS
         ):
-            if key != "default" and not key.startswith(".") and "trigger" not in value:
-                _check_gitlab_image(
-                    _gitlab_image(document, value, key, name), key, name
-                )
             found.extend(_gitlab_hooks(value))
             for script in GITLAB_KEYS:
                 found.extend(_script_value(value.get(script)))
+            found.extend(_gitlab_run_steps(value, key, name))
     return found
 
 
-def _gitlab_image(
+def _gitlab_run_steps(job: dict[str, object], key: str, name: str) -> list[str]:
+    """A job's `run`: GitLab's CI/CD steps, each with a `script`. A step that runs
+    a step component, or any other shape, fails closed (Codex and cubic on #396)."""
+    if "run" not in job:
+        return []
+    steps = job["run"]
+    if not isinstance(steps, list):
+        raise _refuse(name, f"`{key}`: a GitLab `run` that is not a list of steps")
+    found: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict) or "script" not in step or "step" in step:
+            raise _refuse(name, f"`{key}`: a GitLab `run` step that is not a script")
+        found.extend(_script_value(step["script"]))
+    return found
+
+
+def _check_gitlab_shells(document: dict[str, object], name: str) -> None:
+    """Each job that runs is in an image whose shell is known. A hidden job runs
+    in the jobs that extend it, which are checked; one holding shell that no job
+    extends is checked by its own image (Claude on #396)."""
+    jobs = {
+        key: job
+        for key, job in document.items()
+        if isinstance(job, dict) and key not in GITLAB_GLOBALS
+    }
+    covered: set[str] = set()
+    for key, job in jobs.items():
+        if key.startswith(".") or "trigger" in job:
+            continue
+        lineage = _gitlab_lineage(document, job, key, name)
+        covered.update(base for base, _ in lineage)
+        _check_gitlab_image(_gitlab_image(document, job, lineage), key, name)
+    for key, job in jobs.items():
+        if (
+            key.startswith(".")
+            and key not in covered
+            and not GITLAB_SHELL.isdisjoint(job)
+        ):
+            lineage = _gitlab_lineage(document, job, key, name)
+            _check_gitlab_image(_gitlab_image(document, job, lineage), key, name)
+
+
+def _gitlab_lineage(
     document: dict[str, object], job: dict[str, object], key: str, name: str
-) -> object:
-    """A job's image: its own, else its `extends` bases' (the last one wins, as
-    GitLab merges them), else `default`'s, else the deprecated global one."""
+) -> list[tuple[str, dict[str, object]]]:
+    """A job and its `extends` bases, in GitLab's precedence: the job, then its
+    last base and that base's own bases, and so on. A base reached twice is read
+    once; an unknown or malformed one fails closed."""
     seen: set[str] = set()
-    pending = [job]
+    lineage: list[tuple[str, dict[str, object]]] = []
+    pending = [(key, job)]
     while pending:
-        current = pending.pop()
-        if "image" in current:
-            return current["image"]
+        current_key, current = pending.pop()
+        lineage.append((current_key, current))
         extends = current.get("extends", [])
         bases = [extends] if isinstance(extends, str) else extends
         if not isinstance(bases, list):
             raise _refuse(name, f"`{key}`: an `extends` of `{bases}`")
         for base in bases:
-            # A base reached twice, as in a diamond, is read once.
+            if not isinstance(base, str):
+                raise _refuse(name, f"`{key}`: an `extends` of `{base}`")
             if base in seen:
                 continue
-            parent = document.get(base) if isinstance(base, str) else None
+            parent = document.get(base)
             if not isinstance(parent, dict):
                 raise _refuse(name, f"`{key}`: an `extends` of `{base}`")
             seen.add(base)
-            pending.append(parent)
+            pending.append((base, parent))
+    return lineage
+
+
+def _gitlab_image(
+    document: dict[str, object],
+    job: dict[str, object],
+    lineage: list[tuple[str, dict[str, object]]],
+) -> object:
+    """A job's image: the first its lineage gives, else `default`'s, else the
+    deprecated global one, unless `inherit` drops the default (Codex on #396)."""
+    for _, current in lineage:
+        if "image" in current:
+            return current["image"]
+    inherit = job.get("inherit")
+    inherited = inherit.get("default", True) if isinstance(inherit, dict) else True
+    if inherited is not True and not (
+        isinstance(inherited, list) and "image" in inherited
+    ):
+        return None
     default = document.get("default")
     if isinstance(default, dict) and "image" in default:
         return default["image"]
@@ -452,6 +536,9 @@ def _check_gitlab_image(image: object, key: str, name: str) -> None:
         raise _refuse(name, f"`{key}`: a GitLab job whose shell its runner decides")
     if WINDOWS_IMAGE.search(reference):
         raise _refuse(name, f"`{key}`: a Windows image")
+    for variable in re.findall(r"\$\{?(\w+)", reference):
+        if variable not in DECLARED_IMAGE_VARIABLES:
+            raise _refuse(name, f"`{key}`: an image `{variable}` decides")
 
 
 def _gitlab_hooks(job: dict[str, object]) -> list[str]:
@@ -790,20 +877,27 @@ def _dockerfile_runs(text: str) -> list[str]:
     """Each shell-form `RUN` instruction, as Docker hands it to the shell: its
     continuation lines joined, comment lines inside it dropped, its flags removed.
     The exec form is not shell; a here-document or another escape character fails
-    closed."""
-    if re.search(r"^#[ \t]*escape[ \t]*=", text, re.M | re.I):
+    closed, and so does a `RUN` in a stage whose shell is unknown (Codex on #396)."""
+    # The default escape, a backslash, may be stated; another is not read here
+    # (CodeAnt on #396).
+    if re.search(r"^#[ \t]*escape[ \t]*=(?![ \t]*\\[ \t]*$)", text, re.M | re.I):
         raise AssertionError("a Dockerfile escape directive; extend this extraction")
     runs: list[str] = []
+    state = _Stages()
     lines = text.splitlines()
     index = 0
     while index < len(lines):
-        match = RUN.fullmatch(lines[index])
+        line = lines[index]
         index += 1
+        if state.read(line):
+            continue
+        match = RUN.fullmatch(line)
         if match is None:
             continue
         command = match.group(2)
         if match["instruction"].upper() == "SHELL":
             _check_shell_instruction(command)
+            state.set_shell("sh")
             continue
         while command.endswith("\\") and index < len(lines):
             line = lines[index]
@@ -813,20 +907,75 @@ def _dockerfile_runs(text: str) -> list[str]:
         command = RUN_FLAGS.sub("", command)
         if _exec_form(command):
             runs.extend(_exec_form_shell(json.loads(command)))
-            continue
-        # BuildKit reads a here-document from a whole word, its quotes kept; `<<`
-        # inside quotes, inside a word or as `<<<` is shell (CodeAnt and cubic on
-        # #396).
-        try:
-            words = shlex.split(command, posix=False)
-        except ValueError as exc:
-            raise AssertionError(
-                f"an unreadable RUN: {command!r}; extend this extraction"
-            ) from exc
-        if any(HEREDOC_WORD.fullmatch(word) for word in words):
-            raise AssertionError("a RUN here-document; extend this extraction")
-        runs.append(command)
+        else:
+            runs.append(_shell_form_run(command, state.shell))
     return runs
+
+
+class _Stages:
+    """The stages read so far, and the current stage's shell: its base's, `sh`
+    for a Linux image, a named stage's for a stage, `SHELL`'s once set. A global
+    `ARG`'s default resolves in `FROM`. A Windows base, `scratch` or an unresolved
+    reference leaves it unknown (Codex on #396)."""
+
+    def __init__(self) -> None:
+        self.args: dict[str, str] = {}
+        self.shells: dict[str, str | None] = {}
+        self.shell: str | None = None
+        self.stage = ""
+        self.started = False
+
+    def read(self, line: str) -> bool:
+        """Whether a line is a `FROM`, or a global `ARG`, and so read here."""
+        if (stage := FROM_LINE.fullmatch(line)) is not None:
+            self.started = True
+            self.shell = self._base_shell(stage["image"])
+            self.stage = (stage["stage"] or "").lower()
+            self.set_shell(self.shell)
+            return True
+        if not self.started and (arg := ARG_LINE.fullmatch(line)) is not None:
+            if arg["value"] is not None:
+                self.args[arg["name"]] = arg["value"].strip("\"'")
+            return True
+        return False
+
+    def set_shell(self, shell: str | None) -> None:
+        self.shell = shell
+        if self.stage:
+            self.shells[self.stage] = shell
+
+    def _base_shell(self, image: str) -> str | None:
+        resolved = re.sub(
+            r"\$\{(\w+)\}|\$(\w+)",
+            lambda match: self.args.get(match[1] or match[2], match[0]),
+            image,
+        )
+        if "$" in resolved:
+            return None
+        if resolved.lower() in self.shells:
+            return self.shells[resolved.lower()]
+        if resolved.lower() == "scratch" or WINDOWS_IMAGE.search(resolved):
+            return None
+        return "sh"
+
+
+def _shell_form_run(command: str, shell: str | None) -> str:
+    """A shell-form `RUN`'s command, read only in a stage whose shell is known.
+    BuildKit reads a here-document from a whole word, its quotes kept; `<<` inside
+    quotes, inside a word or as `<<<` is shell (CodeAnt and cubic on #396)."""
+    if shell is None:
+        raise AssertionError(
+            f"a RUN whose shell is unknown: {command!r}; extend this extraction"
+        )
+    try:
+        words = shlex.split(command, posix=False)
+    except ValueError as exc:
+        raise AssertionError(
+            f"an unreadable RUN: {command!r}; extend this extraction"
+        ) from exc
+    if any(HEREDOC_WORD.fullmatch(word) for word in words):
+        raise AssertionError("a RUN here-document; extend this extraction")
+    return command
 
 
 def _files(root: Path) -> list[Path]:
@@ -908,7 +1057,7 @@ def _shell_fences(text: str, name: str) -> list[str]:
             index += 1
         index += 1
         language = (opener["info"].split() or [""])[0].lower()
-        if language in OTHER_SHELLS or (
+        if language in OTHER_SHELLS | FENCE_OTHER_SHELLS or (
             language not in SHELL_INFO and SHELL_LIKE.match(language)
         ):
             # A shell this parser does not read (CodeAnt on #396).
@@ -1062,7 +1211,9 @@ class SurfaceExtractionTests(unittest.TestCase):
         # Exec form is a JSON list of strings; a shell test is not (CodeAnt on #394).
         self.assertEqual(
             ["[ -f marker ] && git status"],
-            _dockerfile_runs('RUN ["python", "-V"]\nRUN [ -f marker ] && git status\n'),
+            _dockerfile_runs(
+                'FROM base\nRUN ["python", "-V"]\nRUN [ -f marker ] && git status\n'
+            ),
         )
 
     def test_an_exec_form_shell_run_hands_its_command_to_the_shell(self) -> None:
@@ -1080,9 +1231,13 @@ class SurfaceExtractionTests(unittest.TestCase):
 
     def test_a_run_here_document_or_another_escape_fails_closed(self) -> None:
         with self.assertRaisesRegex(AssertionError, "here-document"):
-            _dockerfile_runs("RUN <<EOF\ngit status\nEOF\n")
+            _dockerfile_runs("FROM base\nRUN <<EOF\ngit status\nEOF\n")
         with self.assertRaisesRegex(AssertionError, "escape directive"):
             _dockerfile_runs("# escape=`\nRUN true\n")
+        # The default escape may be stated (CodeAnt on #396).
+        self.assertEqual(
+            ["true"], _dockerfile_runs("# escape=\\\nFROM base\nRUN true\n")
+        )
 
     def test_a_dockerfile_shell_override_is_honoured_or_fails_closed(self) -> None:
         """A `SHELL` instruction to bash or sh keeps the `RUN` lines shell; to
@@ -1539,15 +1694,15 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             'RUN cat <<<"here"',
         ):
             with self.subTest(line=line):
-                self.assertEqual([line[4:]], _dockerfile_runs(line + "\n"))
+                self.assertEqual([line[4:]], _dockerfile_runs(f"FROM base\n{line}\n"))
         for line in ("RUN cat <<EOF\n", "RUN cat << EOF\n", "RUN cat 3<<-EOF\n"):
             with (
                 self.subTest(line=line),
                 self.assertRaisesRegex(AssertionError, "here-document"),
             ):
-                _dockerfile_runs(line)
+                _dockerfile_runs("FROM base\n" + line)
         with self.assertRaisesRegex(AssertionError, "an unreadable RUN"):
-            _dockerfile_runs('RUN echo "unclosed\n')
+            _dockerfile_runs('FROM base\nRUN echo "unclosed\n')
 
     def test_a_run_that_is_not_a_string_fails_closed(self) -> None:
         """A step's `run` is a string; any other value fails closed instead of being
@@ -1710,7 +1865,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(
             ["git status", "git log"],
             _dockerfile_runs(
-                'ONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
+                'FROM base\nONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
             ),
         )
 
@@ -1796,6 +1951,39 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 ):
                     _ci_shell(path, under_github=False)
 
+    def test_a_hidden_job_runs_in_the_jobs_that_extend_it(self) -> None:
+        """A hidden job's scripts run in each job that extends it, whose image is
+        checked; one that no job extends is checked by its own image (Claude on
+        #396). A malformed `extends` entry fails closed."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            path.write_text(
+                ".lint:\n  script: [git a]\njob:\n  extends: .lint\n  image: alpine\n",
+                "utf-8",
+            )
+            self.assertEqual(["git a"], _ci_shell(path, under_github=False))
+            for document, reason in (
+                (
+                    ".t:\n  image: mcr.microsoft.com/windows/nanoserver:ltsc2022\n"
+                    "  script: [git a]\n",
+                    "`.t`: a Windows image",
+                ),
+                (
+                    ".t:\n  script: [git a]\n",
+                    "`.t`: a GitLab job whose shell its runner decides",
+                ),
+                (
+                    "job:\n  image: alpine\n  extends: [[.x]]\n  script: [git a]\n",
+                    "`job`: an `extends` of",
+                ),
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, reason),
+                ):
+                    _ci_shell(path, under_github=False)
+
     def test_gitlab_global_keywords_are_not_jobs(self) -> None:
         """A global keyword, such as `variables`, holds data, not a job, even when
         one of its keys is named `script`; a job with hooks alone is GitLab's too
@@ -1822,7 +2010,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         fails closed instead of being skipped (CodeAnt on #396)."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for tag in ("zsh", "ksh", "pwsh"):
+            for tag in ("zsh", "ksh", "pwsh", "powershell"):
                 (root / "AGENTS.md").write_text(f"```{tag}\ngit a\n```\n", "utf-8")
                 declared = _declared(root)
                 with (
@@ -1830,6 +2018,89 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                     self.assertRaisesRegex(AssertionError, f"a `{tag}` fence"),
                 ):
                     _shell_surfaces(declared)
+
+    def test_gitlab_run_steps_inheritance_and_variable_images(self) -> None:
+        """A job's `run` steps hold scripts; a step component fails closed (Codex
+        and cubic on #396). `inherit: {default: false}`, or a list without `image`,
+        drops `default`'s image (Codex on #396). An image a variable names is known
+        only for a variable this repository declares (cubic on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            for document, expected in (
+                (
+                    "job:\n  image: alpine\n  run:\n    - name: a\n      script: git a\n",
+                    ["git a"],
+                ),
+                (
+                    "default:\n  image: alpine\njob:\n  inherit: {default: [image]}\n"
+                    "  script: [git a]\n",
+                    ["git a"],
+                ),
+                (
+                    'job:\n  image: {name: "${KNOWLEDGE_KIT_IMAGE}"}\n  script: [git a]\n',
+                    ["git a"],
+                ),
+            ):
+                path.write_text(document, "utf-8")
+                with self.subTest(document=document):
+                    self.assertEqual(expected, _ci_shell(path, under_github=False))
+            for document, reason in (
+                (
+                    "job:\n  image: alpine\n  run:\n    - name: a\n      step: some/step@v1\n",
+                    "`job`: a GitLab `run` step that is not a script",
+                ),
+                (
+                    "default:\n  image: alpine\njob:\n  inherit: {default: false}\n"
+                    "  script: [git a]\n",
+                    "`job`: a GitLab job whose shell its runner decides",
+                ),
+                (
+                    "default:\n  image: alpine\njob:\n  inherit: {default: [cache]}\n"
+                    "  script: [git a]\n",
+                    "`job`: a GitLab job whose shell its runner decides",
+                ),
+                (
+                    "job:\n  image: $CI_IMAGE\n  script: [git a]\n",
+                    "`job`: an image `CI_IMAGE` decides",
+                ),
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, reason),
+                ):
+                    _ci_shell(path, under_github=False)
+
+    def test_each_dockerfile_stage_has_its_own_shell(self) -> None:
+        """A stage's shell is its base's: `sh` for a Linux image, a named stage's
+        for a stage, its `SHELL` once set. A global `ARG`'s default resolves in
+        `FROM`. A Windows base, `scratch`, or an unresolved reference leaves the
+        shell unknown, so a shell-form `RUN` there fails closed (Codex on #396)."""
+        self.assertEqual(
+            ["git a", "git b"],
+            _dockerfile_runs(
+                "ARG BASE=alpine:3\nFROM ${BASE} AS base\nRUN git a\n"
+                "FROM base AS next\nRUN git b\n"
+            ),
+        )
+        self.assertEqual(
+            ["git c"],
+            _dockerfile_runs(
+                "FROM mcr.microsoft.com/windows/servercore:ltsc2022\n"
+                'SHELL ["bash", "-c"]\nRUN git c\n'
+            ),
+        )
+        for text in (
+            "FROM mcr.microsoft.com/windows/servercore:ltsc2022\nRUN dir\n",
+            "FROM scratch\nRUN true\n",
+            "FROM $UNSET\nRUN true\n",
+            "RUN true\n",
+        ):
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(AssertionError, "a RUN whose shell is unknown"),
+            ):
+                _dockerfile_runs(text)
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
