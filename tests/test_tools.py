@@ -13,6 +13,7 @@ import tempfile
 import tomllib
 import unittest
 import zipfile
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -2140,6 +2141,8 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         bundle: Path,
         source: Path,
         target: str,
+        *,
+        during: Callable[[], object] | None = None,
     ) -> tuple[list[Issue], list[tuple[str, Path]], list[Path]]:
         issues: list[Issue] = []
         observations: list[tuple[str, Path]] = []
@@ -2151,14 +2154,25 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         original_readlink = os.readlink
         original_resolve = Path.resolve
         original_read_text = Path.read_text
+        # Only the validator's access is observed: a path inside this test's
+        # sandbox, as given or resolved, or a relative one. The interpreter's own
+        # activity in the window, such as coverage canonicalising a source file
+        # through `os.path.realpath`, is not (#405). Resolved before the patches,
+        # so this is not itself observed.
+        sandbox = (project.parent, project.parent.resolve())
 
         def observed_path(value: object) -> Path | None:
             if isinstance(value, int):
                 return None
             try:
-                return Path(value)  # type: ignore[arg-type]
+                path = Path(value)  # type: ignore[arg-type]
             except TypeError:
                 return None
+            if path.is_absolute() and not any(
+                path.is_relative_to(root) for root in sandbox
+            ):
+                return None
+            return path
 
         def observe_lstat(
             path: object, *args: object, **kwargs: object
@@ -2183,7 +2197,8 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
             return original_readlink(path, *args, **kwargs)  # type: ignore[arg-type]
 
         def observe_resolve(path: Path, *args: object, **kwargs: object) -> Path:
-            observations.append(("resolve", path))
+            if observed_path(path) is not None:
+                observations.append(("resolve", path))
             return original_resolve(path, *args, **kwargs)
 
         def observe_read_text(path: Path, *args: object, **kwargs: object) -> str:
@@ -2199,6 +2214,8 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 Path, "read_text", autospec=True, side_effect=observe_read_text
             ),
         ):
+            if during is not None:
+                during()
             _validate_links(
                 [document],
                 bundle,
@@ -2250,6 +2267,25 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 self.assertEqual(expected, issues)
                 self.assertEqual([], observations)
                 self.assertEqual([], content_reads)
+
+    def test_interpreter_activity_in_the_window_is_not_the_validator_s(self) -> None:
+        """Only the validator's filesystem access is observed. The interpreter's own
+        activity in the same window, such as coverage canonicalising a source file
+        through `os.path.realpath`, is not the validator's (#405; CI run
+        37835021142 recorded ten such `lstat` calls under coverage)."""
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _outside = self._fixture(directory)
+            target = "../../outside/probe"
+            issues, observations, content_reads = self._validate_target(
+                project,
+                bundle,
+                source,
+                target,
+                during=lambda: os.path.realpath(os.__file__),
+            )
+            self.assertEqual(self._authority_issue(target), issues)
+            self.assertEqual([], observations)
+            self.assertEqual([], content_reads)
 
     def test_outside_symlink_target_is_not_observed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
