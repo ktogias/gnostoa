@@ -66,6 +66,13 @@ OTHER_SHELLS = {
     "yash",
     "posh",
     "hush",
+    # Shells whose names do not end in `sh`, so `SHELL_LIKE` misses them (CodeAnt
+    # on #396).
+    "powershell",
+    "nu",
+    "elvish",
+    "rc",
+    "es",
 }
 # A multi-call binary runs the applet its first argument names, such as `sh`.
 MULTI_CALL = {"busybox", "toybox"}
@@ -877,12 +884,14 @@ def _env_escape(escape: str, quote: str, name: str) -> str:
     return ENV_ESCAPES[escape]
 
 
-def _exec_form_shell(argv: list[str]) -> list[str]:
+def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     """An exec-form `RUN` of `sh`, `bash`, `dash` or `ash` still hands its `-c`
     command to that shell; another shell fails closed (cubic on #396). The options
     are read as the shell reads them, up to the first word that is not one. With
     `-c` among them, that word is the command; otherwise it is a script's path
-    (CodeAnt on #396). A multi-call binary's applet is the program."""
+    (CodeAnt on #396). A multi-call binary's applet is the program. A container's
+    process is `open_ended`: a `-c` without its command there takes it from a later
+    stage or from the run, so it is not yet shell (cubic on #396)."""
     # `env` and a multi-call binary launch the command after them (Codex on #396).
     argv = _follow_launchers(argv, "RUN", split=False)
     program = Path(argv[0]).name if argv else ""
@@ -895,6 +904,8 @@ def _exec_form_shell(argv: list[str]) -> list[str]:
         return []
     if words[:1] == ["-"]:
         words = words[1:]
+    if not words and open_ended:
+        return []
     if not words:
         raise AssertionError("a `-c` without its command; extend this extraction")
     return [words[0]]
@@ -1052,6 +1063,7 @@ class _Stages:
         # This stage's `ONBUILD ENTRYPOINT` and `CMD`, which a later build runs in
         # order, as if after its `FROM` (Codex on #396).
         self.triggers: list[tuple[str, _Form]] = []
+        self.stage_triggers: dict[str, list[tuple[str, _Form]]] = {}
         self.surfaces: list[str] = []
 
     def read(self, line: str) -> bool:
@@ -1104,6 +1116,7 @@ class _Stages:
         process = self.process
         if self.stage:
             self.processes[self.stage] = process
+            self.stage_triggers[self.stage] = self.triggers
         if process.set_here:
             self.surfaces.extend(process.runs())
         if self.triggers:
@@ -1141,7 +1154,12 @@ class _Stages:
         resolved = self._resolve(image, flags)
         if resolved is not None and resolved in self.processes:
             inherited = self.processes[resolved]
-            return _Process(inherited.entrypoint, inherited.cmd, inherited.known)
+            process = _Process(inherited.entrypoint, inherited.cmd, inherited.known)
+            # Its `ONBUILD` triggers run first, as if right after this `FROM`
+            # (Codex on #396).
+            for instruction, value in self.stage_triggers.get(resolved, []):
+                process.apply(instruction, value)
+            return process
         known = resolved is not None and (
             resolved == "scratch" or _linux_image(resolved)
         )
@@ -1201,13 +1219,13 @@ class _Process:
                     "an exec-form `CMD` under an unknown base's `ENTRYPOINT`; "
                     "extend this extraction"
                 )
-            return _exec_form_shell(cmd) if cmd else []
+            return _exec_form_shell(cmd, open_ended=True) if cmd else []
         argv = list(entrypoint)
         if isinstance(cmd, _ShellForm):
             argv += [cmd.shell or "/bin/sh", "-c", cmd.text]
         elif cmd is not None:
             argv += cmd
-        return _exec_form_shell(argv)
+        return _exec_form_shell(argv, open_ended=True)
 
 
 def _healthcheck_command(argument: str) -> str | None:
@@ -2516,6 +2534,23 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 'FROM alpine\nENTRYPOINT ["bash"]\nONBUILD CMD ["-c", "git k"]\n',
                 ["git k"],
             ),
+            # A stage built on this one runs its triggers right after its `FROM`
+            # (Codex on #396), and a `-c` whose command a later stage supplies is
+            # not yet a defect (cubic on #396).
+            (
+                'FROM alpine AS base\nONBUILD ENTRYPOINT ["sh", "-c"]\n'
+                'FROM base\nCMD ["git x"]\n',
+                ["git x"],
+            ),
+            (
+                'FROM alpine AS base\nONBUILD ENTRYPOINT ["sh"]\n'
+                'FROM base\nCMD ["-c", "git z"]\n',
+                ["git z"],
+            ),
+            (
+                'FROM alpine AS base\nENTRYPOINT ["sh", "-c"]\nFROM base\nCMD ["git y"]\n',
+                ["git y"],
+            ),
             ('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n', []),
         ):
             with self.subTest(dockerfile=dockerfile):
@@ -2630,6 +2665,19 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         )
         self.assertNotEqual(0, completed.returncode)
         self.assertIn("a JSON list of strings", completed.stderr)
+        # Text that is not JSON at all is refused the same way, not with a
+        # traceback (Amazon Q on #396).
+        malformed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, str(PROBE)],
+            input="not json",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(2, malformed.returncode)
+        self.assertIn("a JSON list of strings", malformed.stderr)
+        self.assertNotIn("Traceback", malformed.stderr)
         with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
         # The child bounds its own read too, at the same limit, whoever writes to it
@@ -2794,6 +2842,17 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "w: a `zsh` script"):
                 _shell_surfaces(declared)
             (root / "w").unlink()
+            # A shell whose name does not end in `sh` is named, so it fails closed
+            # too (CodeAnt on #396).
+            for shell in ("powershell", "nu", "elvish", "rc", "es"):
+                (root / "o").write_bytes(f"#!/usr/bin/{shell}\ngit o\n".encode())
+                declared = _declared(root)
+                with (
+                    self.subTest(shell=shell),
+                    self.assertRaisesRegex(AssertionError, f"o: a `{shell}` script"),
+                ):
+                    _shell_surfaces(declared)
+            (root / "o").unlink()
             (root / "z").write_bytes(b"#!/usr/bin/env zsh\ngit z\n")
             declared = _declared(root)
             with self.assertRaisesRegex(AssertionError, "z: a `zsh` script"):

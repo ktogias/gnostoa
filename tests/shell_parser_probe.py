@@ -48,7 +48,10 @@ def main() -> int:
     if len(payload) > INPUT_LIMIT:
         sys.stderr.write("an input beyond the probe's input bound\n")
         return 2
-    scripts = json.loads(payload)
+    try:
+        scripts = json.loads(payload)
+    except json.JSONDecodeError:
+        scripts = None
     if not isinstance(scripts, list) or not all(isinstance(s, str) for s in scripts):
         sys.stderr.write("the probe expects a JSON list of strings\n")
         return 2
