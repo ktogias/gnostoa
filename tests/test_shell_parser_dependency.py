@@ -849,7 +849,8 @@ class RetainedEvidenceTests(unittest.TestCase):
                 with self.subTest(script=member.name):
                     self.assertTrue(member.isfile())
                     handle = archive.extractfile(member)
-                    assert handle is not None
+                    if handle is None:
+                        self.fail(f"{member.name} has no content")
                     digest = hashlib.sha256(handle.read()).hexdigest()
                     self.assertTrue(digest.startswith(declared[member.name]))
         # The prose holds no copy that could drift from the archive.
