@@ -829,16 +829,18 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         anchor that is merely reused (CodeAnt on #396)."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "w.yml"
-            for document in (
-                "on: push\njobs: &j\n  again: *j\n",
-                "job:\n  script: &s\n    - git a\n    - *s\n",
+            # The GitHub walker on a workflow; the GitLab flattening on a script
+            # outside `.github` (cubic on #396).
+            for document, under_github in (
+                ("on: push\njobs: &j\n  again: *j\n", True),
+                ("job:\n  script: &s\n    - git a\n    - *s\n", False),
             ):
                 path.write_text(document, "utf-8")
                 with (
                     self.subTest(document=document),
                     self.assertRaisesRegex(AssertionError, "a recursive YAML alias"),
                 ):
-                    _ci_shell(path, under_github=True)
+                    _ci_shell(path, under_github=under_github)
             path.write_text(
                 "job:\n  before_script: &s [git a]\n  script: [*s, git b]\n", "utf-8"
             )
