@@ -204,8 +204,12 @@ HEREDOC_WORD = re.compile(r"\d*<<-?[^<]*")
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 # A `RUN` or `SHELL`, also as a trigger that `ONBUILD` defers to a later build
 # (CodeAnt on #396).
+# A shell-form `CMD`, `ENTRYPOINT` or `HEALTHCHECK CMD` runs through the stage's
+# shell too, at the container's start or check (Codex on #396).
 RUN = re.compile(
-    r"[ \t]*(?P<onbuild>ONBUILD[ \t]+)?(?P<instruction>RUN|SHELL)[ \t]+(?P<command>.*)",
+    r"[ \t]*(?P<onbuild>ONBUILD[ \t]+)?"
+    r"(?P<instruction>RUN|SHELL|CMD|ENTRYPOINT|HEALTHCHECK(?:[ \t]+--\S+)*[ \t]+CMD)"
+    r"[ \t]+(?P<command>.*)",
     re.I,
 )
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
@@ -724,13 +728,19 @@ def _shebang_command(head: bytes, name: str) -> str:
     return Path(words[0]).name
 
 
-def _env_operands(rest: list[str], name: str) -> list[str]:
+def _env_operands(rest: list[str], name: str, *, split: bool = True) -> list[str]:
     """`env`'s arguments after its options and assignments: the command and its
-    arguments."""
+    arguments. Without `split`, as in an exec-form instruction whose words are
+    already apart, `-S` would split one again and fails closed (Codex on #396)."""
     while rest and rest[0].startswith("-") and rest[0] != "--":
         word, rest = rest[0], rest[1:]
         if word == "-":
             continue
+        if not split and (
+            word.startswith("--split-string")
+            or (not word.startswith("--") and "S" in word[1:])
+        ):
+            raise _refuse(name, "an exec-form `env -S`")
         handler = _env_long_option if word.startswith("--") else _env_short_options
         rest = handler(word, rest, name)
     if rest and rest[0] == "--":
@@ -840,8 +850,15 @@ def _exec_form_shell(argv: list[str]) -> list[str]:
     are read as the shell reads them, up to the first word that is not one. With
     `-c` among them, that word is the command; otherwise it is a script's path
     (CodeAnt on #396). A multi-call binary's applet is the program."""
-    if argv and Path(argv[0]).name in MULTI_CALL:
-        argv = argv[1:]
+    # `env` and a multi-call binary launch the command after them (Codex on #396).
+    for _ in range(ENV_CHAIN_LIMIT):
+        launcher = Path(argv[0]).name if argv else ""
+        if launcher == "env":
+            argv = _env_operands(argv[1:], "RUN", split=False)
+        elif launcher in MULTI_CALL:
+            argv = argv[1:]
+        else:
+            break
     program = Path(argv[0]).name if argv else ""
     if program in OTHER_SHELLS:
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
@@ -2216,6 +2233,30 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             _dockerfile_runs(
                 'FROM alpine\nSHELL ["/bin/bash", "-eo", "pipefail", "-c"]\nRUN git y\n'
             ),
+        )
+
+    def test_an_exec_form_env_and_the_runtime_instructions_are_read(self) -> None:
+        """An exec-form `env` launches its command, so a shell after it is read;
+        `-S` there fails closed (Codex on #396). A shell-form `CMD`, `ENTRYPOINT`
+        or `HEALTHCHECK CMD` runs through the stage's shell, as `RUN` does (Codex on
+        #396)."""
+        self.assertEqual(["git a"], _exec_form_shell(["env", "sh", "-c", "git a"]))
+        self.assertEqual(
+            ["git b"],
+            _exec_form_shell(["/usr/bin/env", "-i", "FOO=1", "bash", "-c", "git b"]),
+        )
+        with self.assertRaisesRegex(AssertionError, "an exec-form `env -S`"):
+            _exec_form_shell(["env", "-S", "sh -c", "git x"])
+        self.assertEqual(
+            ["git c", "git d", "git e"],
+            _dockerfile_runs(
+                "FROM alpine\nCMD git c\nENTRYPOINT git d\n"
+                "HEALTHCHECK --interval=5m CMD git e\n"
+            ),
+        )
+        self.assertEqual(
+            [],
+            _dockerfile_runs('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n'),
         )
 
     def test_each_dockerfile_stage_has_its_own_shell(self) -> None:
