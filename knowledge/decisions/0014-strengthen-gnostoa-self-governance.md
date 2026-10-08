@@ -59,7 +59,9 @@ only Gnostoa's `policy/change-control.yaml`:
 - an `emergency` may integrate first, but its Work Item, Decision and regression
   evidence are mandatory follow-up;
 - required formal approvals remain zero for maintainer-authored changes;
-  community contributions receive maintainer review.
+  community contributions receive maintainer review. *Revised by Decision 0110:*
+  R-main requires the code owner's approval for every merge but a break-glass
+  merge, which bypasses R-main, and the merge procedure binds it to the exact head.
 
 The self-policy is internal Gnostoa knowledge. It is not part of the public
 inheritance surface and must not be copied into consumer templates.

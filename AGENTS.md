@@ -50,6 +50,16 @@ Start with `README.md`. Load only the route required by the task.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 
+- Opening a PR, pushing, requesting reviews, merging, or any agent identity,
+  credential or ruleset question for Gnostoa-self work: read
+  [`knowledge/runbooks/operate-the-merge-gate.md`](knowledge/runbooks/operate-the-merge-gate.md).
+  Agents act only as the App `gnostoa-agent` and the machine user
+  `gnostoa-agent-user`, never as the owner. A PR is merged only after the owner
+  has approved its exact head in GitHub, except through break glass, which only
+  the owner uses; until Phase 1b, the App checks that the approval's `commit_id`
+  is that head. The App then merges it with `--match-head-commit`, never with
+  `--admin`.
+
 Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
 before new code or implementation, apply **Prior-art and reuse checkpoint** in
 `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`. Reuse applicable
