@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -46,6 +47,8 @@ ENV_LONG_FLAGS = {
 }
 ENV_LONG_ARGUMENT = {"unset", "chdir", "argv0"}
 ASSIGNMENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*=")
+# A name shaped like a shell, such as a version-suffixed `bash5`.
+SHELL_LIKE = re.compile(r"\A[a-z]*sh[\d.]*\Z")
 SHELLS = {"sh", "bash", "dash", "ash"}
 OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
@@ -191,61 +194,71 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     )
 
 
+def _refuse(name: str, reason: str) -> AssertionError:
+    return AssertionError(f"{name}: {reason}; extend this extraction")
+
+
 def _shebang_command(head: bytes, name: str) -> str:
     """The name of the command a shebang line runs. Through `env`, its whole
     documented grammar is read (GNU `env --help`, and BSD's `-P`): options and their
     arguments, `-S` strings split again, then assignments, then the command. A word
     outside that grammar, a line that cannot be split, or no command fails closed, so
     nothing is guessed (Codex, Claude and CodeAnt on #394)."""
-
-    def refuse(reason: str) -> AssertionError:
-        return AssertionError(f"{name}: {reason}; extend this extraction")
-
     try:
         words = shlex.split(head[2:].split(b"\n", 1)[0].decode("utf-8"))
+        if words and Path(words[0]).name == "env":
+            words = _env_operands(words[1:], name)
     except ValueError as exc:  # UnicodeDecodeError included
-        raise refuse("an unreadable shebang") from exc
+        raise _refuse(name, "an unreadable shebang") from exc
     if not words:
-        raise refuse("an unreadable shebang")
-    if Path(words[0]).name != "env":
-        return Path(words[0]).name
-    rest = words[1:]
+        raise _refuse(name, "an unreadable shebang")
+    return Path(words[0]).name
+
+
+def _env_operands(rest: list[str], name: str) -> list[str]:
+    """`env`'s arguments after its options and assignments: the command and its
+    arguments."""
     while rest and rest[0].startswith("-") and rest[0] != "--":
-        word = rest.pop(0)
+        word, rest = rest[0], rest[1:]
         if word == "-":
             continue
-        if word.startswith("--"):
-            option, equals, value = word[2:].partition("=")
-            if option == "split-string" or option in ENV_LONG_ARGUMENT:
-                if not equals:
-                    if not rest:
-                        raise refuse("an unreadable shebang")
-                    value = rest.pop(0)
-                if option == "split-string":
-                    rest = shlex.split(value) + rest
-            elif option not in ENV_LONG_FLAGS:
-                raise refuse(f"an unknown env option `{word}`")
-            continue
-        for index, letter in enumerate(word[1:], start=1):
-            if letter in ENV_FLAGS:
-                continue
-            if letter not in ENV_ARGUMENT_FLAGS:
-                raise refuse(f"an unknown env option `{word}`")
-            value = word[index + 1 :]
-            if not value:
-                if not rest:
-                    raise refuse("an unreadable shebang")
-                value = rest.pop(0)
-            if letter == "S":
-                rest = shlex.split(value) + rest
-            break
+        handler = _env_long_option if word.startswith("--") else _env_short_options
+        rest = handler(word, rest, name)
     if rest and rest[0] == "--":
-        rest.pop(0)
+        rest = rest[1:]
     while rest and ASSIGNMENT.match(rest[0]):
-        rest.pop(0)
+        rest = rest[1:]
+    return rest
+
+
+def _env_long_option(word: str, rest: list[str], name: str) -> list[str]:
+    option, equals, value = word[2:].partition("=")
+    if option in ENV_LONG_FLAGS:
+        return rest
+    if option != "split-string" and option not in ENV_LONG_ARGUMENT:
+        raise _refuse(name, f"an unknown env option `{word}`")
+    if not equals:
+        value, rest = _env_argument(rest, name)
+    return shlex.split(value) + rest if option == "split-string" else rest
+
+
+def _env_short_options(word: str, rest: list[str], name: str) -> list[str]:
+    for index, letter in enumerate(word[1:], start=1):
+        if letter in ENV_FLAGS:
+            continue
+        if letter not in ENV_ARGUMENT_FLAGS:
+            raise _refuse(name, f"an unknown env option `{word}`")
+        value = word[index + 1 :]
+        if not value:
+            value, rest = _env_argument(rest, name)
+        return shlex.split(value) + rest if letter == "S" else rest
+    return rest
+
+
+def _env_argument(rest: list[str], name: str) -> tuple[str, list[str]]:
     if not rest:
-        raise refuse("an unreadable shebang")
-    return Path(rest[0]).name
+        raise _refuse(name, "an unreadable shebang")
+    return rest[0], rest[1:]
 
 
 def _exec_form(command: str) -> bool:
@@ -328,40 +341,47 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
     was in the corpus."""
     surfaces: dict[str, str] = {}
     for path in _files(root):
-        name = path.relative_to(root).as_posix()
-        if MAKEFILE.match(path.name):
-            raise AssertionError(f"{name}: a Make recipe; extend this extraction")
-        # A shebang decides first, whatever the file's name (Codex on #394).
-        with path.open("rb") as handle:
-            head = handle.read(256).removeprefix(BOM)
-        if head.startswith(b"#!"):
-            command = _shebang_command(head, name)
-            if command in OTHER_SHELLS:
-                # Another shell's grammar is not bash's (Claude on #394).
-                raise AssertionError(
-                    f"{name}: a `{command}` script; extend this extraction"
-                )
-            if command in SHELLS:
-                # A shell script that is not UTF-8 fails here, loudly.
-                surfaces[name] = path.read_text(encoding="utf-8-sig")
-            continue
-        if path.suffix in (".yml", ".yaml"):
-            for index, text in enumerate(_ci_shell(path, name.startswith(".github/"))):
-                surfaces[f"{name}#{index}"] = text
-            continue
-        if path.name in INSTRUCTION_FILES:
-            text = path.read_text(encoding="utf-8-sig")
-            for index, fence in enumerate(FENCE.findall(text)):
-                surfaces[f"{name}#{index}"] = PLACEHOLDER.sub(_masked, fence)
-            continue
-        if CONTAINER_FILE.match(path.name) and path.name != "Dockerfile":
-            raise AssertionError(f"{name}: a container file; extend this extraction")
-        if path.name == "Dockerfile":
-            text = path.read_text(encoding="utf-8-sig")
-            for index, run in enumerate(_dockerfile_runs(text)):
-                surfaces[f"{name}#{index}"] = run
-            continue
+        surfaces.update(_surfaces_of(path, path.relative_to(root).as_posix()))
     return surfaces
+
+
+def _surfaces_of(path: Path, name: str) -> dict[str, str]:
+    """One file's shell surfaces, by what the file is."""
+    if MAKEFILE.match(path.name):
+        raise _refuse(name, "a Make recipe")
+    # A shebang decides first, whatever the file's name (Codex on #394).
+    with path.open("rb") as handle:
+        head = handle.read(256).removeprefix(BOM)
+    if head.startswith(b"#!"):
+        return _script_surface(path, name, head)
+    if path.suffix in (".yml", ".yaml"):
+        return _numbered(name, _ci_shell(path, name.startswith(".github/")))
+    if path.name in INSTRUCTION_FILES:
+        fences = FENCE.findall(path.read_text(encoding="utf-8-sig"))
+        return _numbered(name, [PLACEHOLDER.sub(_masked, fence) for fence in fences])
+    if CONTAINER_FILE.match(path.name) and path.name != "Dockerfile":
+        raise _refuse(name, "a container file")
+    if path.name == "Dockerfile":
+        return _numbered(name, _dockerfile_runs(path.read_text(encoding="utf-8-sig")))
+    return {}
+
+
+def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
+    """A script read when its shebang runs `sh`, `bash`, `dash` or `ash`; another
+    shell, or a shell-like name no known shell, fails closed (Claude on #394)."""
+    command = _shebang_command(head, name)
+    if command in OTHER_SHELLS:
+        raise _refuse(name, f"a `{command}` script")
+    if command not in SHELLS and SHELL_LIKE.match(command):
+        raise _refuse(name, f"an unrecognised shell `{command}`")
+    if command not in SHELLS:
+        return {}
+    # A shell script that is not UTF-8 fails here, loudly.
+    return {name: path.read_text(encoding="utf-8-sig")}
+
+
+def _numbered(name: str, texts: list[str]) -> dict[str, str]:
+    return {f"{name}#{index}": text for index, text in enumerate(texts)}
 
 
 def _declared(root: Path, *, unlisted: tuple[str, ...] = ()) -> Path:
@@ -753,6 +773,13 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 with self.subTest(shebang=content):
                     self.assertNotIn("v", _shell_surfaces(_declared(root)))
             (root / "v").unlink()
+            # A shell-like name that is no known shell fails closed (Claude on #394).
+            (root / "q").write_bytes(b"#!/bin/bash5\ngit q\n")
+            with self.assertRaisesRegex(
+                AssertionError, "q: an unrecognised shell `bash5`"
+            ):
+                _shell_surfaces(_declared(root))
+            (root / "q").unlink()
             # An option env does not document fails closed.
             (root / "x").write_bytes(b"#!/usr/bin/env --frobnicate bash\ngit x\n")
             with self.assertRaisesRegex(AssertionError, "x: an unknown env option"):
@@ -795,21 +822,38 @@ class RetainedEvidenceTests(unittest.TestCase):
     ASSESSMENT = ROOT / "knowledge/assessments/0108-shell-parser-evaluation.md"
     EVIDENCE = ROOT / "knowledge/assessments/0108-shell-parser-evaluation.json"
 
-    def test_each_retained_script_hashes_to_its_declared_digest(self) -> None:
+    ARCHIVE = (
+        ROOT
+        / "knowledge/assessments/0108-shell-parser-evaluation-evidence"
+        / "spike-scripts.tar.gz"
+    )
+
+    def test_each_retained_script_is_a_native_file_of_its_declared_digest(
+        self,
+    ) -> None:
+        """The scripts are retained as native `.py` files, byte for byte, in the
+        evidence archive (Codex on #394; AGENTS.md: executable artifacts stay
+        canonical in their native formats). The assessment declares each digest."""
         text = self.ASSESSMENT.read_text(encoding="utf-8")
-        sections = re.findall(
-            r"^### `([^`]+)`\n(.*?)^````(\w*)\n(.*?)^````\n", text, re.M | re.S
+        declared = dict(
+            re.findall(r"^\| `([\w.]+\.py)` \| `([0-9a-f]{16})…` \|", text, re.M)
         )
-        # The exact inventory, so a lost block fails too (CodeAnt on #394).
-        self.assertEqual(RETAINED_SCRIPTS, [name for name, *_ in sections])
-        for name, prose, fence, code in sections:
-            with self.subTest(script=name):
-                declared = re.search(r"SHA-256\s+`([0-9a-f]{16})…`", prose)
-                self.assertIsNotNone(declared)
-                # A `text` fence keeps formatters away from the retained bytes.
-                self.assertEqual("text", fence)
-                digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
-                self.assertTrue(digest.startswith(declared.group(1)))  # type: ignore[union-attr]
+        with tarfile.open(self.ARCHIVE, "r:gz") as archive:
+            members = archive.getmembers()
+            # The exact inventory, so a lost script fails too (CodeAnt on #394).
+            self.assertEqual(
+                sorted(RETAINED_SCRIPTS), [member.name for member in members]
+            )
+            self.assertEqual(sorted(RETAINED_SCRIPTS), sorted(declared))
+            for member in members:
+                with self.subTest(script=member.name):
+                    self.assertTrue(member.isfile())
+                    handle = archive.extractfile(member)
+                    assert handle is not None
+                    digest = hashlib.sha256(handle.read()).hexdigest()
+                    self.assertTrue(digest.startswith(declared[member.name]))
+        # The prose holds no copy that could drift from the archive.
+        self.assertNotIn("````text", text)
 
     def test_the_oracle_is_retained_with_its_digest(self) -> None:
         evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))
