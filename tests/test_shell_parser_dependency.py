@@ -62,13 +62,55 @@ GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
 INSTRUCTION_FILES = {"AGENTS.md"}
-# A CommonMark shell fence: up to three spaces of indent, three or more backticks or
-# tildes, closed by the same (CodeAnt on #396).
-FENCE = re.compile(
-    r"^ {0,3}(?P<fence>`{3,}|~{3,})(?:bash|sh|shell)[ \t]*\n(?P<body>.*?)"
-    r"^ {0,3}(?P=fence)[`~]*[ \t]*$",
-    re.M | re.S,
+# A top-level CommonMark fence line: up to three spaces of indent, then three or more
+# backticks or tildes (CommonMark 0.31.2, section 4.5).
+FENCE_LINE = re.compile(r"(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)")
+# A shell fence behind a container's prefix: a list item, a block quote, or deeper
+# indent. This reader reads the top level only, so one of these fails closed.
+NESTED_SHELL_FENCE = re.compile(
+    r"(?P<prefix>[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+[ \t>]*)*)"
+    r"(?:`{3,}|~{3,})[ \t]*(?:bash|sh|shell)(?:[ \t]|$)",
+    re.I,
 )
+SHELL_INFO = {"bash", "sh", "shell"}
+# A runner label whose implicit shell is bash: a GitHub-hosted Linux or macOS image,
+# or a self-hosted runner's operating-system label.
+BASH_RUNNER = re.compile(r"(?:ubuntu|macos)-[\w.-]+|linux|macos", re.I)
+# What a program's name is made of; a word with quotes, spaces or escapes names none.
+PROGRAM = re.compile(r"[\w./+-]+")
+# GNU env's `-S` escapes and what each yields (coreutils `env.c`, `build_argv`).
+ENV_ESCAPES = {
+    **{char: char for char in "\"#$'\\"},
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
+ENV_SPACE = " \t\n\v\f\r"
+# What a `-S` step yields besides a character: a separator, or the string's end.
+ENV_SEPARATE, ENV_END = "<separate>", "<end>"
+# Bash's long options (bash(1)): those that take a word, and the flags.
+BASH_LONG_ARGUMENT = {"init-file", "rcfile"}
+BASH_LONG_FLAGS = {
+    "debugger",
+    "dump-po-strings",
+    "dump-strings",
+    "help",
+    "login",
+    "noediting",
+    "noprofile",
+    "norc",
+    "posix",
+    "pretty-print",
+    "restricted",
+    "verbose",
+    "version",
+}
+# The single-letter shell options that take a word: `-o` an option, `-O` a shopt.
+SHELL_OPTION_WORDS = set("oO")
+# A BuildKit here-document word: an optional descriptor, then `<<`.
+HEREDOC_WORD = re.compile(r"\d*<<")
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 RUN = re.compile(r"[ \t]*(?:RUN|SHELL)[ \t]+(.*)", re.I)
@@ -144,38 +186,78 @@ def _entered(node: object, above: frozenset[int], where: str) -> frozenset[int]:
     return above | {id(node)}
 
 
+def _runner_shell(runs_on: object) -> str | None:
+    """The shell a job's runner gives a `run` without one: bash on Linux and macOS.
+    On Windows it is PowerShell, and an expression or a group is decided at run
+    time, so neither is known (GitHub's workflow syntax, `defaults.run`)."""
+    labels = runs_on if isinstance(runs_on, list) else [runs_on]
+    names = [label for label in labels if isinstance(label, str) and "${{" not in label]
+    if len(names) != len(labels) or any("windows" in name.lower() for name in names):
+        return None
+    return "bash" if any(BASH_RUNNER.fullmatch(name) for name in names) else None
+
+
+def _github_context(
+    path: Path, node: dict[str, object], default: str | None, runner: str | None
+) -> tuple[str | None, str | None]:
+    """The nearest `defaults.run.shell` and the job's runner's shell, for the
+    nodes below this one. A default other than bash or sh fails closed."""
+    defaults = node.get("defaults")
+    run = defaults.get("run") if isinstance(defaults, dict) else None
+    if isinstance(run, dict) and "shell" in run:
+        default = run["shell"]
+        if default not in ("bash", "sh"):
+            raise AssertionError(
+                f"{path}: a `{default}` default; extend this extraction"
+            )
+    if "runs-on" in node:
+        runner = _runner_shell(node["runs-on"])
+    return default, runner
+
+
+def _check_step_shell(path: Path, shell: object) -> None:
+    """A step's shell: its own, else its default, else its runner's. Unknown, or
+    neither bash nor sh, it fails closed."""
+    if shell is None:
+        raise AssertionError(
+            f"{path}: a `run` whose shell is decided by its runner; "
+            "extend this extraction"
+        )
+    if shell not in ("bash", "sh"):
+        raise AssertionError(f"{path}: a `{shell}` step; extend this extraction")
+
+
 def _github_runs(path: Path, document: object) -> list[str]:
     found: list[str] = []
     # Each node with the containers above it, so that a recursive alias, a
-    # container inside itself, fails closed instead of looping (CodeAnt on #396).
-    stack: list[tuple[object, frozenset[int]]] = [(document, frozenset())]
+    # container inside itself, fails closed instead of looping (CodeAnt on #396);
+    # and with the nearest `defaults.run.shell` and the job's runner's shell, which a
+    # `run` without `shell` takes in that order (Codex on #396).
+    stack: list[tuple[object, frozenset[int], str | None, str | None]] = [
+        (document, frozenset(), None, None)
+    ]
     while stack:
-        node, above = stack.pop()
+        node, above, default, runner = stack.pop()
         if isinstance(node, (dict, list)):
             above = _entered(node, above, path.name)
         if isinstance(node, dict):
-            default = node.get("defaults")
-            if isinstance(default, dict) and isinstance(default.get("run"), dict):
-                shell = default["run"].get("shell", "bash")
-                if shell not in ("bash", "sh"):
-                    raise AssertionError(
-                        f"{path}: a `{shell}` default; extend this extraction"
-                    )
+            default, runner = _github_context(path, node, default, runner)
             if isinstance(node.get("run"), str):
-                if node.get("shell", "bash") not in ("bash", "sh"):
-                    raise AssertionError(
-                        f"{path}: a `{node['shell']}` step; extend this extraction"
-                    )
+                _check_step_shell(path, node.get("shell") or default or runner)
                 found.append(EXPRESSION.sub(_masked_expression, node["run"]))
             # Reversed onto the stack, so that runs are numbered in source order
             # (CodeAnt on #396).
             stack.extend(
                 reversed(
-                    [(value, above) for key, value in node.items() if key != "run"]
+                    [
+                        (value, above, default, runner)
+                        for key, value in node.items()
+                        if key != "run"
+                    ]
                 )
             )
         elif isinstance(node, list):
-            stack.extend((item, above) for item in reversed(node))
+            stack.extend((item, above, default, runner) for item in reversed(node))
     return found
 
 
@@ -272,15 +354,17 @@ def _shebang_command(head: bytes, name: str) -> str:
     outside that grammar, a line that cannot be split, or no command fails closed, so
     nothing is guessed (Codex, Claude and CodeAnt on #394)."""
     try:
-        words = shlex.split(head[2:].split(b"\n", 1)[0].decode("utf-8"))
-        # A chained `env` is followed, to a bound (Claude on #396).
-        for _ in range(ENV_CHAIN_LIMIT):
-            if not words or Path(words[0]).name != "env":
-                break
-            words = _env_operands(words[1:], name)
-    except ValueError as exc:  # UnicodeDecodeError included
+        line = head[2:].split(b"\n", 1)[0].decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise _refuse(name, "an unreadable shebang") from exc
-    if not words or Path(words[0]).name == "env":
+    # A kernel splits on whitespace and reads no quotes; `env -S` reads its own.
+    words = line.split()
+    # A chained `env` is followed, to a bound (Claude on #396).
+    for _ in range(ENV_CHAIN_LIMIT):
+        if not words or Path(words[0]).name != "env":
+            break
+        words = _env_operands(words[1:], name)
+    if not words or Path(words[0]).name == "env" or not PROGRAM.fullmatch(words[0]):
         raise _refuse(name, "an unreadable shebang")
     return Path(words[0]).name
 
@@ -305,11 +389,13 @@ def _env_long_option(word: str, rest: list[str], name: str) -> list[str]:
     option, equals, value = word[2:].partition("=")
     if option in ENV_LONG_FLAGS:
         return rest
-    if option != "split-string" and option not in ENV_LONG_ARGUMENT:
+    if option == "split-string":
+        return _env_split(" ".join([value, *rest]), name)
+    if option not in ENV_LONG_ARGUMENT:
         raise _refuse(name, f"an unknown env option `{word}`")
     if not equals:
-        value, rest = _env_argument(rest, name)
-    return shlex.split(value) + rest if option == "split-string" else rest
+        _, rest = _env_argument(rest, name)
+    return rest
 
 
 def _env_short_options(word: str, rest: list[str], name: str) -> list[str]:
@@ -319,10 +405,37 @@ def _env_short_options(word: str, rest: list[str], name: str) -> list[str]:
         if letter not in ENV_ARGUMENT_FLAGS:
             raise _refuse(name, f"an unknown env option `{word}`")
         value = word[index + 1 :]
+        if letter == "S":
+            return _env_split(" ".join([value, *rest]), name)
         if not value:
-            value, rest = _env_argument(rest, name)
-        return shlex.split(value) + rest if letter == "S" else rest
+            _, rest = _env_argument(rest, name)
+        return rest
     return rest
+
+
+def _env_split(value: str, name: str) -> list[str]:
+    """GNU `env -S`'s words, read as `env` reads them (coreutils `env.c`,
+    `build_argv`). Linux passes a shebang's rest as one argument, so `-S` takes the
+    rest of the line (rejoined here). Quotes group; outside them, whitespace and
+    `\\_` separate; `#` at a word's start and `\\c` end the string. An expansion,
+    which the environment decides, an unknown escape or an open quote fails closed
+    (CodeAnt on #396)."""
+    words: list[str] = []
+    separated, quote, index = True, "", 0
+    while index < len(value):
+        added, index, quote = _env_step(value, index, quote, separated, name)
+        if added == ENV_END:
+            return words
+        if added == ENV_SEPARATE:
+            separated = True
+            continue
+        if separated:
+            words.append("")
+            separated = False
+        words[-1] += added
+    if quote:
+        raise _refuse(name, "an unreadable shebang")
+    return words
 
 
 def _env_argument(rest: list[str], name: str) -> tuple[str, list[str]]:
@@ -331,18 +444,98 @@ def _env_argument(rest: list[str], name: str) -> tuple[str, list[str]]:
     return rest[0], rest[1:]
 
 
+def _env_step(
+    value: str, index: int, quote: str, separated: bool, name: str
+) -> tuple[str, int, str]:
+    """One step of reading a `-S` string at `index`: what it adds (a character, ""
+    for an opening or closing quote, which starts a word, `ENV_SEPARATE` or
+    `ENV_END`), the next index, and the quote then open."""
+    char = value[index]
+    index += 1
+    if char in "'\"" and quote in ("", char):
+        return "", index, "" if quote else char
+    if char in ENV_SPACE and not quote:
+        return ENV_SEPARATE, index, quote
+    if char == "#" and separated:
+        return ENV_END, index, quote
+    if char == "$" and quote != "'":
+        raise _refuse(name, "an unreadable shebang")
+    # Inside single quotes, only a doubled backslash and `\'` are escapes.
+    if char != "\\" or (quote == "'" and value[index : index + 1] not in ("\\", "'")):
+        return char, index, quote
+    return _env_escape(value[index : index + 1], quote, name), index + 1, quote
+
+
+def _env_escape(escape: str, quote: str, name: str) -> str:
+    """What a `-S` escape yields. `\\c` ends the string, and `\\_` separates
+    words outside quotes and is a space inside them. An unknown escape, `\\c`
+    inside quotes, or a backslash at the end fails closed."""
+    if escape == "c" and not quote:
+        return ENV_END
+    if escape == "_":
+        return " " if quote else ENV_SEPARATE
+    if escape not in ENV_ESCAPES:
+        raise _refuse(name, "an unreadable shebang")
+    return ENV_ESCAPES[escape]
+
+
 def _exec_form_shell(argv: list[str]) -> list[str]:
     """An exec-form `RUN` of `sh`, `bash`, `dash` or `ash` still hands its `-c`
-    command to that shell; another shell fails closed (cubic on #396)."""
+    command to that shell; another shell fails closed (cubic on #396). The options
+    are read as the shell reads them, up to the first word that is not one. With
+    `-c` among them, that word is the command; otherwise it is a script's path
+    (CodeAnt on #396)."""
     program = Path(argv[0]).name if argv else ""
     if program in OTHER_SHELLS:
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
     if program not in SHELLS:
         return []
-    for index, word in enumerate(argv[1:-1], start=1):
-        if word.startswith("-") and not word.startswith("--") and "c" in word[1:]:
-            return [argv[index + 1]]
-    return []
+    inline, words = _shell_options(argv[1:])
+    if not inline:
+        return []
+    if words[:1] == ["-"]:
+        words = words[1:]
+    if not words:
+        raise AssertionError("a `-c` without its command; extend this extraction")
+    return [words[0]]
+
+
+def _shell_options(words: list[str]) -> tuple[bool, list[str]]:
+    """Whether `-c` is among a shell's options, and the words after the options."""
+    inline = False
+    while words and words[0][:1] in ("-", "+") and len(words[0]) > 1:
+        word, words = words[0], words[1:]
+        if word == "--":
+            break
+        if word.startswith("--"):
+            words = _shell_long_option(word, words)
+            continue
+        if "c" in word[1:]:
+            if word[0] == "+":
+                raise _unknown_shell_option(word)
+            inline = True
+        for _ in range(sum(letter in SHELL_OPTION_WORDS for letter in word[1:])):
+            words = _shell_option_word(words)
+    return inline, words
+
+
+def _shell_long_option(word: str, words: list[str]) -> list[str]:
+    if word[2:] in BASH_LONG_ARGUMENT:
+        return _shell_option_word(words)
+    if word[2:] not in BASH_LONG_FLAGS:
+        raise _unknown_shell_option(word)
+    return words
+
+
+def _unknown_shell_option(word: str) -> AssertionError:
+    return AssertionError(f"an unknown shell option `{word}`; extend this extraction")
+
+
+def _shell_option_word(words: list[str]) -> list[str]:
+    """The words after an option's own word."""
+    if not words:
+        raise AssertionError("a shell option without its word; extend this extraction")
+    return words[1:]
 
 
 def _exec_form(command: str) -> bool:
@@ -395,7 +588,16 @@ def _dockerfile_runs(text: str) -> list[str]:
         if _exec_form(command):
             runs.extend(_exec_form_shell(json.loads(command)))
             continue
-        if "<<" in command:
+        # BuildKit reads a here-document from a word, its quotes kept, that starts
+        # with `<<` after an optional descriptor; `<<` inside quotes is text
+        # (CodeAnt on #396).
+        try:
+            words = shlex.split(command, posix=False)
+        except ValueError as exc:
+            raise AssertionError(
+                f"an unreadable RUN: {command!r}; extend this extraction"
+            ) from exc
+        if any(HEREDOC_WORD.match(word) for word in words):
             raise AssertionError("a RUN here-document; extend this extraction")
         runs.append(command)
     return runs
@@ -442,14 +644,46 @@ def _surfaces_of(path: Path, name: str) -> dict[str, str]:
     if path.suffix in (".yml", ".yaml"):
         return _numbered(name, _ci_shell(path, name.startswith(".github/")))
     if path.name in INSTRUCTION_FILES:
-        text = path.read_text(encoding="utf-8-sig")
-        fences = [match.group("body") for match in FENCE.finditer(text)]
+        fences = _shell_fences(path.read_text(encoding="utf-8-sig"), name)
         return _numbered(name, [PLACEHOLDER.sub(_masked, fence) for fence in fences])
     if CONTAINER_FILE.match(path.name) and path.name != "Dockerfile":
         raise _refuse(name, "a container file")
     if path.name == "Dockerfile":
         return _numbered(name, _dockerfile_runs(path.read_text(encoding="utf-8-sig")))
     return {}
+
+
+def _shell_fences(text: str, name: str) -> list[str]:
+    """Each top-level shell fence's content, as CommonMark reads it. The opener's
+    indent is removed from each line. A run of the opener's own character, at least
+    as long and with nothing after it, closes it, or the end does. A shell fence in a
+    list item or a block quote fails closed (CodeAnt, Codex, cubic and Claude on
+    #396)."""
+    fences: list[str] = []
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip("\r\n")
+        index += 1
+        opener = FENCE_LINE.fullmatch(line)
+        # A backtick fence's info string holds no backtick (CommonMark, 4.5).
+        if opener is None or (opener["fence"][0] == "`" and "`" in opener["info"]):
+            nested = NESTED_SHELL_FENCE.match(line)
+            if nested and not re.fullmatch(" {0,3}", nested["prefix"]):
+                raise _refuse(name, "a shell fence inside a list or quote")
+            continue
+        fence, indent = opener["fence"], len(opener["indent"])
+        closer = re.compile(rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*")
+        body: list[str] = []
+        while index < len(lines) and not closer.fullmatch(lines[index].rstrip("\r\n")):
+            content = lines[index]
+            body.append(content[min(indent, len(content) - len(content.lstrip(" "))) :])
+            index += 1
+        index += 1
+        words = opener["info"].split()
+        if words and words[0].lower() in SHELL_INFO:
+            fences.append("".join(body))
+    return fences
 
 
 def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
@@ -649,7 +883,8 @@ class SurfaceExtractionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "w.yml"
             path.write_text(
-                "steps:\n  - run: |\n      echo ${{ fromJSON(\n        x) }}\n"
+                "runs-on: ubuntu-latest\nsteps:\n  - run: |\n"
+                "      echo ${{ fromJSON(\n        x) }}\n"
                 "      git status\n",
                 "utf-8",
             )
@@ -674,7 +909,7 @@ class SurfaceExtractionTests(unittest.TestCase):
             root = Path(directory)
             (root / ".github" / "workflows").mkdir(parents=True)
             (root / ".github" / "workflows" / "w.yml").write_text(
-                "steps:\n  - run: git status\n", "utf-8"
+                "runs-on: ubuntu-latest\nsteps:\n  - run: git status\n", "utf-8"
             )
             (root / "AGENTS.md").write_text(
                 "x\n```bash\ngit log <ref>\n```\n```python\nprint()\n```\n", "utf-8"
@@ -783,7 +1018,9 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "utf-8",
             )
             (root / "ci" / "github-actions.yml").write_text(
-                "on: push\njobs:\n  j:\n    steps:\n      - run: git log\n", "utf-8"
+                "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: git log\n",
+                "utf-8",
             )
             (root / "ci" / "policy.yml").write_text("checks:\n  - name: x\n", "utf-8")
             (root / "ci" / "flow.yml").write_text(
@@ -860,8 +1097,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 '{"stages": ["t"], "job": {"stage": "t", "script": "git c"}}\n', "utf-8"
             )
             (root / "ci" / "order.yml").write_text(
-                "on: push\njobs:\n  one:\n    steps:\n      - run: git first\n"
-                "      - run: git second\n  two:\n    steps:\n      - run: git third\n",
+                "on: push\njobs:\n  one:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: git first\n      - run: git second\n"
+                "  two:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: git third\n",
                 "utf-8",
             )
             declared = _declared(root)
@@ -879,19 +1118,160 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             )
 
     def test_every_commonmark_shell_fence_form_is_read(self) -> None:
-        """Up to three spaces of indent, and four backticks or tildes (CodeAnt on
-        #396)."""
+        """Up to three spaces of indent, removed from the content; three or more
+        backticks or tildes, with spaces or an info string after the language; a fence
+        left open to the end; a closer inside another fence is its content (CodeAnt,
+        Codex, cubic and Claude on #396)."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "AGENTS.md").write_text(
-                "  ```bash\ngit d\n  ```\n\n````sh\ngit e\n````\n\n~~~shell\ngit f\n~~~\n",
+                "  ```bash\n  git d\n   git d2\n  ```\n\n"
+                "````sh\ngit e\n````\n\n"
+                "~~~Shell title=setup\ngit f\n~~~\n\n"
+                "``` bash\ngit g\n```\n\n"
+                "```text\n```bash\nnot shell\n```\n\n"
+                "~~~bash\ngit h\n",
                 "utf-8",
             )
             declared = _declared(root)
             self.assertEqual(
-                ["git d\n", "git e\n", "git f\n"],
+                ["git d\n git d2\n", "git e\n", "git f\n", "git g\n", "git h\n"],
                 list(_shell_surfaces(declared).values()),
             )
+
+    def test_a_shell_fence_inside_a_list_or_quote_fails_closed(self) -> None:
+        """This reader reads top-level fences; one in a list item or a block quote
+        fails closed instead of being skipped (Codex, cubic and Claude on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for text in (
+                "> ```bash\n> git a\n> ```\n",
+                "1. Step:\n\n    ```bash\n    git a\n    ```\n",
+                "- ```sh\n  git a\n  ```\n",
+            ):
+                (root / "AGENTS.md").write_text(text, "utf-8")
+                declared = _declared(root)
+                with (
+                    self.subTest(text=text),
+                    self.assertRaisesRegex(
+                        AssertionError, "a shell fence inside a list or quote"
+                    ),
+                ):
+                    _shell_surfaces(declared)
+
+    def test_a_fence_closes_only_on_its_own_character(self) -> None:
+        """A closing fence repeats the opening character alone, so a line such as
+        ```~~~ inside a backtick block does not end it (cubic and Claude on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "AGENTS.md").write_text(
+                "```bash\ngit a\n```~~~\ngit b\n````\n", "utf-8"
+            )
+            declared = _declared(root)
+            self.assertEqual(
+                {"AGENTS.md#0": "git a\n```~~~\ngit b\n"}, _shell_surfaces(declared)
+            )
+
+    def test_a_run_s_implicit_shell_is_its_runner_s(self) -> None:
+        """A `run` without `shell` takes its job's or workflow's default, else its
+        runner's: bash on Linux and macOS, PowerShell on Windows, unknown for an
+        expression or a group. Only an established bash or sh is read (Codex on
+        #396)."""
+        windows = "on: push\njobs:\n  a:\n    runs-on: windows-latest\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workflow.yml"
+            for document in (
+                windows + "    steps:\n      - run: Write-Output hi\n",
+                "on: push\njobs:\n  a:\n    runs-on: ${{ matrix.os }}\n"
+                "    steps:\n      - run: git x\n",
+                "on: push\njobs:\n  a:\n    runs-on: {group: g}\n"
+                "    steps:\n      - run: git x\n",
+                "runs:\n  using: composite\n  steps:\n    - run: git x\n",
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, "decided by its runner"),
+                ):
+                    _ci_shell(path, under_github=True)
+            for document, expected in (
+                (
+                    "on: push\njobs:\n  a:\n    runs-on: macos-15\n"
+                    "    steps:\n      - run: git a\n",
+                    ["git a"],
+                ),
+                (
+                    "on: push\njobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"
+                    "    steps:\n      - run: git b\n",
+                    ["git b"],
+                ),
+                (
+                    windows + "    steps:\n      - run: git c\n        shell: bash\n",
+                    ["git c"],
+                ),
+                (
+                    windows + "    defaults:\n      run:\n        shell: bash\n"
+                    "    steps:\n      - run: git d\n",
+                    ["git d"],
+                ),
+                (
+                    "defaults:\n  run:\n    shell: sh\n"
+                    + windows
+                    + "    steps:\n      - run: git e\n",
+                    ["git e"],
+                ),
+                (
+                    "runs:\n  using: composite\n  steps:\n"
+                    "    - run: git f\n      shell: bash\n",
+                    ["git f"],
+                ),
+            ):
+                path.write_text(document, "utf-8")
+                with self.subTest(document=document):
+                    self.assertEqual(expected, _ci_shell(path, under_github=True))
+
+    def test_an_exec_form_shell_s_options_are_read_as_the_shell_reads_them(
+        self,
+    ) -> None:
+        """With `-c` among the options, the command is the first word after them;
+        `-o` and `-O` take a word, and so do `--rcfile` and `--init-file`. After a
+        script's path, `-c` is the script's (CodeAnt on #396)."""
+        for argv, expected in (
+            (["bash", "script.sh", "-c", "git a"], []),
+            (["bash", "-c", "-e", "git b"], ["git b"]),
+            (["bash", "-eo", "pipefail", "-c", "git c"], ["git c"]),
+            (["bash", "--rcfile", "f", "-c", "git d"], ["git d"]),
+            (["sh", "-c", "--", "git e", "zero"], ["git e"]),
+            (["bash", "+e", "-xc", "git f"], ["git f"]),
+            (["bash", "-"], []),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(expected, _exec_form_shell(argv))
+        for argv, reason in (
+            (["bash", "--unknown", "-c", "x"], "an unknown shell option `--unknown`"),
+            (["bash", "-c"], "a `-c` without its command"),
+            (["bash", "-o"], "a shell option without its word"),
+            (["bash", "+c", "x"], "an unknown shell option `\\+c`"),
+        ):
+            with (
+                self.subTest(argv=argv),
+                self.assertRaisesRegex(AssertionError, reason),
+            ):
+                _exec_form_shell(argv)
+
+    def test_only_a_here_document_word_starts_a_here_document(self) -> None:
+        """BuildKit reads a here-document from a word that starts with `<<`, after
+        an optional descriptor, quotes kept: `<<` inside quotes is text (CodeAnt on
+        #396)."""
+        self.assertEqual(['echo "a << b"'], _dockerfile_runs('RUN echo "a << b"\n'))
+        for line in ("RUN cat <<EOF\n", "RUN cat << EOF\n", "RUN cat 3<<-EOF\n"):
+            with (
+                self.subTest(line=line),
+                self.assertRaisesRegex(AssertionError, "here-document"),
+            ):
+                _dockerfile_runs(line)
+        with self.assertRaisesRegex(AssertionError, "an unreadable RUN"):
+            _dockerfile_runs('RUN echo "unclosed\n')
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
@@ -941,17 +1321,22 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "b": b"#!/usr/local/bin/bash\ngit b\n",
                 "c": b"#!/usr/bin/env -S bash -e\ngit c\n",
                 "d": b"#! /bin/dash\ngit d\n",
-                "e": b'#!/usr/bin/env -S "bash -e"\ngit e\n',
+                "e": b"#!/usr/bin/env -S 'bash' -e\ngit e\n",
                 "f": b"#!/usr/bin/env VAR=1 bash\ngit f\n",
-                "g": b'#!/usr/bin/env --split-string="bash -e"\ngit g\n',
+                "g": b"#!/usr/bin/env --split-string=bash -e\ngit g\n",
                 "h": b"#!/usr/bin/env -Sbash -e\ngit h\n",
                 "j": b"#!/usr/bin/env -i - --unset=X -C /tmp -0v bash\ngit j\n",
+                # GNU env's `-S` escapes: `\_` separates, `\c` ends the string,
+                # `#` at a word's start is a comment (CodeAnt on #396).
+                "m": b"#!/usr/bin/env -S bash\\_-e\ngit m\n",
+                "n": b"#!/usr/bin/env -S sh\\c junk\ngit n\n",
+                "o": b"#!/usr/bin/env -S bash #comment\ngit o\n",
                 "p": b"#!/usr/bin/env python3\nprint()\n",
             }
             for name, content in scripts.items():
                 (root / name).write_bytes(content)
             self.assertEqual(
-                {"a", "b", "c", "d", "e", "f", "g", "h", "j"},
+                {"a", "b", "c", "d", "e", "f", "g", "h", "j", "m", "n", "o"},
                 set(_shell_surfaces(_declared(root))),
             )
             for content in (
@@ -960,6 +1345,14 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 b"#!/bin/\xffsh\ngit u\n",
                 b"#!/usr/bin/env -S 'bash\ngit u\n",
                 b"#!/usr/bin/env -u\ngit u\n",
+                # Quotes make one word, and no program is named `bash -e`; the
+                # environment decides an expansion; an unknown escape is env's
+                # error (GNU coreutils, `env.c`).
+                b'#!/usr/bin/env -S "bash -e"\ngit u\n',
+                b'#!/usr/bin/env --split-string="bash -e"\ngit u\n',
+                b'#!/usr/bin/env "bash"\ngit u\n',
+                b"#!/usr/bin/env -S ${SHELL}\ngit u\n",
+                b"#!/usr/bin/env -S bash\\q\ngit u\n",
             ):
                 (root / "u").write_bytes(content)
                 declared = _declared(root)
@@ -983,7 +1376,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             # A chained env is followed to its command (Claude on #396).
             for content in (
                 b"#!/usr/bin/env env bash\ngit k\n",
-                b'#!/usr/bin/env -S "env -i bash"\ngit k\n',
+                b"#!/usr/bin/env -S env -i bash\ngit k\n",
             ):
                 (root / "k").write_bytes(content)
                 declared = _declared(root)
