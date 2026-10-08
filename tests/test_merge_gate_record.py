@@ -204,7 +204,22 @@ class MergeGateRecordTests(unittest.TestCase):
             )
         ]
         self.assertIn("`commit_id` of the owner's latest `APPROVED` review", merge)
-        self.assertIn("--match-head-commit <approved>", merge)
+        # The command itself, not only its prose (CodeAnt on #400): every page is
+        # read before the latest owner review is chosen, since `--jq` with
+        # `--paginate` runs once per page (cubic, Codex, CodeAnt and Claude on
+        # #400).
+        self.assertIn("pulls/<N>/reviews --paginate --slurp", merge)
+        self.assertIn(
+            """jq -r '[.[][] | select(.user.login == "ktogias")] | last | """
+            """select(.state == "APPROVED") | .commit_id'""",
+            merge,
+        )
+        self.assertIn("gh pr merge <N> --squash --match-head-commit <approved>", merge)
+        text = RUNBOOK.read_text(encoding="utf-8")
+        for command in re.findall(r"```sh\n(.*?)```", text, re.S):
+            joined = " ".join(command.replace("\\\n", " ").split())
+            with self.subTest(command=joined[:60]):
+                self.assertFalse("--paginate" in joined and "--jq" in joined)
 
     def test_break_glass_reads_the_classic_protection_back_first(self) -> None:
         """Break glass leaves the classic protection as the only layer requiring
@@ -230,7 +245,10 @@ class MergeGateRecordTests(unittest.TestCase):
                 "**How.**"
             )
         ]
-        self.assertIn("restore it to require the four checks", last_resort)
+        # Everything read back before the change, not only the checks (CodeAnt on
+        # #400).
+        self.assertIn("Read back the whole protection before changing it", last_resort)
+        self.assertIn("restore exactly what was read back", last_resort)
         # The routine re-verification reads it back too (Claude on #400).
         verify = runbook[
             runbook.index("### Re-verify the gate") : runbook.index("## Recovery")
@@ -254,6 +272,33 @@ class MergeGateRecordTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, runbook)
+
+    def test_the_classic_protection_is_recorded_as_the_owner_read_it(self) -> None:
+        """The classic protection's settings, as the owner read them back on
+        2026-10-08 (rule 81822439); the App gets 403 there, so they were pending."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        record = runbook[
+            runbook.index("**Classic branch protection on `main`**") : runbook.index(
+                "**Repository merge settings:**"
+            )
+        ]
+        self.assertNotIn("in review of this runbook", record)
+        for setting in (
+            "rule 81822439",
+            "a pull request, with no approvals required",
+            "`policy`, `fast`, `regression` and `smoke` from GitHub Actions, on an up-to-date branch",
+            "conversations resolved",
+            "no bypass, administrators included",
+            "no force pushes and no deletions",
+        ):
+            with self.subTest(setting=setting):
+                self.assertIn(setting, record)
+        codex = runbook[
+            runbook.index("### Codex and the review bots") : runbook.index(
+                "### The agent host"
+            )
+        ]
+        self.assertNotIn("in review of this runbook", codex)
 
     def test_the_pre_merge_check_is_named_with_what_it_checks(self) -> None:
         """The convergence step names the pre-merge check, where it lives, and what

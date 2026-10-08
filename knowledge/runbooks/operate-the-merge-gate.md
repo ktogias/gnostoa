@@ -145,12 +145,19 @@ The other rulesets:
 The bypass lists above were read back with an admin-capable credential on
 2026-10-08 (#15, 6050406535).
 
-**Classic branch protection on `main`** stays in force until Phase 1b. Read back as
-the App from `GET /repos/ktogias/gnostoa/branches/main`: `protected: true`, and
-required checks `policy`, `fast`, `regression` and `smoke` from app 15368, with
-`enforcement_level: everyone`. Its other settings, such as conversation resolution,
-come only from the protection endpoint, which returns 403 to the App. *The owner
-reads them back in review of this runbook.*
+**Classic branch protection on `main`** stays in force until Phase 1b. The owner
+read it back on 2026-10-08 (rule 81822439), since its settings come only from the
+protection endpoint, which returns 403 to the App. It requires:
+- a pull request, with no approvals required (R-main requires the approval);
+- the four checks `policy`, `fast`, `regression` and `smoke` from GitHub Actions, on an up-to-date branch;
+- conversations resolved;
+- no bypass, administrators included ("Do not allow bypassing the above settings");
+- no force pushes and no deletions.
+
+It does not require signed commits, linear history (R-main does), deployments, or a
+locked branch. As the App, `GET /repos/ktogias/gnostoa/branches/main` shows
+`protected: true` and the four checks from app 15368, with
+`enforcement_level: everyone`.
 
 **Repository merge settings:** squash only, auto-merge off, and branches deleted on
 merge.
@@ -173,8 +180,8 @@ owner.
     user's `@codex review` (its summary says "Manual request"). So the review ran
     without an environment.
   - The owner connected the machine user under ChatGPT's GitHub connector
-    ("Connect another account"). *The owner confirms this in review of this
-    runbook.*
+    ("Connect another account"), as a second account beside the owner's. The
+    owner confirmed it on 2026-10-08.
 - **Amazon Q:** reviews a new PR, and again on the exact text `/q review` from the
   machine user. It ignores the App's comments. Never post any other `/q` text, since
   that can make it commit.
@@ -261,11 +268,13 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    current head. `--match-head-commit` only checks the SHA it is given against the
    head, and a push that leaves the diff unchanged may not dismiss an approval. So
    `<approved>` is the `commit_id` of the owner's latest `APPROVED` review, which
-   must also be the owner's latest review and equal the sealed head:
+   must also be the owner's latest review and equal the sealed head. Every page
+   is read first (`--slurp`), since `--jq` with `--paginate` runs once per page and
+   could choose a page's last review instead of the latest:
    ```sh
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate \
-     --jq '[.[] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
+     gh api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate --slurp \
+     | jq -r '[.[][] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
      gh pr merge <N> --squash --match-head-commit <approved>
    ```
@@ -298,13 +307,15 @@ approval, thread resolution and R-main's checks.
 
 If a required check itself is broken, break glass does not suffice while the classic
 protection exists. The last resort is then the owner, as admin:
-1. Change that protection temporarily, for the one merge. The security log records
+1. Read back the whole protection before changing it,
+   `GET /repos/ktogias/gnostoa/branches/main/protection`, and keep the result.
+2. Change that protection temporarily, for the one merge. The security log records
    the change.
-2. Merge, as below.
-3. Restore the protection at once, whether the merge succeeded or not: restore it to
-   require the four checks, as Preconditions records them, and read it back. After
-   an interrupted session, restoring it is the first thing done.
-4. Record both changes, and the read-back, in the follow-up.
+3. Merge, as below.
+4. Restore the protection at once, whether the merge succeeded or not: restore exactly
+   what was read back in step 1, not only the four checks, and read it back again to
+   compare. After an interrupted session, restoring it is the first thing done.
+5. Record both changes, and both read-backs, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
 1. Bring the offline key of `gnostoa-break-glass` (App ID 5230732) to a trusted
