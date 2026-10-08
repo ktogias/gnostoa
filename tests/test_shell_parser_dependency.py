@@ -105,6 +105,12 @@ LAUNCHERS = {
     "time",
     "strace",
     "watch",
+    # `find` runs its `-exec` action; the rest run a command they are given (Codex
+    # on #396).
+    "find",
+    "parallel",
+    "ssh",
+    "script",
 }
 
 # The YAML keys that hold shell in a CI definition. They are looked for in the
@@ -789,7 +795,8 @@ def _follow_launchers(words: list[str], name: str, *, split: bool) -> list[str]:
             return _refuse_launched_shell(words, name)
     if words and (Path(words[0]).name == "env" or Path(words[0]).name in MULTI_CALL):
         raise _refuse(name, "a launcher chain beyond the bound")
-    return words
+    # A launcher right after the bound's last wrapper is still one (Codex on #396).
+    return _refuse_launched_shell(words, name)
 
 
 def _refuse_launched_shell(words: list[str], name: str) -> list[str]:
@@ -2618,10 +2625,18 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             ["su", "-c", "git w", "nobody"],
             ["timeout", "10", "bash5", "-c", "git v"],
             ["tini", "--", "knowledge"],
+            # `find` runs its `-exec` action, and the rest run commands too (Codex on
+            # #396).
+            ["find", ".", "-exec", "sh", "-c", "git u", ";"],
+            ["ssh", "host", "git t"],
+            # A launcher after the bound's last wrapper is still a launcher (Codex on
+            # #396).
+            ["env", "env", "env", "timeout", "10", "sh", "-c", "git s"],
         ):
+            launcher = next((word for word in argv if word != "env"), argv[0])
             with (
                 self.subTest(argv=argv),
-                self.assertRaisesRegex(AssertionError, f"a `{argv[0]}` launcher;"),
+                self.assertRaisesRegex(AssertionError, f"a `{launcher}` launcher;"),
             ):
                 _exec_form_shell(argv)
         with tempfile.TemporaryDirectory() as directory:
