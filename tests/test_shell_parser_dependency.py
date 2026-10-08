@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shlex
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import sys
 import tempfile
@@ -30,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # GitHub Actions expressions are not shell; each is masked at its own width.
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
+# A name in a shebang line, bounded as a word; `-S` may be attached before it.
+SHEBANG_WORD = re.compile(r"(?:^|(?<=[\s/=\"']))(?:-S)?([a-z]+)(?=$|[\s\"'])")
 SHELLS = {"sh", "bash", "dash", "ash"}
 OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
@@ -175,25 +176,20 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
 
 
 def _shebang_words(head: bytes, name: str) -> set[str]:
-    """The last path part of each word of a shebang line, with each `env -S` string
-    split again. A shell is recognised by its name among them, whatever options,
-    option arguments or assignments come first (Codex and CodeAnt on #394). A line
-    that cannot be split fails closed."""
-    line = head[2:].split(b"\n", 1)[0]
+    """The names a shebang line holds as whole words, bounded by whitespace, `/`,
+    `=` or a quote, with `env`'s `-S` allowed attached. A shell is recognised by its
+    name among them, so no form of `env`'s arguments can hide it; this models no
+    argument grammar at all (Codex and CodeAnt on #394). A blank or undecodable line
+    fails closed."""
     try:
-        words = shlex.split(line.decode("utf-8"))
-        for index, word in enumerate(list(words)):
-            if word in ("-S", "--split-string") and index + 1 < len(words):
-                words += shlex.split(words[index + 1])
-            elif word.startswith("-S") and len(word) > 2:
-                words += shlex.split(word[2:])
-    except ValueError as exc:  # UnicodeDecodeError included
+        line = head[2:].split(b"\n", 1)[0].decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise AssertionError(
             f"{name}: an unreadable shebang; extend this extraction"
         ) from exc
-    if not words:
+    if not line.strip():
         raise AssertionError(f"{name}: an unreadable shebang; extend this extraction")
-    return {Path(word).name for word in words}
+    return set(SHEBANG_WORD.findall(line))
 
 
 def _check_shell_instruction(argument: str) -> None:
@@ -640,14 +636,22 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "d": b"#! /bin/dash\ngit d\n",
                 "e": b'#!/usr/bin/env -S "bash -e"\ngit e\n',
                 "f": b"#!/usr/bin/env VAR=1 bash\ngit f\n",
+                "g": b'#!/usr/bin/env --split-string="bash -e"\ngit g\n',
+                "h": b"#!/usr/bin/env -Sbash -e\ngit h\n",
+                "i": b"#!/usr/bin/env -S 'bash\ngit i\n",
                 "p": b"#!/usr/bin/env python3\nprint()\n",
             }
             for name, content in scripts.items():
                 (root / name).write_bytes(content)
             self.assertEqual(
-                {"a", "b", "c", "d", "e", "f"}, set(_shell_surfaces(_declared(root)))
+                {"a", "b", "c", "d", "e", "f", "g", "h", "i"},
+                set(_shell_surfaces(_declared(root))),
             )
-            for content in (b"#!\ngit u\n", b"#!/usr/bin/env -S 'bash\ngit u\n"):
+            for content in (
+                b"#!\ngit u\n",
+                b"#! \t\ngit u\n",
+                b"#!/bin/\xffsh\ngit u\n",
+            ):
                 (root / "u").write_bytes(content)
                 with (
                     self.subTest(shebang=content),
