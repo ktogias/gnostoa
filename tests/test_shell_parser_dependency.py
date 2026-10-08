@@ -208,7 +208,7 @@ PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 # shell too, at the container's start or check (Codex on #396).
 RUN = re.compile(
     r"[ \t]*(?P<onbuild>ONBUILD[ \t]+)?"
-    r"(?P<instruction>RUN|SHELL|CMD|ENTRYPOINT|HEALTHCHECK(?:[ \t]+--\S+)*[ \t]+CMD)"
+    r"(?P<instruction>RUN|SHELL|CMD|ENTRYPOINT|HEALTHCHECK)"
     r"[ \t]+(?P<command>.*)",
     re.I,
 )
@@ -736,10 +736,7 @@ def _env_operands(rest: list[str], name: str, *, split: bool = True) -> list[str
         word, rest = rest[0], rest[1:]
         if word == "-":
             continue
-        if not split and (
-            word.startswith("--split-string")
-            or (not word.startswith("--") and "S" in word[1:])
-        ):
+        if not split and _env_splits(word):
             raise _refuse(name, "an exec-form `env -S`")
         handler = _env_long_option if word.startswith("--") else _env_short_options
         rest = handler(word, rest, name)
@@ -748,6 +745,18 @@ def _env_operands(rest: list[str], name: str, *, split: bool = True) -> list[str
     while rest and ASSIGNMENT.match(rest[0]):
         rest = rest[1:]
     return rest
+
+
+def _env_splits(word: str) -> bool:
+    """Whether an `env` option word asks for `-S`: `--split-string`, or `S` where
+    getopt reads an option letter. A letter taking an argument takes the rest of
+    the word, so the `S` of `-uSHELL` is `-u`'s (cubic on #396)."""
+    if word.startswith("--"):
+        return word[2:].partition("=")[0] == "split-string"
+    for letter in word[1:]:
+        if letter not in ENV_FLAGS:
+            return letter == "S"
+    return False
 
 
 def _env_long_option(word: str, rest: list[str], name: str) -> list[str]:
@@ -975,7 +984,14 @@ def _dockerfile_runs(text: str) -> list[str]:
             index += 1
             if not line.lstrip().startswith("#"):
                 command = command[:-1] + line
-        command = RUN_FLAGS.sub("", command)
+        instruction = match["instruction"].upper()
+        if instruction == "HEALTHCHECK":
+            command = _healthcheck_command(command)
+            if command is None:
+                continue
+        # Only `RUN` takes `--mount`-style flags (cubic on #396).
+        if instruction == "RUN":
+            command = RUN_FLAGS.sub("", command)
         if _exec_form(command):
             runs.extend(_exec_form_shell(json.loads(command)))
         else:
@@ -1042,6 +1058,24 @@ class _Stages:
         if resolved.lower() in self.shells:
             return self.shells[resolved.lower()]
         return "sh" if _linux_image(resolved) else None
+
+
+def _healthcheck_command(argument: str) -> str | None:
+    """A `HEALTHCHECK`'s command: what follows its options and `CMD`. `NONE`
+    runs nothing; another form fails closed. The options are read word by word, so
+    no pattern backtracks over them (Codacy on #396)."""
+    words = argument.strip()
+    while words.startswith("--"):
+        parts = re.split(r"[ \t]+", words, maxsplit=1)
+        words = parts[1] if len(parts) == 2 else ""
+    keyword, *command = re.split(r"[ \t]+", words, maxsplit=1)
+    if keyword.upper() == "NONE" and not command:
+        return None
+    if keyword.upper() != "CMD" or not command:
+        raise AssertionError(
+            f"an unreadable HEALTHCHECK: {argument!r}; extend this extraction"
+        )
+    return command[0]
 
 
 def _shell_form_run(command: str, shell: str | None) -> str:
@@ -2257,6 +2291,26 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(
             [],
             _dockerfile_runs('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n'),
+        )
+
+    def test_env_s_is_read_by_position_and_flags_belong_to_run(self) -> None:
+        """An `S` inside `-u`'s attached argument is not `-S` (cubic on #396).
+        Only `RUN` takes `--mount`-style flags; a runtime instruction keeps its
+        command whole (cubic on #396). `HEALTHCHECK`'s own options precede its
+        `CMD`, and `HEALTHCHECK NONE` runs nothing."""
+        self.assertEqual(
+            ["git x"], _exec_form_shell(["env", "-uSHELL", "bash", "-c", "git x"])
+        )
+        with self.assertRaisesRegex(AssertionError, "an exec-form `env -S`"):
+            _exec_form_shell(["env", "-iS", "sh -c", "git x"])
+        self.assertEqual(
+            ["--quiet git y", "git e", "git f"],
+            _dockerfile_runs(
+                "FROM alpine\nCMD --quiet git y\n"
+                "HEALTHCHECK --interval=5m --timeout=3s CMD git e\n"
+                'HEALTHCHECK --interval=5m CMD ["sh", "-c", "git f"]\n'
+                "HEALTHCHECK NONE\n"
+            ),
         )
 
     def test_each_dockerfile_stage_has_its_own_shell(self) -> None:
