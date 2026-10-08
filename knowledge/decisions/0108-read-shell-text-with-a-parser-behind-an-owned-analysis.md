@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Read shell text with a parser behind an owned analysis
-description: The reuse check's shell reader is rebuilt on tree-sitter-bash 0.25.1, with tree-sitter 0.25.2, behind a Gnostoa-owned ShellParser protocol and normalized analysis. It runs in one bounded worker process, gives a three-way GIT, NONE or UNKNOWN verdict, and fails closed on UNKNOWN unless an admitted exemption matches. It supersedes Decision 0105's tokenizer.
+description: The reuse check's shell reader is rebuilt on tree-sitter-bash 0.25.1, with tree-sitter 0.25.2, behind a Gnostoa-owned ShellParser protocol and normalized analysis. It runs in one bounded worker process, gives a three-way GIT, NONE or UNKNOWN verdict, and fails closed on UNKNOWN unless an admitted exemption matches. It supersedes the tokenizer of Decision 0105, which is pending in #369 and not yet on `main`.
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -37,7 +37,7 @@ x-project-knowledge:
 
 ## Context
 
-The reuse check (#369, Decision 0105) found Git commands in shell text with a
+The reuse check (#369, and its Decision 0105, pending there) found Git commands in shell text with a
 `shlex` tokenizer and hand-written handling of quotes, substitutions, groups and
 here-documents. Each of its eight rounds after round 39 brought three to nine new
 shell findings, and in rounds 46 and 47 about seven of twelve were defects the
@@ -114,12 +114,11 @@ Decision 0108").
 7. **The parser**: `tree-sitter-bash` 0.25.1, paired with `tree-sitter` 0.25.2 and pinned exactly. mvdan/sh 3.14.1 is recorded as the measured reference parser, used for differential checks when the corpus grows. It is not the runtime contract: its typed-JSON enum mapping broke between versions ([mvdan/sh#1321](https://github.com/mvdan/sh/issues/1321)).
 8. **Pins and smoke**:
    - Both packages are declared directly, with no `[core]` extra.
-   - The smoke test asserts:
+   - The dependency PR's smoke test asserts:
      - the exact versions and the language ABI;
-     - the whole frozen corpus parsing with no unexpected ERROR or MISSING node;
-     - every acceptance fixture;
-     - normalized output and source spans;
-     - Python 3.11 and 3.12, and the runtime image.
+     - every surface kind of the frozen corpus, in the current tree, parsing with no ERROR or MISSING node;
+     - the runtime image.
+   - #369's reader smoke asserts what needs the reader itself: every acceptance fixture, normalized output and source spans, and Python 3.11 and 3.12. The dependency PR's smoke has no normalized output to assert (cubic on #396).
    - The 0.26.0 reproducer is kept as evidence.
 9. **The worker boundary**: one bounded parser worker per reuse-check run.
    - The parent owns the contract.

@@ -47,6 +47,8 @@ ENV_LONG_FLAGS = {
 }
 ENV_LONG_ARGUMENT = {"unset", "chdir", "argv0"}
 ASSIGNMENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*=")
+# How many chained `env` invocations a shebang may make.
+ENV_CHAIN_LIMIT = 3
 # A name shaped like a shell, such as a version-suffixed `bash5`.
 SHELL_LIKE = re.compile(r"\A[a-z]*sh[\d.]*\Z")
 SHELLS = {"sh", "bash", "dash", "ash"}
@@ -172,6 +174,19 @@ def _gitlab_scripts(document: dict[str, object]) -> list[str]:
     return found
 
 
+def _github_shaped(document: object) -> bool:
+    """A GitHub workflow (`on` and `jobs`; YAML reads a bare `on` as true) or action
+    (`runs.using`). A GitLab job may itself be named `jobs` or `runs` (CodeAnt on
+    #396)."""
+    if not isinstance(document, dict):
+        return False
+    workflow = isinstance(document.get("jobs"), dict) and (
+        "on" in document or True in document
+    )
+    runs = document.get("runs")
+    return workflow or (isinstance(runs, dict) and "using" in runs)
+
+
 def _ci_shell(path: Path, under_github: bool) -> list[str]:
     """The shell of a CI definition, read by its shape wherever it sits: a GitHub
     workflow or action, or a GitLab CI file. A YAML file outside `.github` that
@@ -179,9 +194,7 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     if not under_github and not CI_KEY.search(path.read_text(encoding="utf-8-sig")):
         return []
     document = _load_yaml(path)
-    if under_github or (
-        isinstance(document, dict) and ("jobs" in document or "runs" in document)
-    ):
+    if under_github or _github_shaped(document):
         return _github_runs(path, document)
     if isinstance(document, dict) and (
         "stages" in document
@@ -206,11 +219,14 @@ def _shebang_command(head: bytes, name: str) -> str:
     nothing is guessed (Codex, Claude and CodeAnt on #394)."""
     try:
         words = shlex.split(head[2:].split(b"\n", 1)[0].decode("utf-8"))
-        if words and Path(words[0]).name == "env":
+        # A chained `env` is followed, to a bound (Claude on #396).
+        for _ in range(ENV_CHAIN_LIMIT):
+            if not words or Path(words[0]).name != "env":
+                break
             words = _env_operands(words[1:], name)
     except ValueError as exc:  # UnicodeDecodeError included
         raise _refuse(name, "an unreadable shebang") from exc
-    if not words:
+    if not words or Path(words[0]).name == "env":
         raise _refuse(name, "an unreadable shebang")
     return Path(words[0]).name
 
@@ -261,6 +277,20 @@ def _env_argument(rest: list[str], name: str) -> tuple[str, list[str]]:
     return rest[0], rest[1:]
 
 
+def _exec_form_shell(argv: list[str]) -> list[str]:
+    """An exec-form `RUN` of `sh`, `bash`, `dash` or `ash` still hands its `-c`
+    command to that shell; another shell fails closed (cubic on #396)."""
+    program = Path(argv[0]).name if argv else ""
+    if program in OTHER_SHELLS:
+        raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
+    if program not in SHELLS:
+        return []
+    for index, word in enumerate(argv[1:-1], start=1):
+        if word.startswith("-") and not word.startswith("--") and "c" in word[1:]:
+            return [argv[index + 1]]
+    return []
+
+
 def _exec_form(command: str) -> bool:
     """Whether a `RUN` is in exec form: a JSON list of strings. A shell command that
     starts with `[`, such as a test, is shell (CodeAnt on #394)."""
@@ -309,6 +339,7 @@ def _dockerfile_runs(text: str) -> list[str]:
                 command = command[:-1] + line
         command = RUN_FLAGS.sub("", command)
         if _exec_form(command):
+            runs.extend(_exec_form_shell(json.loads(command)))
             continue
         if "<<" in command:
             raise AssertionError("a RUN here-document; extend this extraction")
@@ -510,10 +541,21 @@ class SurfaceExtractionTests(unittest.TestCase):
         # Exec form is a JSON list of strings; a shell test is not (CodeAnt on #394).
         self.assertEqual(
             ["[ -f marker ] && git status"],
+            _dockerfile_runs('RUN ["python", "-V"]\nRUN [ -f marker ] && git status\n'),
+        )
+
+    def test_an_exec_form_shell_run_hands_its_command_to_the_shell(self) -> None:
+        """`RUN ["bash", "-c", "…"]` still asks bash to parse its command; another
+        shell in exec form fails closed (cubic on #396)."""
+        self.assertEqual(
+            ["git status"],
             _dockerfile_runs(
-                'RUN ["sh", "-c", "x"]\nRUN [ -f marker ] && git status\n'
+                'RUN ["/bin/bash", "-o", "pipefail", "-c", "git status"]\n'
             ),
         )
+        self.assertEqual([], _dockerfile_runs('RUN ["python", "-c", "print()"]\n'))
+        with self.assertRaisesRegex(AssertionError, "an exec-form `zsh` RUN"):
+            _dockerfile_runs('RUN ["zsh", "-c", "git status"]\n')
 
     def test_a_run_here_document_or_another_escape_fails_closed(self) -> None:
         with self.assertRaisesRegex(AssertionError, "here-document"):
@@ -610,12 +652,14 @@ class SurfaceExtractionTests(unittest.TestCase):
                 _shell_surfaces(_declared(root, unlisted=("scratch",))),
             )
             (root / "deep" / "er" / "tool").write_bytes(b"#!/bin/sh\n\xff\n")
+            declared = _declared(root, unlisted=("scratch",))
             with self.assertRaises(UnicodeDecodeError):
-                _shell_surfaces(_declared(root, unlisted=("scratch",)))
+                _shell_surfaces(declared)
             (root / "deep" / "er" / "tool").unlink()
             (root / "Makefile").write_text("all:\n\tgit status\n", "utf-8")
+            declared = _declared(root, unlisted=("scratch",))
             with self.assertRaisesRegex(AssertionError, "Makefile: a Make recipe"):
-                _shell_surfaces(_declared(root, unlisted=("scratch",)))
+                _shell_surfaces(declared)
 
     def test_a_probe_answer_that_is_not_json_is_reported(self) -> None:
         answer = SimpleNamespace(returncode=0, stdout="warn", stderr="")
@@ -661,11 +705,12 @@ class SurfaceExtractionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / name).write_text("FROM a\nRUN true\n", "utf-8")
+                declared = _declared(root)
                 with (
                     self.subTest(name=name),
                     self.assertRaisesRegex(AssertionError, "a container file"),
                 ):
-                    _shell_surfaces(_declared(root))
+                    _shell_surfaces(declared)
 
 
 class InterpreterAndCiShapeTests(unittest.TestCase):
@@ -683,7 +728,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "utf-8",
             )
             (root / "ci" / "github-actions.yml").write_text(
-                "jobs:\n  j:\n    steps:\n      - run: git log\n", "utf-8"
+                "on: push\njobs:\n  j:\n    steps:\n      - run: git log\n", "utf-8"
             )
             (root / "ci" / "policy.yml").write_text("checks:\n  - name: x\n", "utf-8")
             (root / "ci" / "flow.yml").write_text(
@@ -702,10 +747,11 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             (root / "ci" / "other.yml").write_text(
                 "pipeline:\n  steps:\n    - script: git status\n", "utf-8"
             )
+            declared = _declared(root)
             with self.assertRaisesRegex(
                 AssertionError, "other.yml: shell in an unknown"
             ):
-                _shell_surfaces(_declared(root))
+                _shell_surfaces(declared)
 
     def test_a_checkout_s_tracked_files_are_the_universe(self) -> None:
         """In a Git checkout the tracked files are read, wherever they sit, and an
@@ -726,6 +772,21 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             (root / "unlisted").write_text("#!/bin/sh\ngit d\n", "utf-8")
             (root / ".gnostoa-source-files").write_bytes(b"listed\0")
             self.assertEqual({"listed"}, set(_shell_surfaces(root)))
+
+    def test_a_gitlab_job_named_like_github_s_keys_stays_gitlab(self) -> None:
+        """A workflow has `on` and `jobs`, an action `runs.using`; a GitLab job may
+        be named `jobs` or `runs` (CodeAnt on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".gitlab-ci.yml").write_text(
+                "jobs:\n  script: git status\nruns:\n  script:\n    - git log\n",
+                "utf-8",
+            )
+            declared = _declared(root)
+            self.assertEqual(
+                {".gitlab-ci.yml#0": "git status", ".gitlab-ci.yml#1": "git log"},
+                _shell_surfaces(declared),
+            )
 
     def test_a_shebang_is_classified_by_its_interpreter(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -756,11 +817,12 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 b"#!/usr/bin/env -u\ngit u\n",
             ):
                 (root / "u").write_bytes(content)
+                declared = _declared(root)
                 with (
                     self.subTest(shebang=content),
                     self.assertRaisesRegex(AssertionError, "u: an unreadable shebang"),
                 ):
-                    _shell_surfaces(_declared(root))
+                    _shell_surfaces(declared)
             (root / "u").unlink()
             # An option's argument or an assignment is not the command (Codex,
             # Claude and CodeAnt on #394).
@@ -773,29 +835,47 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 with self.subTest(shebang=content):
                     self.assertNotIn("v", _shell_surfaces(_declared(root)))
             (root / "v").unlink()
+            # A chained env is followed to its command (Claude on #396).
+            for content in (
+                b"#!/usr/bin/env env bash\ngit k\n",
+                b'#!/usr/bin/env -S "env -i bash"\ngit k\n',
+            ):
+                (root / "k").write_bytes(content)
+                declared = _declared(root)
+                with self.subTest(shebang=content):
+                    self.assertIn("k", _shell_surfaces(declared))
+            (root / "k").write_bytes(b"#!/usr/bin/env env env env env bash\ngit k\n")
+            declared = _declared(root)
+            with self.assertRaisesRegex(AssertionError, "k: an unreadable shebang"):
+                _shell_surfaces(declared)
+            (root / "k").unlink()
             # A shell-like name that is no known shell fails closed (Claude on #394).
             (root / "q").write_bytes(b"#!/bin/bash5\ngit q\n")
+            declared = _declared(root)
             with self.assertRaisesRegex(
                 AssertionError, "q: an unrecognised shell `bash5`"
             ):
-                _shell_surfaces(_declared(root))
+                _shell_surfaces(declared)
             (root / "q").unlink()
             # An option env does not document fails closed.
             (root / "x").write_bytes(b"#!/usr/bin/env --frobnicate bash\ngit x\n")
+            declared = _declared(root)
             with self.assertRaisesRegex(AssertionError, "x: an unknown env option"):
-                _shell_surfaces(_declared(root))
+                _shell_surfaces(declared)
             (root / "x").unlink()
             # A shell script with a YAML name is read by its shebang (Codex on #394).
             (root / "tool.yml").write_bytes(b"#!/bin/sh\ngit y\n")
             self.assertIn("tool.yml", _shell_surfaces(_declared(root)))
             (root / "tool.yml").unlink()
             (root / "w").write_bytes(b"#!/usr/bin/env -u NAME zsh\ngit w\n")
+            declared = _declared(root)
             with self.assertRaisesRegex(AssertionError, "w: a `zsh` script"):
-                _shell_surfaces(_declared(root))
+                _shell_surfaces(declared)
             (root / "w").unlink()
             (root / "z").write_bytes(b"#!/usr/bin/env zsh\ngit z\n")
+            declared = _declared(root)
             with self.assertRaisesRegex(AssertionError, "z: a `zsh` script"):
-                _shell_surfaces(_declared(root))
+                _shell_surfaces(declared)
 
 
 RETAINED_SCRIPTS = [
@@ -855,6 +935,40 @@ class RetainedEvidenceTests(unittest.TestCase):
                     self.assertTrue(digest.startswith(declared[member.name]))
         # The prose holds no copy that could drift from the archive.
         self.assertNotIn("````text", text)
+
+    def test_the_archive_is_deterministic_and_matches_its_full_digests(self) -> None:
+        """The archive and each member match their full SHA-256 in the JSON
+        evidence, not a prefix (CodeAnt on #396), and the archive is as deterministic
+        as the assessment says: sorted members, no times or owners, mode 0644
+        (Claude on #396)."""
+        evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))
+        scripts = evidence["spike_scripts"]
+        self.assertEqual(
+            scripts["sha256"], hashlib.sha256(self.ARCHIVE.read_bytes()).hexdigest()
+        )
+        expected = {member["name"]: member["sha256"] for member in scripts["members"]}
+        with tarfile.open(self.ARCHIVE, "r:gz") as archive:
+            members = archive.getmembers()
+            self.assertEqual(sorted(expected), [member.name for member in members])
+            for member in members:
+                with self.subTest(script=member.name):
+                    self.assertEqual(
+                        (0, 0, 0, "", "", 0o644),
+                        (
+                            member.mtime,
+                            member.uid,
+                            member.gid,
+                            member.uname,
+                            member.gname,
+                            member.mode,
+                        ),
+                    )
+                    handle = archive.extractfile(member)
+                    if handle is None:
+                        self.fail(f"{member.name} has no content")
+                    self.assertEqual(
+                        expected[member.name], hashlib.sha256(handle.read()).hexdigest()
+                    )
 
     def test_the_oracle_is_retained_with_its_digest(self) -> None:
         evidence = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))

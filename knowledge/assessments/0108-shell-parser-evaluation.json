@@ -8,6 +8,21 @@
     {"name": "mvdan/sh", "version": "3.14.1", "runtime": "shfmt --to-json", "git_commands": 75, "scripts_with_parse_problems": 1, "dynamic_command_words": 7}
   ],
   "difference": "Only AGENTS.md differs: tree-sitter parses it partially and the policy takes `command -v git` for an execution (a policy false positive); mvdan/sh refuses it whole (UNKNOWN). Both agree on all 75 real Git executions.",
+  "spike_scripts": {"path": "0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz", "sha256": "f682e3bcc1fc12fc843f1bcaaa64905867d5f4782d9f038130d822f7800c3ea3", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "members": [
+    {"name": "audit_docs.py", "sha256": "87328a813624da41d43025cbd4748eeb066b29597e428db1bb93cadb1b75fc69", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "audit_oracle.py", "sha256": "94f5faf4f4aea242049a04d0b50e5ef07f25fdb2e773e299c9b5da478d42a608", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "corpus_scripts.py", "sha256": "b5601f954a15ed721095eab70cfd98d5e7e25cbc7beea4a925e59932a0c1b317", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "crash_doc.py", "sha256": "0d3c1f0b0c68454f17e6dd130fdb6b8dac51b64016d75e2fb2c0bc038827b8c2", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "diff_parsers.py", "sha256": "480dcaf0fa826d93b36fac13f9bc0c930e9183efe9ff93740e372c4bcb39006a", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "docs.py", "sha256": "1be5a431d9a94d79e83147383fe98cbaa02bd5f165e8decad811497942d397e4", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "evaluate314.py", "sha256": "ffb69eeae78604e31e6b3a6555db92f350d8b7fc86bad3487edf04193583e940", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "gate.py", "sha256": "167f850f7c9cb2974f04c48c3821c701e6572f8d7a2e51997233cc4139c7ed93", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "oracle.py", "sha256": "aae47ef9efc4942b23c6bd35a59ab19c6e612c6e8a1844a4402fdacc517b682b", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "parent.py", "sha256": "1d062b85079dd12278738d91479cee38f9bcaf5849b11c9dc4706b3f08cb44f4", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "spike.py", "sha256": "cf8b602985d031e74b3135710d5a0e76e65495c7b3a8c61b3e06035dfccb374f", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "stress_probe.py", "sha256": "a34ba9077284334f89e5b2913630e71a690ddf3a69bc2cfddda96ea31bdf9374", "annotation": "# pragma: allowlist secret -- public retained evidence digest"},
+    {"name": "worker.py", "sha256": "6487d0c626e07593bc37e7bd688adc80557e5f2a11a9d538f3f79de3c8dded27", "annotation": "# pragma: allowlist secret -- public retained evidence digest"}
+  ]},
   "oracle_git_commands_per_file": {".github/workflows/analyzer-readback.yml": 1, ".github/workflows/publish-current-advisory-restoration-runtime.yml": 5, ".github/workflows/publish-oci.yml": 6, ".github/workflows/publish-r2a-p2a-bootstrap-oci.yml": 5, ".github/workflows/publish-r2a-p2b-b1-oci.yml": 5, ".github/workflows/publish-r2a-p2b-b15-oci.yml": 5, ".github/workflows/publish-r2a-p2b-b16-oci.yml": 8, ".github/workflows/publish-r2a-p2b-oci.yml": 5, ".github/workflows/r2a-protected-current-advisory.yml": 1, ".github/workflows/verification.yml": 11, ".github/workflows/verify-r2a-current-advisory-restoration-runtime.yml": 4, "AGENTS.md": 1, "ci/build-runtime": 9, "ci/prepare-candidate": 1, "ci/style": 1, "ci/x3_conformance": 8},
   "oracle": {"sha256": "f285d9f5bc2b3a8172d41964941b803d49349ef709bf50febe2ef2da00611c13", "annotation": "# pragma: allowlist secret -- public retained evidence digest", "written_as": "json.dump(oracle, file, indent=0)", "entries": [
     {"path": ".github/workflows/analyzer-readback.yml", "argv": ["git", "rev-parse", "HEAD"]},

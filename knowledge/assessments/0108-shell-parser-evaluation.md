@@ -183,8 +183,10 @@ These scripts are evaluation tooling, not repository code. They are retained as
 native `.py` files, byte for byte as they ran, in
 [`0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz`](./0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz)
 (SHA-256 `f682e3bcc1fc12fc…`). The archive is deterministic: sorted members, no
-times or owners, mode `0644`. `tests/test_shell_parser_dependency.py` checks each
-member against the digest below, and the exact inventory.
+times or owners, mode `0644`. The JSON evidence holds the full SHA-256 of the archive
+and of each member (`spike_scripts`); the table below shows their first 16 digits.
+`tests/test_shell_parser_dependency.py` checks the archive and every member against
+the full digests, the determinism and the exact inventory.
 
 They are archived rather than committed as loose `.py` files for a reason.
 Repository-root Ruff covers every tracked Python file (Decision 0081), and these
