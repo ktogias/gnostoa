@@ -508,8 +508,12 @@ class MergeGateRecordTests(unittest.TestCase):
             """select(.state == "APPROVED") | .commit_id'""",
             merge,
         )
+        # The squash message is pinned to the subject and body the pre-merge check
+        # read, since either can be edited without moving the head (Codex on #400).
         self.assertIn(
-            "as_app pr merge <N> --squash --match-head-commit <approved>", merge
+            "as_app pr merge <N> --squash --match-head-commit <approved> "
+            "--subject <subject> --body-file <checked-body>",
+            merge,
         )
         # The comparison is a step, not a hope (CodeAnt on #400).
         self.assertIn(
@@ -655,6 +659,8 @@ class MergeGateRecordTests(unittest.TestCase):
         # (Codex on #400).
         flat_verify = " ".join(verify.split())
         self.assertNotIn("Try to merge an unapproved PR", flat_verify)
+        # No merge operation at all, whatever the prose (cubic on #400).
+        self.assertIsNone(re.search(r"pr merge|/merge\b|merge_method", flat_verify))
         for phrase in (
             "mergeStateStatus",
             "viewerCanMergeAsAdmin",
@@ -905,6 +911,55 @@ class MergeGateRecordTests(unittest.TestCase):
             "until Phase 1b",
             records[DECISION.name],
         )
+
+    def test_0110_specialises_the_neutral_contract_and_defers_phase_1b(self) -> None:
+        """The owner's bounded corrections (#400, 6061478624; #398, 6061470364):
+        Decision 0110 names its governing neutral contract and says it does not alter
+        it; the Phase-1a shell procedures are labelled temporary, with their
+        successors; and Phase 1b's reuse contract is recorded, deferred."""
+        import yaml
+
+        text = DECISION.read_text(encoding="utf-8")
+        front = yaml.safe_load(text.split("---", 2)[1])
+        relations = {
+            (r["kind"], r["target"]) for r in front["x-project-knowledge"]["relations"]
+        }
+        for relation in (
+            ("governed-by", "/decisions/0006-provider-neutral-change-governance.md"),
+            ("implements", "/requirements/reviewed-change-control.md"),
+            ("references", "/decisions/0014-strengthen-gnostoa-self-governance.md"),
+        ):
+            with self.subTest(relation=relation):
+                self.assertIn(relation, relations)
+        decision = " ".join(text.split())
+        self.assertIn(
+            "This Decision is a Gnostoa-self/GitHub specialization and does not alter "
+            "the provider-neutral public change-governance contract.",
+            decision,
+        )
+        for phrase in (
+            "Phase 1b is deferred",
+            "`tools/github_rest.py`",
+            "Decision 0086",
+            "`ci/review_github_current_state.py`",
+            "`tools/review_reconcile.py`",
+            "#389",
+            "#369",
+            "the provider-neutral merge-admission verdict",
+            "fails closed",
+            "#398 (6061470364, 6061573600)",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, decision)
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        for phrase in (
+            "Phase-1a operational procedures",
+            "not a permanent API, trusted-execution, observation or gate engine",
+            "#369, which is not yet integrated",
+            "Phase 1b's canonical adapter",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, runbook)
 
     def test_every_decision_cited_exists(self) -> None:
         """A Decision is cited by number only when it is in the repository; #384's

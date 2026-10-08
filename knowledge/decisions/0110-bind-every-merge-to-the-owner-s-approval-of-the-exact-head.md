@@ -28,6 +28,12 @@ x-project-knowledge:
   relations:
     - kind: references
       target: /runbooks/operate-the-merge-gate.md
+    - kind: governed-by
+      target: /decisions/0006-provider-neutral-change-governance.md
+    - kind: implements
+      target: /requirements/reviewed-change-control.md
+    - kind: references
+      target: /decisions/0014-strengthen-gnostoa-self-governance.md
 ---
 
 # Bind every merge to the owner's approval of the exact head
@@ -53,6 +59,13 @@ causes:
 - **MA0 itself was never shipped**, displaced by feature work.
 
 ## Decision
+
+This Decision is a Gnostoa-self/GitHub specialization and does not alter the
+provider-neutral public change-governance contract. It specializes
+[Decision 0006](0006-provider-neutral-change-governance.md) and
+[reviewed change control](../requirements/reviewed-change-control.md) for Gnostoa
+itself on GitHub, and extends
+[Decision 0014](0014-strengthen-gnostoa-self-governance.md)'s stricter self-policy.
 
 1. **The agent's identities.**
    - The App `gnostoa-agent` has no admin. It pushes branches, resolves threads, runs
@@ -108,6 +121,24 @@ causes:
   requires a new approval. A push that leaves the diff unchanged may keep it, so the
   merge procedure compares the approval's `commit_id` with the head.
 - **The classic protection stays until Phase 1b.** Break glass cannot bypass it.
+
+## Successor: Phase 1b
+
+Phase 1b is deferred: it needs its own admission, Decision and falsifiers, and this
+Decision implements none of it. Its reuse contract follows the owner's lineage
+disposition on #398 (6061470364, 6061573600). Phase 1b consumes, rather than
+duplicates:
+- `tools/github_rest.py`, for GitHub REST calls;
+- Decision 0086's current-state observation and reconciliation,
+  `ci/review_github_current_state.py` and `tools/review_reconcile.py`, for the exact
+  head, the reviews and the threads;
+- #389's assurance-completeness receipts, once they are effective;
+- #369's trusted-execution owner, once it is integrated.
+
+The only new shared responsibility is the provider-neutral merge-admission verdict,
+in the generic core, with the GitHub mapping at the adapter boundary. Where an owner
+or a receipt is not yet available, the verdict fails closed rather than
+reimplementing it.
 
 ## What this supersedes or revises
 

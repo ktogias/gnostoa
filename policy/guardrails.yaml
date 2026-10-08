@@ -412,6 +412,7 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_phase_1a_states_what_it_does_not_enforce
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_zero_approval_decisions_are_marked_revised
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_no_record_claims_the_platform_binds_the_exact_head
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_0110_specialises_the_neutral_contract_and_defers_phase_1b
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_every_decision_cited_exists
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_decision_and_runbook_link_each_other_and_are_indexed
 

@@ -213,6 +213,14 @@ The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `rm`
 `/bin/sh`. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
 the list of reviews outside the guarded body, so it never holds a token.
 
+**Temporary debt.** `as_app`, `as_machine_user`, break glass's isolated shell and the
+`gh api`/`jq` steps below are Phase-1a operational procedures, not a permanent API,
+trusted-execution, observation or gate engine. They are consumed or replaced when
+their owners land: trusted execution by #369, which is not yet integrated, and the
+GitHub calls, observations and merge admission by Phase 1b's canonical adapter
+(Decision 0110, "Successor: Phase 1b"). Until then, their safety invariants hold as
+written here.
+
 **Rules on the host:**
 - A token is never printed, logged or passed on a command line. It is captured into
   `GH_TOKEN` inside one of the functions below, for one `gh` command, and never with xtrace (`set -x`) on, nor in a recorded
@@ -331,9 +339,12 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```sh
    as_app api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate --slurp \
      | jq -r '[.[][] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
-   as_app pr merge <N> --squash --match-head-commit <approved>
+   as_app pr merge <N> --squash --match-head-commit <approved> --subject <subject> --body-file <checked-body>
    ```
-   Between the two, the App reads the PR's head,
+   `<subject>` and `<checked-body>` are the PR's title and body as the pre-merge check
+   read them, with no closing keyword. Passing them pins the squash message, since
+   either can be edited without moving the head. Between the two commands, the App
+   reads the PR's head,
    `as_app pr view <N> --json headRefOid --jq .headRefOid`.
    Stop unless `<approved>`, the PR's head and the seal are one SHA. No provider gate
    yet checks the approval's `commit_id` against the merged head: the platform keeps
