@@ -55,12 +55,20 @@ SHELLS = {"sh", "bash", "dash", "ash"}
 OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
 # Anywhere in the text, so a flow-style mapping is found too (CodeAnt on #394).
-CI_KEY = re.compile(r"(?<![\w-])(?:run|script|before_script|after_script)\s*:")
+CI_KEY = re.compile(
+    r"(?<![\w-])[\"']?(?:run|script|before_script|after_script)[\"']?\s*:"
+)
 GITLAB_KEYS = ("before_script", "script", "after_script")
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
 INSTRUCTION_FILES = {"AGENTS.md"}
-FENCE = re.compile(r"^```(?:bash|sh|shell)[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
+# A CommonMark shell fence: up to three spaces of indent, three or more backticks or
+# tildes, closed by the same (CodeAnt on #396).
+FENCE = re.compile(
+    r"^ {0,3}(?P<fence>`{3,}|~{3,})(?:bash|sh|shell)[ \t]*\n(?P<body>.*?)"
+    r"^ {0,3}(?P=fence)[`~]*[ \t]*$",
+    re.M | re.S,
+)
 # A documentation placeholder, such as `<exact-40-character-parent-sha>`: not shell.
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 RUN = re.compile(r"[ \t]*(?:RUN|SHELL)[ \t]+(.*)", re.I)
@@ -159,27 +167,41 @@ def _github_runs(path: Path, document: object) -> list[str]:
                         f"{path}: a `{node['shell']}` step; extend this extraction"
                     )
                 found.append(EXPRESSION.sub(_masked_expression, node["run"]))
-            stack.extend((value, above) for key, value in node.items() if key != "run")
+            # Reversed onto the stack, so that runs are numbered in source order
+            # (CodeAnt on #396).
+            stack.extend(
+                reversed(
+                    [(value, above) for key, value in node.items() if key != "run"]
+                )
+            )
         elif isinstance(node, list):
-            stack.extend((item, above) for item in node)
+            stack.extend((item, above) for item in reversed(node))
     return found
 
 
 def _gitlab_scripts(document: dict[str, object]) -> list[str]:
     """Each GitLab CI job's (and `default`'s) `before_script`, `script` and
-    `after_script`, in document order. A list is the lines the runner's shell runs
-    in turn."""
+    `after_script`, and the deprecated top-level ones, in document order. A list is
+    the lines the runner's shell runs in turn."""
     found: list[str] = []
-    for job in document.values():
-        if not isinstance(job, dict):
-            continue
-        for key in GITLAB_KEYS:
-            value = job.get(key)
-            if isinstance(value, str):
-                found.append(value)
-            elif isinstance(value, list):
-                found.append("\n".join(_script_lines(value)))
+    for key, value in document.items():
+        if key in GITLAB_KEYS:
+            # A deprecated but valid global lifecycle script (Codex on #396).
+            found.extend(_script_value(value))
+        elif isinstance(value, dict):
+            for name in GITLAB_KEYS:
+                found.extend(_script_value(value.get(name)))
     return found
+
+
+def _script_value(value: object) -> list[str]:
+    """A `before_script`, `script` or `after_script` value as shell: a string, or a
+    list of lines."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return ["\n".join(_script_lines(value))]
+    return []
 
 
 def _script_lines(value: list[object]) -> list[str]:
@@ -420,7 +442,8 @@ def _surfaces_of(path: Path, name: str) -> dict[str, str]:
     if path.suffix in (".yml", ".yaml"):
         return _numbered(name, _ci_shell(path, name.startswith(".github/")))
     if path.name in INSTRUCTION_FILES:
-        fences = FENCE.findall(path.read_text(encoding="utf-8-sig"))
+        text = path.read_text(encoding="utf-8-sig")
+        fences = [match.group("body") for match in FENCE.finditer(text)]
         return _numbered(name, [PLACEHOLDER.sub(_masked, fence) for fence in fences])
     if CONTAINER_FILE.match(path.name) and path.name != "Dockerfile":
         raise _refuse(name, "a container file")
@@ -822,6 +845,53 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(AssertionError, "not YAML.*!reference"):
                 _ci_shell(path, under_github=False)
+
+    def test_ci_scripts_are_found_in_every_valid_form_and_source_order(self) -> None:
+        """Top-level GitLab lifecycle scripts (Codex on #396), quoted keys, and
+        steps numbered in source order (CodeAnt on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ci").mkdir()
+            (root / ".gitlab-ci.yml").write_text(
+                "before_script: [git a]\nafter_script: git z\njob:\n  script: [git b]\n",
+                "utf-8",
+            )
+            (root / "ci" / "quoted.yml").write_text(
+                '{"stages": ["t"], "job": {"stage": "t", "script": "git c"}}\n', "utf-8"
+            )
+            (root / "ci" / "order.yml").write_text(
+                "on: push\njobs:\n  one:\n    steps:\n      - run: git first\n"
+                "      - run: git second\n  two:\n    steps:\n      - run: git third\n",
+                "utf-8",
+            )
+            declared = _declared(root)
+            self.assertEqual(
+                {
+                    ".gitlab-ci.yml#0": "git a",
+                    ".gitlab-ci.yml#1": "git z",
+                    ".gitlab-ci.yml#2": "git b",
+                    "ci/quoted.yml#0": "git c",
+                    "ci/order.yml#0": "git first",
+                    "ci/order.yml#1": "git second",
+                    "ci/order.yml#2": "git third",
+                },
+                _shell_surfaces(declared),
+            )
+
+    def test_every_commonmark_shell_fence_form_is_read(self) -> None:
+        """Up to three spaces of indent, and four backticks or tildes (CodeAnt on
+        #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "AGENTS.md").write_text(
+                "  ```bash\ngit d\n  ```\n\n````sh\ngit e\n````\n\n~~~shell\ngit f\n~~~\n",
+                "utf-8",
+            )
+            declared = _declared(root)
+            self.assertEqual(
+                ["git d\n", "git e\n", "git f\n"],
+                list(_shell_surfaces(declared).values()),
+            )
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
