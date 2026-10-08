@@ -49,7 +49,7 @@ causes:
   platform at merge time.
 - **Fail-open signal semantics.**
 - **Approvals were not bound to the exact head.**
-- **The bypass had become the merge path** (#384's proposal).
+- **The admin bypass had become the merge path in practice,** and #384 proposed making it the rule; that proposal was never merged.
 - **MA0 itself was never shipped**, displaced by feature work.
 
 ## Decision

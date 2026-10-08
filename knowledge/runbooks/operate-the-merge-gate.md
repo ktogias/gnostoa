@@ -231,8 +231,17 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    - Each finding gets its own reply: fixed with its commit, or declined with
      evidence. Only the threads replied to are resolved.
    - Every fix is a new head, so a new seal and new review requests follow.
-   - The pre-merge check (`premerge-check.sh`) and the exact-head analyzer readback
-     must both be clean: `BOUND`, every analyzer `COMPLETE`, 0 findings.
+   - The pre-merge check and the exact-head analyzer readback must both be clean:
+     `BOUND`, every analyzer `COMPLETE`, 0 findings.
+   - The pre-merge check is `premerge-check.sh`, a script in the agent's session
+     workspace, not yet versioned; versioning it with the host's helpers is #398's
+     follow-up. Until then, an agent without it checks the same, on the exact head:
+     - the seal names the exact head;
+     - every required check succeeded, by its latest run;
+     - every other check run and status is green, and a green one carries no
+       annotation or analyzer finding;
+     - every review thread is resolved, read through every page;
+     - no closing keyword is in what the squash merge will carry.
 6. **The convergence report.** The App posts it on the PR. It covers:
    - the seal;
    - the required checks;
@@ -287,13 +296,16 @@ protection exists. The last resort is then the owner, as admin:
 **How.** Only the owner does it, and no agent ever holds the key:
 1. Bring the offline key of `gnostoa-break-glass` (App ID 5230732) to a trusted
    machine.
-2. Have a minting script there: a copy of the agent host's token helper with the
-   break-glass App's ID and key path, here `break-glass-token.sh`. It prints a
-   one-hour installation token, for capture only.
-3. Merge the exact head, capturing the token for this one command. The command line
-   and the shell's history then hold `$(...)`, never the token:
+2. Have a minting script there, at an absolute path, here
+   `~/break-glass/break-glass-token.sh`: a copy of the agent host's token helper with
+   the break-glass App's ID and key path. It prints a one-hour installation token,
+   for capture only.
+3. Merge the exact head, capturing the token for this one command. Run the script by
+   its absolute path, never a relative one, so that no same-named script in the
+   current directory runs while the key is present. The command line and the
+   shell's history then hold `$(...)`, never the token:
    ```sh
-   GH_TOKEN=$(./break-glass-token.sh) gh api -X PUT \
+   GH_TOKEN=$(~/break-glass/break-glass-token.sh) gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
    ```
 4. Remove the key from the machine.
@@ -340,7 +352,7 @@ the gate:
 | Event | Action |
 |---|---|
 | The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
-| The agent host may be compromised | Revoke `gnostoa-agent`'s private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. |
+| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host, and unsuspend the installation only after reading it back. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
 | The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, generate a new one offline, read the installation back, and only then unsuspend it. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |

@@ -107,7 +107,27 @@ class MergeGateRecordTests(unittest.TestCase):
         command or its history; each helper and the token file are named by their
         full path (cubic, Sourcery and CodeAnt on #400)."""
         text = RUNBOOK.read_text(encoding="utf-8")
-        self.assertEqual({"$("}, set(re.findall(r"GH_TOKEN=(\S{0,2})", text)))
+        # Each token comes from a known minting command, run by its absolute path
+        # (cubic and CodeAnt on #400).
+        minted = {
+            "$(~/.config/gnostoa-agent/bin/agent-token.sh)",
+            "$(cat ~/.config/gnostoa-agent/machine-user-token)",
+            "$(~/break-glass/break-glass-token.sh)",
+        }
+        assigned = re.findall(r"GH_TOKEN=(\$\([^)]*\)|\S*)", text)
+        self.assertTrue(assigned)
+        for value in assigned:
+            with self.subTest(assignment=value):
+                self.assertIn(value.rstrip("`"), minted)
+        for literal in (
+            r"--token\b",
+            r"[Aa]uthorization:",
+            r"x-access-token:",
+            r"\bgh[opsur]_[A-Za-z0-9]{8,}",
+            r"github_pat_",
+        ):
+            with self.subTest(literal=literal):
+                self.assertIsNone(re.search(literal, text))
         for name in (
             "bin/agent-token.sh",
             "bin/agent-git.sh",
@@ -134,7 +154,24 @@ class MergeGateRecordTests(unittest.TestCase):
         for phrase in (
             "the emergency follow-up Work Item and Decision",
             "Suspend the installation of `gnostoa-break-glass`",
+            "Suspend the installation of `gnostoa-agent`",
             "Restore the protection",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, runbook)
+
+    def test_the_pre_merge_check_is_named_with_what_it_checks(self) -> None:
+        """The convergence step names the pre-merge check, where it lives, and what
+        it checks, so a fresh environment can perform it (Codex on #400)."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        for phrase in (
+            "`premerge-check.sh`",
+            "not yet versioned",
+            "the seal names the exact head",
+            "every required check",
+            "every other check run and status",
+            "every review thread",
+            "no closing keyword",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, runbook)
