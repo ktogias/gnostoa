@@ -577,6 +577,9 @@ class MergeGateRecordTests(unittest.TestCase):
         ]
         self.assertIn(command, blocks)
         self.assertIn("never exists in the interactive shell", procedure)
+        # The minting script is never copied from the agent host, which may be the
+        # compromised one (CodeAnt on #400).
+        self.assertIn("never copied from the agent host", procedure)
         # Where `<head>` comes from (Claude on #400).
         self.assertIn("`<head>` is the head the owner has just reviewed", procedure)
         # The last resort removes one broken check, which the read-back before the
@@ -697,7 +700,7 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertEqual(
             2,
             recovery.count(
-                "audit every merge into `main` since its last trusted identity"
+                "audit every merge into `main` since the earliest suspected exposure"
             ),
         )
         # For each merge, the approval, the recorded head and the integrated tree, since
@@ -705,21 +708,24 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertEqual(
             2,
             " ".join(recovery.split()).count(
-                "compare the owner's approval `commit_id`, the PR's recorded head and "
-                "the integrated tree, as the normal merge's step 9 does"
+                "its `commit_id` the PR's recorded head, and the integrated tree that "
+                "head's, as the normal merge's steps 8 and 9 require"
             ),
         )
-        # An anchor no agent identity can write: the owner's own review, not a Work
-        # Item record that a compromised identity could edit (Codex on #400).
+        # No "last good merge" anchor, which a compromise can postdate (Codex on
+        # #400): the audit starts at the earliest suspected exposure, else at the
+        # credential's creation, which GitHub records; each merge needs the owner's
+        # latest review on it to approve its exact head, since an older approval can
+        # stand beside a later request for changes (cubic on #400).
         flat = " ".join(recovery.split())
-        self.assertEqual(
-            2,
-            flat.count(
-                "the last merge whose PR carries the owner's own approving review of "
-                "its exact head"
-            ),
-        )
-        self.assertNotIn("the last merge recorded on a Work Item", flat)
+        for phrase in (
+            "since the earliest suspected exposure",
+            "since the compromised credential was created, which its settings record",
+            "the owner's latest review on that PR must be `APPROVED`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(2, flat.count(phrase))
+        self.assertNotIn("last trusted identity", flat)
         self.assertIn("a collaborator on this repository alone", runbook)
         self.assertIn("account-wide", runbook)
         decision = " ".join(DECISION.read_text(encoding="utf-8").split())
