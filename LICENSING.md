@@ -32,6 +32,11 @@ grant permission to use the Gnostoa name, logos or other marks except for
 reasonable and customary description of origin. Open-source licensing and
 trademark policy are separate concerns.
 
+The Gnostoa logo files in `docs/assets/brand/` state otherwise: they are not
+licensed under Apache-2.0, and their own notice,
+[`docs/assets/brand/NOTICE`](docs/assets/brand/NOTICE), gives their terms and
+provenance.
+
 Contributions intentionally submitted for inclusion are licensed under
 Apache-2.0 under Section 5 unless the contributor explicitly states otherwise
 or a separate agreement applies. Contributors must have authority to submit
