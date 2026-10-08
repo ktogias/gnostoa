@@ -224,6 +224,7 @@ RUN = re.compile(
     r"[ \t]+(?P<command>.*)",
     re.I,
 )
+CONTINUATION = re.compile(r"\\[ \t]*\Z")
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
 CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
@@ -1007,11 +1008,13 @@ def _dockerfile_runs(text: str) -> list[str]:
             # after it (Codex on #396).
             state.set_shell("sh", deferred=deferred)
             continue
-        while command.endswith("\\") and index < len(lines):
+        # BuildKit continues past spaces or tabs after the escape character, and
+        # skips empty and comment lines inside a continuation (Codex on #396).
+        while (end := CONTINUATION.search(command)) and index < len(lines):
             line = lines[index]
             index += 1
-            if not line.lstrip().startswith("#"):
-                command = command[:-1] + line
+            if line.strip() and not line.lstrip().startswith("#"):
+                command = command[: end.start()] + line
         runs.extend(
             _instruction_runs(match["instruction"].upper(), command, deferred, state)
         )
@@ -1470,6 +1473,18 @@ class ShellParserDependencyTests(unittest.TestCase):
         masked at its own width first (Codex, Kody and CodeAnt on #394)."""
         surfaces = _shell_surfaces()
         self.assertGreater(len(surfaces), 50)
+        # Each file of the frozen corpus that is still tracked still yields a
+        # surface, so an extraction that drops one fails here (CodeAnt on #396).
+        evidence = json.loads(
+            (
+                ROOT / "knowledge/assessments/0108-shell-parser-evaluation.json"
+            ).read_text(encoding="utf-8")
+        )
+        found = {name.split("#", 1)[0] for name in surfaces}
+        for path in sorted({script["path"] for script in evidence["scripts"]}):
+            if (ROOT / path).is_file():
+                with self.subTest(corpus_file=path):
+                    self.assertIn(path, found)
         for kind in (
             ".github/workflows/verification.yml#",
             ".gitlab-ci.yml#",
@@ -2488,6 +2503,19 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             _dockerfile_runs('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n'),
         )
 
+    def test_a_continuation_follows_buildkit_s_rule(self) -> None:
+        """BuildKit continues a line whose escape character is followed only by
+        spaces or tabs, and skips empty and comment lines inside it; measured with
+        a BuildKit build (Codex on #396)."""
+        self.assertEqual(
+            ["git a     && git b", "git c     && git d", "git e     && git f"],
+            _dockerfile_runs(
+                "FROM alpine\nRUN git a \\   \n    && git b\n"
+                "RUN git c \\\n\n    && git d\n"
+                "RUN git e \\\n# a comment\n    && git f\n"
+            ),
+        )
+
     def test_an_exec_form_entrypoint_takes_its_cmd(self) -> None:
         """An exec-form `ENTRYPOINT` takes an exec-form `CMD` as its arguments, so
         the stage's process is read whole, as Docker runs it (Codex on #396). A
@@ -2678,6 +2706,18 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(2, malformed.returncode)
         self.assertIn("a JSON list of strings", malformed.stderr)
         self.assertNotIn("Traceback", malformed.stderr)
+        # JSON nested past the decoder's recursion limit too (cubic on #396).
+        nested = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, str(PROBE)],
+            input="[" * 100_000,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(2, nested.returncode)
+        self.assertIn("a JSON list of strings", nested.stderr)
+        self.assertNotIn("Traceback", nested.stderr)
         with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
         # The child bounds its own read too, at the same limit, whoever writes to it
@@ -2848,7 +2888,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 (root / "o").write_bytes(f"#!/usr/bin/{shell}\ngit o\n".encode())
                 declared = _declared(root)
                 with (
-                    self.subTest(shell=shell),
+                    self.subTest(interpreter=shell),
                     self.assertRaisesRegex(AssertionError, f"o: a `{shell}` script"),
                 ):
                     _shell_surfaces(declared)

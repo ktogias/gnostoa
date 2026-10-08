@@ -50,7 +50,9 @@ def main() -> int:
         return 2
     try:
         scripts = json.loads(payload)
-    except json.JSONDecodeError:
+    # JSON nested past the decoder's recursion limit raises `RecursionError`, which
+    # is refused the same way (cubic on #396).
+    except (json.JSONDecodeError, RecursionError):
         scripts = None
     if not isinstance(scripts, list) or not all(isinstance(s, str) for s in scripts):
         sys.stderr.write("the probe expects a JSON list of strings\n")

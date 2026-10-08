@@ -55,8 +55,8 @@ x-project-knowledge:
 
 The surfaces are each workflow and action `run:` value, extracted through YAML so
 that its block indentation is removed. Every other shell surface is taken whole: the
-reader's lines for scripts, `AGENTS.md` fences, Make recipes and Dockerfile `RUN`
-instructions.
+reader's lines for scripts, `AGENTS.md` fences and Dockerfile `RUN` instructions. The
+subject has no Makefile, so no Make recipe was measured, and the smoke refuses one.
 
 - Each `${{ … }}` is masked by underscores of the same width.
 - That gives 127 scripts from 27 files.
