@@ -224,7 +224,9 @@ RUN = re.compile(
     r"[ \t]+(?P<command>.*)",
     re.I,
 )
-CONTINUATION = re.compile(r"\\[ \t]*\Z")
+# A lone escape character: one that is itself escaped ends the line instead, as a
+# BuildKit build measured (Claude on #396).
+CONTINUATION = re.compile(r"(?<!\\)\\[ \t]*\Z")
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
 CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
@@ -901,10 +903,17 @@ def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     if program not in SHELLS:
         return []
     inline, words = _shell_options(argv[1:])
-    if not inline:
-        return []
     if words[:1] == ["-"]:
         words = words[1:]
+    if not inline:
+        # The first word after the options is a script in the image, which this
+        # reader cannot map back to the repository (Codex on #396); none means the
+        # shell reads standard input.
+        if words:
+            raise AssertionError(
+                "an exec-form shell running a script; extend this extraction"
+            )
+        return []
     if not words and open_ended:
         return []
     if not words:
@@ -1977,9 +1986,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
     ) -> None:
         """With `-c` among the options, the command is the first word after them;
         `-o` and `-O` take a word, and so do `--rcfile` and `--init-file`. After a
-        script's path, `-c` is the script's (CodeAnt on #396)."""
+        script's path, `-c` is the script's (CodeAnt on #396). A script operand is
+        a file in the image, which this reader cannot map back to the repository, so
+        it fails closed (Codex on #396); `-` reads standard input instead."""
         for argv, expected in (
-            (["bash", "script.sh", "-c", "git a"], []),
             (["bash", "-c", "-e", "git b"], ["git b"]),
             (["bash", "-eo", "pipefail", "-c", "git c"], ["git c"]),
             (["bash", "--rcfile", "f", "-c", "git d"], ["git d"]),
@@ -1992,6 +2002,11 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         for argv, reason in (
             (["bash", "--unknown", "-c", "x"], "an unknown shell option `--unknown`"),
             (["bash", "-c"], "a `-c` without its command"),
+            (
+                ["bash", "script.sh", "-c", "git a"],
+                "an exec-form shell running a script",
+            ),
+            (["sh", "scripts/check.sh"], "an exec-form shell running a script"),
             (["bash", "-o"], "a shell option without its word"),
             (["bash", "+c", "x"], "an unknown shell option `\\+c`"),
         ):
@@ -2503,6 +2518,30 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             _dockerfile_runs('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n'),
         )
 
+    def test_no_build_overrides_a_from_argument(self) -> None:
+        """A `FROM` that names a global `ARG` is read with its default, so no
+        repository build may override that `ARG`: a caller's own `--build-arg` is
+        outside the repository, the assumption this reader declares (Codex on
+        #396)."""
+        files = _files(ROOT)
+        names: set[str] = set()
+        for path in files:
+            if CONTAINER_FILE.match(path.name):
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if (stage := FROM_LINE.fullmatch(line)) is not None:
+                        names |= set(re.findall(r"\$\{?(\w+)", stage["image"]))
+        self.assertEqual({"PYTHON_BASE_IMAGE"}, names)
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for name in names:
+                with self.subTest(path=str(path.relative_to(ROOT)), name=name):
+                    self.assertIsNone(
+                        re.search(rf"--build-arg[ =]+[\"']?{name}=", text)
+                    )
+
     def test_a_continuation_follows_buildkit_s_rule(self) -> None:
         """BuildKit continues a line whose escape character is followed only by
         spaces or tabs, and skips empty and comment lines inside it; measured with
@@ -2515,6 +2554,16 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "RUN git e \\\n# a comment\n    && git f\n"
             ),
         )
+        # Only a lone escape character continues: two or three end the line, as a
+        # BuildKit build measured (Claude on #396).
+        for escapes in (2, 3):
+            with self.subTest(escapes=escapes):
+                self.assertEqual(
+                    ["git a" + "\\" * escapes],
+                    _dockerfile_runs(
+                        "FROM alpine\nRUN git a" + "\\" * escapes + "\n    && git b\n"
+                    ),
+                )
 
     def test_an_exec_form_entrypoint_takes_its_cmd(self) -> None:
         """An exec-form `ENTRYPOINT` takes an exec-form `CMD` as its arguments, so
