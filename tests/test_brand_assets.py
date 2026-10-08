@@ -47,15 +47,20 @@ class BrandAssetTests(unittest.TestCase):
             "Do not modify them, combine them with another mark, or use them in a way "
             "that suggests endorsement or affiliation.",
             "This notice is not a claim that Gnostoa is a registered trademark.",
-            "generated with an AI image tool under the owner's direction",
+            "generated with an AI image tool under the owner's direction, then "
+            "chosen and approved by the owner.",
+            # Apache-2.0 covers what LICENSING.md says it covers, which leaves
+            # third-party material under its own licenses (Codex on #399).
+            "which covers the project's other material as LICENSING.md, at the "
+            "repository root, describes.",
         ):
             with self.subTest(term=term):
                 self.assertIn(term, prose)
-        # Each file's full digest, compared exactly (Sourcery and cubic on #399).
-        declared = dict(
-            re.findall(r"^([\w.-]+)\n  SHA-256 ([0-9a-f]{64})$", notice, re.M)
-        )
-        self.assertEqual(LOGOS, declared)
+        self.assertNotIn("the repository's other material", prose)
+        # Each file's full digest, compared exactly (Sourcery and cubic on #399),
+        # as a list, so a repeated entry cannot hide (CodeAnt on #399).
+        declared = re.findall(r"^([\w.-]+)\n  SHA-256 ([0-9a-f]{64})$", notice, re.M)
+        self.assertEqual(sorted(LOGOS.items()), sorted(declared))
 
     def test_licensing_points_to_the_notice(self) -> None:
         licensing = (ROOT / "LICENSING.md").read_text(encoding="utf-8")
