@@ -58,7 +58,7 @@ def _isolated(mint: str, tail: str) -> str:
         'HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" '
         '/bin/sh -c \' cleanup() { unset GH_TOKEN; rm -rf -- "$created"; } '
         'trap "exit 130" INT trap "exit 143" TERM trap "exit 129" HUP '
-        "cd / || exit created=$(mktemp -d) || exit trap cleanup EXIT "
+        "created=$(mktemp -d) || exit trap cleanup EXIT "
         "GH_CONFIG_DIR=$created && export GH_CONFIG_DIR "
         f'&& GH_TOKEN={mint} && test -n "$GH_TOKEN" && export GH_TOKEN && gh {tail}'
     )
@@ -167,11 +167,12 @@ class MergeGateRecordTests(unittest.TestCase):
         full path (cubic, Sourcery and CodeAnt on #400)."""
         text = RUNBOOK.read_text(encoding="utf-8")
         # Each token comes from a known minting command, run by its absolute path
-        # (cubic and CodeAnt on #400).
+        # (cubic and CodeAnt on #400); each minting script runs in `/`, never in a
+        # candidate checkout (Codex on #400).
         minted = {
-            "$(~/.config/gnostoa-agent/bin/agent-token.sh)",
+            "$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh)",
             "$(cat ~/.config/gnostoa-agent/machine-user-token)",
-            "$(~/break-glass/break-glass-token.sh)",
+            "$(cd / && ~/break-glass/break-glass-token.sh)",
         }
         assigned = re.findall(r"GH_TOKEN=(\$\([^)]*\)|\S*)", text)
         self.assertTrue(assigned)
@@ -215,7 +216,8 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn(
             "as_app() { "
             + _isolated(
-                "$(~/.config/gnostoa-agent/bin/agent-token.sh)", '"$@" \' as_app "$@" }'
+                "$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh)",
+                '"$@" \' as_app "$@" }',
             )
             + " as_machine_user() { "
             + _isolated(
@@ -259,7 +261,8 @@ class MergeGateRecordTests(unittest.TestCase):
         # #400).
         flat = " ".join(text.split())
         for phrase in (
-            "It then changes to `/`, so no helper runs in a candidate checkout",
+            "The mint runs in `/`, in a subshell of its own, so no helper runs in a candidate checkout",
+            "`gh` itself runs in the caller's directory, the isolated clone, from which it infers the repository",
             "reads the token from the response with `python3 -I`, which imports nothing from the working directory",
         ):
             with self.subTest(phrase=phrase):
@@ -307,7 +310,7 @@ class MergeGateRecordTests(unittest.TestCase):
                         # A candidate checkout as the caller's working directory, with
                         # a module `python3` would import from it (Codex on #400).
                         checkout = root / "checkout"
-                        checkout.mkdir()
+                        (checkout / ".git").mkdir(parents=True)
                         (checkout / "json.py").write_text(
                             "raise SystemExit('planted')\n", encoding="utf-8"
                         )
@@ -320,6 +323,7 @@ class MergeGateRecordTests(unittest.TestCase):
                         gh.write_text(
                             '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
                             'pwd > "$HOME/gh-cwd"\n'
+                            '[ -d .git ] || { echo "not a git repository" >&2; exit 1; }\n'
                             "printf '%s %s|%s|%s\\n' \"${GH_TOKEN:+token}\" "
                             '"${GH_HOST-}" "${GH_REPO-}" "${GH_DEBUG-}" > "$HOME/seen"\n',
                             encoding="utf-8",
@@ -358,11 +362,16 @@ class MergeGateRecordTests(unittest.TestCase):
                             self.assertEqual(
                                 "token ||", seen.read_text(encoding="utf-8").strip()
                             )
-                        # The mint and `gh` run in `/`, never in the checkout.
-                        for ran in ("mint-cwd", "gh-cwd"):
+                        # The mint runs in `/`, never in the checkout; `gh` runs in the
+                        # caller's checkout, from which it infers the repository
+                        # (Codex and cubic on #400).
+                        for ran, where in (
+                            ("mint-cwd", "/"),
+                            ("gh-cwd", str(checkout)),
+                        ):
                             if (root / ran).exists():
                                 self.assertEqual(
-                                    "/",
+                                    where,
                                     (root / ran).read_text(encoding="utf-8").strip(),
                                 )
                         self.assertEqual(
@@ -405,7 +414,7 @@ class MergeGateRecordTests(unittest.TestCase):
                     # Run from a candidate checkout holding a module `python3` would
                     # import from it (Codex on #400).
                     checkout = root / "checkout"
-                    checkout.mkdir()
+                    (checkout / ".git").mkdir(parents=True)
                     (checkout / "json.py").write_text(
                         "raise SystemExit('planted')\n", encoding="utf-8"
                     )
@@ -413,6 +422,7 @@ class MergeGateRecordTests(unittest.TestCase):
                     gh.write_text(
                         '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
                         'pwd > "$HOME/gh-cwd"\n'
+                        '[ -d .git ] || { echo "not a git repository" >&2; exit 1; }\n'
                         'printf "%s %s\\n" "${GH_TOKEN:+token}" "$*" > "$HOME/seen"\n',
                         encoding="utf-8",
                     )
@@ -458,10 +468,10 @@ class MergeGateRecordTests(unittest.TestCase):
                             "-f merge_method=squash -f sha=0123abc",
                             seen.read_text(encoding="utf-8").strip(),
                         )
-                    for ran in ("mint-cwd", "gh-cwd"):
+                    for ran, where in (("mint-cwd", "/"), ("gh-cwd", str(checkout))):
                         if (root / ran).exists():
                             self.assertEqual(
-                                "/", (root / ran).read_text(encoding="utf-8").strip()
+                                where, (root / ran).read_text(encoding="utf-8").strip()
                             )
                     self.assertTrue((root / "mint-cwd").exists())
                     self.assertFalse((root / "shadowed").exists())
@@ -781,7 +791,7 @@ class MergeGateRecordTests(unittest.TestCase):
         # The guarded body, as the two functions have it (CodeAnt, Claude and Codex on
         # #400).
         command = _isolated(
-            "$(~/break-glass/break-glass-token.sh)",
+            "$(cd / && ~/break-glass/break-glass-token.sh)",
             "api -X PUT repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash"
             " -f sha=<head> ' break-glass",
         )

@@ -247,9 +247,10 @@ written here.
   the fresh shell, nothing can shadow anything, so the body needs no `command`
   prefix. The calling shell itself, which defines and calls these functions, is
   trusted: a hostile shell could redefine the functions themselves. The body traps the same signals as AGENTS.md's preparation helper,
-  `HUP` included. It then changes to `/`, so no helper runs in a candidate checkout,
-  where `python3 -c` would import a planted module such as `json.py` while the token
-  is in hand. On exit, by any path, it unsets the token and then removes the
+  `HUP` included. The mint runs in `/`, in a subshell of its own, so no helper runs in
+  a candidate checkout, where `python3 -c` would import a planted module such as
+  `json.py`. `gh` itself runs in the caller's directory, the isolated clone, from which
+  it infers the repository. On exit, by any path, it unsets the token and then removes the
   directory `mktemp` made, with whatever `gh` wrote there. That directory is held
   in `created` before the clean-up is set, so nothing else is removed. Define them again after any change to this section, since a
   shell keeps the definitions it already has:
@@ -261,11 +262,10 @@ written here.
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
-      cd / || exit
       created=$(mktemp -d) || exit
       trap cleanup EXIT
       GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
-        && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+        && GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
         && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
     ' as_app "$@"
   }
@@ -276,7 +276,6 @@ written here.
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
-      cd / || exit
       created=$(mktemp -d) || exit
       trap cleanup EXIT
       GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
@@ -504,11 +503,10 @@ protection exists. The last resort is then the owner, as admin:
      trap "exit 130" INT
      trap "exit 143" TERM
      trap "exit 129" HUP
-     cd / || exit
      created=$(mktemp -d) || exit
      trap cleanup EXIT
      GH_CONFIG_DIR=$created && export GH_CONFIG_DIR \
-       && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
+       && GH_TOKEN=$(cd / && ~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
        && export GH_TOKEN && gh api -X PUT \
        repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
    ' break-glass
