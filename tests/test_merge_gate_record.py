@@ -172,23 +172,30 @@ class MergeGateRecordTests(unittest.TestCase):
         #400)."""
         text = RUNBOOK.read_text(encoding="utf-8")
         rule = re.search(
-            r"It resolves every program that holds a token: ([^.]+)\.",
+            r"It resolves every program that holds a token or the App's key: ([^.]+)\.",
             " ".join(text.split()),
         )
         if rule is None:
             self.fail("the runbook names the programs its trusted PATH resolves")
         programs = re.findall(r"`([\w.]+)`", rule.group(1))
-        # The host section alone, its table and its rules, where tokens are held;
-        # a command elsewhere, such as `gh pr create`, does not count (cubic on
-        # #400).
+        # Each program on a host entry, a table row or a rule, that handles a token
+        # or the App's key: a mention elsewhere, such as `gh pr create`, or beside
+        # nothing secret, does not count (cubic and CodeAnt on #400).
         host = text[text.index("### The agent host") : text.index("## Procedure")]
-        host = " ".join(host.split()).replace(" ".join(rule.group(0).split()), "")
+        entries = [
+            entry
+            for entry in re.split(r"\n(?=- |\| )", host)
+            if "is trusted" not in entry
+        ]
         for program in programs:
+            named = re.compile(
+                rf"`{re.escape(program)}`|\$\({re.escape(program)} |\) {re.escape(program)} "
+            )
             with self.subTest(program=program):
                 self.assertTrue(
-                    re.search(
-                        rf"`{re.escape(program)}`|\$\({re.escape(program)} |\) {re.escape(program)} ",
-                        host,
+                    any(
+                        named.search(entry) and re.search(r"token|key|JWT", entry, re.I)
+                        for entry in entries
                     ),
                     program,
                 )
@@ -240,6 +247,15 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertNotEqual(-1, read_back)
         self.assertNotEqual(-1, merge)
         self.assertLess(read_back, merge)
+        # A failed mint stops the merge: `gh` would otherwise fall back to the
+        # owner's stored login and merge as the owner (Codex on #400).
+        for guard in (
+            'test -n "$GH_TOKEN"',
+            "GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT",
+            "instead of letting `gh` fall back to a stored login",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, procedure)
         # Restoring has a stated target (Claude on #400), and happens whether the
         # merge succeeded or not (CodeAnt on #400).
         self.assertIn("restore it to require the four checks", procedure)
@@ -255,9 +271,13 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn("Read back the whole protection before changing it", last_resort)
         # Restored to the recorded settings, since a read-back is not a body to
         # replay, then compared with the first read-back (Claude on #400).
-        self.assertIn("to the settings Preconditions records", last_resort)
+        # Restored to the incident's own read-back, re-entered since a read-back is
+        # not a body to send back; repeated until they match; drift recorded
+        # (Claude on #400).
+        self.assertIn("re-enter the settings step 1 read back", last_resort)
         self.assertIn("a read-back is not a body to send back", last_resort)
-        self.assertIn("compare it with step 1's read-back", last_resort)
+        self.assertIn("until the new read-back equals step 1's", last_resort)
+        self.assertIn("record the drift and update Preconditions", last_resort)
         # The routine re-verification reads it back too (Claude on #400).
         verify = runbook[
             runbook.index("### Re-verify the gate") : runbook.index("## Recovery")

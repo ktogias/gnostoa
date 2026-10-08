@@ -209,7 +209,7 @@ owner.
 - A token is never printed, logged or passed on a command line. It is captured into
   `GH_TOKEN` for one command, and never with xtrace (`set -x`) on, nor in a recorded
   session: under xtrace, the shell prints the command as expanded, token included.
-- The host's `PATH` is trusted. It resolves every program that holds a token: `gh`,
+- The host's `PATH` is trusted. It resolves every program that holds a token or the App's key: `gh`,
   `git`, `cat`, `curl`, `openssl` and `python3`. A host whose `PATH` cannot be
   trusted is compromised (Recovery).
 - `gh` acts as the App: `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh …`.
@@ -315,12 +315,14 @@ protection exists. The last resort is then the owner, as admin:
 2. Change that protection temporarily, for the one merge. The security log records
    the change.
 3. Merge, as below.
-4. Restore the protection at once, whether the merge succeeded or not, to the settings
-   Preconditions records, in Settings → Branches → the `main` rule, not only the four
-   checks. Re-enter them there, since a read-back is not a body to send back: the
-   endpoint's answer carries read-only fields that its update does not take. Read it back again, and compare it
-   with step 1's read-back. After an interrupted session, restoring it is the first
-   thing done.
+4. Restore the protection at once, whether the merge succeeded or not: re-enter the
+   settings step 1 read back, in Settings → Branches → the `main` rule, not only the
+   four checks. They are re-entered by hand, since a read-back is not a body to send
+   back: the endpoint's answer carries read-only fields that its update does not take.
+   Read it back again, and repeat until the new read-back equals step 1's. If step 1's
+   read-back differs from what Preconditions records, record the drift and update
+   Preconditions in the follow-up. After an interrupted session, restoring it is the
+   first thing done.
 5. Record both changes, and both read-backs, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
@@ -340,10 +342,15 @@ protection exists. The last resort is then the owner, as admin:
    and outside any recorded session. Run the script by its absolute path, never a
    relative one, so that no same-named script in the current directory runs while
    the key is present. The command line and the shell's history then hold `$(...)`,
-   never the token:
+   never the token. Each step runs only if the one before succeeded, and `gh` runs
+   with an empty configuration directory, so a failed or empty mint stops the merge
+   instead of letting `gh` fall back to a stored login, which would merge as the
+   owner rather than as `gnostoa-break-glass[bot]`:
    ```sh
-   GH_TOKEN=$(~/break-glass/break-glass-token.sh) gh api -X PUT \
+   GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
+     && export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
+   unset GH_TOKEN
    ```
 5. Remove the key from the machine.
 
