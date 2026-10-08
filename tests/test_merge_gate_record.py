@@ -155,6 +155,41 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, runbook)
 
+    def test_each_program_trusted_on_the_path_is_shown_holding_the_token(
+        self,
+    ) -> None:
+        """Every program the trusted-PATH rule names appears where the runbook
+        shows it holding a token, so the boundary can be audited (Claude on
+        #400)."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        rule = re.search(
+            r"It resolves every program that holds a token: ([^.]+)\.",
+            " ".join(text.split()),
+        )
+        if rule is None:
+            self.fail("the runbook names the programs its trusted PATH resolves")
+        programs = re.findall(r"`([\w.]+)`", rule.group(1))
+        host = text[
+            text.index("### The agent host") : text.index("**Rules on the host:**")
+        ]
+        for program in programs:
+            with self.subTest(program=program):
+                self.assertTrue(
+                    re.search(rf"`{re.escape(program)}`", host)
+                    or re.search(
+                        rf"\$\({re.escape(program)} |\b{re.escape(program)} pr ", text
+                    ),
+                    program,
+                )
+
+    def test_break_glass_reads_the_classic_protection_back_first(self) -> None:
+        """Break glass leaves the classic protection as the only layer requiring
+        the checks, so the owner reads it back before the merge (Codex on #400)."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        procedure = runbook[runbook.index("**How.**") : runbook.index("**After.**")]
+        self.assertIn("GET /repos/ktogias/gnostoa/branches/main/protection", procedure)
+        self.assertIn("before the merge", procedure)
+
     def test_break_glass_is_named_as_the_exception_and_closed_after(self) -> None:
         """The guarantee names break glass as its one exception (cubic and CodeAnt on
         #400). Its follow-up has a Work Item and a Decision (Greptile on #400); an

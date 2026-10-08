@@ -195,7 +195,7 @@ owner.
 | `~/.config/gnostoa-agent/private-key.pem` | `gnostoa-agent`'s private key | `0600` |
 | `~/.config/gnostoa-agent/machine-user-token` | `gnostoa-agent-user`'s classic token | `0600` |
 | `~/.config/gnostoa-agent/bin/agent-jwt.sh` | prints a nine-minute App JWT, signed with `openssl` (RS256) | `0700` |
-| `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only | `0700` |
+| `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only: it sends the JWT with `curl` and reads the token from the response with `python3` | `0700` |
 | `~/.config/gnostoa-agent/bin/agent-git.sh` | runs `git` with the App's token through a credential helper; it blanks the inherited helpers, so no token is ever on a command line or in output | `0700` |
 
 **Rules on the host:**
@@ -304,7 +304,11 @@ protection exists. The last resort is then the owner, as admin:
    `~/break-glass/break-glass-token.sh`: a copy of the agent host's token helper with
    the break-glass App's ID and key path. It prints a one-hour installation token,
    for capture only.
-3. Merge the exact head, capturing the token for this one command, with xtrace off
+3. Read back the classic protection, as the owner, before the merge:
+   `GET /repos/ktogias/gnostoa/branches/main/protection`. Once break glass bypasses
+   R-main, it is the only layer that still requires the four checks. If it no
+   longer requires them, stop, and restore it first.
+4. Merge the exact head, capturing the token for this one command, with xtrace off
    and outside any recorded session. Run the script by its absolute path, never a
    relative one, so that no same-named script in the current directory runs while
    the key is present. The command line and the shell's history then hold `$(...)`,
@@ -313,7 +317,7 @@ protection exists. The last resort is then the owner, as admin:
    GH_TOKEN=$(~/break-glass/break-glass-token.sh) gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
    ```
-4. Remove the key from the machine.
+5. Remove the key from the machine.
 
 **After.**
 - Open the emergency follow-up Work Item and Decision that
