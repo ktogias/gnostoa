@@ -922,6 +922,27 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(2, flat.count(phrase))
         self.assertNotIn("last trusted identity", flat)
+        # Each row audits its own compromised identities (cubic on #400).
+        rows = {
+            row.split("|")[1].strip(): row
+            for row in RUNBOOK.read_text(encoding="utf-8")
+            .split("## Recovery", 1)[1]
+            .splitlines()
+            if row.startswith("| The ")
+        }
+        host = " ".join(rows["The agent host may be compromised"].split())
+        glass = " ".join(rows["The break-glass key is lost or exposed"].split())
+        self.assertIn(
+            "`gnostoa-agent[bot]` and `gnostoa-agent-user`, can also change issues "
+            "and pull requests",
+            host,
+        )
+        self.assertIn(
+            "`gnostoa-break-glass[bot]`, can also change pull requests, which its "
+            "`Pull requests: write` allows",
+            glass,
+        )
+        self.assertNotIn("every closure, reopening", flat)
         # A compromised App can change an approved PR's title or description without
         # moving its head, so each audit also checks every merge's effects: the squash
         # commit, the title and description reconstructed from their history, and the
@@ -934,10 +955,14 @@ class MergeGateRecordTests(unittest.TestCase):
             "list every issue closed since then whose closer, GraphQL `ClosedEvent.closer`, is a pull request or a commit",
             "is recorded as an incident and restored through the follow-up, with the owner's disposition",
             "the merge's audit is `UNKNOWN`, for the owner to dispose, never clean on its SHA and tree alone",
-            # Both identities can change issues and pull requests directly, without
-            # a merge, including a seal (Codex and Claude on #400).
-            "list every closure, reopening, title or body edit, comment edit and comment deletion by `gnostoa-agent[bot]` or `gnostoa-agent-user` in the window",
-            "`userContentEdits` on each body and comment, each seal included, and `CommentDeletedEvent`",
+            # A compromised identity can change issues and pull requests directly,
+            # without a merge, seals and labels included. The audit lists every event
+            # and edit of any kind by it, not an enumerated list, and reconciles the
+            # authoritative `roadmap:now` selection (Codex, Claude and cubic on #400;
+            # the owner's choice to generalise once, then route to Phase 1b).
+            "directly, without a merge, so list every event and edit of any kind whose actor is",
+            "every GraphQL timeline item, labels such as `roadmap:now` included, and `userContentEdits` on each body and comment, each seal included",
+            "reconcile the open `roadmap:now` selection with the owner before unsuspending",
             "since a compromised identity's own round notes are no evidence for it",
         ):
             with self.subTest(phrase=phrase):
