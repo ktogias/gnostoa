@@ -2735,44 +2735,8 @@ class ChangeControlTests(unittest.TestCase):
                 class_id,
             )
 
-        # Every class that merges through R-main needs the approval R-main enforces,
-        # read from its record in the merge-gate runbook rather than restated here
-        # (Decision 0110, #401). The schema couples an approval to a human,
-        # independent one and forbids auto-merge with it. An emergency bypasses
-        # R-main through break glass, and its follow-up is mandatory.
-        runbook = (
-            ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
-        ).read_text(encoding="utf-8")
-        # R-main is the one recorded ruleset with a pull-request rule, so another JSON
-        # block elsewhere in the runbook changes nothing (cubic on #404).
-        rules = [
-            rule
-            for block in re.findall(r"```json\n(\{.*?\})\n```", runbook, re.S)
-            for rule in json.loads(block).get("rules", [])
-            if rule.get("type") == "pull_request"
-        ]
-        self.assertEqual(
-            1, len(rules), "the merge-gate runbook records R-main's pull-request rule"
-        )
-        [rule] = rules
-        enforced = rule["parameters"]
-        self.assertEqual(1, enforced["required_approving_review_count"])
-        self.assertTrue(enforced["require_code_owner_review"])
-        for class_id in ("mechanical", "normal", "normative", "critical"):
-            change_class = policy["change_classes"][class_id]
-            with self.subTest(change_class=class_id):
-                self.assertEqual(
-                    enforced["required_approving_review_count"],
-                    change_class["minimum_approvals"],
-                )
-                self.assertIs(
-                    enforced["require_code_owner_review"],
-                    change_class["code_owner_approval"],
-                )
-                self.assertTrue(change_class["human_approval"])
-                self.assertTrue(change_class["independent_approval"])
-                self.assertFalse(change_class["auto_merge"])
-
+        # Each class's approval is bound to R-main's record by its owner, the merge-gate
+        # record's test (Claude on #404: one reader of R-main, not two).
         emergency = policy["change_classes"]["emergency"]
         self.assertEqual(0, emergency["minimum_approvals"])
         self.assertFalse(emergency["code_owner_approval"])
@@ -2789,29 +2753,6 @@ class ChangeControlTests(unittest.TestCase):
             maintain,
         )
         self.assertIn("an emergency merges through break glass", maintain)
-        # The coverage manifest names this binding: the approval-authority guardrail
-        # lists this test, and the merge gate lists the policy it binds (Codex on
-        # #404; AGENTS.md: update the manifest when coverage changes).
-        guardrails = {
-            entry["id"]: entry
-            for entry in load_yaml(ROOT / "policy" / "guardrails.yaml")["guardrails"]
-        }
-        self.assertIn(
-            "tests/test_tools.py::ChangeControlTests."
-            "test_gnostoa_self_policy_requires_durable_context_and_test_first",
-            guardrails["human-change-approval-authority"]["tests"],
-        )
-        self.assertIn(
-            "policy/change-control.yaml",
-            guardrails["owner-approved-exact-head-merge"]["implementation"],
-        )
-        # The gate that names the policy also names the test that checks it, so an
-        # audit of the gate's coverage sees the binding (Claude on #404).
-        self.assertIn(
-            "tests/test_tools.py::ChangeControlTests."
-            "test_gnostoa_self_policy_requires_durable_context_and_test_first",
-            guardrails["owner-approved-exact-head-merge"]["tests"],
-        )
         # Linked, as the runbook links its other Decisions (cubic on #404).
         self.assertIn(
             "[`Decision 0110`](../decisions/"

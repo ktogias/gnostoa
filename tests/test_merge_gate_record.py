@@ -66,11 +66,25 @@ def _isolated(mint: str, tail: str) -> str:
 
 class MergeGateRecordTests(unittest.TestCase):
     def _r_main(self) -> dict[str, list[dict[str, object]]]:
+        # R-main is the one recorded ruleset with a pull-request rule, so another JSON
+        # block in the runbook cannot stand in for it (cubic on #404).
         text = RUNBOOK.read_text(encoding="utf-8")
-        block = re.search(r"```json\n(\{.*?\})\n```", text, re.S)
-        if block is None:
-            self.fail("the runbook records R-main as JSON")
-        return cast(dict[str, list[dict[str, object]]], json.loads(block.group(1)))
+        records = [
+            cast(dict[str, list[dict[str, object]]], json.loads(block))
+            for block in re.findall(r"```json\n(\{.*?\})\n```", text, re.S)
+        ]
+        r_main = [
+            record
+            for record in records
+            if any(
+                rule.get("type") == "pull_request" for rule in record.get("rules", [])
+            )
+        ]
+        if len(r_main) != 1:
+            self.fail(
+                "the runbook records R-main, its one ruleset with a pull-request rule"
+            )
+        return r_main[0]
 
     def _rules(self) -> dict[str, dict[str, object]]:
         # Each rule type once, so a duplicate cannot overwrite the one checked
@@ -81,6 +95,53 @@ class MergeGateRecordTests(unittest.TestCase):
             str(rule["type"]): cast(dict[str, object], rule.get("parameters", {}))
             for rule in self._r_main()["rules"]
         }
+
+    def test_the_change_control_policy_requires_what_r_main_enforces(self) -> None:
+        """Gnostoa's change-control policy requires, for every class that merges
+        through R-main, the approval R-main enforces, read through this module's one
+        reader of R-main (Decision 0110, #401; Claude on #404). The schema couples an
+        approval to a human, independent one and forbids auto-merge with it. An
+        emergency bypasses R-main through break glass, and its follow-up is
+        mandatory. The coverage manifest names the binding (Codex on #404)."""
+        import yaml
+
+        from tools.check_change_policy import load_change_policy
+
+        enforced = self._rules()["pull_request"]
+        classes = load_change_policy(ROOT / "policy" / "change-control.yaml")[
+            "change_classes"
+        ]
+        for class_id in ("mechanical", "normal", "normative", "critical"):
+            change_class = classes[class_id]
+            with self.subTest(change_class=class_id):
+                self.assertEqual(
+                    enforced["required_approving_review_count"],
+                    change_class["minimum_approvals"],
+                )
+                self.assertIs(
+                    enforced["require_code_owner_review"],
+                    change_class["code_owner_approval"],
+                )
+                self.assertTrue(change_class["human_approval"])
+                self.assertTrue(change_class["independent_approval"])
+                self.assertFalse(change_class["auto_merge"])
+        self.assertEqual(0, classes["emergency"]["minimum_approvals"])
+        self.assertFalse(classes["emergency"]["code_owner_approval"])
+        guardrails = {
+            entry["id"]: entry
+            for entry in yaml.safe_load(
+                (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+            )["guardrails"]
+        }
+        self.assertIn(
+            "tests/test_merge_gate_record.py::MergeGateRecordTests."
+            "test_the_change_control_policy_requires_what_r_main_enforces",
+            guardrails["human-change-approval-authority"]["tests"],
+        )
+        self.assertIn(
+            "policy/change-control.yaml",
+            guardrails["owner-approved-exact-head-merge"]["implementation"],
+        )
 
     def test_r_main_requires_the_code_owner_s_approval_of_the_exact_head(self) -> None:
         pull_request = self._rules()["pull_request"]
@@ -1104,18 +1165,11 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertIn(surface, entry["implementation"])
         # Every test of this module, so none is added without being registered, and
         # an unrelated test cannot stand in for one (cubic, CodeAnt and Claude on
-        # #400); and the one test that binds the policy this gate names, so its
-        # coverage shows that binding (Claude on #404).
+        # #400). The policy's binding is one of them (Claude on #404).
         own = sorted(
-            [
-                f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
-                for name in dir(MergeGateRecordTests)
-                if name.startswith("test_")
-            ]
-            + [
-                "tests/test_tools.py::ChangeControlTests."
-                "test_gnostoa_self_policy_requires_durable_context_and_test_first"
-            ]
+            f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
+            for name in dir(MergeGateRecordTests)
+            if name.startswith("test_")
         )
         self.assertEqual(own, sorted(entry["tests"]))
         self.assertEqual(len(own), len(entry["tests"]))
