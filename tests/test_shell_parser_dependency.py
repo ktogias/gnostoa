@@ -618,21 +618,30 @@ def _check_gitlab_shells(document: dict[str, object], name: str) -> None:
 
 
 def _refuse_extends_cycle(document: dict[str, object], key: str, name: str) -> None:
-    """Fails closed when `key`'s `extends` chain returns to a job already on it: a
-    cycle, unlike a base two paths reach. Malformed bases are left to the lineage
+    """Fails closed when `key`'s `extends` chain returns to a job still on it: a
+    cycle, unlike a base two paths reach. A depth-first walk marks each job when it
+    is entered and when it is left, so each is visited once, and a chain of
+    diamonds stays linear (cubic on #396). Malformed bases are left to the lineage
     walk, which refuses them."""
-    stack: list[tuple[str, tuple[str, ...]]] = [(key, ())]
+    entered: set[str] = set()
+    left: set[str] = set()
+    stack: list[tuple[str, bool]] = [(key, False)]
     while stack:
-        current, path = stack.pop()
-        if current in path:
+        current, leaving = stack.pop()
+        if leaving:
+            left.add(current)
+            continue
+        if current in left:
+            continue
+        if current in entered:
             raise _refuse(name, f"`{key}`: an `extends` cycle through `{current}`")
+        entered.add(current)
+        stack.append((current, True))
         job = document.get(current)
         extends = job.get("extends", []) if isinstance(job, dict) else []
         bases = [extends] if isinstance(extends, str) else extends
         if isinstance(bases, list):
-            stack.extend(
-                (base, (*path, current)) for base in bases if isinstance(base, str)
-            )
+            stack.extend((base, False) for base in bases if isinstance(base, str))
 
 
 def _gitlab_lineage(
@@ -1178,19 +1187,20 @@ def _dockerfile_runs(text: str) -> list[str]:
             continue
         command = match["command"]
         deferred = match["onbuild"] is not None
+        # BuildKit continues past spaces or tabs after the escape character, and
+        # skips empty and comment lines inside a continuation (Codex on #396); a
+        # `SHELL` continues too, so it is joined before it is read (CodeAnt on #396).
+        while (end := CONTINUATION.search(command)) and index < len(lines):
+            line = lines[index]
+            index += 1
+            if line.strip() and not line.lstrip().startswith("#"):
+                command = command[: end.start()] + line
         if match["instruction"].upper() == "SHELL":
             _check_shell_instruction(command)
             # `ONBUILD SHELL` changes no current stage, only the `ONBUILD RUN`s
             # after it (Codex on #396).
             state.set_shell("sh", deferred=deferred)
             continue
-        # BuildKit continues past spaces or tabs after the escape character, and
-        # skips empty and comment lines inside a continuation (Codex on #396).
-        while (end := CONTINUATION.search(command)) and index < len(lines):
-            line = lines[index]
-            index += 1
-            if line.strip() and not line.lstrip().startswith("#"):
-                command = command[: end.start()] + line
         runs.extend(
             _instruction_runs(match["instruction"].upper(), command, deferred, state)
         )
@@ -1542,7 +1552,9 @@ def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
         raise _refuse(name, f"a `{command}` script")
     if _other_shell(words[0]):
         raise _refuse(name, f"an unrecognised shell `{command}`")
-    if command not in SHELLS:
+    # A supported shell as Windows or Cygwin names it is that shell (Codex on #396).
+    shell = _program_stem(words[0])
+    if shell not in SHELLS:
         return {}
     # The shebang's own options decide what the shell reads (Codex on #396): with
     # `-c`, its command string, the file only `$0`; with `-s`, standard input.
@@ -1553,7 +1565,7 @@ def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
     )
     # With `-c`, bash ignores `-s`, but dash runs the string and then reads
     # standard input too, so only bash's is read (cubic on #396).
-    if reads_input and not (inline and command == "bash"):
+    if reads_input and not (inline and shell == "bash"):
         raise _refuse(name, "a shebang shell that reads standard input")
     if inline:
         rest = rest[1:] if rest[:1] == ["-"] else rest
@@ -2853,6 +2865,44 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(["git x"], _exec_form_shell(argv))
+
+    def test_the_cycle_check_visits_each_job_once(self) -> None:
+        """A chain of diamonds has exponentially many paths but few jobs; the cycle
+        check visits each job once, so it stays linear (cubic on #396)."""
+
+        class Counted(dict[str, object]):
+            lookups = 0
+
+            def get(self, key: str, default: object = None) -> object:
+                Counted.lookups += 1
+                return super().get(key, default)
+
+        levels = 12
+        document = Counted()
+        for level in range(levels):
+            document[f"j{level}"] = {"extends": [f"a{level}", f"b{level}"]}
+            document[f"a{level}"] = {"extends": f"j{level + 1}"}
+            document[f"b{level}"] = {"extends": f"j{level + 1}"}
+        document[f"j{levels}"] = {"script": "git x"}
+        _refuse_extends_cycle(document, "j0", ".gitlab-ci.yml")
+        self.assertLessEqual(Counted.lookups, 2 * len(document))
+
+    def test_shell_continues_and_shebangs_name_shells_as_windows_does(self) -> None:
+        """A JSON `SHELL` over continuation lines is joined before it is read
+        (CodeAnt on #396); a shebang naming a supported shell as Windows names it,
+        such as Cygwin's `/bin/bash.exe`, is that shell (Codex on #396)."""
+        self.assertEqual(
+            ["git x"],
+            _dockerfile_runs(
+                'FROM alpine\nSHELL ["/bin/bash", \\\n  "-c"]\nRUN git x\n'
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "w").write_bytes(b"#!/bin/bash.exe\ngit w\n")
+            self.assertEqual(
+                {"w": "#!/bin/bash.exe\ngit w\n"}, _shell_surfaces(_declared(root))
+            )
 
     def test_a_launcher_fails_closed(self) -> None:
         """A launcher such as `timeout`, `su` or `tini` runs a command by its own
