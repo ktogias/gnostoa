@@ -77,7 +77,8 @@ OTHER_SHELLS = {
 # A multi-call binary runs the applet its first argument names, such as `sh`.
 MULTI_CALL = {"busybox", "toybox"}
 # Programs that run a command given among their own arguments, each with its own
-# grammar: a declared list (Codex on #396). One outside it is read as a program.
+# grammar, which this reader does not parse: a declared list, each failing closed
+# (Codex and cubic on #396). One outside it is read as a program.
 LAUNCHERS = {
     "timeout",
     "nice",
@@ -792,13 +793,13 @@ def _follow_launchers(words: list[str], name: str, *, split: bool) -> list[str]:
 
 
 def _refuse_launched_shell(words: list[str], name: str) -> list[str]:
-    """`words` unchanged, unless they are a launcher whose own grammar this reader
-    does not read, and a shell, `env` or a multi-call binary follows it among its
-    words: that shell runs, so it fails closed (Codex on #396)."""
+    """`words` unchanged, unless they are a declared launcher: each runs a command by
+    its own grammar, which may hand it to a shell without naming one, as `su -c`
+    does, or name a shell this reader does not list. So one fails closed, whatever
+    follows it (Codex and cubic on #396)."""
     launcher = Path(words[0]).name if words else ""
-    runners = SHELLS | OTHER_SHELLS | MULTI_CALL | {"env"}
-    if launcher in LAUNCHERS and any(Path(word).name in runners for word in words[1:]):
-        raise _refuse(name, f"a `{launcher}` launcher of a shell")
+    if launcher in LAUNCHERS:
+        raise _refuse(name, f"a `{launcher}` launcher")
     return words
 
 
@@ -2604,30 +2605,30 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 self.assertTrue(_overrides_build_arg(text, base))
         self.assertFalse(_overrides_build_arg(f"--build-arg {base}_X=y", base))
 
-    def test_a_launcher_of_a_shell_fails_closed(self) -> None:
-        """A launcher such as `timeout`, `nice` or `sudo` runs the command after its
-        own arguments, so a shell it names fails closed, in an exec form and in a
-        shebang alike; one that names no shell runs no shell (Codex on #396)."""
+    def test_a_launcher_fails_closed(self) -> None:
+        """A launcher such as `timeout`, `su` or `tini` runs a command by its own
+        grammar, which may hand it to a shell without naming one, as `su -c` does, or
+        name a shell this reader does not list, such as `bash5`. So a declared
+        launcher fails closed, in an exec form and in a shebang alike (Codex and
+        cubic on #396)."""
         for argv in (
             ["timeout", "10", "sh", "-c", "git x"],
             ["nice", "-n", "5", "bash", "-c", "git y"],
             ["sudo", "-u", "app", "/bin/sh", "-c", "git z"],
+            ["su", "-c", "git w", "nobody"],
+            ["timeout", "10", "bash5", "-c", "git v"],
+            ["tini", "--", "knowledge"],
         ):
             with (
                 self.subTest(argv=argv),
-                self.assertRaisesRegex(
-                    AssertionError, f"a `{argv[0]}` launcher of a shell"
-                ),
+                self.assertRaisesRegex(AssertionError, f"a `{argv[0]}` launcher;"),
             ):
                 _exec_form_shell(argv)
-        self.assertEqual([], _exec_form_shell(["tini", "--", "knowledge"]))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "t").write_bytes(b"#!/usr/bin/env -S timeout 10 sh\ngit t\n")
             declared = _declared(root)
-            with self.assertRaisesRegex(
-                AssertionError, "t: a `timeout` launcher of a shell"
-            ):
+            with self.assertRaisesRegex(AssertionError, "t: a `timeout` launcher;"):
                 _shell_surfaces(declared)
 
     def test_a_continuation_follows_buildkit_s_rule(self) -> None:
@@ -2865,6 +2866,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(2, digits.returncode)
+        self.assertIn("a JSON list of strings", digits.stderr)
         self.assertNotIn("Traceback", digits.stderr)
         with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
