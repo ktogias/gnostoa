@@ -73,6 +73,7 @@ OTHER_SHELLS = {
     "elvish",
     "rc",
     "es",
+    "cmd",
 }
 # A multi-call binary runs the applet its first argument names, such as `sh`.
 MULTI_CALL = {"busybox", "toybox"}
@@ -935,6 +936,16 @@ def _env_escape(escape: str, quote: str, name: str) -> str:
     return ENV_ESCAPES[escape]
 
 
+def _other_shell(program: str) -> bool:
+    """Whether `program` is a shell this reader does not read: a listed one, or a
+    shell-like name that is no known shell, with or without `.exe`. One test serves
+    shebangs and exec forms (Codex on #396)."""
+    stem = program.removesuffix(".exe")
+    if stem in OTHER_SHELLS:
+        return True
+    return stem not in SHELLS and SHELL_LIKE.match(stem) is not None
+
+
 def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     """An exec-form `RUN` of `sh`, `bash`, `dash` or `ash` still hands its `-c`
     command to that shell; another shell fails closed (cubic on #396). The options
@@ -946,7 +957,7 @@ def _exec_form_shell(argv: list[str], *, open_ended: bool = False) -> list[str]:
     # `env` and a multi-call binary launch the command after them (Codex on #396).
     argv = _follow_launchers(argv, "RUN", split=False)
     program = Path(argv[0]).name if argv else ""
-    if program in OTHER_SHELLS:
+    if _other_shell(program):
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
     if program not in SHELLS:
         return []
@@ -1428,7 +1439,7 @@ def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
     command = Path(words[0]).name
     if command in OTHER_SHELLS:
         raise _refuse(name, f"a `{command}` script")
-    if command not in SHELLS and SHELL_LIKE.match(command):
+    if _other_shell(command):
         raise _refuse(name, f"an unrecognised shell `{command}`")
     if command not in SHELLS:
         return {}
@@ -2611,6 +2622,23 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertTrue(_overrides_build_arg(text, base))
         self.assertFalse(_overrides_build_arg(f"--build-arg {base}_X=y", base))
+
+    def test_an_exec_form_of_another_shell_fails_closed(self) -> None:
+        """An exec form of a shell this reader does not read fails closed, as a
+        shebang of one does: a listed shell, or a shell-like name that is no known
+        shell, with or without `.exe` (Codex on #396)."""
+        for program in ("pwsh", "pwsh.exe", "powershell.exe", "cmd.exe", "zsh5"):
+            with (
+                self.subTest(program=program),
+                self.assertRaisesRegex(AssertionError, f"an exec-form `{program}` RUN"),
+            ):
+                _exec_form_shell([program, "-c", "git x"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "p").write_bytes(b"#!/usr/bin/pwsh.exe\ngit p\n")
+            declared = _declared(root)
+            with self.assertRaisesRegex(AssertionError, "p: an unrecognised shell"):
+                _shell_surfaces(declared)
 
     def test_a_launcher_fails_closed(self) -> None:
         """A launcher such as `timeout`, `su` or `tini` runs a command by its own
