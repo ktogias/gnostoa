@@ -221,14 +221,24 @@ owner.
   but `gh` runs while the token is set. A failed or empty mint stops it before `gh`,
   rather than letting `gh` fall back to a stored login, as a `gh` command prefixed
   with a captured token would.
-  The token never exists in the calling shell, even when a command is interrupted:
+  The token never exists in the calling shell, even when a command is interrupted.
+  On exit, by any path, the body unsets the token and then removes the directory, so
+  `rm` never holds the token. These are AGENTS.md's traps for its preparation
+  helper. Define them again after any change to this section, since a shell keeps
+  the definitions it already has:
   ```sh
   as_app() (
+    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
       && GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
       && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
   )
   as_machine_user() (
+    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
       && GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) \
       && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
@@ -348,7 +358,10 @@ protection exists. The last resort is then the owner, as admin:
 1. Read back the whole protection before changing it,
    `GET /repos/ktogias/gnostoa/branches/main/protection`, and keep the result.
 2. Remove only the broken check from it, for the one merge. The security log
-   records the change.
+   records the change. The removed check protects every merge into `main`, not just
+   this one, so hold every other merge until step 4: tell the agents to stop
+   merging. After step 4, read the activity log for the window, and record any
+   other merge in that window in the follow-up, for review.
 3. Merge, as below.
 4. Restore the protection at once, whether the merge succeeded or not: re-enter the
    settings step 1 read back, in Settings → Branches → the `main` rule, not only the
@@ -391,7 +404,10 @@ protection exists. The last resort is then the owner, as admin:
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   ( GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
+   ( trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+     trap 'exit 130' INT
+     trap 'exit 143' TERM
+     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
      && GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
      && export GH_TOKEN && gh api -X PUT \
      repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )

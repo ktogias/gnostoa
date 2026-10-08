@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess  # nosec B404 -- test-only: runs the runbook's own shell functions
+import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
@@ -167,7 +170,11 @@ class MergeGateRecordTests(unittest.TestCase):
             " ".join(block.replace("\\\n", " ").split())
             for block in re.findall(r"```sh\n(.*?)```", text, re.S)
         ]
+        # The configuration directory is removed whatever happens, the token unset
+        # first, so `rm` never holds it (Claude and CodeAnt on #400).
         guard = (
+            'trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- '
+            "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
             "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR && GH_TOKEN={} "
             '&& test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@" )'
         )
@@ -193,6 +200,85 @@ class MergeGateRecordTests(unittest.TestCase):
                     self.assertIn(call, {'"$@"', "api"})
                     if call == "api":
                         self.assertIn("break-glass-token.sh", block)
+
+    def test_the_guarded_functions_run_as_written(self) -> None:
+        """The two functions, executed as the runbook writes them, in each shell
+        present, with stand-ins for the mint and `gh` (Claude on #400): a failed or
+        empty mint stops before `gh`; a working one runs `gh` with the token; the
+        token never reaches the caller; and the configuration directory is gone
+        afterwards, whatever happened (Claude and CodeAnt on #400)."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        self.assertIn("Define them again after any change to this section", text)
+        [block] = [
+            b for b in re.findall(r"```sh\n(.*?)```", text, re.S) if "as_app() (" in b
+        ]
+        shells = [
+            path for name in ("sh", "bash", "dash") if (path := shutil.which(name))
+        ]
+        self.assertTrue(shells)
+        cases = (
+            ("as_app", "exit 4", 4),
+            ("as_app", "exit 0", 1),
+            ("as_app", "echo t0ken", 0),
+            ("as_machine_user", "", 1),
+            ("as_machine_user", "t0ken", 0),
+        )
+        for interpreter in shells:
+            for function, source, expected in cases:
+                with (
+                    self.subTest(
+                        interpreter=interpreter, function=function, source=source
+                    ),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    for name in ("bin", "tmp"):
+                        (root / name).mkdir()
+                    mint = root / "mint.sh"
+                    mint.write_text(f"#!/bin/sh\n{source}\n", encoding="utf-8")
+                    mint.chmod(0o755)
+                    (root / "token").write_text(source, encoding="utf-8")
+                    gh = root / "bin" / "gh"
+                    gh.write_text(
+                        '#!/bin/sh\nprintf "%s\\n" "${GH_TOKEN:+token}" > "$GH_SEEN"\n',
+                        encoding="utf-8",
+                    )
+                    gh.chmod(0o755)
+                    defined = block.replace(
+                        "~/.config/gnostoa-agent/bin/agent-token.sh", str(mint)
+                    ).replace(
+                        "~/.config/gnostoa-agent/machine-user-token",
+                        str(root / "token"),
+                    )
+                    script = (
+                        defined
+                        + f"\n{function} api x\nstatus=$?\n"
+                        + 'printf "%s %s\\n" "$status" "${GH_TOKEN-unset}"\n'
+                    )
+                    done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                        [interpreter, "-c", script],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                            "TMPDIR": str(root / "tmp"),
+                            "GH_SEEN": str(root / "seen"),
+                        },
+                    )
+                    self.assertEqual(
+                        f"{expected} unset",
+                        done.stdout.strip().splitlines()[-1],
+                        done.stderr,
+                    )
+                    seen = root / "seen"
+                    self.assertEqual(expected == 0, seen.exists())
+                    if seen.exists():
+                        self.assertEqual(
+                            "token", seen.read_text(encoding="utf-8").strip()
+                        )
+                    self.assertEqual([], list((root / "tmp").iterdir()))
 
     def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
         """Bash prints a command's expansion under xtrace, token included, so no
@@ -319,9 +405,12 @@ class MergeGateRecordTests(unittest.TestCase):
         # interruption cannot leave it there, and the block's status is the
         # merge's (Codex and CodeAnt on #400).
         # The empty configuration directory is made before the mint, so no program
-        # but `gh` runs while the token is set (CodeAnt on #400).
+        # but `gh` runs while the token is set (CodeAnt on #400), and removed after,
+        # the token unset first (Claude on #400).
         command = (
-            "( GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR "
+            '( trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- '
+            "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
+            "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR "
             '&& GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
             "&& export GH_TOKEN && gh api -X PUT "
             "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )"
@@ -357,6 +446,10 @@ class MergeGateRecordTests(unittest.TestCase):
         # Everything read back before the change, not only the checks (CodeAnt on
         # #400).
         self.assertIn("Read back the whole protection before changing it", last_resort)
+        # The removed check protects every merge, so nothing else merges until it
+        # is back, and the window is audited (Claude on #400).
+        self.assertIn("hold every other merge until step 4", last_resort)
+        self.assertIn("any other merge in that window", last_resort)
         # Restored to the recorded settings, since a read-back is not a body to
         # replay, then compared with the first read-back (Claude on #400).
         # Restored to the incident's own read-back, re-entered since a read-back is
