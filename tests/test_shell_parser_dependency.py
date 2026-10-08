@@ -8,6 +8,7 @@ the two cannot drift apart (Claude on #394)."""
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -32,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # The most the parser probe is sent: far above the repository's corpus, and far
 # below what would strain a CI runner.
-PROBE_INPUT_LIMIT = 16 * 1024 * 1024
+PROBE_INPUT_LIMIT = 16_777_216  # 16 MiB
 # `env`'s documented options: GNU coreutils' `env --help`, and BSD's `-P`.
 ENV_FLAGS = set("i0v")
 ENV_ARGUMENT_FLAGS = set("uCaPS")
@@ -1021,11 +1022,10 @@ def _instruction_runs(
     # Only `RUN` takes `--mount`-style flags (cubic on #396).
     if instruction == "RUN":
         command = RUN_FLAGS.sub("", command)
-    # A stage's process is read whole when the stage ends (Codex on #396).
-    if instruction in {"CMD", "ENTRYPOINT"} and not deferred:
-        state.record(instruction, command)
-        if _exec_form(command):
-            return []
+    # A stage's process is read whole when the stage ends (Codex and cubic on #396).
+    if instruction in {"CMD", "ENTRYPOINT"}:
+        state.record(instruction, command, deferred)
+        return []
     if _exec_form(command):
         return _exec_form_shell(json.loads(command))
     return [_shell_form_run(command, state.shell_for(deferred))]
@@ -1049,6 +1049,9 @@ class _Stages:
         # the current stage's, read whole when the stage ends (Codex on #396).
         self.processes: dict[str, _Process] = {}
         self.process = _Process()
+        # This stage's `ONBUILD ENTRYPOINT` and `CMD`, which a later build runs in
+        # order, as if after its `FROM` (Codex on #396).
+        self.triggers: list[tuple[str, _Form]] = []
         self.surfaces: list[str] = []
 
     def read(self, line: str) -> bool:
@@ -1082,47 +1085,33 @@ class _Stages:
         whose base is this stage, after any `ONBUILD SHELL` before it."""
         return (self.deferred or self.shell) if deferred else self.shell
 
-    def record(self, instruction: str, command: str) -> None:
-        """A stage's `ENTRYPOINT` or `CMD`. Its own `ENTRYPOINT` resets an
-        inherited `CMD`, as Docker's builder does."""
-        value: list[str] | str | None = (
-            json.loads(command) if _exec_form(command) else command
-        )
-        process = self.process
-        process.set_here = True
-        if instruction == "ENTRYPOINT":
-            process.entrypoint = value or None
-            process.known = True
-            if not process.cmd_set:
-                process.cmd = None
+    def record(self, instruction: str, command: str, deferred: bool) -> None:
+        """A stage's `ENTRYPOINT` or `CMD`, or an `ONBUILD` one for a later build.
+        A shell form keeps the shell in effect where it is written."""
+        value: _Form
+        if _exec_form(command):
+            value = json.loads(command) or None
         else:
-            process.cmd = value or None
-            process.cmd_set = True
+            value = _ShellForm(command, self.shell_for(deferred)) if command else None
+        if deferred:
+            self.triggers.append((instruction, value))
+        else:
+            self.process.apply(instruction, value)
 
     def finish(self) -> None:
-        """The process of the stage that ends: an exec-form `ENTRYPOINT` with its
-        `CMD` as arguments, or an exec-form `CMD` alone. A shell-form one is read on
-        its own line; a shell-form `ENTRYPOINT` ignores `CMD`."""
+        """The process of the stage that ends, and the one a later build gets from
+        its `ONBUILD` triggers."""
         process = self.process
         if self.stage:
             self.processes[self.stage] = process
-        if not process.set_here or isinstance(process.entrypoint, str):
-            return
-        if not process.known:
-            if isinstance(process.cmd, list):
-                raise AssertionError(
-                    "an exec-form `CMD` under an unknown base's `ENTRYPOINT`; "
-                    "extend this extraction"
-                )
-            return
-        argv = list(process.entrypoint or [])
-        if isinstance(process.cmd, list):
-            argv += process.cmd
-        elif process.cmd is not None and argv:
-            # A shell-form `CMD` reaches an exec-form `ENTRYPOINT` through the shell.
-            argv += [self.shell or "/bin/sh", "-c", process.cmd]
-        if argv:
-            self.surfaces.extend(_exec_form_shell(argv))
+        if process.set_here:
+            self.surfaces.extend(process.runs())
+        if self.triggers:
+            later = _Process(process.entrypoint, process.cmd, process.known)
+            for instruction, value in self.triggers:
+                later.apply(instruction, value)
+            self.surfaces.extend(later.runs())
+        self.triggers = []
 
     def _resolve(self, image: str, flags: str) -> str | None:
         """The base a `FROM` names, its global `ARG`s resolved; a platform other
@@ -1159,16 +1148,66 @@ class _Stages:
         return _Process(known=known)
 
 
+@dataclass(frozen=True)
+class _ShellForm:
+    """A shell-form `ENTRYPOINT` or `CMD`: its text, and the shell it runs in."""
+
+    text: str
+    shell: str | None
+
+
+# An exec form's words, a shell form, or none.
+_Form = list[str] | _ShellForm | None
+
+
 @dataclass
 class _Process:
-    """A stage's `ENTRYPOINT` and `CMD`: an exec form's words, a shell form's text,
-    or none; whether the entrypoint is known; and whether this stage set either."""
+    """A stage's `ENTRYPOINT` and `CMD`; whether the entrypoint is known; and
+    whether this stage set either."""
 
-    entrypoint: list[str] | str | None = None
-    cmd: list[str] | str | None = None
+    entrypoint: _Form = None
+    cmd: _Form = None
     known: bool = True
     cmd_set: bool = False
     set_here: bool = False
+
+    def apply(self, instruction: str, value: _Form) -> None:
+        """An `ENTRYPOINT` or `CMD`. An `ENTRYPOINT` resets an inherited `CMD`, as
+        Docker's builder does."""
+        self.set_here = True
+        if instruction == "ENTRYPOINT":
+            self.entrypoint = value
+            self.known = True
+            if not self.cmd_set:
+                self.cmd = None
+        else:
+            self.cmd = value
+            self.cmd_set = True
+
+    def runs(self) -> list[str]:
+        """The shell this process runs, as Docker combines it: a shell-form
+        `ENTRYPOINT` alone, ignoring `CMD`; an exec-form one with `CMD` as its
+        arguments, a shell-form `CMD` through its shell; or `CMD` alone (cubic and
+        Codex on #396). An exec-form `CMD` under an unknown base's `ENTRYPOINT`
+        fails closed; a shell-form one is read, since it may run."""
+        entrypoint, cmd = self.entrypoint, self.cmd
+        if isinstance(entrypoint, _ShellForm):
+            return [_shell_form_run(entrypoint.text, entrypoint.shell)]
+        if entrypoint is None or not self.known:
+            if isinstance(cmd, _ShellForm):
+                return [_shell_form_run(cmd.text, cmd.shell)]
+            if cmd is not None and not self.known:
+                raise AssertionError(
+                    "an exec-form `CMD` under an unknown base's `ENTRYPOINT`; "
+                    "extend this extraction"
+                )
+            return _exec_form_shell(cmd) if cmd else []
+        argv = list(entrypoint)
+        if isinstance(cmd, _ShellForm):
+            argv += [cmd.shell or "/bin/sh", "-c", cmd.text]
+        elif cmd is not None:
+            argv += cmd
+        return _exec_form_shell(argv)
 
 
 def _healthcheck_command(argument: str) -> str | None:
@@ -2416,8 +2455,11 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         # The multi-call half of the bound too (Claude on #396).
         with self.assertRaisesRegex(AssertionError, "a launcher chain beyond"):
             _exec_form_shell([*["busybox"] * 4, "sh", "-c", "git x"])
+        # The health check runs on its own; the process is read when the stage
+        # ends, and Docker ignores `CMD` under a shell-form `ENTRYPOINT` (cubic on
+        # #396).
         self.assertEqual(
-            ["git c", "git d", "git e"],
+            ["git e", "git d"],
             _dockerfile_runs(
                 "FROM alpine\nCMD git c\nENTRYPOINT git d\n"
                 "HEALTHCHECK --interval=5m CMD git e\n"
@@ -2460,6 +2502,20 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 [],
             ),
             ('FROM scratch\nCMD ["/app"]\n', []),
+            # A shell-form `CMD` is part of the process too: one Docker ignores, or a
+            # later one replaces, is not read (cubic on #396).
+            ("FROM alpine\nCMD if then\nENTRYPOINT git i\n", ["git i"]),
+            ("FROM alpine\nCMD git old\nCMD git j\n", ["git j"]),
+            # `ONBUILD` triggers run in order in a later build, as if after its
+            # `FROM`, so they are combined too (Codex on #396).
+            (
+                'FROM alpine\nONBUILD ENTRYPOINT ["sh"]\nONBUILD CMD ["-c", "git h"]\n',
+                ["git h"],
+            ),
+            (
+                'FROM alpine\nENTRYPOINT ["bash"]\nONBUILD CMD ["-c", "git k"]\n',
+                ["git k"],
+            ),
             ('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n', []),
         ):
             with self.subTest(dockerfile=dockerfile):
@@ -2478,7 +2534,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "an exec-form `env -S`"):
             _exec_form_shell(["env", "-iS", "sh -c", "git x"])
         self.assertEqual(
-            ["--quiet git y", "git e", "git f"],
+            ["git e", "git f", "--quiet git y"],
             _dockerfile_runs(
                 "FROM alpine\nCMD --quiet git y\n"
                 "HEALTHCHECK --interval=5m --timeout=3s CMD git e\n"
@@ -2576,6 +2632,27 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertIn("a JSON list of strings", completed.stderr)
         with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
             _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
+        # The child bounds its own read too, at the same limit, whoever writes to it
+        # (Amazon Q on #396); it reads no more than one character past it.
+        probe = ast.parse(PROBE.read_text(encoding="utf-8"))
+        [limit] = [
+            node.value
+            for node in probe.body
+            if isinstance(node, ast.Assign)
+            and [getattr(target, "id", None) for target in node.targets]
+            == ["INPUT_LIMIT"]
+        ]
+        self.assertEqual(PROBE_INPUT_LIMIT, ast.literal_eval(limit))
+        oversized = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, str(PROBE)],
+            input=json.dumps(["x" * PROBE_INPUT_LIMIT]),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(2, oversized.returncode)
+        self.assertIn("beyond the probe's input bound", oversized.stderr)
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive

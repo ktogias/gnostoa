@@ -16,6 +16,9 @@ import tree_sitter_bash
 from tree_sitter import Language, Parser
 
 LANGUAGE = Language(tree_sitter_bash.language())
+# The most this child reads, in characters: the parent's bound, which the smoke pins
+# equal, so the child stays bounded whoever writes to it (Amazon Q on #396).
+INPUT_LIMIT = 16_777_216  # 16 MiB
 
 
 def facts(source: bytes) -> dict[str, object]:
@@ -41,7 +44,11 @@ def facts(source: bytes) -> dict[str, object]:
 def main() -> int:
     # Standard input is the test's own `json.dumps`; anything else fails this child,
     # which the test reports with its standard error.
-    scripts = json.load(sys.stdin)
+    payload = sys.stdin.read(INPUT_LIMIT + 1)
+    if len(payload) > INPUT_LIMIT:
+        sys.stderr.write("an input beyond the probe's input bound\n")
+        return 2
+    scripts = json.loads(payload)
     if not isinstance(scripts, list) or not all(isinstance(s, str) for s in scripts):
         sys.stderr.write("the probe expects a JSON list of strings\n")
         return 2
