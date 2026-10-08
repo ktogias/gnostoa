@@ -223,12 +223,15 @@ owner.
   with a captured token would.
   The token never exists in the calling shell, even when a command is interrupted.
   On exit, by any path, the body unsets the token and then removes the directory, so
-  `rm` never holds the token. These are AGENTS.md's traps for its preparation
+  `rmdir` never holds the token. It is `rmdir`, which removes only an empty
+  directory: if the caller's `GH_CONFIG_DIR` is read-only, the body's assignment fails
+  and the variable keeps the caller's value, and `rmdir` then leaves that
+  configuration intact. `gh` leaves its own directory empty. These are AGENTS.md's traps for its preparation
   helper. Define them again after any change to this section, since a shell keeps
   the definitions it already has:
   ```sh
   as_app() (
-    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
@@ -236,7 +239,7 @@ owner.
       && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
   )
   as_machine_user() (
-    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+    trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
@@ -358,9 +361,9 @@ protection exists. The last resort is then the owner, as admin:
 1. Read back the whole protection before changing it,
    `GET /repos/ktogias/gnostoa/branches/main/protection`, and keep the result.
 2. Remove only the broken check from it, for the one merge. The security log
-   records the change. The removed check protects every merge into `main`, not just
-   this one, so hold every other merge until step 4: tell the agents to stop
-   merging. After step 4, read the activity log for the window, and record any
+   records the change. R-main still requires the check of every normal merge, so
+   only another break-glass merge could skip it; even so, hold every other merge until
+   step 4: tell the agents to stop merging. After step 4, read the activity log for the window, and record any
    other merge in that window in the follow-up, for review.
 3. Merge, as below.
 4. Restore the protection at once, whether the merge succeeded or not: re-enter the
@@ -404,7 +407,7 @@ protection exists. The last resort is then the owner, as admin:
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   ( trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- "$GH_CONFIG_DIR"' EXIT
+   ( trap 'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- "$GH_CONFIG_DIR"' EXIT
      trap 'exit 130' INT
      trap 'exit 143' TERM
      GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR \
@@ -459,8 +462,8 @@ the gate:
 | Event | Action |
 |---|---|
 | The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
-| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host, and unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
+| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. Before unsuspending, audit every merge into `main` since its last trusted identity: the last merge recorded on a Work Item. Read each merge's actor and approval in the activity log, and record any the owner did not approve in the follow-up, for revert or disposition. Unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
-| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, generate a new one offline, read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
+| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, and generate a new one offline. The App bypasses R-main, so a stolen key may already have merged: audit every merge into `main` since its last trusted identity, the last merge recorded on a Work Item. Any merge by `gnostoa-break-glass[bot]` that the owner did not make is recorded in the emergency follow-up, for revert or disposition. Then read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
 | An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |

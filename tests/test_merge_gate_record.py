@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess  # nosec B404 -- test-only: runs the runbook's own shell functions
 import tempfile
@@ -173,7 +174,7 @@ class MergeGateRecordTests(unittest.TestCase):
         # The configuration directory is removed whatever happens, the token unset
         # first, so `rm` never holds it (Claude and CodeAnt on #400).
         guard = (
-            'trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- '
+            'trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- '
             "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
             "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR && GH_TOKEN={} "
             '&& test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@" )'
@@ -244,11 +245,14 @@ class MergeGateRecordTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     gh.chmod(0o755)
+                    # Quoted, so a temporary path with spaces stays one word (cubic on
+                    # #400).
                     defined = block.replace(
-                        "~/.config/gnostoa-agent/bin/agent-token.sh", str(mint)
+                        "~/.config/gnostoa-agent/bin/agent-token.sh",
+                        shlex.quote(str(mint)),
                     ).replace(
                         "~/.config/gnostoa-agent/machine-user-token",
-                        str(root / "token"),
+                        shlex.quote(str(root / "token")),
                     )
                     script = (
                         defined
@@ -279,6 +283,47 @@ class MergeGateRecordTests(unittest.TestCase):
                             "token", seen.read_text(encoding="utf-8").strip()
                         )
                     self.assertEqual([], list((root / "tmp").iterdir()))
+        # A caller's read-only `GH_CONFIG_DIR` keeps its value when the body's
+        # assignment fails; the clean-up then removes only an empty directory, so
+        # the caller's own configuration survives, and `gh` never runs (cubic on
+        # #400).
+        for interpreter in shells:
+            with (
+                self.subTest(interpreter=interpreter, case="read-only GH_CONFIG_DIR"),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / "bin").mkdir()
+                kept = root / "caller config"
+                kept.mkdir()
+                (kept / "hosts.yml").write_text("kept\n", encoding="utf-8")
+                gh = root / "bin" / "gh"
+                gh.write_text('#!/bin/sh\ntouch "$GH_SEEN"\n', encoding="utf-8")
+                gh.chmod(0o755)
+                mint = root / "mint.sh"
+                mint.write_text("#!/bin/sh\necho t0ken\n", encoding="utf-8")
+                mint.chmod(0o755)
+                script = (
+                    f"readonly GH_CONFIG_DIR={shlex.quote(str(kept))}\n"
+                    + block.replace(
+                        "~/.config/gnostoa-agent/bin/agent-token.sh",
+                        shlex.quote(str(mint)),
+                    )
+                    + "\nas_app api x\necho $?\n"
+                )
+                done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [interpreter, "-c", script],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                    env={
+                        "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                        "GH_SEEN": str(root / "seen"),
+                    },
+                )
+                self.assertTrue((kept / "hosts.yml").is_file(), done.stderr)
+                self.assertFalse((root / "seen").exists())
 
     def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
         """Bash prints a command's expansion under xtrace, token included, so no
@@ -408,7 +453,7 @@ class MergeGateRecordTests(unittest.TestCase):
         # but `gh` runs while the token is set (CodeAnt on #400), and removed after,
         # the token unset first (Claude on #400).
         command = (
-            '( trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rm -rf -- '
+            '( trap \'unset GH_TOKEN; [ -z "$GH_CONFIG_DIR" ] || rmdir -- '
             "\"$GH_CONFIG_DIR\"' EXIT trap 'exit 130' INT trap 'exit 143' TERM "
             "GH_CONFIG_DIR=$(mktemp -d) && export GH_CONFIG_DIR "
             '&& GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
@@ -449,6 +494,9 @@ class MergeGateRecordTests(unittest.TestCase):
         # The removed check protects every merge, so nothing else merges until it
         # is back, and the window is audited (Claude on #400).
         self.assertIn("hold every other merge until step 4", last_resort)
+        # R-main still requires the check of every normal merge, so only another
+        # break-glass merge is exposed (Claude on #400).
+        self.assertIn("only another break-glass merge could skip it", last_resort)
         self.assertIn("any other merge in that window", last_resort)
         # Restored to the recorded settings, since a read-back is not a body to
         # replay, then compared with the first read-back (Claude on #400).
@@ -535,6 +583,14 @@ class MergeGateRecordTests(unittest.TestCase):
         runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
         recovery = runbook[runbook.index("## Recovery") :]
         self.assertEqual(2, recovery.count("at least an hour after suspending it"))
+        # A stolen key or host may already have merged, so `main` is audited back to
+        # its last trusted identity before anything is restored (Codex on #400).
+        self.assertEqual(
+            2,
+            recovery.count(
+                "audit every merge into `main` since its last trusted identity"
+            ),
+        )
         self.assertIn("a collaborator on this repository alone", runbook)
         self.assertIn("account-wide", runbook)
         decision = " ".join(DECISION.read_text(encoding="utf-8").split())
