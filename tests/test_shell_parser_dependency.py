@@ -102,6 +102,19 @@ DECLARED_IMAGE_VARIABLES = {
 FENCE_OTHER_SHELLS = {"powershell", "ps1", "cmd", "bat", "batch"}
 # Microsoft's Windows base images, which run PowerShell.
 WINDOWS_IMAGE = re.compile(r"windows|servercore|nanoserver", re.I)
+# A name cannot show an image's OS, so only images known to be Linux count (cubic
+# on #396): Docker Official Images published for Linux alone, and `python` with a
+# Linux variant's tag. Any other image may be Windows.
+LINUX_ONLY_IMAGES = {"alpine", "debian", "ubuntu", "busybox"}
+LINUX_VARIANT_IMAGES = {"python"}
+LINUX_VARIANT_TAG = re.compile(
+    r"(?:^|-)(?:slim|alpine|bookworm|bullseye|trixie|buster)"
+)
+# GitLab's runner, not the file, sets a job's shell (its `config.toml`), even in a
+# Linux image (Codex on #396). No file can establish it, so this smoke declares it:
+# this repository's GitLab jobs run on a Docker executor with its default shell,
+# `sh` or `bash` in a Linux image. The images are still checked.
+GITLAB_RUNNER_SHELL = "the Docker executor's default shell"
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
 INSTRUCTION_FILES = {"AGENTS.md"}
@@ -177,7 +190,8 @@ SHELL_OPTION_WORDS = set("oO")
 # A stage's base and name, after any flags such as `--platform`; and a global
 # `ARG`, whose default a `FROM` may use.
 FROM_LINE = re.compile(
-    r"[ \t]*FROM[ \t]+(?:--\S+[ \t]+)*(?P<image>\S+)(?:[ \t]+AS[ \t]+(?P<stage>\S+))?[ \t]*",
+    r"[ \t]*FROM[ \t]+(?P<flags>(?:--\S+[ \t]+)*)(?P<image>\S+)"
+    r"(?:[ \t]+AS[ \t]+(?P<stage>\S+))?[ \t]*",
     re.I,
 )
 ARG_LINE = re.compile(
@@ -528,17 +542,36 @@ def _gitlab_image(
     return document.get("image")
 
 
+def _linux_image(reference: str) -> bool:
+    """Whether an image reference names an image known to be Linux. A registry
+    other than Docker Hub, a bare digest of a multi-OS image, or another tag is
+    not known (cubic on #396)."""
+    name = reference.partition("@")[0]
+    repository, _, tag = (
+        name.rpartition(":") if ":" in name.rsplit("/", 1)[-1] else (name, "", "")
+    )
+    repository = repository.lower().removeprefix("docker.io/").removeprefix("library/")
+    if repository in LINUX_ONLY_IMAGES:
+        return True
+    return repository in LINUX_VARIANT_IMAGES and bool(LINUX_VARIANT_TAG.search(tag))
+
+
 def _check_gitlab_image(image: object, key: str, name: str) -> None:
-    """A Linux image runs a job's scripts with `sh` or `bash`; a Windows base
-    image runs PowerShell, and with no image the runner decides."""
+    """A job's scripts run with the declared runner shell (`GITLAB_RUNNER_SHELL`)
+    only in an image known to be Linux, or one a declared variable names. A Windows
+    base image runs PowerShell, another image's OS is unknown, and with no image the
+    runner decides."""
     reference = image.get("name") if isinstance(image, dict) else image
     if not isinstance(reference, str) or not reference:
         raise _refuse(name, f"`{key}`: a GitLab job whose shell its runner decides")
     if WINDOWS_IMAGE.search(reference):
         raise _refuse(name, f"`{key}`: a Windows image")
-    for variable in re.findall(r"\$\{?(\w+)", reference):
+    variables = re.findall(r"\$\{?(\w+)", reference)
+    for variable in variables:
         if variable not in DECLARED_IMAGE_VARIABLES:
             raise _refuse(name, f"`{key}`: an image `{variable}` decides")
+    if not variables and not _linux_image(reference):
+        raise _refuse(name, f"`{key}`: an image not known to be Linux")
 
 
 def _gitlab_hooks(job: dict[str, object]) -> list[str]:
@@ -929,7 +962,7 @@ class _Stages:
         """Whether a line is a `FROM`, or a global `ARG`, and so read here."""
         if (stage := FROM_LINE.fullmatch(line)) is not None:
             self.started = True
-            self.shell = self._base_shell(stage["image"])
+            self.shell = self._base_shell(stage["image"], stage["flags"])
             self.stage = (stage["stage"] or "").lower()
             self.set_shell(self.shell)
             return True
@@ -944,7 +977,12 @@ class _Stages:
         if self.stage:
             self.shells[self.stage] = shell
 
-    def _base_shell(self, image: str) -> str | None:
+    def _base_shell(self, image: str, flags: str) -> str | None:
+        # A platform other than Linux, or one a variable names, leaves the shell
+        # unknown (Codex on #396).
+        platform = re.search(r"--platform=(\S+)", flags)
+        if platform and not platform[1].lower().startswith("linux/"):
+            return None
         resolved = re.sub(
             r"\$\{(\w+)\}|\$(\w+)",
             lambda match: self.args.get(match[1] or match[2], match[0]),
@@ -954,9 +992,7 @@ class _Stages:
             return None
         if resolved.lower() in self.shells:
             return self.shells[resolved.lower()]
-        if resolved.lower() == "scratch" or WINDOWS_IMAGE.search(resolved):
-            return None
-        return "sh"
+        return "sh" if _linux_image(resolved) else None
 
 
 def _shell_form_run(command: str, shell: str | None) -> str:
@@ -1199,7 +1235,7 @@ class SurfaceExtractionTests(unittest.TestCase):
 
     def test_a_run_instruction_is_read_as_docker_hands_it_to_the_shell(self) -> None:
         text = (
-            "FROM base\n"
+            "FROM alpine\n"
             "RUN --mount=type=bind,source=a,target=/b \\\n"
             "    set -eux; \\\n"
             "    # a comment Docker drops\n"
@@ -1212,7 +1248,7 @@ class SurfaceExtractionTests(unittest.TestCase):
         self.assertEqual(
             ["[ -f marker ] && git status"],
             _dockerfile_runs(
-                'FROM base\nRUN ["python", "-V"]\nRUN [ -f marker ] && git status\n'
+                'FROM alpine\nRUN ["python", "-V"]\nRUN [ -f marker ] && git status\n'
             ),
         )
 
@@ -1231,12 +1267,12 @@ class SurfaceExtractionTests(unittest.TestCase):
 
     def test_a_run_here_document_or_another_escape_fails_closed(self) -> None:
         with self.assertRaisesRegex(AssertionError, "here-document"):
-            _dockerfile_runs("FROM base\nRUN <<EOF\ngit status\nEOF\n")
+            _dockerfile_runs("FROM alpine\nRUN <<EOF\ngit status\nEOF\n")
         with self.assertRaisesRegex(AssertionError, "escape directive"):
             _dockerfile_runs("# escape=`\nRUN true\n")
         # The default escape may be stated (CodeAnt on #396).
         self.assertEqual(
-            ["true"], _dockerfile_runs("# escape=\\\nFROM base\nRUN true\n")
+            ["true"], _dockerfile_runs("# escape=\\\nFROM alpine\nRUN true\n")
         )
 
     def test_a_dockerfile_shell_override_is_honoured_or_fails_closed(self) -> None:
@@ -1312,7 +1348,7 @@ class SurfaceExtractionTests(unittest.TestCase):
             (root / "sub" / "AGENTS.md").write_text(
                 "```sh\ngit fetch <remote>\n```\n", "utf-8"
             )
-            (root / "Dockerfile").write_text("FROM a\nRUN git fetch\n", "utf-8")
+            (root / "Dockerfile").write_text("FROM alpine\nRUN git fetch\n", "utf-8")
             (root / "deep" / "er").mkdir(parents=True)
             (root / "deep" / "er" / "tool").write_bytes(BOM + b"#!/bin/sh\ngit gc\n")
             (root / "deep" / "data.bin").write_bytes(b"\xff\xfe")
@@ -1694,15 +1730,15 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             'RUN cat <<<"here"',
         ):
             with self.subTest(line=line):
-                self.assertEqual([line[4:]], _dockerfile_runs(f"FROM base\n{line}\n"))
+                self.assertEqual([line[4:]], _dockerfile_runs(f"FROM alpine\n{line}\n"))
         for line in ("RUN cat <<EOF\n", "RUN cat << EOF\n", "RUN cat 3<<-EOF\n"):
             with (
                 self.subTest(line=line),
                 self.assertRaisesRegex(AssertionError, "here-document"),
             ):
-                _dockerfile_runs("FROM base\n" + line)
+                _dockerfile_runs("FROM alpine\n" + line)
         with self.assertRaisesRegex(AssertionError, "an unreadable RUN"):
-            _dockerfile_runs('FROM base\nRUN echo "unclosed\n')
+            _dockerfile_runs('FROM alpine\nRUN echo "unclosed\n')
 
     def test_a_run_that_is_not_a_string_fails_closed(self) -> None:
         """A step's `run` is a string; any other value fails closed instead of being
@@ -1865,7 +1901,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertEqual(
             ["git status", "git log"],
             _dockerfile_runs(
-                'FROM base\nONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
+                'FROM alpine\nONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
             ),
         )
 
@@ -2070,6 +2106,44 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                     self.assertRaisesRegex(AssertionError, reason),
                 ):
                     _ci_shell(path, under_github=False)
+
+    def test_only_an_image_known_to_be_linux_runs_sh(self) -> None:
+        """A name cannot show an image's OS, so only images known to be Linux
+        count: an official image published for Linux alone, or `python` with a
+        Linux variant's tag. A custom name or a bare digest may be Windows, and
+        leaves the shell unknown (cubic on #396)."""
+        for image in (
+            "alpine",
+            "alpine:3.20",
+            "docker.io/library/debian:trixie",
+            "python:3.12-slim@sha256:" + "0" * 64,
+            "python:3.12-alpine3.20",
+        ):
+            with self.subTest(image=image):
+                self.assertTrue(_linux_image(image))
+        for image in (
+            "registry.example/custom-base",
+            "python@sha256:" + "0" * 64,
+            "python:3.12",
+            "python:3.12-windowsservercore",
+            "mcr.microsoft.com/windows/servercore:ltsc2022",
+        ):
+            with self.subTest(image=image):
+                self.assertFalse(_linux_image(image))
+        for text in (
+            "FROM registry.example/custom-base\nRUN Write-Output hi\n",
+            # A platform other than Linux leaves the shell unknown (Codex on #396).
+            "FROM --platform=windows/amd64 alpine\nRUN Write-Output hi\n",
+            "FROM --platform=$BUILDPLATFORM python:3.12-slim\nRUN true\n",
+        ):
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(AssertionError, "a RUN whose shell is unknown"),
+            ):
+                _dockerfile_runs(text)
+        self.assertEqual(
+            ["true"], _dockerfile_runs("FROM --platform=linux/arm64 alpine\nRUN true\n")
+        )
 
     def test_each_dockerfile_stage_has_its_own_shell(self) -> None:
         """A stage's shell is its base's: `sh` for a Linux image, a named stage's
