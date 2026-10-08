@@ -204,7 +204,10 @@ HEREDOC_WORD = re.compile(r"\d*<<-?[^<]*")
 PLACEHOLDER = re.compile(r"<[a-z0-9][a-z0-9-]*>")
 # A `RUN` or `SHELL`, also as a trigger that `ONBUILD` defers to a later build
 # (CodeAnt on #396).
-RUN = re.compile(r"[ \t]*(?:ONBUILD[ \t]+)?(?P<instruction>RUN|SHELL)[ \t]+(.*)", re.I)
+RUN = re.compile(
+    r"[ \t]*(?P<onbuild>ONBUILD[ \t]+)?(?P<instruction>RUN|SHELL)[ \t]+(?P<command>.*)",
+    re.I,
+)
 RUN_FLAGS = re.compile(r"\A(?:--[a-z-]+(?:=\S*)?[ \t]+)*")
 MAKEFILE = re.compile(r"\A(?:GNUmakefile|[Mm]akefile|.+\.mk)\Z")
 CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*)?\Z")
@@ -904,6 +907,13 @@ def _check_shell_instruction(argument: str) -> None:
     program = Path(argv[0]).name if isinstance(argv, list) and argv else ""
     if program not in SHELLS:
         raise AssertionError(f"a `{program}` SHELL; extend this extraction")
+    # Docker appends a shell-form `RUN` to the whole vector, so the vector's
+    # options must end with `-c`, leaving no command of its own (Codex on #396).
+    inline, rest = _shell_options(argv[1:])
+    if not inline or rest:
+        raise AssertionError(
+            f"a SHELL that does not hand RUN to `-c`: {argument!r}; extend this extraction"
+        )
 
 
 def _dockerfile_runs(text: str) -> list[str]:
@@ -927,10 +937,13 @@ def _dockerfile_runs(text: str) -> list[str]:
         match = RUN.fullmatch(line)
         if match is None:
             continue
-        command = match.group(2)
+        command = match["command"]
+        deferred = match["onbuild"] is not None
         if match["instruction"].upper() == "SHELL":
             _check_shell_instruction(command)
-            state.set_shell("sh")
+            # `ONBUILD SHELL` changes no current stage, only the `ONBUILD RUN`s
+            # after it (Codex on #396).
+            state.set_shell("sh", deferred=deferred)
             continue
         while command.endswith("\\") and index < len(lines):
             line = lines[index]
@@ -941,7 +954,7 @@ def _dockerfile_runs(text: str) -> list[str]:
         if _exec_form(command):
             runs.extend(_exec_form_shell(json.loads(command)))
         else:
-            runs.append(_shell_form_run(command, state.shell))
+            runs.append(_shell_form_run(command, state.shell_for(deferred)))
     return runs
 
 
@@ -957,6 +970,8 @@ class _Stages:
         self.shell: str | None = None
         self.stage = ""
         self.started = False
+        # The shell an `ONBUILD SHELL` set for a later build's triggers.
+        self.deferred: str | None = None
 
     def read(self, line: str) -> bool:
         """Whether a line is a `FROM`, or a global `ARG`, and so read here."""
@@ -964,6 +979,7 @@ class _Stages:
             self.started = True
             self.shell = self._base_shell(stage["image"], stage["flags"])
             self.stage = (stage["stage"] or "").lower()
+            self.deferred = None
             self.set_shell(self.shell)
             return True
         if not self.started and (arg := ARG_LINE.fullmatch(line)) is not None:
@@ -972,10 +988,18 @@ class _Stages:
             return True
         return False
 
-    def set_shell(self, shell: str | None) -> None:
+    def set_shell(self, shell: str | None, *, deferred: bool = False) -> None:
+        if deferred:
+            self.deferred = shell
+            return
         self.shell = shell
         if self.stage:
             self.shells[self.stage] = shell
+
+    def shell_for(self, deferred: bool) -> str | None:
+        """The shell a `RUN` runs in: an `ONBUILD RUN`'s is the later build's,
+        whose base is this stage, after any `ONBUILD SHELL` before it."""
+        return (self.deferred or self.shell) if deferred else self.shell
 
     def _base_shell(self, image: str, flags: str) -> str | None:
         # A platform other than Linux, or one a variable names, leaves the shell
@@ -2143,6 +2167,34 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 _dockerfile_runs(text)
         self.assertEqual(
             ["true"], _dockerfile_runs("FROM --platform=linux/arm64 alpine\nRUN true\n")
+        )
+
+    def test_a_shell_instruction_hands_run_to_c_and_defers_under_onbuild(
+        self,
+    ) -> None:
+        """Docker appends a shell-form `RUN` to the whole `SHELL` vector, so the
+        vector must end its options with `-c` and hold no command of its own (Codex
+        on #396). `ONBUILD SHELL` defers to a later build: it changes no current
+        stage, only the `ONBUILD RUN`s after it (Codex on #396)."""
+        windows = "FROM mcr.microsoft.com/windows/servercore:ltsc2022\n"
+        for text in (
+            'FROM alpine\nSHELL ["bash", "-c", "git status"]\nRUN true\n',
+            'FROM alpine\nSHELL ["bash"]\nRUN true\n',
+            windows + 'ONBUILD SHELL ["bash", "-c"]\nRUN Write-Output hi\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(AssertionError):
+                _dockerfile_runs(text)
+        self.assertEqual(
+            ["git x"],
+            _dockerfile_runs(
+                windows + 'ONBUILD SHELL ["bash", "-c"]\nONBUILD RUN git x\n'
+            ),
+        )
+        self.assertEqual(
+            ["git y"],
+            _dockerfile_runs(
+                'FROM alpine\nSHELL ["/bin/bash", "-eo", "pipefail", "-c"]\nRUN git y\n'
+            ),
         )
 
     def test_each_dockerfile_stage_has_its_own_shell(self) -> None:
