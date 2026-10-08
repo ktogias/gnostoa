@@ -165,13 +165,27 @@ def _gitlab_scripts(document: dict[str, object]) -> list[str]:
             if isinstance(value, str):
                 found.append(value)
             elif isinstance(value, list):
-                lines = [
-                    line
-                    for item in value
-                    for line in (item if isinstance(item, list) else [item])
-                ]
-                found.append("\n".join(str(line) for line in lines))
+                found.append("\n".join(_script_lines(value)))
     return found
+
+
+def _script_lines(value: list[object]) -> list[str]:
+    """A GitLab `script` array, flattened at any depth as GitLab flattens nested
+    `!reference` and anchor arrays. A line that is not a string fails closed rather
+    than being stringified (CodeAnt on #396)."""
+    lines: list[str] = []
+    stack: list[object] = list(reversed(value))
+    while stack:
+        item = stack.pop()
+        if isinstance(item, list):
+            stack.extend(reversed(item))
+        elif isinstance(item, str):
+            lines.append(item)
+        else:
+            raise AssertionError(
+                f"a `{type(item).__name__}` script line; extend this extraction"
+            )
+    return lines
 
 
 def _github_shaped(document: object) -> bool:
@@ -772,6 +786,15 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             (root / "unlisted").write_text("#!/bin/sh\ngit d\n", "utf-8")
             (root / ".gnostoa-source-files").write_bytes(b"listed\0")
             self.assertEqual({"listed"}, set(_shell_surfaces(root)))
+
+    def test_nested_gitlab_script_lists_are_flattened_and_others_fail(self) -> None:
+        """GitLab flattens nested `script` arrays (from `!reference` and anchors) at
+        any depth; a value that is not a string fails closed rather than being
+        stringified (CodeAnt on #396)."""
+        nested: dict[str, object] = {"job": {"script": ["git a", ["git b", ["git c"]]]}}
+        self.assertEqual(["git a\ngit b\ngit c"], _gitlab_scripts(nested))
+        with self.assertRaisesRegex(AssertionError, "a `int` script line"):
+            _gitlab_scripts({"job": {"script": ["git a", 7]}})
 
     def test_a_gitlab_job_named_like_github_s_keys_stays_gitlab(self) -> None:
         """A workflow has `on` and `jobs`, an action `runs.using`; a GitLab job may
