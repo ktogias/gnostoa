@@ -33,30 +33,46 @@ class BrandAssetTests(unittest.TestCase):
 
     def test_the_notice_states_the_terms_provenance_and_digests(self) -> None:
         notice = NOTICE.read_text(encoding="utf-8")
-        # The prose as read, whatever its line breaks and emphasis.
-        prose = " ".join(notice.replace("*", "").split())
-        self.assertIn("not licensed under the Apache License", prose)
-        self.assertIn("refer to the Gnostoa project", prose)
-        self.assertIn("generated with an AI image tool", prose)
+        # Plain text, as the root NOTICE is: no Markdown markers (cubic on #399).
+        for marker in ("**", "`", "|"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, notice)
+        # The prose as read, whatever its line breaks.
+        prose = " ".join(notice.split())
+        # Every term the owner set, so a broader use cannot pass (cubic on #399).
+        for term in (
+            "not licensed under the Apache License",
+            "All rights in them are reserved by Konstantinos Togias.",
+            "You may use them unmodified to refer to the Gnostoa project",
+            "Do not modify them, combine them with another mark, or use them in a way "
+            "that suggests endorsement or affiliation.",
+            "This notice is not a claim that Gnostoa is a registered trademark.",
+            "generated with an AI image tool under the owner's direction",
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, prose)
+        # Each file's full digest, compared exactly (Sourcery and cubic on #399).
         declared = dict(
-            re.findall(r"^\| `([\w.-]+)` \| `([0-9a-f]{16})…` \|", notice, re.M)
+            re.findall(r"^([\w.-]+)\n  SHA-256 ([0-9a-f]{64})$", notice, re.M)
         )
-        self.assertEqual(sorted(LOGOS), sorted(declared))
-        for name, digest in LOGOS.items():
-            with self.subTest(logo=name):
-                self.assertTrue(digest.startswith(declared[name]))
+        self.assertEqual(LOGOS, declared)
 
     def test_licensing_points_to_the_notice(self) -> None:
         licensing = (ROOT / "LICENSING.md").read_text(encoding="utf-8")
         self.assertIn("docs/assets/brand/NOTICE", licensing)
 
-    def test_the_readme_shows_the_logo(self) -> None:
+    def test_the_readme_shows_the_logo_under_its_title(self) -> None:
+        """The logo follows the `# Gnostoa` title and precedes the first section;
+        its alt text names the project where the image cannot load (Sourcery on
+        #399)."""
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        images = re.findall(r'<img src="([^"]+)"', readme.split("\n## ", 1)[0])
-        self.assertIn("docs/assets/brand/gnostoa-logo.png", images)
-        for image in images:
-            with self.subTest(image=image):
-                self.assertTrue((ROOT / image).is_file())
+        self.assertTrue(readme.startswith("# Gnostoa\n"))
+        head = readme.split("\n## ", 1)[0]
+        self.assertEqual(
+            [("docs/assets/brand/gnostoa-logo.png", "Gnostoa")],
+            re.findall(r'<img src="([^"]+)" alt="([^"]*)"', head),
+        )
+        self.assertTrue((ROOT / "docs/assets/brand/gnostoa-logo.png").is_file())
 
 
 if __name__ == "__main__":

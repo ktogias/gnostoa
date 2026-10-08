@@ -50,15 +50,22 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
    claims that `Gnostoa` is a registered trademark.
 3. **Provenance (the owner's statement).** The logos were generated with an AI image
    tool under the owner's direction, then chosen and approved by the owner. The
-   notice records this, with each file's digest.
+   notice records this, with each file's full SHA-256.
 4. **Integrity.** `tests/test_brand_assets.py` checks:
    - each file against its full SHA-256;
    - that the directory holds nothing else;
-   - that the notice states the terms, the provenance and each digest;
+   - that the notice states every term and the provenance, and records each full
+     digest exactly;
    - that `LICENSING.md` points to the notice;
-   - that the README's logo resolves.
-5. **Use.** The README shows `gnostoa-logo.png` under its `# Gnostoa` heading, which the brand-identity test requires to come first.
-6. **The notice is plain text**, as the root `NOTICE` is, because every Markdown file under `docs/` is a navigation projection of canonical knowledge.
+   - that the README's logo resolves, under the title and before the first section.
+5. **Use.** The README shows `gnostoa-logo.png` under its `# Gnostoa` heading, which the brand-identity test requires to come first. Its alt text, `Gnostoa`, names the project wherever the image cannot load.
+6. **The notice is plain text**, as the root `NOTICE` is, because every Markdown file under `docs/` is a navigation projection of canonical knowledge. It holds no Markdown markers.
+7. **The distributions do not carry the logos.** The source distribution and the
+   wheel declare `license = "Apache-2.0"`, with `LICENSE` and `NOTICE` as their
+   license files. Shipping reserved files in them would make that declaration
+   untrue. So the unpacked source distribution's README shows the alt text in place
+   of the logo (Greptile on #399). PyPI renders no README, because the project
+   declares no `readme` metadata.
 
 ## Consequences
 
@@ -75,3 +82,5 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
 - **Vector (SVG) sources:** none were supplied. Adding them later is a separate
   change.
 - **A trademark registration or a full trademark-use policy:** out of scope (#397).
+- **The logos in the source distribution:** this would need a license expression
+  beyond `Apache-2.0` for the archive; see item 7.
