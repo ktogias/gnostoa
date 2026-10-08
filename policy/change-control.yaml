@@ -1,22 +1,44 @@
 id: gnostoa-change-control
-version: "0.3.0"
+version: "0.4.0"
 owner: team:gnostoa-maintainers
 extends:
   - ../core/change-control.yaml
 
+# Every class that merges through R-main, the ruleset on `main`, needs the code
+# owner's approval there (Decision 0110, #401): a human approval, independent of the
+# agent identities that author, and with auto-merge off, as the repository has it.
+# An emergency bypasses R-main through break glass, and its follow-up is mandatory.
 change_classes:
+  mechanical:
+    minimum_approvals: 1
+    code_owner_approval: true
+    independent_approval: true
+    human_approval: true
+    auto_merge: false
   normal:
+    minimum_approvals: 1
+    code_owner_approval: true
+    independent_approval: true
+    human_approval: true
     work_item: required
     decision_record: true
     verification:
       evidence_timing: before-implementation
   normative:
+    minimum_approvals: 1
+    code_owner_approval: true
+    independent_approval: true
+    human_approval: true
     work_item: required
     decision_record: true
     verification:
       failing_evidence: required
       evidence_timing: before-implementation
   critical:
+    minimum_approvals: 1
+    code_owner_approval: true
+    independent_approval: true
+    human_approval: true
     work_item: required
     decision_record: true
     verification:

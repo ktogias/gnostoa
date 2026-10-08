@@ -2734,9 +2734,44 @@ class ChangeControlTests(unittest.TestCase):
                 change_class["verification"]["failing_evidence"],
                 class_id,
             )
-            self.assertEqual(0, change_class["minimum_approvals"], class_id)
+
+        # Every class that merges through R-main needs the approval R-main enforces,
+        # read from its record in the merge-gate runbook rather than restated here
+        # (Decision 0110, #401). The schema couples an approval to a human,
+        # independent one and forbids auto-merge with it. An emergency bypasses
+        # R-main through break glass, and its follow-up is mandatory.
+        runbook = (
+            ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
+        ).read_text(encoding="utf-8")
+        record = re.search(r"```json\n(\{.*?\})\n```", runbook, re.S)
+        if record is None:
+            self.fail("the merge-gate runbook records R-main as JSON")
+        [rule] = [
+            rule
+            for rule in json.loads(record.group(1))["rules"]
+            if rule["type"] == "pull_request"
+        ]
+        enforced = rule["parameters"]
+        self.assertEqual(1, enforced["required_approving_review_count"])
+        self.assertTrue(enforced["require_code_owner_review"])
+        for class_id in ("mechanical", "normal", "normative", "critical"):
+            change_class = policy["change_classes"][class_id]
+            with self.subTest(change_class=class_id):
+                self.assertEqual(
+                    enforced["required_approving_review_count"],
+                    change_class["minimum_approvals"],
+                )
+                self.assertIs(
+                    enforced["require_code_owner_review"],
+                    change_class["code_owner_approval"],
+                )
+                self.assertTrue(change_class["human_approval"])
+                self.assertTrue(change_class["independent_approval"])
+                self.assertFalse(change_class["auto_merge"])
 
         emergency = policy["change_classes"]["emergency"]
+        self.assertEqual(0, emergency["minimum_approvals"])
+        self.assertFalse(emergency["code_owner_approval"])
         self.assertEqual("required-follow-up", emergency["work_item"])
         self.assertTrue(emergency["decision_record"])
         self.assertEqual(
