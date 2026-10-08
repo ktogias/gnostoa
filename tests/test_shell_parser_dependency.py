@@ -65,13 +65,15 @@ INSTRUCTION_FILES = {"AGENTS.md"}
 # A top-level CommonMark fence line: up to three spaces of indent, then three or more
 # backticks or tildes (CommonMark 0.31.2, section 4.5).
 FENCE_LINE = re.compile(r"(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)")
-# A shell fence behind a container's prefix: a list item, a block quote, or deeper
-# indent. This reader reads the top level only, so one of these fails closed.
-NESTED_SHELL_FENCE = re.compile(
-    r"(?P<prefix>[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+[ \t>]*)*)"
-    r"(?:`{3,}|~{3,})[ \t]*(?:bash|sh|shell)(?:[ \t]|$)",
-    re.I,
+# A shell fence's opener, and what a container's prefix is made of: block-quote and
+# list markers, and indent. A shell fence behind such a prefix is in a list item, a
+# block quote or deeper indent; this reader reads the top level only, so it fails
+# closed. The prefix is stripped, not matched, so no input backtracks (CodeQL and
+# Codacy on #396).
+SHELL_FENCE_OPEN = re.compile(
+    r"(?:`{3,}|~{3,})[ \t]*(?:bash|sh|shell)(?:[ \t]|$)", re.I
 )
+CONTAINER_PREFIX = " \t>-+*.)0123456789"
 SHELL_INFO = {"bash", "sh", "shell"}
 # A runner label whose implicit shell is bash: a GitHub-hosted Linux or macOS image,
 # or a self-hosted runner's operating-system label.
@@ -668,8 +670,9 @@ def _shell_fences(text: str, name: str) -> list[str]:
         opener = FENCE_LINE.fullmatch(line)
         # A backtick fence's info string holds no backtick (CommonMark, 4.5).
         if opener is None or (opener["fence"][0] == "`" and "`" in opener["info"]):
-            nested = NESTED_SHELL_FENCE.match(line)
-            if nested and not re.fullmatch(" {0,3}", nested["prefix"]):
+            rest = line.lstrip(CONTAINER_PREFIX)
+            prefix = line[: len(line) - len(rest)]
+            if SHELL_FENCE_OPEN.match(rest) and not re.fullmatch(" {0,3}", prefix):
                 raise _refuse(name, "a shell fence inside a list or quote")
             continue
         fence, indent = opener["fence"], len(opener["indent"])
@@ -1138,6 +1141,29 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 ["git d\n git d2\n", "git e\n", "git f\n", "git g\n", "git h\n"],
                 list(_shell_surfaces(declared).values()),
             )
+
+    def test_a_line_of_list_markers_is_read_in_linear_time(self) -> None:
+        """A container's prefix is read without backtracking: repeated list markers
+        and tabs once took exponential time (CodeQL and Codacy on #396). The reader
+        runs in a subprocess, so the old shape fails by its deadline instead of
+        hanging the suite."""
+        hostile = "*\t\t\t" * 40 + "x\n"
+        completed = subprocess.run(  # nosec B603 -- this interpreter; literal argv
+            [
+                sys.executable,
+                "-c",
+                "import sys; from tests.test_shell_parser_dependency import "
+                "_shell_fences; print(_shell_fences(sys.argv[1], 'AGENTS.md'))",
+                hostile,
+            ],
+            cwd=ROOT,
+            env={"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        self.assertEqual("[]\n", completed.stdout)
 
     def test_a_shell_fence_inside_a_list_or_quote_fails_closed(self) -> None:
         """This reader reads top-level fences; one in a list item or a block quote
