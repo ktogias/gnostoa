@@ -31,8 +31,13 @@ x-project-knowledge:
 - **Subject:** `ktogias/gnostoa` at `c8ababdaa11a0901e3661b8bba594fd7b2ef6c13`, #369's
   frozen head (round 47).
 - **Image:** the development target, `sha256:0099ecaeef2a…`; Python 3.12.14 on Linux
-  x86_64, glibc 2.41.
-- **Wheel SHA-256 values** (the first 16 hex digits):
+  x86_64, glibc 2.41. Only this prefix was recorded, and the image was rebuilt before
+  its full identity was kept, so its full identity was not recorded.
+- **Artifact digests.** The JSON evidence keeps each wheel's and binary's full
+  SHA-256, with its source (`artifacts`); this page prints their first 16 hex digits.
+  Each was matched on 2026-10-08 against its published digest: PyPI's for the wheels,
+  the release's `sha256sums.txt` for v3.10.0, and GitHub's release API for v3.14.1.
+- **Wheel SHA-256 values:**
 
   | Wheel | SHA-256 |
   |---|---|
@@ -43,7 +48,8 @@ x-project-knowledge:
 - **The mvdan/sh binaries:**
   - `shfmt` v3.10.0: `1f57a384d59542f8`;
   - v3.14.1 (`shfmt_v3.14.1_linux_amd64`): `76e77641faa02581`. The v3.14.1 release
-    publishes no checksum file, so this is a measurement, not a provenance claim.
+    publishes no checksum file. GitHub's release API reports the same digest for the
+    stored asset, which confirms what was served, not who built it.
 
 ## Corpus
 

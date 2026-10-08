@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
+from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
@@ -999,19 +1000,35 @@ def _dockerfile_runs(text: str) -> list[str]:
             index += 1
             if not line.lstrip().startswith("#"):
                 command = command[:-1] + line
-        instruction = match["instruction"].upper()
-        if instruction == "HEALTHCHECK":
-            command = _healthcheck_command(command)
-            if command is None:
-                continue
-        # Only `RUN` takes `--mount`-style flags (cubic on #396).
-        if instruction == "RUN":
-            command = RUN_FLAGS.sub("", command)
+        runs.extend(
+            _instruction_runs(match["instruction"].upper(), command, deferred, state)
+        )
+    if state.started:
+        state.finish()
+    return runs + state.surfaces
+
+
+def _instruction_runs(
+    instruction: str, command: str, deferred: bool, state: _Stages
+) -> list[str]:
+    """The shell one `RUN`, `CMD`, `ENTRYPOINT` or `HEALTHCHECK` hands over, its
+    continuation lines already joined."""
+    if instruction == "HEALTHCHECK":
+        healthcheck = _healthcheck_command(command)
+        if healthcheck is None:
+            return []
+        command = healthcheck
+    # Only `RUN` takes `--mount`-style flags (cubic on #396).
+    if instruction == "RUN":
+        command = RUN_FLAGS.sub("", command)
+    # A stage's process is read whole when the stage ends (Codex on #396).
+    if instruction in {"CMD", "ENTRYPOINT"} and not deferred:
+        state.record(instruction, command)
         if _exec_form(command):
-            runs.extend(_exec_form_shell(json.loads(command)))
-        else:
-            runs.append(_shell_form_run(command, state.shell_for(deferred)))
-    return runs
+            return []
+    if _exec_form(command):
+        return _exec_form_shell(json.loads(command))
+    return [_shell_form_run(command, state.shell_for(deferred))]
 
 
 class _Stages:
@@ -1028,11 +1045,19 @@ class _Stages:
         self.started = False
         # The shell an `ONBUILD SHELL` set for a later build's triggers.
         self.deferred: str | None = None
+        # The container's process: each named stage's `ENTRYPOINT` and `CMD`, and
+        # the current stage's, read whole when the stage ends (Codex on #396).
+        self.processes: dict[str, _Process] = {}
+        self.process = _Process()
+        self.surfaces: list[str] = []
 
     def read(self, line: str) -> bool:
         """Whether a line is a `FROM`, or a global `ARG`, and so read here."""
         if (stage := FROM_LINE.fullmatch(line)) is not None:
+            if self.started:
+                self.finish()
             self.started = True
+            self.process = self._base_process(stage["image"], stage["flags"])
             self.shell = self._base_shell(stage["image"], stage["flags"])
             self.stage = (stage["stage"] or "").lower()
             self.deferred = None
@@ -1057,9 +1082,51 @@ class _Stages:
         whose base is this stage, after any `ONBUILD SHELL` before it."""
         return (self.deferred or self.shell) if deferred else self.shell
 
-    def _base_shell(self, image: str, flags: str) -> str | None:
-        # A platform other than Linux, or one a variable names, leaves the shell
-        # unknown (Codex on #396).
+    def record(self, instruction: str, command: str) -> None:
+        """A stage's `ENTRYPOINT` or `CMD`. Its own `ENTRYPOINT` resets an
+        inherited `CMD`, as Docker's builder does."""
+        value: list[str] | str | None = (
+            json.loads(command) if _exec_form(command) else command
+        )
+        process = self.process
+        process.set_here = True
+        if instruction == "ENTRYPOINT":
+            process.entrypoint = value or None
+            process.known = True
+            if not process.cmd_set:
+                process.cmd = None
+        else:
+            process.cmd = value or None
+            process.cmd_set = True
+
+    def finish(self) -> None:
+        """The process of the stage that ends: an exec-form `ENTRYPOINT` with its
+        `CMD` as arguments, or an exec-form `CMD` alone. A shell-form one is read on
+        its own line; a shell-form `ENTRYPOINT` ignores `CMD`."""
+        process = self.process
+        if self.stage:
+            self.processes[self.stage] = process
+        if not process.set_here or isinstance(process.entrypoint, str):
+            return
+        if not process.known:
+            if isinstance(process.cmd, list):
+                raise AssertionError(
+                    "an exec-form `CMD` under an unknown base's `ENTRYPOINT`; "
+                    "extend this extraction"
+                )
+            return
+        argv = list(process.entrypoint or [])
+        if isinstance(process.cmd, list):
+            argv += process.cmd
+        elif process.cmd is not None and argv:
+            # A shell-form `CMD` reaches an exec-form `ENTRYPOINT` through the shell.
+            argv += [self.shell or "/bin/sh", "-c", process.cmd]
+        if argv:
+            self.surfaces.extend(_exec_form_shell(argv))
+
+    def _resolve(self, image: str, flags: str) -> str | None:
+        """The base a `FROM` names, its global `ARG`s resolved; a platform other
+        than Linux, or a name a variable still holds, is unknown (Codex on #396)."""
         platform = re.search(r"--platform=(\S+)", flags)
         if platform and not platform[1].lower().startswith("linux/"):
             return None
@@ -1068,11 +1135,40 @@ class _Stages:
             lambda match: self.args.get(match[1] or match[2], match[0]),
             image,
         )
-        if "$" in resolved:
+        return None if "$" in resolved else resolved.lower()
+
+    def _base_shell(self, image: str, flags: str) -> str | None:
+        resolved = self._resolve(image, flags)
+        if resolved is None:
             return None
-        if resolved.lower() in self.shells:
-            return self.shells[resolved.lower()]
+        if resolved in self.shells:
+            return self.shells[resolved]
         return "sh" if _linux_image(resolved) else None
+
+    def _base_process(self, image: str, flags: str) -> _Process:
+        """A named stage's process, inherited; none for `scratch` or a Linux image
+        this reader knows, whose official images set no `ENTRYPOINT`; otherwise an
+        unknown one."""
+        resolved = self._resolve(image, flags)
+        if resolved is not None and resolved in self.processes:
+            inherited = self.processes[resolved]
+            return _Process(inherited.entrypoint, inherited.cmd, inherited.known)
+        known = resolved is not None and (
+            resolved == "scratch" or _linux_image(resolved)
+        )
+        return _Process(known=known)
+
+
+@dataclass
+class _Process:
+    """A stage's `ENTRYPOINT` and `CMD`: an exec form's words, a shell form's text,
+    or none; whether the entrypoint is known; and whether this stage set either."""
+
+    entrypoint: list[str] | str | None = None
+    cmd: list[str] | str | None = None
+    known: bool = True
+    cmd_set: bool = False
+    set_here: bool = False
 
 
 def _healthcheck_command(argument: str) -> str | None:
@@ -1216,9 +1312,12 @@ def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
     # `-c`, its command string, the file only `$0`; with `-s`, standard input.
     inline, rest = _shell_options(words[1:])
     options = words[1 : len(words) - len(rest)]
-    if any(
+    reads_input = any(
         word[:1] == "-" and word[:2] != "--" and "s" in word[1:] for word in options
-    ):
+    )
+    # With `-c`, bash ignores `-s`, but dash runs the string and then reads
+    # standard input too, so only bash's is read (cubic on #396).
+    if reads_input and not (inline and command == "bash"):
         raise _refuse(name, "a shebang shell that reads standard input")
     if inline:
         rest = rest[1:] if rest[:1] == ["-"] else rest
@@ -2329,6 +2428,45 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             _dockerfile_runs('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n'),
         )
 
+    def test_an_exec_form_entrypoint_takes_its_cmd(self) -> None:
+        """An exec-form `ENTRYPOINT` takes an exec-form `CMD` as its arguments, so
+        the stage's process is read whole, as Docker runs it (Codex on #396). A
+        stage inherits a named stage's; its own `ENTRYPOINT` resets an inherited
+        `CMD`; a shell-form `ENTRYPOINT` ignores `CMD`; only the last of each runs.
+        An exec-form `CMD` under an unknown base's `ENTRYPOINT` fails closed."""
+        for dockerfile, expected in (
+            ('FROM alpine\nENTRYPOINT ["sh"]\nCMD ["-c", "git a"]\n', ["git a"]),
+            ('FROM alpine\nENTRYPOINT ["sh", "-c"]\nCMD ["git b"]\n', ["git b"]),
+            (
+                'FROM alpine AS base\nENTRYPOINT ["bash"]\nFROM base\nCMD ["-c", "git c"]\n',
+                ["git c"],
+            ),
+            (
+                'FROM alpine AS base\nENTRYPOINT ["sh", "-c"]\nCMD ["git d"]\n'
+                'FROM base\nENTRYPOINT ["knowledge"]\n',
+                ["git d"],
+            ),
+            # Docker ignores `CMD` under a shell-form `ENTRYPOINT`, though it
+            # would run on its own.
+            ('FROM alpine\nENTRYPOINT git e\nCMD ["sh", "-c", "git z"]\n', ["git e"]),
+            (
+                'FROM alpine\nCMD ["sh", "-c", "git old"]\nCMD ["sh", "-c", "git f"]\n',
+                ["git f"],
+            ),
+            # Without the reset, the child would run `sh -c "git y"`.
+            (
+                'FROM alpine AS base\nENTRYPOINT ["knowledge"]\nCMD ["-c", "git y"]\n'
+                'FROM base\nENTRYPOINT ["sh"]\n',
+                [],
+            ),
+            ('FROM scratch\nCMD ["/app"]\n', []),
+            ('FROM alpine\nENTRYPOINT ["knowledge"]\nCMD ["--help"]\n', []),
+        ):
+            with self.subTest(dockerfile=dockerfile):
+                self.assertEqual(expected, _dockerfile_runs(dockerfile))
+        with self.assertRaisesRegex(AssertionError, "an unknown base's `ENTRYPOINT`"):
+            _dockerfile_runs('FROM example.com/tool\nCMD ["sh", "-c", "git g"]\n')
+
     def test_env_s_is_read_by_position_and_flags_belong_to_run(self) -> None:
         """An `S` inside `-u`'s attached argument is not `-S` (cubic on #396).
         Only `RUN` takes `--mount`-style flags; a runtime instruction keeps its
@@ -2399,6 +2537,27 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 AssertionError, "s: a shebang shell that reads"
             ):
                 _shell_surfaces(declared)
+        # With `-c`, bash ignores `-s`; dash runs the string, then reads standard
+        # input too, so `sh`, `dash` and `ash` still fail closed (cubic on #396).
+        cases: dict[bytes, dict[str, str] | str] = {
+            b"#!/usr/bin/env -S bash -sc 'git status'\n": {"b": "git status"},
+            b"#!/usr/bin/env -S sh -sc 'git status'\n": "b: a shebang shell that reads",
+            # `-c -` names no command: such a file runs its own path as the
+            # command, and so itself, without end (Claude on #396).
+            b"#!/usr/bin/env -S sh -c -\n": "b: a shebang `-c` without its command",
+        }
+        for head, expected in cases.items():
+            with self.subTest(head=head), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "b").write_bytes(head + b"git log\n")
+                declared = _declared(root)
+                if isinstance(expected, dict):
+                    self.assertEqual(expected, _shell_surfaces(declared))
+                else:
+                    with self.assertRaisesRegex(AssertionError, expected):
+                        _shell_surfaces(declared)
+        with self.assertRaisesRegex(AssertionError, "a `-c` without its command"):
+            _exec_form_shell(["sh", "-c", "-"])
 
     def test_the_probe_takes_a_bounded_list_of_strings(self) -> None:
         """The probe child refuses input that is not a list of strings (Amazon Q on
@@ -2640,6 +2799,32 @@ class RetainedEvidenceTests(unittest.TestCase):
         for name, digest in printed.items():
             with self.subTest(script=name):
                 self.assertTrue(full[name].startswith(digest))
+
+    def test_the_evaluated_artifacts_keep_their_full_digests(self) -> None:
+        """Decision 0108 item 12 asks for the hashes of the wheels and binaries, so
+        the JSON evidence keeps each full SHA-256 and its source, and the prefixes
+        the assessment prints are theirs (Codex on #396). The image's full identity
+        was never recorded, and the assessment says so."""
+        text = self.ASSESSMENT.read_text(encoding="utf-8")
+        artifacts = json.loads(self.EVIDENCE.read_text(encoding="utf-8"))["artifacts"]
+        self.assertEqual(
+            [
+                "tree_sitter-0.25.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+                "tree_sitter_bash-0.25.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+                "tree_sitter-0.26.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+                "shfmt_v3.10.0_linux_amd64",
+                "shfmt_v3.14.1_linux_amd64",
+            ],
+            [artifact["name"] for artifact in artifacts],
+        )
+        printed = re.findall(r"`([0-9a-f]{16})`", text.split("## Corpus", 1)[0])
+        self.assertEqual(len(artifacts), len(printed))
+        for artifact, prefix in zip(artifacts, printed, strict=True):
+            with self.subTest(artifact=artifact["name"]):
+                self.assertRegex(artifact["sha256"], r"\A[0-9a-f]{64}\Z")
+                self.assertTrue(artifact["sha256"].startswith(prefix))
+                self.assertTrue(artifact["source"].startswith("https://"))
+        self.assertIn("its full identity was not recorded", " ".join(text.split()))
 
     def test_the_archive_is_deterministic_and_matches_its_full_digests(self) -> None:
         """The archive and each member match their full SHA-256 in the JSON

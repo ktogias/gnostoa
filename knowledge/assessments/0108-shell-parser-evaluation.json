@@ -2,7 +2,14 @@
   "schema": "gnostoa-shell-parser-evaluation/v1",
   "decision": "0108-read-shell-text-with-a-parser-behind-an-owned-analysis",
   "subject": {"repository": "ktogias/gnostoa", "commit_hex_chunks": ["c8ababda", "a11a0901", "e3661b8b", "ba594fd7", "b2ef6c13"]},
-  "environment": {"image": "gnostoa:dev-relay (development target)", "python": "3.12.14", "platform": "linux x86_64, glibc 2.41"},
+  "environment": {"image": "gnostoa:dev-relay (development target)", "image_id_prefix": "sha256:0099ecaeef2a", "image_id_note": "Only this prefix was recorded; the image was rebuilt before its full identity was kept.", "python": "3.12.14", "platform": "linux x86_64, glibc 2.41"},
+  "artifacts": [
+    {"name": "tree_sitter-0.25.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", "sha256": "b43a9e4c89d4d0839de27cd4d6902d33396de700e9ff4c5ab7631f277a85ead9", "source": "https://pypi.org/pypi/tree-sitter/0.25.2/json", "annotation": "# pragma: allowlist secret -- public evaluated artifact digest"},
+    {"name": "tree_sitter_bash-0.25.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", "sha256": "3f484c4bb8796cde7a87ca351e6116f09653edac0eb3c6d238566359dd28b117", "source": "https://pypi.org/pypi/tree-sitter-bash/0.25.1/json", "annotation": "# pragma: allowlist secret -- public evaluated artifact digest"},
+    {"name": "tree_sitter-0.26.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", "sha256": "5a6b333b0282d8bb0af741f9b018bd2523d4eecb2686bf6717066a625fecfaa4", "source": "https://pypi.org/pypi/tree-sitter/0.26.0/json", "annotation": "# pragma: allowlist secret -- public evaluated artifact digest"},
+    {"name": "shfmt_v3.10.0_linux_amd64", "sha256": "1f57a384d59542f8fac5f503da1f3ea44242f46dff969569e80b524d64b71dbc", "source": "https://github.com/mvdan/sh/releases/download/v3.10.0/sha256sums.txt", "annotation": "# pragma: allowlist secret -- public evaluated artifact digest"},
+    {"name": "shfmt_v3.14.1_linux_amd64", "sha256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf", "source": "https://api.github.com/repos/mvdan/sh/releases/tags/v3.14.1", "annotation": "# pragma: allowlist secret -- public evaluated artifact digest"}
+  ],
   "parsers": [
     {"name": "tree-sitter-bash", "version": "0.25.1", "runtime": "tree-sitter 0.25.2", "git_commands": 76, "scripts_with_parse_problems": 1, "dynamic_command_words": 10},
     {"name": "mvdan/sh", "version": "3.14.1", "runtime": "shfmt --to-json", "git_commands": 75, "scripts_with_parse_problems": 1, "dynamic_command_words": 7}
