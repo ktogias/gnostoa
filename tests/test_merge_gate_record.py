@@ -422,11 +422,27 @@ class MergeGateRecordTests(unittest.TestCase):
         The host's PATH resolves every program that holds a token, so it is part of
         the trust boundary, as recorded (cubic on #400)."""
         runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
-        # Every program the procedure needs is named, `jq` included (CodeAnt on #400).
-        self.assertIn(
-            "The procedure needs `gh`, `git`, `jq`, `curl`, `openssl` and `python3`",
-            runbook,
+        # Every program the procedure runs is named: `jq` (CodeAnt on #400), and `cat`
+        # and `rm`, which the guarded bodies run (cubic and Claude on #400).
+        needs = re.search(
+            r"The procedure needs (.+?) on the fixed system path", runbook
         )
+        if needs is None:
+            self.fail("the runbook names the programs the procedure needs")
+        named = set(re.findall(r"`([\w.]+)`", needs.group(1)))
+        for program in (
+            "gh",
+            "git",
+            "jq",
+            "curl",
+            "openssl",
+            "python3",
+            "cat",
+            "rm",
+            "mktemp",
+        ):
+            with self.subTest(program=program):
+                self.assertIn(program, named)
         for phrase in (
             "never with xtrace (`set -x`) on, nor in a recorded session",
             "The host's `PATH` is trusted",
@@ -693,6 +709,17 @@ class MergeGateRecordTests(unittest.TestCase):
                 "the integrated tree, as the normal merge's step 9 does"
             ),
         )
+        # An anchor no agent identity can write: the owner's own review, not a Work
+        # Item record that a compromised identity could edit (Codex on #400).
+        flat = " ".join(recovery.split())
+        self.assertEqual(
+            2,
+            flat.count(
+                "the last merge whose PR carries the owner's own approving review of "
+                "its exact head"
+            ),
+        )
+        self.assertNotIn("the last merge recorded on a Work Item", flat)
         self.assertIn("a collaborator on this repository alone", runbook)
         self.assertIn("account-wide", runbook)
         decision = " ".join(DECISION.read_text(encoding="utf-8").split())
