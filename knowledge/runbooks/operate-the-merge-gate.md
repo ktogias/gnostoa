@@ -38,7 +38,7 @@ The gate depends on the identities, settings and host files below. Each was read
 |---|---|---|---|---|
 | `ktogias` | the owner, the only admin and the only code owner | approves the exact head of a PR, which is the merge instruction; edits settings | approve a PR that it authored | the owner's own login; no token of it is on any agent host |
 | `gnostoa-agent` | GitHub App, ID 5230694, installation 169050684, bot user `gnostoa-agent[bot]` (id 339367847) | pushes branches; commits under its bot identity; resolves review threads; dispatches and reads the analyzer readback; merges an approved PR | merge without the owner's approval; push to `main` | a private key on the agent host; one-hour installation tokens |
-| `gnostoa-agent-user` | machine user (a real account, id 339381282), **Write** role on this repository only | opens PRs; posts review triggers | push any branch (ruleset 24640984); merge without the owner's approval (R-main); count as a code owner | a classic token with `public_repo` scope only, which **expires 2027-01-06** |
+| `gnostoa-agent-user` | machine user (a real account, id 339381282), **Write** role here; it is a collaborator on this repository alone, which is what limits its token | opens PRs; posts review triggers | push any branch (ruleset 24640984); merge without the owner's approval (R-main); count as a code owner | a classic token with `public_repo` scope only, which **expires 2027-01-06**; that scope is account-wide, so the account is never added to another repository |
 | `gnostoa-break-glass` | GitHub App, ID 5230732 | merges a PR that bypasses R-main, in an emergency only | bypass the classic protection or the CodeQL ruleset | a private key held **offline** by the owner, never on an agent host |
 
 Why the work is split between two agent identities: Codex, Amazon Q and CodeAnt
@@ -278,6 +278,9 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
      gh pr merge <N> --squash --match-head-commit <approved>
    ```
+   Between the two, the App reads the PR's head,
+   `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh pr view <N> --json headRefOid --jq .headRefOid`.
+   Stop unless `<approved>`, the PR's head and the seal are one SHA.
    GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
    hold. There is no `--admin`, because the App is not a bypass actor of R-main.
 9. **After the merge.** The agent confirms that the merge commit and the head match
@@ -312,9 +315,12 @@ protection exists. The last resort is then the owner, as admin:
 2. Change that protection temporarily, for the one merge. The security log records
    the change.
 3. Merge, as below.
-4. Restore the protection at once, whether the merge succeeded or not: restore exactly
-   what was read back in step 1, not only the four checks, and read it back again to
-   compare. After an interrupted session, restoring it is the first thing done.
+4. Restore the protection at once, whether the merge succeeded or not, to the settings
+   Preconditions records, in Settings → Branches → the `main` rule, not only the four
+   checks. Re-enter them there, since a read-back is not a body to send back: the
+   endpoint's answer carries read-only fields that its update does not take. Read it back again, and compare it
+   with step 1's read-back. After an interrupted session, restoring it is the first
+   thing done.
 5. Record both changes, and both read-backs, in the follow-up.
 
 **How.** Only the owner does it, and no agent ever holds the key:
@@ -386,8 +392,8 @@ the gate:
 | Event | Action |
 |---|---|
 | The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
-| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host, and unsuspend the installation only after reading it back. |
+| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host, and unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
-| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, generate a new one offline, read the installation back, and only then unsuspend it. |
+| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, generate a new one offline, read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
 | An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |

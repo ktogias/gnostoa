@@ -215,6 +215,11 @@ class MergeGateRecordTests(unittest.TestCase):
             merge,
         )
         self.assertIn("gh pr merge <N> --squash --match-head-commit <approved>", merge)
+        # The comparison is a step, not a hope (CodeAnt on #400).
+        self.assertIn(
+            "Stop unless `<approved>`, the PR's head and the seal are one SHA", merge
+        )
+        self.assertIn("gh pr view <N> --json headRefOid --jq .headRefOid", merge)
         text = RUNBOOK.read_text(encoding="utf-8")
         for command in re.findall(r"```sh\n(.*?)```", text, re.S):
             joined = " ".join(command.replace("\\\n", " ").split())
@@ -248,7 +253,11 @@ class MergeGateRecordTests(unittest.TestCase):
         # Everything read back before the change, not only the checks (CodeAnt on
         # #400).
         self.assertIn("Read back the whole protection before changing it", last_resort)
-        self.assertIn("restore exactly what was read back", last_resort)
+        # Restored to the recorded settings, since a read-back is not a body to
+        # replay, then compared with the first read-back (Claude on #400).
+        self.assertIn("to the settings Preconditions records", last_resort)
+        self.assertIn("a read-back is not a body to send back", last_resort)
+        self.assertIn("compare it with step 1's read-back", last_resort)
         # The routine re-verification reads it back too (Claude on #400).
         verify = runbook[
             runbook.index("### Re-verify the gate") : runbook.index("## Recovery")
@@ -315,6 +324,20 @@ class MergeGateRecordTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, runbook)
+
+    def test_recovery_waits_out_stolen_tokens_and_identities_are_exact(self) -> None:
+        """A suspended installation stops its tokens only while suspended, so it
+        stays suspended until any token minted before it has expired (Codex on
+        #400). The machine user's limit is its collaborator list, not its token
+        (Claude on #400). Decision 0110 lists every R-main safeguard (Claude on
+        #400)."""
+        runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        recovery = runbook[runbook.index("## Recovery") :]
+        self.assertEqual(2, recovery.count("at least an hour after suspending it"))
+        self.assertIn("a collaborator on this repository alone", runbook)
+        self.assertIn("account-wide", runbook)
+        decision = " ".join(DECISION.read_text(encoding="utf-8").split())
+        self.assertIn("unattributed changes", decision)
 
     def test_every_decision_cited_exists(self) -> None:
         """A Decision is cited by number only when it is in the repository; #384's

@@ -64,6 +64,7 @@ causes:
 2. **R-main**, a ruleset on `main`, requires:
    - one approval from a code owner, and the only code owner is the owner;
    - stale approvals dismissed, and the latest push approved;
+   - an extra approval for unattributed changes;
    - every thread resolved;
    - squash merges only;
    - the four checks from GitHub Actions, on an up-to-date branch.
