@@ -35,10 +35,21 @@ class BrandAssetTests(unittest.TestCase):
 
     def test_the_notice_states_the_terms_provenance_and_digests(self) -> None:
         notice = NOTICE.read_text(encoding="utf-8")
-        # Plain text, as the root NOTICE is: no Markdown markers (cubic on #399).
-        for marker in ("**", "`", "|"):
-            with self.subTest(marker=marker):
-                self.assertNotIn(marker, notice)
+        # Plain text, as the root NOTICE is: no Markdown construct, whether
+        # emphasis, code, a table, a heading, a quote, a link or HTML (cubic and
+        # CodeAnt on #399).
+        for construct in (
+            r"\*",
+            r"`",
+            r"\|",
+            r"^#",
+            r"^>",
+            r"\[[^\]\n]*\]\(",
+            r"(?<!\w)_[^_\n]+_(?!\w)",
+            r"<[A-Za-z/]",
+        ):
+            with self.subTest(construct=construct):
+                self.assertIsNone(re.search(construct, notice, re.M))
         # The prose as read, whatever its line breaks.
         prose = " ".join(notice.split())
         # Every term the owner set, so a broader use cannot pass (cubic on #399).
@@ -66,6 +77,9 @@ class BrandAssetTests(unittest.TestCase):
         # as a list, so a repeated entry cannot hide (CodeAnt on #399).
         declared = re.findall(r"^([\w.-]+)\n  SHA-256 ([0-9a-f]{64})$", notice, re.M)
         self.assertEqual(sorted(LOGOS.items()), sorted(declared))
+        # Every declaration parses: a malformed one is not skipped (cubic and
+        # CodeAnt on #399).
+        self.assertEqual(len(declared), notice.count("SHA-256"))
 
     def test_licensing_points_to_the_notice(self) -> None:
         licensing = (ROOT / "LICENSING.md").read_text(encoding="utf-8")

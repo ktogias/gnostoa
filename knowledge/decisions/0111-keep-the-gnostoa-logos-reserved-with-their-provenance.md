@@ -74,13 +74,15 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
    unchanged, on a white tile with rounded corners. It was made with Pillow 12.3.0:
    a white 1254×1254 image whose alpha is a rounded rectangle of radius 156
    (`width // 8`), alpha-composited under the logo. None of the logo's opaque pixels
-   changed. The notice records it as derived, and its terms are the others'.
+   changed. The notice records it as derived, and its terms are the others'. A
+   renderer that does not honour `<picture>` or `prefers-color-scheme` shows the
+   original, as before.
 
 ## Consequences
 
 - The logos are versioned with the project, and their terms are explicit wherever
   the repository is copied.
-- They add about 1.5 MB to the tracked tree, and so to the runtime image's source
+- They add about 1.9 MB to the tracked tree, and so to the runtime image's source
   payload.
 - Replacing a logo is a change through this Decision: a new file, a new digest, and
   the owner's provenance statement.
