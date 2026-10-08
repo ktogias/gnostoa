@@ -127,6 +127,9 @@ class MergeGateRecordTests(unittest.TestCase):
                 self.assertFalse(change_class["auto_merge"])
         self.assertEqual(0, classes["emergency"]["minimum_approvals"])
         self.assertFalse(classes["emergency"]["code_owner_approval"])
+        # Its follow-up is mandatory, as the docstring says (CodeAnt on #404).
+        self.assertTrue(classes["emergency"]["follow_up_review"])
+        self.assertEqual("required-follow-up", classes["emergency"]["work_item"])
         guardrails = {
             entry["id"]: entry
             for entry in yaml.safe_load(
