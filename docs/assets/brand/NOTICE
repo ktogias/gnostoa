@@ -35,12 +35,14 @@ gnostoa-logo-on-light.png
 
 PROVENANCE
 
-The logos were generated with an AI image tool under the owner's direction, then
-chosen and approved by the owner. The owner supplied them on 2026-10-08 (#397). The
-files are kept byte for byte as supplied, and tests/test_brand_assets.py checks
-each one against the digest above.
+The four logos the owner supplied on 2026-10-08 (#397), gnostoa-logo.png,
+gnostoa-mark.webp, gnostoa-break-glass-logo.png and gnostoa-break-glass-mark.png,
+were generated with an AI image tool under the owner's direction, then chosen and
+approved by the owner. They are kept byte for byte as supplied.
 
 gnostoa-logo-on-light.png is derived from gnostoa-logo.png: the same image,
 unchanged, on a white tile with rounded corners, for dark backgrounds. The owner
-chose it on 2026-10-08 (#399). The terms above apply to it as to the others. Decision 0111 records their location, terms
-and provenance.
+chose it on 2026-10-08 (#399). The terms above apply to it as to the others.
+
+tests/test_brand_assets.py checks each file against the digest above. Decision 0111
+records their location, terms and provenance.

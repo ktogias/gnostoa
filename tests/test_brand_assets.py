@@ -22,6 +22,44 @@ LOGOS = {
 }
 
 
+# What each file is, as the notice says.
+WHAT = {
+    "gnostoa-logo.png": "The mark and the wordmark, 1254x1254 PNG.",
+    "gnostoa-mark.webp": "The mark alone, WebP; also the icon of the gnostoa-agent App.",
+    "gnostoa-break-glass-logo.png": "The break-glass mark with the wordmark, 1254x1254 PNG.",
+    "gnostoa-break-glass-mark.png": "The break-glass mark alone, 1254x1254 PNG; also the "
+    "icon of the gnostoa-break-glass App.",
+    "gnostoa-logo-on-light.png": "The logo on a white tile, 1254x1254 PNG, for dark "
+    "backgrounds.",
+}
+# The notice, paragraph by paragraph, with its whitespace normalised.
+NOTICE_TEXT = [
+    "GNOSTOA LOGOS",
+    "These files are the Gnostoa project's logos. They are not licensed under the "
+    "Apache License, which covers the project's other material as LICENSING.md, at "
+    "the repository root, describes. All rights in them are reserved by Konstantinos "
+    "Togias.",
+    "You may use them unmodified to refer to the Gnostoa project, for example in an "
+    "article, a list of tools, or a link to this repository. Do not modify them, "
+    "combine them with another mark, or use them in a way that suggests endorsement "
+    "or affiliation. This notice is not a claim that Gnostoa is a registered "
+    "trademark.",
+    "FILES",
+    *(f"{name} SHA-256 {digest} {WHAT[name]}" for name, digest in LOGOS.items()),
+    "PROVENANCE",
+    "The four logos the owner supplied on 2026-10-08 (#397), gnostoa-logo.png, "
+    "gnostoa-mark.webp, gnostoa-break-glass-logo.png and "
+    "gnostoa-break-glass-mark.png, were generated with an AI image tool under the "
+    "owner's direction, then chosen and approved by the owner. They are kept byte "
+    "for byte as supplied.",
+    "gnostoa-logo-on-light.png is derived from gnostoa-logo.png: the same image, "
+    "unchanged, on a white tile with rounded corners, for dark backgrounds. The owner "
+    "chose it on 2026-10-08 (#399). The terms above apply to it as to the others.",
+    "tests/test_brand_assets.py checks each file against the digest above. Decision "
+    "0111 records their location, terms and provenance.",
+]
+
+
 class BrandAssetTests(unittest.TestCase):
     def test_each_logo_is_kept_byte_for_byte(self) -> None:
         self.assertEqual(
@@ -42,11 +80,12 @@ class BrandAssetTests(unittest.TestCase):
             r"\*",
             r"`",
             r"\|",
-            r"^#",
-            r"^>",
+            r"^ {0,3}#",
+            r"^ {0,3}>",
             r"\[[^\]\n]*\]\(",
             r"(?<!\w)_[^_\n]+_(?!\w)",
-            r"<[A-Za-z/]",
+            r"__",
+            r"<[A-Za-z/!]",
         ):
             with self.subTest(construct=construct):
                 self.assertIsNone(re.search(construct, notice, re.M))
@@ -80,6 +119,16 @@ class BrandAssetTests(unittest.TestCase):
         # Every declaration parses: a malformed one is not skipped (cubic and
         # CodeAnt on #399).
         self.assertEqual(len(declared), notice.count("SHA-256"))
+
+    def test_the_notice_says_exactly_what_the_owner_approved(self) -> None:
+        """The notice's whole text, paragraph by paragraph, so that no added
+        grant, heading or claim can pass beside the terms (CodeAnt and cubic on
+        #399). Changing its terms means changing this test, in review."""
+        paragraphs = [
+            " ".join(paragraph.split())
+            for paragraph in NOTICE.read_text(encoding="utf-8").split("\n\n")
+        ]
+        self.assertEqual(NOTICE_TEXT, paragraphs)
 
     def test_licensing_points_to_the_notice(self) -> None:
         licensing = (ROOT / "LICENSING.md").read_text(encoding="utf-8")

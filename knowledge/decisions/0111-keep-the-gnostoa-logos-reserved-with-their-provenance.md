@@ -55,8 +55,9 @@ otherwise". It notes that Section 6 grants no right to the name or logos.
 4. **Integrity.** `tests/test_brand_assets.py` checks:
    - each file against its full SHA-256;
    - that the directory holds nothing else;
-   - that the notice states every term and the provenance, and records each full
-     digest exactly;
+   - that the notice's text is exactly the approved one, paragraph by paragraph,
+     so that no grant or claim can be added beside its terms, and that it records
+     each full digest exactly;
    - that `LICENSING.md` points to the notice;
    - that the README's logo resolves, under the title and before the first section.
 5. **Use.** The README shows `gnostoa-logo.png` under its `# Gnostoa` heading, which the brand-identity test requires to come first. On a dark theme it shows `gnostoa-logo-on-light.png` instead, through `<picture>`. Its alt text, `Gnostoa`, names the project wherever the image cannot load.
