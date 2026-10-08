@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import sys
 import tempfile
@@ -29,8 +30,22 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
 # GitHub Actions expressions are not shell; each is masked at its own width.
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.S)
-# A name in a shebang line, bounded as a word; `-S` may be attached before it.
-SHEBANG_WORD = re.compile(r"(?:^|(?<=[\s/=\"']))(?:-S)?([a-z]+)(?=$|[\s\"'])")
+# `env`'s documented options: GNU coreutils' `env --help`, and BSD's `-P`.
+ENV_FLAGS = set("i0v")
+ENV_ARGUMENT_FLAGS = set("uCaPS")
+ENV_LONG_FLAGS = {
+    "ignore-environment",
+    "null",
+    "debug",
+    "list-signal-handling",
+    "block-signal",
+    "default-signal",
+    "ignore-signal",
+    "help",
+    "version",
+}
+ENV_LONG_ARGUMENT = {"unset", "chdir", "argv0"}
+ASSIGNMENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*=")
 SHELLS = {"sh", "bash", "dash", "ash"}
 OTHER_SHELLS = {"zsh", "ksh", "mksh", "oksh", "fish", "csh", "tcsh", "yash", "posh"}
 # A YAML key that holds shell in a CI definition.
@@ -176,25 +191,61 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     )
 
 
-def _shebang_words(head: bytes, name: str) -> set[str]:
-    """The names a shebang line holds as whole words, bounded by whitespace, `/`,
-    `=` or a quote, with `env`'s `-S` allowed attached. A shell is recognised by its
-    name among them, so no form of `env`'s arguments can hide it; this models no
-    argument grammar at all (Codex and CodeAnt on #394). A blank or undecodable line
-    fails closed.
+def _shebang_command(head: bytes, name: str) -> str:
+    """The name of the command a shebang line runs. Through `env`, its whole
+    documented grammar is read (GNU `env --help`, and BSD's `-P`): options and their
+    arguments, `-S` strings split again, then assignments, then the command. A word
+    outside that grammar, a line that cannot be split, or no command fails closed, so
+    nothing is guessed (Codex, Claude and CodeAnt on #394)."""
 
-    It over-includes by design: a shell name used as an option's argument, as in
-    `env -u sh perl`, makes a non-shell script parse too. That fails loudly or passes
-    harmlessly, and never hides a shell surface (Claude and CodeAnt on #394)."""
+    def refuse(reason: str) -> AssertionError:
+        return AssertionError(f"{name}: {reason}; extend this extraction")
+
     try:
-        line = head[2:].split(b"\n", 1)[0].decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise AssertionError(
-            f"{name}: an unreadable shebang; extend this extraction"
-        ) from exc
-    if not line.strip():
-        raise AssertionError(f"{name}: an unreadable shebang; extend this extraction")
-    return set(SHEBANG_WORD.findall(line))
+        words = shlex.split(head[2:].split(b"\n", 1)[0].decode("utf-8"))
+    except ValueError as exc:  # UnicodeDecodeError included
+        raise refuse("an unreadable shebang") from exc
+    if not words:
+        raise refuse("an unreadable shebang")
+    if Path(words[0]).name != "env":
+        return Path(words[0]).name
+    rest = words[1:]
+    while rest and rest[0].startswith("-") and rest[0] != "--":
+        word = rest.pop(0)
+        if word == "-":
+            continue
+        if word.startswith("--"):
+            option, equals, value = word[2:].partition("=")
+            if option == "split-string" or option in ENV_LONG_ARGUMENT:
+                if not equals:
+                    if not rest:
+                        raise refuse("an unreadable shebang")
+                    value = rest.pop(0)
+                if option == "split-string":
+                    rest = shlex.split(value) + rest
+            elif option not in ENV_LONG_FLAGS:
+                raise refuse(f"an unknown env option `{word}`")
+            continue
+        for index, letter in enumerate(word[1:], start=1):
+            if letter in ENV_FLAGS:
+                continue
+            if letter not in ENV_ARGUMENT_FLAGS:
+                raise refuse(f"an unknown env option `{word}`")
+            value = word[index + 1 :]
+            if not value:
+                if not rest:
+                    raise refuse("an unreadable shebang")
+                value = rest.pop(0)
+            if letter == "S":
+                rest = shlex.split(value) + rest
+            break
+    if rest and rest[0] == "--":
+        rest.pop(0)
+    while rest and ASSIGNMENT.match(rest[0]):
+        rest.pop(0)
+    if not rest:
+        raise refuse("an unreadable shebang")
+    return Path(rest[0]).name
 
 
 def _exec_form(command: str) -> bool:
@@ -280,6 +331,20 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
         name = path.relative_to(root).as_posix()
         if MAKEFILE.match(path.name):
             raise AssertionError(f"{name}: a Make recipe; extend this extraction")
+        # A shebang decides first, whatever the file's name (Codex on #394).
+        with path.open("rb") as handle:
+            head = handle.read(256).removeprefix(BOM)
+        if head.startswith(b"#!"):
+            command = _shebang_command(head, name)
+            if command in OTHER_SHELLS:
+                # Another shell's grammar is not bash's (Claude on #394).
+                raise AssertionError(
+                    f"{name}: a `{command}` script; extend this extraction"
+                )
+            if command in SHELLS:
+                # A shell script that is not UTF-8 fails here, loudly.
+                surfaces[name] = path.read_text(encoding="utf-8-sig")
+            continue
         if path.suffix in (".yml", ".yaml"):
             for index, text in enumerate(_ci_shell(path, name.startswith(".github/"))):
                 surfaces[f"{name}#{index}"] = text
@@ -296,19 +361,6 @@ def _shell_surfaces(root: Path = ROOT) -> dict[str, str]:
             for index, run in enumerate(_dockerfile_runs(text)):
                 surfaces[f"{name}#{index}"] = run
             continue
-        with path.open("rb") as handle:
-            head = handle.read(256).removeprefix(BOM)
-        if not head.startswith(b"#!"):
-            continue
-        words = _shebang_words(head, name)
-        if other := sorted(words & OTHER_SHELLS):
-            # Another shell's grammar is not bash's (Claude on #394).
-            raise AssertionError(
-                f"{name}: a `{other[0]}` script; extend this extraction"
-            )
-        if words & SHELLS:
-            # A shell script that is not UTF-8 fails here, loudly.
-            surfaces[name] = path.read_text(encoding="utf-8-sig")
     return surfaces
 
 
@@ -667,19 +719,21 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 "f": b"#!/usr/bin/env VAR=1 bash\ngit f\n",
                 "g": b'#!/usr/bin/env --split-string="bash -e"\ngit g\n',
                 "h": b"#!/usr/bin/env -Sbash -e\ngit h\n",
-                "i": b"#!/usr/bin/env -S 'bash\ngit i\n",
+                "j": b"#!/usr/bin/env -i - --unset=X -C /tmp -0v bash\ngit j\n",
                 "p": b"#!/usr/bin/env python3\nprint()\n",
             }
             for name, content in scripts.items():
                 (root / name).write_bytes(content)
             self.assertEqual(
-                {"a", "b", "c", "d", "e", "f", "g", "h", "i"},
+                {"a", "b", "c", "d", "e", "f", "g", "h", "j"},
                 set(_shell_surfaces(_declared(root))),
             )
             for content in (
                 b"#!\ngit u\n",
                 b"#! \t\ngit u\n",
                 b"#!/bin/\xffsh\ngit u\n",
+                b"#!/usr/bin/env -S 'bash\ngit u\n",
+                b"#!/usr/bin/env -u\ngit u\n",
             ):
                 (root / "u").write_bytes(content)
                 with (
@@ -688,7 +742,26 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 ):
                     _shell_surfaces(_declared(root))
             (root / "u").unlink()
-            # An option's argument is not the interpreter (Codex and CodeAnt on #394).
+            # An option's argument or an assignment is not the command (Codex,
+            # Claude and CodeAnt on #394).
+            for content in (
+                b"#!/usr/bin/env -u bash python3\nprint()\n",
+                b"#!/usr/bin/env FOO=bash python3\nprint()\n",
+                b"#!/usr/bin/env --chdir=/bin/sh perl\nprint 1\n",
+            ):
+                (root / "v").write_bytes(content)
+                with self.subTest(shebang=content):
+                    self.assertNotIn("v", _shell_surfaces(_declared(root)))
+            (root / "v").unlink()
+            # An option env does not document fails closed.
+            (root / "x").write_bytes(b"#!/usr/bin/env --frobnicate bash\ngit x\n")
+            with self.assertRaisesRegex(AssertionError, "x: an unknown env option"):
+                _shell_surfaces(_declared(root))
+            (root / "x").unlink()
+            # A shell script with a YAML name is read by its shebang (Codex on #394).
+            (root / "tool.yml").write_bytes(b"#!/bin/sh\ngit y\n")
+            self.assertIn("tool.yml", _shell_surfaces(_declared(root)))
+            (root / "tool.yml").unlink()
             (root / "w").write_bytes(b"#!/usr/bin/env -u NAME zsh\ngit w\n")
             with self.assertRaisesRegex(AssertionError, "w: a `zsh` script"):
                 _shell_surfaces(_declared(root))
