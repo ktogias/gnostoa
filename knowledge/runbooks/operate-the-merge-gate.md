@@ -102,7 +102,8 @@ only bypass actor is `gnostoa-break-glass`, as an Integration with mode
 `pull_request`. Its bypass list and rules, as the API returns them:
 
 ```json
-{"bypass_actors": [
+{"conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+"bypass_actors": [
   {"actor_id": 5230732, "actor_type": "Integration", "bypass_mode": "pull_request"}
 ],
 "rules": [
@@ -280,7 +281,10 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```
    Between the two, the App reads the PR's head,
    `GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) gh pr view <N> --json headRefOid --jq .headRefOid`.
-   Stop unless `<approved>`, the PR's head and the seal are one SHA.
+   Stop unless `<approved>`, the PR's head and the seal are one SHA. No provider gate
+   yet checks the approval's `commit_id` against the merged head: the platform keeps
+   an approval across a push that leaves the diff unchanged. This step is that check
+   until Phase 1b's required `merge-admission` check enforces it.
    GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
    hold. There is no `--admin`, because the App is not a bypass actor of R-main.
 9. **After the merge.** The agent confirms that the merge commit and the head match

@@ -249,13 +249,21 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertLess(read_back, merge)
         # A failed mint stops the merge: `gh` would otherwise fall back to the
         # owner's stored login and merge as the owner (Codex on #400).
-        for guard in (
-            'test -n "$GH_TOKEN"',
-            "GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT",
-            "instead of letting `gh` fall back to a stored login",
-        ):
-            with self.subTest(guard=guard):
-                self.assertIn(guard, procedure)
+        self.assertIn("instead of letting `gh` fall back to a stored login", procedure)
+        # The command itself, its guards chained in order (cubic on #400).
+        command = (
+            'GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
+            "&& export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT "
+            "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> "
+            "unset GH_TOKEN"
+        )
+        blocks = [
+            " ".join(block.replace("\\\n", " ").split())
+            for block in re.findall(
+                r"```sh\n(.*?)```", RUNBOOK.read_text(encoding="utf-8"), re.S
+            )
+        ]
+        self.assertIn(command, blocks)
         # Restoring has a stated target (Claude on #400), and happens whether the
         # merge succeeded or not (CodeAnt on #400).
         self.assertIn("restore it to require the four checks", procedure)
@@ -358,6 +366,51 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn("account-wide", runbook)
         decision = " ".join(DECISION.read_text(encoding="utf-8").split())
         self.assertIn("unattributed changes", decision)
+
+    def test_the_gate_is_a_registered_guardrail_and_its_target_is_main(self) -> None:
+        """The gate's surfaces are owned by a kit-only guardrail, so their removal
+        or drift is visible to the policy check (Codex on #400); R-main targets the
+        default branch, as the API records it (CodeAnt on #400)."""
+        import yaml
+
+        manifest = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        )
+        [entry] = [
+            g
+            for g in manifest["guardrails"]
+            if g["id"] == "owner-approved-exact-head-merge"
+        ]
+        self.assertEqual(["kit"], entry["applies_to"])
+        for surface in (
+            "AGENTS.md",
+            "knowledge/runbooks/operate-the-merge-gate.md",
+            f"knowledge/decisions/{DECISION.name}",
+            ".github/CODEOWNERS",
+        ):
+            with self.subTest(surface=surface):
+                self.assertIn(surface, entry["implementation"])
+        self.assertTrue(
+            all(
+                t.startswith("tests/test_merge_gate_record.py::")
+                for t in entry["tests"]
+            )
+        )
+        self.assertEqual(
+            {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            self._r_main()["conditions"],
+        )
+
+    def test_phase_1a_states_what_it_does_not_enforce(self) -> None:
+        """No provider gate yet compares the approval's `commit_id` with the merged
+        head; the procedure does, and Phase 1b's required check will (Codex on
+        #400)."""
+        for path in (DECISION, RUNBOOK):
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            with self.subTest(path=path.name):
+                self.assertIn(
+                    "the approval's `commit_id` against the merged head", text
+                )
 
     def test_every_decision_cited_exists(self) -> None:
         """A Decision is cited by number only when it is in the repository; #384's

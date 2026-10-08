@@ -92,6 +92,9 @@ causes:
   break glass,** which only the owner can use, and which the runbook bounds and
   audits. Calibration showed the App refused both with and without `--admin`.
 - **What the platform does not yet enforce.** Until Phase 1b it does not check:
+  - the approval's `commit_id` against the merged head, since the platform keeps an
+    approval across a push that leaves the diff unchanged; the merge procedure
+    compares them;
   - the analyzer readback;
   - convergence;
   - the analyzers' findings;

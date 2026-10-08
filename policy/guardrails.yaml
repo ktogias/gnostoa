@@ -379,6 +379,23 @@ guardrails:
     tests:
       - tests/test_tools.py::ChangeControlTests.test_agents_cannot_approve_or_bypass
 
+  - id: owner-approved-exact-head-merge
+    title: A Gnostoa-self merge is bound to the owner's approval of its exact head
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/operate-the-merge-gate.md#the-normal-merge
+    implementation:
+      - AGENTS.md
+      - .github/CODEOWNERS
+      - knowledge/runbooks/operate-the-merge-gate.md
+      - knowledge/decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md
+    tests:
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_r_main_requires_the_code_owner_s_approval_of_the_exact_head
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_break_glass_bypasses_r_main
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_the_code_owner_approves
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_merge_binds_the_sha_the_owner_approved
+
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration
     applies_to: [kit, adopting-projects]
