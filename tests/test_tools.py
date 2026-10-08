@@ -2743,14 +2743,18 @@ class ChangeControlTests(unittest.TestCase):
         runbook = (
             ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
         ).read_text(encoding="utf-8")
-        record = re.search(r"```json\n(\{.*?\})\n```", runbook, re.S)
-        if record is None:
-            self.fail("the merge-gate runbook records R-main as JSON")
-        [rule] = [
+        # R-main is the one recorded ruleset with a pull-request rule, so another JSON
+        # block elsewhere in the runbook changes nothing (cubic on #404).
+        rules = [
             rule
-            for rule in json.loads(record.group(1))["rules"]
-            if rule["type"] == "pull_request"
+            for block in re.findall(r"```json\n(\{.*?\})\n```", runbook, re.S)
+            for rule in json.loads(block).get("rules", [])
+            if rule.get("type") == "pull_request"
         ]
+        self.assertEqual(
+            1, len(rules), "the merge-gate runbook records R-main's pull-request rule"
+        )
+        [rule] = rules
         enforced = rule["parameters"]
         self.assertEqual(1, enforced["required_approving_review_count"])
         self.assertTrue(enforced["require_code_owner_review"])
@@ -2772,6 +2776,25 @@ class ChangeControlTests(unittest.TestCase):
         emergency = policy["change_classes"]["emergency"]
         self.assertEqual(0, emergency["minimum_approvals"])
         self.assertFalse(emergency["code_owner_approval"])
+        # The maintainer step says the same, emergency included (CodeAnt and Sourcery
+        # on #404).
+        maintain = " ".join(
+            (ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "Every merge into Gnostoa's `main` except an emergency one needs the code "
+            "owner's approval",
+            maintain,
+        )
+        self.assertIn("an emergency merges through break glass", maintain)
+        # Linked, as the runbook links its other Decisions (cubic on #404).
+        self.assertIn(
+            "[`Decision 0110`](../decisions/"
+            "0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)",
+            maintain,
+        )
         self.assertEqual("required-follow-up", emergency["work_item"])
         self.assertTrue(emergency["decision_record"])
         self.assertEqual(
