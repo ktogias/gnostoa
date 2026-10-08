@@ -1,0 +1,321 @@
+---
+type: Runbook
+title: Operate the merge gate
+description: How Gnostoa's main branch is protected under MA0 Phase 1a. It records the identities, every GitHub and Codex setting with its read-back, the host's helpers, the normal merge procedure, break glass, and rotation and recovery.
+status: draft
+generated:
+  by: anthropic/claude-opus-5-5
+  at: "2026-10-08T02:40:00Z"
+x-project-knowledge:
+  id: kit.runbook.operate-the-merge-gate
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: references
+      target: /decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md
+---
+
+# Operate the merge gate
+
+Under MA0 Phase 1a, no actor can merge into `main` without the owner's approval of
+the exact head. That covers the orchestrating agent, Amazon Q, any review bot and
+any developer. GitHub enforces it; no agent's discipline is relied on.
+[Decision 0110](../decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
+records why. The work items are #15, for MA0, and #398, for this record.
+
+Everything below was read back on 2026-10-08 unless a step says otherwise.
+
+## Preconditions
+
+The gate depends on the identities, settings and host files below. Each was read back on 2026-10-08.
+
+### Identities
+
+| Identity | Kind | It does | It cannot | Credential |
+|---|---|---|---|---|
+| `ktogias` | the owner, the only admin and the only code owner | approves the exact head of a PR, which is the merge instruction; edits settings | approve a PR that it authored | the owner's own login; no token of it is on any agent host |
+| `gnostoa-agent` | GitHub App, ID 5230694, installation 169050684, bot user `gnostoa-agent[bot]` (id 339367847) | pushes branches; commits under its bot identity; resolves review threads; dispatches and reads the analyzer readback; merges an approved PR | merge without the owner's approval; push to `main` | a private key on the agent host; one-hour installation tokens |
+| `gnostoa-agent-user` | machine user (a real account, id 339381282), **Write** role on this repository only | opens PRs; posts review triggers | push any branch (ruleset 24640984); merge without the owner's approval (R-main); count as a code owner | a classic token with `public_repo` scope only, which **expires 2027-01-06** |
+| `gnostoa-break-glass` | GitHub App, ID 5230732 | merges a PR that bypasses R-main, in an emergency only | bypass the classic protection or the CodeQL ruleset | a private key held **offline** by the owner, never on an agent host |
+
+Why the work is split between two agent identities: Codex, Amazon Q and CodeAnt
+skip PRs that a bot opened, and they ignore review requests a bot posts. Calibration
+showed it (Verification). The machine user is therefore the PR author and the requester, and
+the App does the rest.
+
+### GitHub settings
+
+#### The App `gnostoa-agent`
+
+Created at <https://github.com/settings/apps/new>:
+- **Homepage:** `https://github.com/ktogias/gnostoa`.
+- **Webhook:** inactive.
+- **Installable:** only on this account.
+- **Installed:** on the selected repository `ktogias/gnostoa` only.
+
+Repository permissions, as read back from the App's own `GET /app`:
+
+| Permission | Access |
+|---|---|
+| Contents | write |
+| Pull requests | write |
+| Issues | write |
+| Workflows | write |
+| Actions | read |
+| Checks | read |
+| Commit statuses (`statuses`) | read |
+| Code scanning alerts (`security_events`) | read |
+| Metadata | read |
+| Everything else, including Administration, Deployments, Environments and Secrets | none |
+
+Its icon is `docs/assets/brand/gnostoa-mark.webp` (#397).
+
+#### The App `gnostoa-break-glass`
+
+Created the same way. It has Contents and Pull requests write, and Metadata read.
+It is installed on `ktogias/gnostoa` only, and its icon is the break-glass mark.
+Its private key is kept offline by the owner.
+
+#### The machine user `gnostoa-agent-user`
+
+1. **The account.** A separate GitHub account, with a separate address and 2FA. Its
+   bio says it is the machine account of the agent, operated by `@ktogias`. GitHub's
+   terms allow one free machine account per person.
+2. **Access.** `ktogias` invited it to `ktogias/gnostoa` with the **Write** role,
+   and it accepted. Read back: `role_name: write`.
+3. **The token.** A classic token (<https://github.com/settings/tokens/new>) with
+   **`public_repo`** only, expiring 2027-01-06. A fine-grained token cannot write
+   to a personal repository on which its owner is only a collaborator.
+
+#### CODEOWNERS
+
+`.github/CODEOWNERS` begins with `* @ktogias`. So the owner is the only code owner,
+and R-main's code-owner rule makes the owner's approval the only one that counts.
+
+#### Rulesets
+
+**R-main**, `main merge gate (MA0)` (24687961), active on `~DEFAULT_BRANCH`. Its
+only bypass actor is `gnostoa-break-glass`, as an Integration with mode
+`pull_request`. Its rules:
+
+```json
+[
+  {"type": "deletion"},
+  {"type": "non_fast_forward"},
+  {"type": "required_linear_history"},
+  {"type": "pull_request", "parameters": {
+    "required_approving_review_count": 1,
+    "dismiss_stale_reviews_on_push": true,
+    "require_code_owner_review": true,
+    "require_last_push_approval": true,
+    "required_review_thread_resolution": true,
+    "require_extra_approval_for_unattributed_changes": true,
+    "allowed_merge_methods": ["squash"],
+    "required_reviewers": []
+  }},
+  {"type": "required_status_checks", "parameters": {
+    "strict_required_status_checks_policy": true,
+    "do_not_enforce_on_create": false,
+    "required_status_checks": [
+      {"context": "policy", "integration_id": 15368},
+      {"context": "fast", "integration_id": 15368},
+      {"context": "regression", "integration_id": 15368},
+      {"context": "smoke", "integration_id": 15368}
+    ]
+  }}
+]
+```
+
+The other rulesets:
+
+| Ruleset | Target | Bypass actors | Rules |
+|---|---|---|---|
+| `Only admins write branches` (24640984) | every branch except `main` | the admin role, and `gnostoa-agent` (Integration 5230694); both `always` | creation, update, deletion, non-fast-forward |
+| `Only admins write tags` (24640985) | every tag | the admin role | creation, update, deletion, non-fast-forward |
+| `Require CodeQL on main` (23699912) | `~DEFAULT_BRANCH` | none | code scanning: CodeQL, errors and high-or-higher security alerts |
+
+**Who can read what.** The App can read the rulesets but not their bypass lists,
+which need Administration access. The bypass lists above were read back with an
+admin-capable credential on 2026-10-08 (#15, 6050406535).
+
+**Classic branch protection on `main`** stays in force until Phase 1b. It requires
+`policy`, `fast`, `regression` and `smoke`, strict, with conversations resolved and
+no bypass. Read back: `protected: true`, with those four contexts. The protection
+endpoint itself needs Administration access.
+
+**Repository merge settings:** squash only, auto-merge off, and branches deleted on
+merge.
+
+#### What the owner's own tokens look like now
+
+The owner revoked the agents' former fine-grained PAT, and the unused comment-only
+PAT, on 2026-10-08. The host's default `gh` credential now fails with 401 by design:
+an agent command that forgets to name an identity stops instead of acting as the
+owner.
+
+### Codex and the review bots
+
+- **Codex** (<https://chatgpt.com>, in Settings, "Code review"). A review is
+  requested by an `@codex review` comment.
+  - Codex accepts that comment from `gnostoa-agent-user` (calibrated on #396). It
+    refuses the App's: "create a Codex account and connect to github".
+  - The owner connected the machine user under ChatGPT's GitHub connector
+    ("Connect another account"). *The owner confirms this in review of this
+    runbook.*
+- **Amazon Q:** reviews a new PR, and again on the exact text `/q review` from the
+  machine user. It ignores the App's comments. Never post any other `/q` text, since
+  that can make it commit.
+- **CodeAnt:** skips PRs that a bot opened, and answers `@codeant-ai: review` from
+  the machine user.
+- **The Claude review relay** admits an `OWNER`, `MEMBER` or `COLLABORATOR` comment.
+  The machine user is a `COLLABORATOR` and needs no change; the App is not admitted.
+- **Others** (Sourcery, cubic, Greptile, CodeRabbit, Kody, CodeReviewBot.ai) review
+  automatically within their quotas. A quota-limited reviewer counts only when it is
+  available.
+- **Approvals by bots** (for example Sourcery's APPROVED) do not satisfy R-main,
+  which requires the code owner. A push dismisses them as stale.
+
+### The agent host
+
+| Path | What it is | Mode |
+|---|---|---|
+| `~/.config/gnostoa-agent/private-key.pem` | `gnostoa-agent`'s private key | `0600` |
+| `~/.config/gnostoa-agent/machine-user-token` | `gnostoa-agent-user`'s classic token | `0600` |
+| `~/.config/gnostoa-agent/bin/agent-jwt.sh` | prints a nine-minute App JWT, signed with `openssl` (RS256) | `0700` |
+| `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only | `0700` |
+| `~/.config/gnostoa-agent/bin/agent-git.sh` | runs `git` with the App's token through a credential helper; it blanks the inherited helpers, so no token is ever on a command line or in output | `0700` |
+
+**Rules on the host:**
+- A token is never printed, logged or passed on a command line. It is captured into
+  `GH_TOKEN` for one command.
+- `gh` acts as the App: `GH_TOKEN=$(agent-token.sh) gh …`. Review triggers act as the
+  machine user: `GH_TOKEN=$(cat machine-user-token)`.
+- Commits in an agent's clone are authored by
+  `gnostoa-agent[bot] <339367847+gnostoa-agent[bot]@users.noreply.github.com>`, and
+  pushed with `agent-git.sh push https://github.com/ktogias/gnostoa.git HEAD:<branch>`.
+- The repository's activity log shows who pushed. Read it, rather than trusting a
+  push that merely succeeded: both the admin and the App can write branches.
+
+Versioning these helpers as repository tools is a follow-up (#398's scope boundary).
+
+## Procedure
+
+### The normal merge
+
+1. **Branch and commits.** The agent works in an isolated clone and commits as
+   `gnostoa-agent[bot]`. It pushes the branch with `agent-git.sh`.
+2. **The PR.** The machine user opens it (`gh pr create` with its token). Never open
+   a PR as the owner: the owner could not approve it.
+3. **The seal.** The App posts `Exact review candidate: <40-hex head>`.
+4. **Reviews.** The machine user posts `@codex review`, `@codeant-ai: review`, the
+   Claude request and `/q review`.
+5. **Rounds.**
+   - Each finding gets its own reply: fixed with its commit, or declined with
+     evidence. Only the threads replied to are resolved.
+   - Every fix is a new head, so a new seal and new review requests follow.
+   - The pre-merge check (`premerge-check.sh`) and the exact-head analyzer readback
+     must both be clean: `BOUND`, every analyzer `COMPLETE`, 0 findings.
+6. **The convergence report.** The App posts it on the PR. It covers:
+   - the seal;
+   - the required checks;
+   - the readback;
+   - SonarCloud and Codacy;
+   - the threads;
+   - each available reviewer's verdict on the head;
+   - each unavailable reviewer, quoting its text.
+7. **The owner's approval.** The owner reviews and clicks **Approve** in GitHub on
+   that exact head. A later push dismisses the approval, and a move of `main` makes
+   the branch out of date. Either needs a new approval.
+8. **The merge.** The App runs:
+   ```sh
+   GH_TOKEN=$(agent-token.sh) gh pr merge <N> --squash --match-head-commit <head>
+   ```
+   GitHub refuses unless R-main, the classic protection and the CodeQL ruleset all
+   hold. There is no `--admin`, because the App is not a bypass actor of R-main.
+9. **After the merge.** The agent confirms that the merge commit and the head match
+   what was approved. It records the outcome on the Work Item. A Work Item that
+   survives the merge was only referenced (`Refs`, never a closing keyword).
+
+### Break glass
+
+**When.** Only when the normal procedure is impossible, not merely slow. For
+example:
+- An urgent fix must merge, and the owner's approval cannot be given. One case is a
+  PR that the owner authored.
+- Convergence cannot be reached for a reason outside the change: a reviewer is
+  broken, or a thread cannot be resolved.
+
+Break glass is never for skipping a review that is late, or a finding nobody wants
+to fix.
+
+**What it bypasses: only R-main.** That means the code-owner approval, the last-push
+approval, thread resolution and R-main's checks.
+
+**What it does not bypass:**
+- the classic protection, which still requires the four checks and resolved
+  conversations;
+- the CodeQL ruleset.
+
+If a required check itself is broken, break glass does not suffice while the classic
+protection exists. The last resort is then the owner, as admin, changing that
+protection temporarily. That change is recorded in the security log.
+
+**How.** Only the owner does it, and no agent ever holds the key:
+1. Bring the offline key of `gnostoa-break-glass` (App ID 5230732) to a trusted
+   machine.
+2. Mint a one-hour installation token with it, in the same way as
+   `agent-token.sh`, but with that App's ID and key.
+3. Merge the exact head:
+   ```sh
+   GH_TOKEN=<that token> gh api -X PUT repos/ktogias/gnostoa/pulls/<N>/merge \
+     -f merge_method=squash -f sha=<head>
+   ```
+4. Remove the key from the machine.
+
+**After.**
+- Open the emergency follow-up Work Item that `policy/change-control.yaml` requires.
+  It names the PR, the reason, and what was not verified.
+- The merge shows `gnostoa-break-glass[bot]` as its actor in the activity log, so it
+  is auditable.
+- MA0 Phase 1b's post-merge audit will open this Work Item by itself, for any merge
+  whose head lacked a green `merge-admission`.
+
+## Verification
+
+### What calibration showed (2026-10-08)
+
+| Check | Result |
+|---|---|
+| The App creates and deletes a branch | allowed (`calibration/agent-push`; the activity log shows `gnostoa-agent[bot]`) |
+| The App merges an unapproved PR (#395) | refused: "base branch policy prohibits the merge" |
+| The App merges it with `--admin` | refused: "Waiting on code owner review from ktogias" |
+| The machine user creates a branch | refused (422) |
+| Codex, Amazon Q or CodeAnt on an App-authored PR, or on an App's trigger | none reviewed, or each refused (Codex and the review bots) |
+| Codex, Amazon Q, CodeAnt and the Claude relay on the machine user's PR and triggers | all reviewed (#396) |
+| A fine-grained PAT with Issues: write comments on a PR | refused (403); it would need Pull requests: write, which also allows approval |
+
+### Re-verify the gate
+
+After any change to an identity, a permission or a ruleset, and before relying on
+the gate:
+1. Read back each App's `GET /app` with its own JWT.
+2. Read back the installation with `GET /repos/ktogias/gnostoa/installation`.
+3. Read back each ruleset with `GET /repos/ktogias/gnostoa/rulesets/<id>`. The
+   bypass lists need an admin-capable credential.
+4. Read back the machine user's `GET /user`, its `x-oauth-scopes` header, and its
+   expiry in the `github-authentication-token-expiration` header.
+5. Try to merge an unapproved PR as the App, with and without `--admin`. GitHub must
+   refuse both.
+
+## Recovery
+
+| Event | Action |
+|---|---|
+| The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `machine-user-token`, then revokes the old one. |
+| The agent host may be compromised | Revoke `gnostoa-agent`'s private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. |
+| The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
+| The break-glass key is lost or exposed | Delete it in the App's settings, and generate a new one offline. |
+| A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
+| An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |
