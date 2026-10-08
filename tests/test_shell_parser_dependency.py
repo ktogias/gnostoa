@@ -171,8 +171,9 @@ def _gitlab_scripts(document: dict[str, object]) -> list[str]:
 
 def _script_lines(value: list[object]) -> list[str]:
     """A GitLab `script` array, flattened at any depth as GitLab flattens nested
-    `!reference` and anchor arrays. A line that is not a string fails closed rather
-    than being stringified (CodeAnt on #396)."""
+    arrays (YAML anchors and aliases build them). A line that is not a string fails
+    closed rather than being stringified (CodeAnt on #396). A `!reference` tag never
+    reaches here: the YAML load refuses it, and that fails closed (cubic on #396)."""
     lines: list[str] = []
     stack: list[object] = list(reversed(value))
     while stack:
@@ -788,13 +789,22 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             self.assertEqual({"listed"}, set(_shell_surfaces(root)))
 
     def test_nested_gitlab_script_lists_are_flattened_and_others_fail(self) -> None:
-        """GitLab flattens nested `script` arrays (from `!reference` and anchors) at
-        any depth; a value that is not a string fails closed rather than being
-        stringified (CodeAnt on #396)."""
+        """GitLab flattens nested `script` arrays (anchors and aliases build them)
+        at any depth; a value that is not a string fails closed rather than being
+        stringified (CodeAnt on #396). A `!reference` tag fails closed at the YAML
+        load: none is tracked (cubic on #396)."""
         nested: dict[str, object] = {"job": {"script": ["git a", ["git b", ["git c"]]]}}
         self.assertEqual(["git a\ngit b\ngit c"], _gitlab_scripts(nested))
         with self.assertRaisesRegex(AssertionError, "a `int` script line"):
             _gitlab_scripts({"job": {"script": ["git a", 7]}})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            path.write_text(
+                ".base:\n  script: [git a]\njob:\n  script: [!reference [.base, script]]\n",
+                "utf-8",
+            )
+            with self.assertRaisesRegex(AssertionError, "not YAML.*!reference"):
+                _ci_shell(path, under_github=False)
 
     def test_a_gitlab_job_named_like_github_s_keys_stays_gitlab(self) -> None:
         """A workflow has `on` and `jobs`, an action `runs.using`; a GitLab job may
