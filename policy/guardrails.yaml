@@ -392,11 +392,25 @@ guardrails:
       - knowledge/decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md
     tests:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_r_main_requires_the_code_owner_s_approval_of_the_exact_head
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_r_main_requires_the_four_checks_from_github_actions
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_break_glass_bypasses_r_main
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_only_the_code_owner_approves
-      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_merge_binds_the_sha_the_owner_approved
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_agents_are_routed_to_the_runbook
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_no_command_carries_a_token_or_a_bare_helper
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_host_rules_name_tracing_and_the_trusted_path
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_each_program_trusted_on_the_path_is_shown_holding_the_token
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_merge_binds_the_sha_the_owner_approved
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_break_glass_reads_the_classic_protection_back_first
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_break_glass_is_named_as_the_exception_and_closed_after
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_classic_protection_is_recorded_as_the_owner_read_it
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_pre_merge_check_is_named_with_what_it_checks
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_recovery_waits_out_stolen_tokens_and_identities_are_exact
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_gate_is_a_registered_guardrail_and_its_target_is_main
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_phase_1a_states_what_it_does_not_enforce
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_zero_approval_decisions_are_marked_revised
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_no_record_claims_the_platform_binds_the_exact_head
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_every_decision_cited_exists
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_decision_and_runbook_link_each_other_and_are_indexed
 
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration

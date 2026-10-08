@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Bind every merge to the owner's approval of the exact head
-description: MA0 Phase 1a. The orchestrating agent acts through its own GitHub App, without admin, and a machine user that opens PRs and requests reviews. A ruleset on main, with no bypass but a break-glass App, requires the code owner's approval of the exact head, resolved threads and the required checks, so no actor merges without the owner. The owner's former agent PAT is revoked.
+description: MA0 Phase 1a. The orchestrating agent acts through its own GitHub App, without admin, and a machine user that opens PRs and requests reviews. A ruleset on main, with no bypass but a break-glass App, requires the code owner's approval, resolved threads and the required checks, so no actor merges without the owner; the merge procedure binds that approval to the exact head until Phase 1b. The owner's former agent PAT is revoked.
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -88,9 +88,9 @@ causes:
 
 ## Consequences
 
-- **No actor can merge without the owner's approval of the head, except through
-  break glass,** which only the owner can use, and which the runbook bounds and
-  audits. Calibration showed the App refused both with and without `--admin`.
+- **No actor can merge without the owner's approval, except through break glass,**
+  which only the owner can use, and which the runbook bounds and audits. Binding the
+  approval to the exact head is the merge procedure's until Phase 1b, as below. Calibration showed the App refused both with and without `--admin`.
 - **What the platform does not yet enforce.** Until Phase 1b it does not check:
   - the approval's `commit_id` against the merged head, since the platform keeps an
     approval across a push that leaves the diff unchanged; the merge procedure

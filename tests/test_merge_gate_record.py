@@ -235,7 +235,9 @@ class MergeGateRecordTests(unittest.TestCase):
         ]
         self.assertNotIn("the merge commit and the head match", after)
         for phrase in (
-            "--json headRefOid,mergeCommit",
+            "--json headRefOid,mergeCommit --jq .headRefOid",
+            "--json headRefOid,mergeCommit --jq .mergeCommit.oid",
+            "If the trees differ, stop",
             "the PR's recorded head equals `<approved>`",
             "commits/<merge>",
             "commits/<approved>",
@@ -268,13 +270,15 @@ class MergeGateRecordTests(unittest.TestCase):
         # owner's stored login and merge as the owner (Codex on #400).
         self.assertIn("instead of letting `gh` fall back to a stored login", procedure)
         # The command itself, its guards chained in order (cubic on #400).
+        # In a subshell, so the token never exists in the interactive shell, an
+        # interruption cannot leave it there, and the block's status is the
+        # merge's (Codex and CodeAnt on #400).
         command = (
-            'GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
+            '( GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" '
             "&& export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT "
-            "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> "
-            # The merge's status survives the cleanup (Codex on #400).
-            'status=$? unset GH_TOKEN (exit "$status")'
+            "repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )"
         )
+        self.assertIn("never exists in the interactive shell", procedure)
         blocks = [
             " ".join(block.replace("\\\n", " ").split())
             for block in re.findall(
@@ -408,25 +412,16 @@ class MergeGateRecordTests(unittest.TestCase):
         ):
             with self.subTest(surface=surface):
                 self.assertIn(surface, entry["implementation"])
-        # Exactly the gate's contract tests, so swapping one for an unrelated test
-        # fails (cubic on #400).
-        self.assertEqual(
-            [
-                f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
-                for name in (
-                    "test_r_main_requires_the_code_owner_s_approval_of_the_exact_head",
-                    "test_only_break_glass_bypasses_r_main",
-                    "test_only_the_code_owner_approves",
-                    "test_the_merge_binds_the_sha_the_owner_approved",
-                    # The route in `AGENTS.md` and the Decision's limits, so every
-                    # implementation surface has a test that reads it (Claude on
-                    # #400).
-                    "test_agents_are_routed_to_the_runbook",
-                    "test_phase_1a_states_what_it_does_not_enforce",
-                )
-            ],
-            entry["tests"],
+        # Every test of this module, so none is added without being registered, and
+        # an unrelated test cannot stand in for one (cubic, CodeAnt and Claude on
+        # #400).
+        own = sorted(
+            f"tests/test_merge_gate_record.py::MergeGateRecordTests.{name}"
+            for name in dir(MergeGateRecordTests)
+            if name.startswith("test_")
         )
+        self.assertEqual(own, sorted(entry["tests"]))
+        self.assertEqual(len(own), len(entry["tests"]))
         self.assertEqual(
             {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
             self._r_main()["conditions"],
@@ -473,6 +468,34 @@ class MergeGateRecordTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, revises)
+
+    def test_no_record_claims_the_platform_binds_the_exact_head(self) -> None:
+        """GitHub requires the owner's approval, but keeps it across a push that
+        leaves the diff unchanged, so binding it to the exact head is the merge
+        procedure's until Phase 1b; no record says otherwise (cubic on #400)."""
+        decisions = ROOT / "knowledge" / "decisions"
+        records = {
+            path.name: " ".join(path.read_text(encoding="utf-8").split())
+            for path in (
+                RUNBOOK,
+                DECISION,
+                decisions / "0013-defer-provider-enforcement-while-private.md",
+                decisions / "0014-strengthen-gnostoa-self-governance.md",
+            )
+        }
+        for name, text in records.items():
+            for claim in (
+                "GitHub enforces it; no agent's discipline is relied on",
+                "requires the code owner's approval of the exact head",
+                "A later push dismisses the approval",
+                "without the owner's approval of the head",
+            ):
+                with self.subTest(record=name, claim=claim):
+                    self.assertNotIn(claim, text)
+        self.assertIn(
+            "binding it to the exact head is the merge procedure's step until Phase 1b",
+            records[RUNBOOK.name],
+        )
 
     def test_every_decision_cited_exists(self) -> None:
         """A Decision is cited by number only when it is in the repository; #384's

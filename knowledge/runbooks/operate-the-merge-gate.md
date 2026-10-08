@@ -19,10 +19,12 @@ x-project-knowledge:
 
 # Operate the merge gate
 
-Under MA0 Phase 1a, no actor can merge into `main` without the owner's approval of
-the exact head, except through break glass, which only the owner can use. That
-covers the orchestrating agent, Amazon Q, any review bot and any developer. GitHub
-enforces it; no agent's discipline is relied on.
+Under MA0 Phase 1a, no actor can merge into `main` without the owner's approval,
+except through break glass, which only the owner can use. That covers the
+orchestrating agent, Amazon Q, any review bot and any developer, and GitHub enforces
+it. GitHub keeps an approval across a push that leaves the diff unchanged, so
+binding it to the exact head is the merge procedure's step until Phase 1b's required
+check enforces it.
 [Decision 0110](../decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
 records why. The work items are #15, for MA0, and #398, for this record.
 
@@ -263,8 +265,9 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    - each available reviewer's verdict on the head;
    - each unavailable reviewer, quoting its text.
 7. **The owner's approval.** The owner reviews and clicks **Approve** in GitHub on
-   that exact head. A later push dismisses the approval, and a move of `main` makes
-   the branch out of date. Either needs a new approval.
+   that exact head. A later push that changes the diff dismisses the approval, and a
+   move of `main` makes the branch out of date. Either needs a new approval. A push
+   that leaves the diff unchanged may keep it, which step 8 checks.
 8. **The merge.** The App merges the SHA the owner approved, never just the PR's
    current head. `--match-head-commit` only checks the SHA it is given against the
    head, and a push that leaves the diff unchanged may not dismiss an approval. So
@@ -292,10 +295,14 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    head equals `<approved>`, and reads the new commit `<merge>`:
    ```sh
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
-     gh pr view <N> --json headRefOid,mergeCommit
+     gh pr view <N> --json headRefOid,mergeCommit --jq .headRefOid
+   GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
+     gh pr view <N> --json headRefOid,mergeCommit --jq .mergeCommit.oid
    ```
-   Second, that `<merge>` integrated that head. The branch was up to date with
-   `main`, so the two trees are one:
+   The first prints the PR's recorded head, the second `<merge>`. Second, that
+   `<merge>` integrated that head. The branch was up to date with `main`, so the two
+   trees are one. If the trees differ, stop: the squash carries something the owner
+   did not approve. Record it on the Work Item and tell the owner:
    ```sh
    GH_TOKEN=$(~/.config/gnostoa-agent/bin/agent-token.sh) \
      gh api repos/ktogias/gnostoa/commits/<merge> --jq .commit.tree.sha
@@ -363,16 +370,14 @@ protection exists. The last resort is then the owner, as admin:
    never the token. Each step runs only if the one before succeeded, and `gh` runs
    with an empty configuration directory, so a failed or empty mint stops the merge
    instead of letting `gh` fall back to a stored login, which would merge as the
-   owner rather than as `gnostoa-break-glass[bot]`. The token is cleared whatever
-   happens, and the block still ends with the merge's status, so a failure is not
-   reported as success:
+   owner rather than as `gnostoa-break-glass[bot]`. The block runs in a subshell, so
+   the token never exists in the interactive shell. Interrupting it, for example
+   with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
+   a failure is not reported as success:
    ```sh
-   GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
+   ( GH_TOKEN=$(~/break-glass/break-glass-token.sh) && test -n "$GH_TOKEN" \
      && export GH_TOKEN && GH_CONFIG_DIR=$(mktemp -d) gh api -X PUT \
-     repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head>
-   status=$?
-   unset GH_TOKEN
-   (exit "$status")
+     repos/ktogias/gnostoa/pulls/<N>/merge -f merge_method=squash -f sha=<head> )
    ```
 5. Remove the key from the machine.
 
