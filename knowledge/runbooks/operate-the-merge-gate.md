@@ -208,6 +208,10 @@ owner.
 | `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only: it sends the JWT with `curl` and reads the token from the response with `python3` | `0700` |
 | `~/.config/gnostoa-agent/bin/agent-git.sh` | runs `git` with the App's token through a credential helper; it blanks the inherited helpers, so no token is ever on a command line or in output | `0700` |
 
+The procedure needs `gh`, `git`, `jq`, `curl`, `openssl` and `python3` on the fixed
+system path below, besides the system's `/usr/bin/env`, `/bin/sh` and `mktemp`. `jq`
+reads the list of reviews outside the guarded body, so it never holds a token.
+
 **Rules on the host:**
 - A token is never printed, logged or passed on a command line. It is captured into
   `GH_TOKEN` inside one of the functions below, for one `gh` command, and never with xtrace (`set -x`) on, nor in a recorded

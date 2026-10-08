@@ -379,7 +379,15 @@ class MergeGateRecordTests(unittest.TestCase):
                         .replace(FIXED_PATH, f"{root / 'bin'}:/usr/bin:/bin")
                     )
                     done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                        [interpreter, "-c", _CALLER + filled + '\necho "$?"\n'],
+                        [
+                            interpreter,
+                            "-c",
+                            # The caller's token stays unset after the block (cubic on
+                            # #400).
+                            _CALLER
+                            + filled
+                            + '\nprintf "%s %s\\n" "$?" "${GH_TOKEN-unset}"\n',
+                        ],
                         capture_output=True,
                         text=True,
                         check=False,
@@ -393,7 +401,9 @@ class MergeGateRecordTests(unittest.TestCase):
                         },
                     )
                     self.assertEqual(
-                        str(expected), done.stdout.strip().splitlines()[-1], done.stderr
+                        f"{expected} unset",
+                        done.stdout.strip().splitlines()[-1],
+                        done.stderr,
                     )
                     seen = root / "seen"
                     self.assertEqual(expected == 0, seen.exists())
@@ -412,6 +422,11 @@ class MergeGateRecordTests(unittest.TestCase):
         The host's PATH resolves every program that holds a token, so it is part of
         the trust boundary, as recorded (cubic on #400)."""
         runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+        # Every program the procedure needs is named, `jq` included (CodeAnt on #400).
+        self.assertIn(
+            "The procedure needs `gh`, `git`, `jq`, `curl`, `openssl` and `python3`",
+            runbook,
+        )
         for phrase in (
             "never with xtrace (`set -x`) on, nor in a recorded session",
             "The host's `PATH` is trusted",
