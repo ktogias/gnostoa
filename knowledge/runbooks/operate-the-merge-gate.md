@@ -223,22 +223,24 @@ owner.
   with a captured token would.
   The token never exists in the calling shell, even when a command is interrupted.
   Each body runs in a fresh `/bin/sh`, started by absolute path through `env -i`,
-  which passes on only `PATH`, `HOME` and `TMPDIR`. A name with a slash is never
+  which passes on only `HOME` and `TMPDIR`, and sets `PATH` to AGENTS.md's fixed
+  system path, so no entry of the caller's `PATH`, such as a writable virtualenv or
+  `.`, is searched. A name with a slash is never
   looked up as a function, so no function, alias or variable of the calling shell
   reaches the body: not a `gh`, `test`, `mktemp` or even `command` function, not
   `GH_HOST`, `GH_REPO` or `GH_DEBUG`, and not a read-only `GH_CONFIG_DIR`. Inside
   the fresh shell, nothing can shadow anything, so the body needs no `command`
   prefix. The calling shell itself, which defines and calls these functions, is
-  trusted, as its `PATH` is: a hostile shell could redefine the functions
-  themselves. The body traps the same signals as AGENTS.md's preparation helper,
+  trusted: a hostile shell could redefine the functions themselves. The body traps the same signals as AGENTS.md's preparation helper,
   `HUP` included. On exit, by any path, it unsets the token and then removes the
-  directory `mktemp` made, held in `created` before the clean-up is set, so nothing
-  else is removed. Define them again after any change to this section, since a
+  directory `mktemp` made, with whatever `gh` wrote there. That directory is held
+  in `created` before the clean-up is set, so nothing else is removed. Define them again after any change to this section, since a
   shell keeps the definitions it already has:
   ```sh
   as_app() {
-    /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
-      cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
+      HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rm -rf -- "$created"; }
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
@@ -250,8 +252,9 @@ owner.
     ' as_app "$@"
   }
   as_machine_user() {
-    /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
-      cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
+      HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rm -rf -- "$created"; }
       trap "exit 130" INT
       trap "exit 143" TERM
       trap "exit 129" HUP
@@ -424,8 +427,9 @@ protection exists. The last resort is then the owner, as admin:
    with Ctrl-C, cannot leave the token behind. The block's status is the merge's, so
    a failure is not reported as success:
    ```sh
-   /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
-     cleanup() { unset GH_TOKEN; rmdir -- "$created"; }
+   /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
+      HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+     cleanup() { unset GH_TOKEN; rm -rf -- "$created"; }
      trap "exit 130" INT
      trap "exit 143" TERM
      trap "exit 129" HUP
@@ -484,8 +488,8 @@ the gate:
 | Event | Action |
 |---|---|
 | The machine user's token approaches **2027-01-06** | The owner, signed in as the machine user, creates a new classic token (`public_repo`) and writes it to `~/.config/gnostoa-agent/machine-user-token`, then revokes the old one. |
-| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. Before unsuspending, audit every merge into `main` since its last trusted identity: the last merge recorded on a Work Item. Read each merge's actor and approval in the activity log, and record any the owner did not approve in the follow-up, for revert or disposition. Unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
+| The agent host may be compromised | Suspend the installation of `gnostoa-agent` first (its installation settings → Suspend). A token the host already minted would otherwise stay valid for up to an hour. Then revoke its private key (App settings → Private keys) and the machine user's token. Generate a new key, and a new token, only for a clean host. Before unsuspending, audit every merge into `main` since its last trusted identity: the last merge recorded on a Work Item. For each, read its actor in the activity log, and compare the owner's approval `commit_id`, the PR's recorded head and the integrated tree, as the normal merge's step 9 does, since a push that keeps the diff keeps the approval. Record any merge that fails a comparison, or that the owner did not approve, in the follow-up, for revert or disposition. Unsuspend the installation only after reading it back, and at least an hour after suspending it, when any token minted before has expired. |
 | The App's key is rotated on schedule | Generate a new key, install it at the same path, then delete the old key in the App's settings. |
-| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, and generate a new one offline. The App bypasses R-main, so a stolen key may already have merged: audit every merge into `main` since its last trusted identity, the last merge recorded on a Work Item. Any merge by `gnostoa-break-glass[bot]` that the owner did not make is recorded in the emergency follow-up, for revert or disposition. Then read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
+| The break-glass key is lost or exposed | Suspend the installation of `gnostoa-break-glass` first (its installation settings → Suspend). That stops the App acting at once, including through a token already minted, which would otherwise stay valid for up to an hour. Then delete the key, and generate a new one offline. The App bypasses R-main, so a stolen key may already have merged: audit every merge into `main` since its last trusted identity, the last merge recorded on a Work Item. For each, read its actor in the activity log, and compare the owner's approval `commit_id`, the PR's recorded head and the integrated tree, as the normal merge's step 9 does. Any merge by `gnostoa-break-glass[bot]` that the owner did not make, or that fails a comparison, is recorded in the emergency follow-up, for revert or disposition. Then read the installation back, and only then unsuspend it, at least an hour after suspending it, when any token minted before has expired. |
 | A reviewer changes whom it accepts | Run the calibration again (Verification), and record the result here. |
 | An identity, permission or ruleset changes | Read it back, and update Preconditions and Verification in the same change. |

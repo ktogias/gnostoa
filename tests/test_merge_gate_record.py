@@ -22,6 +22,30 @@ DECISION = (
 )
 
 
+# A calling shell as hostile to the token as a shell can be by accident: functions
+# for what the bodies run, `gh`'s own variables, and a read-only `GH_CONFIG_DIR`
+# (Codex, cubic and Claude on #400).
+_CALLER = (
+    'gh() { touch "$SHADOWED"; }\n'
+    'test() { touch "$SHADOWED"; return 0; }\n'
+    'cat() { touch "$SHADOWED"; echo t0ken; }\n'
+    'mktemp() { touch "$SHADOWED"; echo "$KEPT"; }\n'
+    'command() { touch "$SHADOWED"; }\n'
+    "export GH_HOST=ghe.example.com GH_REPO=elsewhere/repo GH_DEBUG=api\n"
+    'readonly GH_CONFIG_DIR="$KEPT"\n'
+)
+
+
+def _shells() -> list[str]:
+    """Each POSIX shell present, by path."""
+    return [path for name in ("sh", "bash", "dash") if (path := shutil.which(name))]
+
+
+# AGENTS.md's fixed system path, so no entry of a caller's PATH is searched (Codex on
+# #400).
+FIXED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+
 def _isolated(mint: str, tail: str) -> str:
     """The guarded body the runbook writes, whitespace normalised. It runs in a fresh
     `/bin/sh`, started by absolute path through `env -i`, so no function, alias or
@@ -29,8 +53,9 @@ def _isolated(mint: str, tail: str) -> str:
     (cubic and Codex on #400). It traps every signal AGENTS.md's helper traps, and
     removes only the directory `mktemp` made (cubic and Claude on #400)."""
     return (
-        '/usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" '
-        '/bin/sh -c \' cleanup() { unset GH_TOKEN; rmdir -- "$created"; } '
+        f"/usr/bin/env -i PATH={FIXED_PATH} "
+        'HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" '
+        '/bin/sh -c \' cleanup() { unset GH_TOKEN; rm -rf -- "$created"; } '
         'trap "exit 130" INT trap "exit 143" TERM trap "exit 129" HUP '
         "created=$(mktemp -d) || exit trap cleanup EXIT "
         "GH_CONFIG_DIR=$created && export GH_CONFIG_DIR "
@@ -235,15 +260,6 @@ class MergeGateRecordTests(unittest.TestCase):
             path for name in ("sh", "bash", "dash") if (path := shutil.which(name))
         ]
         self.assertTrue(shells)
-        caller = (
-            'gh() { touch "$SHADOWED"; }\n'
-            'test() { touch "$SHADOWED"; return 0; }\n'
-            'cat() { touch "$SHADOWED"; echo t0ken; }\n'
-            'mktemp() { touch "$SHADOWED"; echo "$KEPT"; }\n'
-            'command() { touch "$SHADOWED"; }\n'
-            "export GH_HOST=ghe.example.com GH_REPO=elsewhere/repo GH_DEBUG=api\n"
-            'readonly GH_CONFIG_DIR="$KEPT"\n'
-        )
         cases = (
             ("as_app", "exit 4", 4),
             ("as_app", "exit 0", 1),
@@ -278,15 +294,19 @@ class MergeGateRecordTests(unittest.TestCase):
                             source, encoding="utf-8"
                         )
                         gh = root / "bin" / "gh"
+                        # It writes into its configuration directory, as a real `gh` may,
+                        # and the clean-up still leaves nothing (Claude on #400).
                         gh.write_text(
-                            "#!/bin/sh\nprintf '%s %s|%s|%s\\n' \"${GH_TOKEN:+token}\" "
+                            '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
+                            "printf '%s %s|%s|%s\\n' \"${GH_TOKEN:+token}\" "
                             '"${GH_HOST-}" "${GH_REPO-}" "${GH_DEBUG-}" > "$HOME/seen"\n',
                             encoding="utf-8",
                         )
                         gh.chmod(0o755)
+                        test_path = f"{root / 'bin'}:/usr/bin:/bin"
                         script = (
-                            caller
-                            + block
+                            _CALLER
+                            + block.replace(FIXED_PATH, test_path)
                             + f"\n{function} api x\nstatus=$?\n"
                             + 'printf "%s %s\\n" "$status" "${GH_TOKEN-unset}"\n'
                         )
@@ -319,6 +339,72 @@ class MergeGateRecordTests(unittest.TestCase):
                         self.assertTrue(kept.is_dir())
                         self.assertEqual(populated, (kept / "hosts.yml").is_file())
                         self.assertEqual([], list((root / "tmp").iterdir()))
+
+    def test_break_glass_runs_as_written(self) -> None:
+        """Break glass's block, executed as written with its placeholders filled, from
+        the same calling shell: a failed or empty mint stops before `gh`; a working
+        one merges the exact head with the token; nothing is left in `TMPDIR` (Claude
+        on #400)."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        shells = _shells()
+        self.assertTrue(shells)
+        [glass] = [
+            b
+            for b in re.findall(r"```sh\n(.*?)```", text, re.S)
+            if "break-glass-token.sh" in b
+        ]
+        for interpreter in shells:
+            for source, expected in (("exit 4", 4), ("exit 0", 1), ("echo t0ken", 0)):
+                with (
+                    self.subTest(interpreter=interpreter, glass=source),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    (root / "break-glass").mkdir()
+                    for name in ("bin", "tmp"):
+                        (root / name).mkdir()
+                    mint = root / "break-glass" / "break-glass-token.sh"
+                    mint.write_text(f"#!/bin/sh\n{source}\n", encoding="utf-8")
+                    mint.chmod(0o755)
+                    gh = root / "bin" / "gh"
+                    gh.write_text(
+                        '#!/bin/sh\ntouch "$GH_CONFIG_DIR/state.yml"\n'
+                        'printf "%s %s\\n" "${GH_TOKEN:+token}" "$*" > "$HOME/seen"\n',
+                        encoding="utf-8",
+                    )
+                    gh.chmod(0o755)
+                    filled = (
+                        glass.replace("<N>", "7")
+                        .replace("<head>", "0123abc")
+                        .replace(FIXED_PATH, f"{root / 'bin'}:/usr/bin:/bin")
+                    )
+                    done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                        [interpreter, "-c", _CALLER + filled + '\necho "$?"\n'],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            "PATH": "/usr/bin:/bin",
+                            "HOME": str(root),
+                            "TMPDIR": str(root / "tmp"),
+                            "KEPT": str(root / "tmp"),
+                            "SHADOWED": str(root / "shadowed"),
+                        },
+                    )
+                    self.assertEqual(
+                        str(expected), done.stdout.strip().splitlines()[-1], done.stderr
+                    )
+                    seen = root / "seen"
+                    self.assertEqual(expected == 0, seen.exists())
+                    if seen.exists():
+                        self.assertEqual(
+                            "token api -X PUT repos/ktogias/gnostoa/pulls/7/merge "
+                            "-f merge_method=squash -f sha=0123abc",
+                            seen.read_text(encoding="utf-8").strip(),
+                        )
+                    self.assertFalse((root / "shadowed").exists())
+                    self.assertEqual([], list((root / "tmp").iterdir()))
 
     def test_the_host_rules_name_tracing_and_the_trusted_path(self) -> None:
         """Bash prints a command's expansion under xtrace, token included, so no
@@ -462,13 +548,6 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertIn("never exists in the interactive shell", procedure)
         # Where `<head>` comes from (Claude on #400).
         self.assertIn("`<head>` is the head the owner has just reviewed", procedure)
-        blocks = [
-            " ".join(block.replace("\\\n", " ").split())
-            for block in re.findall(
-                r"```sh\n(.*?)```", RUNBOOK.read_text(encoding="utf-8"), re.S
-            )
-        ]
-        self.assertIn(command, blocks)
         # The last resort removes one broken check, which the read-back before the
         # merge then expects, rather than restoring it (CodeAnt on #400).
         self.assertIn("Remove only the broken check from it", runbook)
@@ -588,6 +667,15 @@ class MergeGateRecordTests(unittest.TestCase):
             2,
             recovery.count(
                 "audit every merge into `main` since its last trusted identity"
+            ),
+        )
+        # For each merge, the approval, the recorded head and the integrated tree, since
+        # a push that keeps the diff keeps the approval (Codex on #400).
+        self.assertEqual(
+            2,
+            " ".join(recovery.split()).count(
+                "compare the owner's approval `commit_id`, the PR's recorded head and "
+                "the integrated tree, as the normal merge's step 9 does"
             ),
         )
         self.assertIn("a collaborator on this repository alone", runbook)
