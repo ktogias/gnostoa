@@ -42,6 +42,9 @@ def main() -> int:
     # Standard input is the test's own `json.dumps`; anything else fails this child,
     # which the test reports with its standard error.
     scripts = json.load(sys.stdin)
+    if not isinstance(scripts, list) or not all(isinstance(s, str) for s in scripts):
+        sys.stderr.write("the probe expects a JSON list of strings\n")
+        return 2
     json.dump(
         {
             "abi": LANGUAGE.abi_version,

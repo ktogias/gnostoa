@@ -29,6 +29,9 @@ from tools.repository_scope import SOURCE_MANIFEST, candidate_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
+# The most the parser probe is sent: far above the repository's corpus, and far
+# below what would strain a CI runner.
+PROBE_INPUT_LIMIT = 16 * 1024 * 1024
 # `env`'s documented options: GNU coreutils' `env --help`, and BSD's `-P`.
 ENV_FLAGS = set("i0v")
 ENV_ARGUMENT_FLAGS = set("uCaPS")
@@ -219,10 +222,17 @@ CONTAINER_FILE = re.compile(r"(?i)\A(?:.*\.)?(?:dockerfile|containerfile)(?:\..*
 
 def _probe(scripts: list[str]) -> dict[str, object]:
     """The probe's answer for ``scripts``, from a child process: a native crash fails
-    here, as an error the test reports."""
+    here, as an error the test reports. A corpus beyond the input bound is refused
+    before it is sent; the answer, which grows with the input, is bounded with it
+    (CodeAnt on #396)."""
+    payload = json.dumps(scripts)
+    if len(payload) > PROBE_INPUT_LIMIT:
+        raise AssertionError(
+            f"a corpus of {len(payload)} characters, beyond the probe's input bound"
+        )
     done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         [sys.executable, str(PROBE)],
-        input=json.dumps(scripts),
+        input=payload,
         capture_output=True,
         text=True,
         check=False,
@@ -704,8 +714,8 @@ def _refuse(name: str, reason: str) -> AssertionError:
     return AssertionError(f"{name}: {reason}; extend this extraction")
 
 
-def _shebang_command(head: bytes, name: str) -> str:
-    """The name of the command a shebang line runs. Through `env`, its whole
+def _shebang_words(head: bytes, name: str) -> list[str]:
+    """The command a shebang line runs, with its arguments. Through `env`, its whole
     documented grammar is read (GNU `env --help`, and BSD's `-P`): options and their
     arguments, `-S` strings split again, then assignments, then the command. A word
     outside that grammar, a line that cannot be split, or no command fails closed, so
@@ -715,17 +725,29 @@ def _shebang_command(head: bytes, name: str) -> str:
     except UnicodeDecodeError as exc:
         raise _refuse(name, "an unreadable shebang") from exc
     # A kernel splits on whitespace and reads no quotes; `env -S` reads its own.
-    words = line.split()
-    # A chained `env` is followed, to a bound (Claude on #396).
-    for _ in range(ENV_CHAIN_LIMIT):
-        if not words or Path(words[0]).name != "env":
-            break
-        words = _env_operands(words[1:], name)
-    if words and Path(words[0]).name in MULTI_CALL:
-        words = words[1:]
-    if not words or Path(words[0]).name == "env" or not PROGRAM.fullmatch(words[0]):
+    words = _follow_launchers(line.split(), name, split=True)
+    if not words or not PROGRAM.fullmatch(words[0]):
         raise _refuse(name, "an unreadable shebang")
-    return Path(words[0]).name
+    return words
+
+
+def _follow_launchers(words: list[str], name: str, *, split: bool) -> list[str]:
+    """The command a chain of launchers runs, with its arguments: `env`, read by
+    its own reader, and a multi-call binary's applet, to a bound. `split` admits
+    `env -S`, whose words come from one string, as in a shebang. One walk serves
+    shebangs and exec forms (Claude on #396); a launcher left after the bound fails
+    closed (Codex on #396)."""
+    for _ in range(ENV_CHAIN_LIMIT):
+        launcher = Path(words[0]).name if words else ""
+        if launcher == "env":
+            words = _env_operands(words[1:], name, split=split)
+        elif launcher in MULTI_CALL:
+            words = words[1:]
+        else:
+            return words
+    if words and (Path(words[0]).name == "env" or Path(words[0]).name in MULTI_CALL):
+        raise _refuse(name, "a launcher chain beyond the bound")
+    return words
 
 
 def _env_operands(rest: list[str], name: str, *, split: bool = True) -> list[str]:
@@ -860,21 +882,8 @@ def _exec_form_shell(argv: list[str]) -> list[str]:
     `-c` among them, that word is the command; otherwise it is a script's path
     (CodeAnt on #396). A multi-call binary's applet is the program."""
     # `env` and a multi-call binary launch the command after them (Codex on #396).
-    for _ in range(ENV_CHAIN_LIMIT):
-        launcher = Path(argv[0]).name if argv else ""
-        if launcher == "env":
-            argv = _env_operands(argv[1:], "RUN", split=False)
-        elif launcher in MULTI_CALL:
-            argv = argv[1:]
-        else:
-            break
+    argv = _follow_launchers(argv, "RUN", split=False)
     program = Path(argv[0]).name if argv else ""
-    # A launcher still left after the bound fails closed, as a shebang's chain does
-    # (Codex on #396).
-    if program == "env" or program in MULTI_CALL:
-        raise AssertionError(
-            "a launcher chain beyond the bound; extend this extraction"
-        )
     if program in OTHER_SHELLS:
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
     if program not in SHELLS:
@@ -1195,13 +1204,27 @@ def _shell_fences(text: str, name: str) -> list[str]:
 def _script_surface(path: Path, name: str, head: bytes) -> dict[str, str]:
     """A script read when its shebang runs `sh`, `bash`, `dash` or `ash`; another
     shell, or a shell-like name no known shell, fails closed (Claude on #394)."""
-    command = _shebang_command(head, name)
+    words = _shebang_words(head, name)
+    command = Path(words[0]).name
     if command in OTHER_SHELLS:
         raise _refuse(name, f"a `{command}` script")
     if command not in SHELLS and SHELL_LIKE.match(command):
         raise _refuse(name, f"an unrecognised shell `{command}`")
     if command not in SHELLS:
         return {}
+    # The shebang's own options decide what the shell reads (Codex on #396): with
+    # `-c`, its command string, the file only `$0`; with `-s`, standard input.
+    inline, rest = _shell_options(words[1:])
+    options = words[1 : len(words) - len(rest)]
+    if any(
+        word[:1] == "-" and word[:2] != "--" and "s" in word[1:] for word in options
+    ):
+        raise _refuse(name, "a shebang shell that reads standard input")
+    if inline:
+        rest = rest[1:] if rest[:1] == ["-"] else rest
+        if not rest:
+            raise _refuse(name, "a shebang `-c` without its command")
+        return {name: rest[0]}
     # A shell script that is not UTF-8 fails here, loudly.
     return {name: path.read_text(encoding="utf-8-sig")}
 
@@ -2291,6 +2314,9 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         # (Codex on #396).
         with self.assertRaisesRegex(AssertionError, "a launcher chain beyond"):
             _exec_form_shell(["env", "env", "env", "env", "sh", "-c", "git x"])
+        # The multi-call half of the bound too (Claude on #396).
+        with self.assertRaisesRegex(AssertionError, "a launcher chain beyond"):
+            _exec_form_shell([*["busybox"] * 4, "sh", "-c", "git x"])
         self.assertEqual(
             ["git c", "git d", "git e"],
             _dockerfile_runs(
@@ -2353,6 +2379,44 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 self.assertRaisesRegex(AssertionError, "a RUN whose shell is unknown"),
             ):
                 _dockerfile_runs(text)
+
+    def test_a_shebang_s_own_command_is_what_runs(self) -> None:
+        """A shebang whose shell has `-c` runs that string, not the file's body;
+        `-s` reads standard input instead, and fails closed (Codex on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "c").write_bytes(
+                b"#!/usr/bin/env -S bash -c 'git status'\necho body\n"
+            )
+            (root / "e").write_bytes(b"#!/bin/sh -e\ngit log\n")
+            self.assertEqual(
+                {"c": "git status", "e": "#!/bin/sh -e\ngit log\n"},
+                _shell_surfaces(_declared(root)),
+            )
+            (root / "s").write_bytes(b"#!/bin/sh -s\ngit log\n")
+            declared = _declared(root)
+            with self.assertRaisesRegex(
+                AssertionError, "s: a shebang shell that reads"
+            ):
+                _shell_surfaces(declared)
+
+    def test_the_probe_takes_a_bounded_list_of_strings(self) -> None:
+        """The probe child refuses input that is not a list of strings (Amazon Q on
+        #396), and the parent refuses a corpus beyond its bound before sending it
+        (CodeAnt on #396); the answer, which grows with the input, is bounded with
+        it."""
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, str(PROBE)],
+            input='{"not": "a list"}',
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("a JSON list of strings", completed.stderr)
+        with self.assertRaisesRegex(AssertionError, "beyond the probe's input bound"):
+            _probe(["x" * (PROBE_INPUT_LIMIT + 1)])
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
@@ -2467,7 +2531,8 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                     self.assertIn("k", _shell_surfaces(declared))
             (root / "k").write_bytes(b"#!/usr/bin/env env env env env bash\ngit k\n")
             declared = _declared(root)
-            with self.assertRaisesRegex(AssertionError, "k: an unreadable shebang"):
+            # One launcher walk serves shebangs and exec forms (Claude on #396).
+            with self.assertRaisesRegex(AssertionError, "k: a launcher chain beyond"):
                 _shell_surfaces(declared)
             (root / "k").unlink()
             # A shell-like name that is no known shell fails closed (Claude on #394).
