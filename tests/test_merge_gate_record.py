@@ -510,16 +510,30 @@ class MergeGateRecordTests(unittest.TestCase):
         )
         # The squash message is pinned to the subject and body the pre-merge check
         # read, since either can be edited without moving the head (Codex on #400).
+        # The title is untrusted text, so it reaches `gh` from the file the pre-merge
+        # check wrote, never pasted into a command line (Claude on #400).
         self.assertIn(
             "as_app pr merge <N> --squash --match-head-commit <approved> "
-            "--subject <subject> --body-file <checked-body>",
+            '--subject "$(cat <checked-subject>)" --body-file <checked-body>',
             merge,
         )
+        self.assertNotIn("<subject>", merge)
         # The comparison is a step, not a hope (CodeAnt on #400).
         self.assertIn(
             "Stop unless `<approved>`, the PR's head and the seal are one SHA", merge
         )
+        # The head, the title and the body are read together just before the merge:
+        # GitHub closes an issue a closing keyword in the description names,
+        # whatever the squash message says (Codex on #400).
         self.assertIn("as_app pr view <N> --json headRefOid --jq .headRefOid", merge)
+        for read in (
+            "as_app pr view <N> --json title --jq .title | cmp -s - <checked-subject>",
+            "as_app pr view <N> --json body --jq .body | cmp -s - <checked-body>",
+        ):
+            with self.subTest(read=read):
+                self.assertIn(read, merge)
+        self.assertIn("and both comparisons succeed", merge)
+        self.assertIn("whatever the squash message says", merge)
         # A squash merge makes a new commit, so after it the PR's recorded head is
         # compared with `<approved>`, and the new commit's tree with that head's
         # (Codex on #400).
@@ -545,6 +559,71 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(command=joined[:60]):
                 self.assertFalse("--paginate" in joined and "--jq" in joined)
 
+    def test_an_untrusted_title_reaches_gh_as_one_argument(self) -> None:
+        """The pre-merge check writes the title and body it read to files, and the
+        merge passes them from there: a title's shell syntax reaches `gh` as one
+        argument and never runs (Claude on #400)."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        flat = " ".join(text.split())
+        for write in (
+            "as_app pr view <N> --json title --jq .title > <checked-subject>",
+            "as_app pr view <N> --json body --jq .body > <checked-body>",
+        ):
+            with self.subTest(write=write):
+                self.assertIn(
+                    write, flat[: flat.index("6. **The convergence report.**")]
+                )
+        [line] = [
+            line.strip()
+            for block in re.findall(r"```sh\n(.*?)```", text, re.S)
+            for line in block.splitlines()
+            if line.strip().startswith("as_app pr merge")
+        ]
+        title = "Docs`touch PWNED` $(touch PWNED); touch PWNED 'q\" \\$HOME"
+        for interpreter in _shells():
+            with (
+                self.subTest(interpreter=interpreter),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / "subject").write_text(title + "\n", encoding="utf-8")
+                filled = (
+                    line.replace("<N>", "7")
+                    .replace("<approved>", "0123abc")
+                    .replace("<checked-subject>", str(root / "subject"))
+                    .replace("<checked-body>", str(root / "body"))
+                )
+                done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [
+                        interpreter,
+                        "-c",
+                        'as_app() { printf "%s\\n" "$@" > "$HOME/seen"; }\n' + filled,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                    cwd=root,
+                    env={"PATH": "/usr/bin:/bin", "HOME": str(root)},
+                )
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertFalse((root / "PWNED").exists())
+                self.assertEqual(
+                    [
+                        "pr",
+                        "merge",
+                        "7",
+                        "--squash",
+                        "--match-head-commit",
+                        "0123abc",
+                        "--subject",
+                        title,
+                        "--body-file",
+                        str(root / "body"),
+                    ],
+                    (root / "seen").read_text(encoding="utf-8").splitlines(),
+                )
+
     def test_break_glass_reads_the_classic_protection_back_first(self) -> None:
         """Break glass leaves the classic protection as the only layer requiring
         the checks, so the owner reads it back before the merge (Codex on #400)."""
@@ -559,6 +638,18 @@ class MergeGateRecordTests(unittest.TestCase):
         self.assertNotEqual(-1, read_back)
         self.assertNotEqual(-1, merge)
         self.assertLess(read_back, merge)
+        # The owner reads the title, the description and the commits' messages just
+        # before the merge, and stops on a closing keyword in any: the squash commit
+        # is built from the commits' messages and the title (Codex on #400).
+        for phrase in (
+            "`title` and `body` from that same response",
+            "GET /repos/ktogias/gnostoa/pulls/<N>/commits",
+            "stops if any of them carries a closing keyword",
+            "the commits' messages and its title from the PR's title or its one",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, procedure)
+                self.assertLess(procedure.index(phrase), procedure.index("```sh"))
         # A failed mint stops the merge: `gh` would otherwise fall back to the
         # owner's stored login and merge as the owner (Codex on #400).
         self.assertIn("instead of letting `gh` fall back to a stored login", procedure)

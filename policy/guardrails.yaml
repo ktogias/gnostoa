@@ -403,6 +403,7 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_host_rules_name_tracing_and_the_trusted_path
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_each_program_trusted_on_the_path_is_shown_holding_the_token
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_merge_binds_the_sha_the_owner_approved
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_an_untrusted_title_reaches_gh_as_one_argument
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_break_glass_reads_the_classic_protection_back_first
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_break_glass_is_named_as_the_exception_and_closed_after
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_classic_protection_is_recorded_as_the_owner_read_it

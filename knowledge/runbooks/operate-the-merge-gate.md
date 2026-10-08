@@ -208,7 +208,7 @@ owner.
 | `~/.config/gnostoa-agent/bin/agent-token.sh` | prints a one-hour installation token for `ktogias/gnostoa` only: it sends the JWT with `curl` and reads the token from the response with `python3` | `0700` |
 | `~/.config/gnostoa-agent/bin/agent-git.sh` | runs `git` with the App's token through a credential helper; it blanks the inherited helpers, so no token is ever on a command line or in output | `0700` |
 
-The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `rm` and
+The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `cmp`, `rm` and
 `mktemp` on the fixed system path below, besides the system's `/usr/bin/env` and
 `/bin/sh`. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
 the list of reviews outside the guarded body, so it never holds a token.
@@ -316,7 +316,12 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      - every other check run and status is green, and a green one carries no
        annotation or analyzer finding;
      - every review thread is resolved, read through every page;
-     - no closing keyword is in what the squash merge will carry.
+     - no closing keyword is in what the squash merge will carry. The check writes the
+       PR's title and body, as it read them, to two files the merge passes on:
+       ```sh
+       as_app pr view <N> --json title --jq .title > <checked-subject>
+       as_app pr view <N> --json body --jq .body > <checked-body>
+       ```
 6. **The convergence report.** The App posts it on the PR. It covers:
    - the seal;
    - the required checks;
@@ -339,14 +344,22 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```sh
    as_app api repos/ktogias/gnostoa/pulls/<N>/reviews --paginate --slurp \
      | jq -r '[.[][] | select(.user.login == "ktogias")] | last | select(.state == "APPROVED") | .commit_id'
-   as_app pr merge <N> --squash --match-head-commit <approved> --subject <subject> --body-file <checked-body>
+   as_app pr merge <N> --squash --match-head-commit <approved> --subject "$(cat <checked-subject>)" --body-file <checked-body>
    ```
-   `<subject>` and `<checked-body>` are the PR's title and body as the pre-merge check
-   read them, with no closing keyword. Passing them pins the squash message, since
-   either can be edited without moving the head. Between the two commands, the App
-   reads the PR's head,
-   `as_app pr view <N> --json headRefOid --jq .headRefOid`.
-   Stop unless `<approved>`, the PR's head and the seal are one SHA. No provider gate
+   `<checked-subject>` and `<checked-body>` are the files the pre-merge check wrote,
+   holding the PR's title and body with no closing keyword. Passing them pins the
+   squash message, since either can be edited without moving the head. The title is
+   untrusted text, so it is never pasted into a command line: `"$(cat ...)"` hands it
+   to `gh` as one argument, and nothing in it runs. Between the two commands, the App
+   reads the PR's head, `as_app pr view <N> --json headRefOid --jq .headRefOid`, and
+   compares its title and body with the files:
+   ```sh
+   as_app pr view <N> --json title --jq .title | cmp -s - <checked-subject>
+   as_app pr view <N> --json body --jq .body | cmp -s - <checked-body>
+   ```
+   Stop unless `<approved>`, the PR's head and the seal are one SHA, and both
+   comparisons succeed. GitHub closes an issue that a closing keyword in the
+   description names when the PR merges, whatever the squash message says. No provider gate
    yet checks the approval's `commit_id` against the merged head: the platform keeps
    an approval across a push that leaves the diff unchanged. This step is that check
    until Phase 1b's required `merge-admission` check enforces it.
@@ -447,7 +460,13 @@ protection exists. The last resort is then the owner, as admin:
    the key is present. The command line and the shell's history then hold `$(...)`,
    never the token. `<head>` is the head the owner has just reviewed, read from
    `GET /repos/ktogias/gnostoa/pulls/<N>` (`head.sha`) and recorded in the
-   follow-up; GitHub refuses the merge if the head has moved since. Each step runs
+   follow-up; GitHub refuses the merge if the head has moved since. The owner also
+   reads the PR's `title` and `body` from that same response, and its commits'
+   messages from `GET /repos/ktogias/gnostoa/pulls/<N>/commits`, and stops if any of
+   them carries a closing keyword. GitHub closes an issue that one names in the
+   description, and the repository builds the squash commit from the commits'
+   messages and its title from the PR's title or its one commit's. `<head>` binds the
+   commits but not the title or the description, so those are read last. Each step runs
    only if the one before succeeded, and `gh` runs
    with an empty configuration directory, made before the mint so that no other
    program runs while the token is set. So a failed or empty mint stops the merge
