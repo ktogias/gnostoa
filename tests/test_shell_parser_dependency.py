@@ -869,6 +869,12 @@ def _exec_form_shell(argv: list[str]) -> list[str]:
         else:
             break
     program = Path(argv[0]).name if argv else ""
+    # A launcher still left after the bound fails closed, as a shebang's chain does
+    # (Codex on #396).
+    if program == "env" or program in MULTI_CALL:
+        raise AssertionError(
+            "a launcher chain beyond the bound; extend this extraction"
+        )
     if program in OTHER_SHELLS:
         raise AssertionError(f"an exec-form `{program}` RUN; extend this extraction")
     if program not in SHELLS:
@@ -2281,6 +2287,10 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AssertionError, "an exec-form `env -S`"):
             _exec_form_shell(["env", "-S", "sh -c", "git x"])
+        # A launcher chain beyond the bound fails closed, as a shebang's does
+        # (Codex on #396).
+        with self.assertRaisesRegex(AssertionError, "a launcher chain beyond"):
+            _exec_form_shell(["env", "env", "env", "env", "sh", "-c", "git x"])
         self.assertEqual(
             ["git c", "git d", "git e"],
             _dockerfile_runs(
