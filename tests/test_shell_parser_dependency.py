@@ -68,8 +68,10 @@ MULTI_CALL = {"busybox", "toybox"}
 # The YAML keys that hold shell in a CI definition. They are looked for in the
 # loaded document, wherever and however written: flow style (CodeAnt on #394), quoted,
 # or as an explicit `? key` (Codex on #396).
-CI_KEYS = {"run", "script", "before_script", "after_script"}
+CI_KEYS = {"run", "script", "before_script", "after_script", "pre_get_sources_script"}
 GITLAB_KEYS = ("before_script", "script", "after_script")
+# GitLab's job hooks: commands the runner runs before the clone (Codex on #396).
+GITLAB_HOOKS = {"pre_get_sources_script"}
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
 INSTRUCTION_FILES = {"AGENTS.md"}
@@ -86,9 +88,29 @@ SHELL_FENCE_OPEN = re.compile(
 )
 CONTAINER_PREFIX = " \t>-+*.)0123456789"
 SHELL_INFO = {"bash", "sh", "shell"}
-# A runner label whose implicit shell is bash: a GitHub-hosted Linux or macOS image,
-# or a self-hosted runner's operating-system label.
-BASH_RUNNER = re.compile(r"(?:ubuntu|macos)-[\w.-]+|linux|macos", re.I)
+# The runner labels whose implicit shell is bash.
+BASH_RUNNERS = {
+    # GitHub's documented hosted labels with a Linux or macOS image. A custom
+    # self-hosted label, such as `ubuntu-builder`, may name any runner (Codex on
+    # #396), so only these imply bash.
+    "ubuntu-latest",
+    "ubuntu-24.04",
+    "ubuntu-22.04",
+    "ubuntu-24.04-arm",
+    "ubuntu-22.04-arm",
+    "macos-latest",
+    "macos-15",
+    "macos-14",
+    "macos-13",
+    *(
+        f"macos-{v}-{size}"
+        for v in ("latest", "15", "14", "13")
+        for size in ("large", "xlarge")
+    ),
+    # A self-hosted runner's operating-system label.
+    "linux",
+    "macos",
+}
 # What a program's name is made of; a word with quotes, spaces or escapes names none.
 PROGRAM = re.compile(r"[\w./+-]+")
 # GNU env's `-S` escapes and what each yields (coreutils `env.c`, `build_argv`).
@@ -212,27 +234,9 @@ def _workflow_runs(path: Path) -> list[str]:
     return _github_runs(path, _load_yaml(path))
 
 
-class _AnyTagLoader(yaml.SafeLoader):
-    """A safe loader that reads any tag's node as plain data. It only finds keys:
-    a file such as `mkdocs.yml`, whose `!!python/name:` tags the safe loader
-    refuses, is still read for them. Extraction keeps the safe loader, so a tagged
-    CI file, such as one with GitLab's `!reference`, fails closed."""
-
-
-def _untagged(loader: yaml.SafeLoader, _suffix: str, node: yaml.Node) -> object:
-    if isinstance(node, yaml.MappingNode):
-        return loader.construct_mapping(node, deep=True)
-    if isinstance(node, yaml.SequenceNode):
-        return loader.construct_sequence(node, deep=True)
-    return loader.construct_scalar(node)  # type: ignore[arg-type]
-
-
-_AnyTagLoader.add_multi_constructor("", _untagged)  # type: ignore[no-untyped-call]
-
-
-def _load_yaml(path: Path, loader: type[yaml.SafeLoader] = yaml.SafeLoader) -> object:
+def _load_yaml(path: Path) -> object:
     try:
-        return yaml.load(path.read_text(encoding="utf-8-sig"), Loader=loader)  # nosec B506
+        return yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except yaml.YAMLError as exc:
         raise AssertionError(f"{path}: not YAML: {exc}") from exc
 
@@ -254,7 +258,7 @@ def _runner_shell(runs_on: object) -> str | None:
     names = [label for label in labels if isinstance(label, str) and "${{" not in label]
     if len(names) != len(labels) or any("windows" in name.lower() for name in names):
         return None
-    return "bash" if any(BASH_RUNNER.fullmatch(name) for name in names) else None
+    return "bash" if any(name.lower() in BASH_RUNNERS for name in names) else None
 
 
 def _github_context(
@@ -310,7 +314,7 @@ def _github_runs(path: Path, document: object) -> list[str]:
     runner's. Another shape on those paths fails closed, and so does a recursive
     alias along them (CodeAnt on #396)."""
     if not isinstance(document, dict) or not ("jobs" in document or "runs" in document):
-        if _has_shell_key(document):
+        if _has_shell_key(path):
             raise _refuse(path.name, "shell in an unknown GitHub shape")
         return []
     above = _entered(document, frozenset(), path.name)
@@ -358,18 +362,37 @@ def _github_steps(
 
 
 def _gitlab_scripts(document: dict[str, object]) -> list[str]:
-    """Each GitLab CI job's (and `default`'s) `before_script`, `script` and
-    `after_script`, and the deprecated top-level ones, in document order. A list is
-    the lines the runner's shell runs in turn."""
+    """Each GitLab CI job's (and `default`'s) hook commands, `before_script`,
+    `script` and `after_script`, and the deprecated top-level ones, in document
+    order. A list is the lines the runner's shell runs in turn."""
     found: list[str] = []
     for key, value in document.items():
         if key in GITLAB_KEYS:
             # A deprecated but valid global lifecycle script (Codex on #396).
             found.extend(_script_value(value))
         elif isinstance(value, dict):
+            found.extend(_gitlab_hooks(value))
             for name in GITLAB_KEYS:
                 found.extend(_script_value(value.get(name)))
     return found
+
+
+def _gitlab_hooks(job: dict[str, object]) -> list[str]:
+    """A job's hook commands, which run before its scripts. A hook this reader does
+    not know fails closed."""
+    hooks = job.get("hooks")
+    if hooks is None:
+        return []
+    if not isinstance(hooks, dict):
+        raise AssertionError(
+            "GitLab hooks that are not a mapping; extend this extraction"
+        )
+    for hook in hooks:
+        if hook not in GITLAB_HOOKS:
+            raise AssertionError(
+                f"an unknown GitLab hook `{hook}`; extend this extraction"
+            )
+    return _script_value(hooks.get("pre_get_sources_script"))
 
 
 def _script_value(value: object) -> list[str]:
@@ -423,7 +446,7 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     """The shell of a CI definition, read by its shape wherever it sits: a GitHub
     workflow or action, or a GitLab CI file. A YAML file outside `.github` that
     holds a shell key in another shape fails closed (CodeAnt on #394)."""
-    if not under_github and not _has_shell_key(_load_yaml(path, _AnyTagLoader)):
+    if not under_github and not _has_shell_key(path):
         return []
     document = _load_yaml(path)
     if under_github or _github_shaped(document):
@@ -439,22 +462,33 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     )
 
 
-def _has_shell_key(document: object) -> bool:
-    """Whether any mapping in a loaded YAML document has a key that holds shell in a
-    CI definition. Each container is visited once, so a recursive alias ends."""
+def _has_shell_key(path: Path) -> bool:
+    """Whether any mapping in a YAML file has a key that holds shell in a CI
+    definition. The file is composed, not constructed: its node graph is read
+    without its tags' meaning, so a tag the safe loader refuses, such as
+    `mkdocs.yml`'s `!!python/name:`, hides no key. Extraction still loads safely,
+    so a tagged CI file, such as one with GitLab's `!reference`, fails closed. Each
+    node is visited once, so a recursive alias ends."""
+    try:
+        root = yaml.compose(
+            path.read_text(encoding="utf-8-sig"), Loader=yaml.SafeLoader
+        )
+    except yaml.YAMLError as exc:
+        raise AssertionError(f"{path}: not YAML: {exc}") from exc
     seen: set[int] = set()
-    stack = [document]
+    stack: list[yaml.Node | None] = [root]
     while stack:
         node = stack.pop()
-        if not isinstance(node, dict | list) or id(node) in seen:
+        if not isinstance(node, yaml.CollectionNode) or id(node) in seen:
             continue
         seen.add(id(node))
-        if isinstance(node, dict):
-            if CI_KEYS.intersection(key for key in node if isinstance(key, str)):
+        if isinstance(node, yaml.SequenceNode):
+            stack.extend(node.value)
+            continue
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode) and key.value in CI_KEYS:
                 return True
-            stack.extend(node.values())
-        else:
-            stack.extend(node)
+            stack.extend((key, value))
     return False
 
 
@@ -1595,6 +1629,43 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 'ONBUILD RUN git status\nonbuild run ["sh", "-c", "git log"]\n'
             ),
         )
+
+    def test_a_gitlab_hook_s_commands_are_read(self) -> None:
+        """`hooks:pre_get_sources_script` runs on the runner before the clone, in
+        a job or in `default`; another hook fails closed (Codex on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            path.write_text(
+                "default:\n  hooks:\n    pre_get_sources_script: [git a]\n"
+                "job:\n  hooks:\n    pre_get_sources_script: git b\n  script: [git c]\n",
+                "utf-8",
+            )
+            self.assertEqual(
+                ["git a", "git b", "git c"], _ci_shell(path, under_github=False)
+            )
+            path.write_text(
+                "job:\n  hooks:\n    other: git x\n  script: [git c]\n", "utf-8"
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "an unknown GitLab hook `other`"
+            ):
+                _ci_shell(path, under_github=False)
+
+    def test_only_a_known_runner_label_implies_bash(self) -> None:
+        """A documented GitHub-hosted Linux or macOS label, or a self-hosted
+        runner's OS label, implies bash; a custom label such as `ubuntu-builder`
+        may name any runner, and fails closed (Codex on #396)."""
+        for runs_on in (
+            "ubuntu-latest",
+            "ubuntu-24.04-arm",
+            "macos-15-xlarge",
+            ["self-hosted", "Linux"],
+        ):
+            with self.subTest(runs_on=runs_on):
+                self.assertEqual("bash", _runner_shell(runs_on))
+        for runs_on in ("ubuntu-builder", "macos-anything", ["self-hosted", "build"]):
+            with self.subTest(runs_on=runs_on):
+                self.assertIsNone(_runner_shell(runs_on))
 
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
