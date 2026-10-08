@@ -72,6 +72,22 @@ CI_KEYS = {"run", "script", "before_script", "after_script", "pre_get_sources_sc
 GITLAB_KEYS = ("before_script", "script", "after_script")
 # GitLab's job hooks: commands the runner runs before the clone (Codex on #396).
 GITLAB_HOOKS = {"pre_get_sources_script"}
+# GitLab's global keywords, which are not jobs (GitLab's CI/CD YAML syntax).
+GITLAB_GLOBALS = {
+    "default",
+    "include",
+    "stages",
+    "variables",
+    "workflow",
+    "image",
+    "services",
+    "cache",
+    "spec",
+}
+# What only a GitLab job holds, among the keys this reader knows.
+GITLAB_JOB_SIGNS = {*GITLAB_KEYS, "hooks", "extends"}
+# Microsoft's Windows base images, which run PowerShell.
+WINDOWS_IMAGE = re.compile(r"windows|servercore|nanoserver", re.I)
 BOM = b"\xef\xbb\xbf"
 # The instruction files whose shell fences agents run, found by name at any depth.
 INSTRUCTION_FILES = {"AGENTS.md"}
@@ -361,20 +377,81 @@ def _github_steps(
     return found
 
 
-def _gitlab_scripts(document: dict[str, object]) -> list[str]:
+def _gitlab_shaped(document: dict[str, object]) -> bool:
+    """Whether a document is a GitLab CI file: `stages` or `default`, or a job with
+    a lifecycle script, a hook or an `extends` (Claude on #396)."""
+    return (
+        "stages" in document
+        or "default" in document
+        or any(
+            isinstance(job, dict) and not GITLAB_JOB_SIGNS.isdisjoint(job)
+            for job in document.values()
+        )
+    )
+
+
+def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     """Each GitLab CI job's (and `default`'s) hook commands, `before_script`,
     `script` and `after_script`, and the deprecated top-level ones, in document
-    order. A list is the lines the runner's shell runs in turn."""
+    order. A list is the lines the runner's shell runs in turn. A global keyword,
+    such as `variables`, is not a job (Codex on #396); a job that runs is read only
+    in a container image whose shell is known (Codex on #396)."""
     found: list[str] = []
     for key, value in document.items():
         if key in GITLAB_KEYS:
             # A deprecated but valid global lifecycle script (Codex on #396).
             found.extend(_script_value(value))
-        elif isinstance(value, dict):
+        elif isinstance(value, dict) and (
+            key == "default" or key not in GITLAB_GLOBALS
+        ):
+            if key != "default" and not key.startswith(".") and "trigger" not in value:
+                _check_gitlab_image(
+                    _gitlab_image(document, value, key, name), key, name
+                )
             found.extend(_gitlab_hooks(value))
-            for name in GITLAB_KEYS:
-                found.extend(_script_value(value.get(name)))
+            for script in GITLAB_KEYS:
+                found.extend(_script_value(value.get(script)))
     return found
+
+
+def _gitlab_image(
+    document: dict[str, object], job: dict[str, object], key: str, name: str
+) -> object:
+    """A job's image: its own, else its `extends` bases' (the last one wins, as
+    GitLab merges them), else `default`'s, else the deprecated global one."""
+    seen: set[str] = set()
+    pending = [job]
+    while pending:
+        current = pending.pop()
+        if "image" in current:
+            return current["image"]
+        extends = current.get("extends", [])
+        bases = [extends] if isinstance(extends, str) else extends
+        if not isinstance(bases, list):
+            raise _refuse(name, f"`{key}`: an `extends` of `{bases}`")
+        for base in bases:
+            # A base reached twice, as in a diamond, is read once.
+            if base in seen:
+                continue
+            parent = document.get(base) if isinstance(base, str) else None
+            if not isinstance(parent, dict):
+                raise _refuse(name, f"`{key}`: an `extends` of `{base}`")
+            seen.add(base)
+            pending.append(parent)
+    default = document.get("default")
+    if isinstance(default, dict) and "image" in default:
+        return default["image"]
+    return document.get("image")
+
+
+def _check_gitlab_image(image: object, key: str, name: str) -> None:
+    """A Linux image runs a job's scripts with `sh` or `bash`; a Windows base
+    image runs PowerShell, and with no image the runner decides."""
+    reference = image.get("name") if isinstance(image, dict) else image
+    if not isinstance(reference, str) or not reference:
+        raise _refuse(name, f"`{key}`: a GitLab job whose shell its runner decides")
+    if WINDOWS_IMAGE.search(reference):
+        raise _refuse(name, f"`{key}`: a Windows image")
 
 
 def _gitlab_hooks(job: dict[str, object]) -> list[str]:
@@ -451,12 +528,8 @@ def _ci_shell(path: Path, under_github: bool) -> list[str]:
     document = _load_yaml(path)
     if under_github or _github_shaped(document):
         return _github_runs(path, document)
-    if isinstance(document, dict) and (
-        "stages" in document
-        or "default" in document
-        or any(isinstance(job, dict) and "script" in job for job in document.values())
-    ):
-        return _gitlab_scripts(document)
+    if isinstance(document, dict) and _gitlab_shaped(document):
+        return _gitlab_scripts(document, path.name)
     raise AssertionError(
         f"{path.name}: shell in an unknown CI shape; extend this extraction"
     )
@@ -834,8 +907,13 @@ def _shell_fences(text: str, name: str) -> list[str]:
             body.append(content[min(indent, len(content) - len(content.lstrip(" "))) :])
             index += 1
         index += 1
-        words = opener["info"].split()
-        if words and words[0].lower() in SHELL_INFO:
+        language = (opener["info"].split() or [""])[0].lower()
+        if language in OTHER_SHELLS or (
+            language not in SHELL_INFO and SHELL_LIKE.match(language)
+        ):
+            # A shell this parser does not read (CodeAnt on #396).
+            raise _refuse(name, f"a `{language}` fence")
+        if language in SHELL_INFO:
             fences.append("".join(body))
     return fences
 
@@ -1172,7 +1250,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             root = Path(directory)
             (root / "ci").mkdir()
             (root / ".gitlab-ci.yml").write_text(
-                "stages: [test]\ndefault:\n  before_script:\n    - git fetch\n"
+                "stages: [test]\ndefault:\n  image: alpine\n  before_script:\n    - git fetch\n"
                 "job:\n  stage: test\n  script:\n    - git status\n    - echo ok\n"
                 "  after_script: git gc\n",
                 "utf-8",
@@ -1184,7 +1262,8 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             )
             (root / "ci" / "policy.yml").write_text("checks:\n  - name: x\n", "utf-8")
             (root / "ci" / "flow.yml").write_text(
-                'stages: [t]\njob: {stage: t, script: "git describe"}\n', "utf-8"
+                'stages: [t]\nimage: alpine\njob: {stage: t, script: "git describe"}\n',
+                "utf-8",
             )
             self.assertEqual(
                 {
@@ -1230,10 +1309,13 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         at any depth; a value that is not a string fails closed rather than being
         stringified (CodeAnt on #396). A `!reference` tag fails closed at the YAML
         load: none is tracked (cubic on #396)."""
-        nested: dict[str, object] = {"job": {"script": ["git a", ["git b", ["git c"]]]}}
-        self.assertEqual(["git a\ngit b\ngit c"], _gitlab_scripts(nested))
+        nested: dict[str, object] = {
+            "image": "alpine",
+            "job": {"script": ["git a", ["git b", ["git c"]]]},
+        }
+        self.assertEqual(["git a\ngit b\ngit c"], _gitlab_scripts(nested, "x"))
         with self.assertRaisesRegex(AssertionError, "a `int` script line"):
-            _gitlab_scripts({"job": {"script": ["git a", 7]}})
+            _gitlab_scripts({"image": "alpine", "job": {"script": ["git a", 7]}}, "x")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".gitlab-ci.yml"
             path.write_text(
@@ -1250,11 +1332,13 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             root = Path(directory)
             (root / "ci").mkdir()
             (root / ".gitlab-ci.yml").write_text(
-                "before_script: [git a]\nafter_script: git z\njob:\n  script: [git b]\n",
+                "image: alpine\nbefore_script: [git a]\nafter_script: git z\n"
+                "job:\n  script: [git b]\n",
                 "utf-8",
             )
             (root / "ci" / "quoted.yml").write_text(
-                '{"stages": ["t"], "job": {"stage": "t", "script": "git c"}}\n', "utf-8"
+                '{"stages": ["t"], "image": "alpine", "job": {"stage": "t", "script": "git c"}}\n',
+                "utf-8",
             )
             (root / "ci" / "order.yml").write_text(
                 "on: push\njobs:\n  one:\n    runs-on: ubuntu-latest\n"
@@ -1595,8 +1679,8 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "explicit.yml"
             for document in (
-                "job:\n  ? script\n  : git status\n",
-                "job:\n  ? script  # the job's commands\n  : git status\n",
+                "image: alpine\njob:\n  ? script\n  : git status\n",
+                "image: alpine\njob:\n  ? script  # the job's commands\n  : git status\n",
             ):
                 path.write_text(document, "utf-8")
                 with self.subTest(document=document):
@@ -1636,7 +1720,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".gitlab-ci.yml"
             path.write_text(
-                "default:\n  hooks:\n    pre_get_sources_script: [git a]\n"
+                "default:\n  image: alpine\n  hooks:\n    pre_get_sources_script: [git a]\n"
                 "job:\n  hooks:\n    pre_get_sources_script: git b\n  script: [git c]\n",
                 "utf-8",
             )
@@ -1644,7 +1728,8 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 ["git a", "git b", "git c"], _ci_shell(path, under_github=False)
             )
             path.write_text(
-                "job:\n  hooks:\n    other: git x\n  script: [git c]\n", "utf-8"
+                "job:\n  image: alpine\n  hooks:\n    other: git x\n  script: [git c]\n",
+                "utf-8",
             )
             with self.assertRaisesRegex(
                 AssertionError, "an unknown GitLab hook `other`"
@@ -1667,6 +1752,85 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             with self.subTest(runs_on=runs_on):
                 self.assertIsNone(_runner_shell(runs_on))
 
+    def test_a_gitlab_job_s_shell_is_its_image_s(self) -> None:
+        """GitLab's runner, not the file, picks the shell, except in a container: a
+        Linux image runs `sh` or `bash` (GitLab Runner's Docker executor). A job's
+        image is its own, else its `extends` base's, else `default`'s, else the
+        global one. A job without one, or with a Windows base image, fails closed
+        (Codex on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            for document in (
+                "job:\n  image: alpine\n  script: [git a]\n",
+                ".base:\n  image: alpine\njob:\n  extends: .base\n  script: [git a]\n",
+                # A base reached twice, through both bases, before the image.
+                ".root:\n  stage: x\n.img:\n  image: alpine\n"
+                ".a:\n  extends: [.img, .root]\n.b:\n  extends: .root\n"
+                "job:\n  extends: [.a, .b]\n  script: [git a]\n",
+                "default:\n  image: {name: alpine}\njob:\n  script: [git a]\n",
+                "image: alpine\njob:\n  script: [git a]\n",
+                "job:\n  image: alpine\n  script: [git a]\nbridge:\n  trigger: other\n",
+            ):
+                path.write_text(document, "utf-8")
+                with self.subTest(document=document):
+                    self.assertEqual(["git a"], _ci_shell(path, under_github=False))
+            for document, reason in (
+                (
+                    "job:\n  script: [git a]\n",
+                    "`job`: a GitLab job whose shell its runner decides",
+                ),
+                (
+                    "job:\n  image: mcr.microsoft.com/windows/servercore:ltsc2022\n"
+                    "  script: [git a]\n",
+                    "`job`: a Windows image",
+                ),
+                (
+                    "job:\n  extends: .missing\n  script: [git a]\n",
+                    "`job`: an `extends` of `.missing`",
+                ),
+            ):
+                path.write_text(document, "utf-8")
+                with (
+                    self.subTest(document=document),
+                    self.assertRaisesRegex(AssertionError, reason),
+                ):
+                    _ci_shell(path, under_github=False)
+
+    def test_gitlab_global_keywords_are_not_jobs(self) -> None:
+        """A global keyword, such as `variables`, holds data, not a job, even when
+        one of its keys is named `script`; a job with hooks alone is GitLab's too
+        (Codex and Claude on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitlab-ci.yml"
+            path.write_text(
+                "variables:\n  script: 'not shell ('\nworkflow:\n  rules: []\n"
+                "job:\n  image: alpine\n  script: [git a]\n",
+                "utf-8",
+            )
+            self.assertEqual(["git a"], _ci_shell(path, under_github=False))
+            path.write_text(
+                "fetch:\n  image: alpine\n  hooks:\n"
+                "    pre_get_sources_script: [git submodule sync]\n",
+                "utf-8",
+            )
+            self.assertEqual(
+                ["git submodule sync"], _ci_shell(path, under_github=False)
+            )
+
+    def test_a_fence_in_another_shell_fails_closed(self) -> None:
+        """A fence tagged with a shell this parser does not read, such as `zsh`,
+        fails closed instead of being skipped (CodeAnt on #396)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for tag in ("zsh", "ksh", "pwsh"):
+                (root / "AGENTS.md").write_text(f"```{tag}\ngit a\n```\n", "utf-8")
+                declared = _declared(root)
+                with (
+                    self.subTest(tag=tag),
+                    self.assertRaisesRegex(AssertionError, f"a `{tag}` fence"),
+                ):
+                    _shell_surfaces(declared)
+
     def test_a_recursive_yaml_alias_fails_closed(self) -> None:
         """`safe_load` builds self-referential lists and mappings from recursive
         aliases; both walkers refuse a cycle rather than loop on it, and still read an
@@ -1677,7 +1841,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             # outside `.github` (cubic on #396).
             for document, under_github in (
                 ("on: push\njobs: &j\n  again: *j\n", True),
-                ("job:\n  script: &s\n    - git a\n    - *s\n", False),
+                ("job:\n  image: alpine\n  script: &s\n    - git a\n    - *s\n", False),
             ):
                 path.write_text(document, "utf-8")
                 with (
@@ -1686,7 +1850,9 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                 ):
                     _ci_shell(path, under_github=under_github)
             path.write_text(
-                "job:\n  before_script: &s [git a]\n  script: [*s, git b]\n", "utf-8"
+                "job:\n  image: alpine\n  before_script: &s [git a]\n"
+                "  script: [*s, git b]\n",
+                "utf-8",
             )
             self.assertEqual(
                 ["git a", "git a\ngit b"], _ci_shell(path, under_github=False)
@@ -1698,7 +1864,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".gitlab-ci.yml").write_text(
-                "jobs:\n  script: git status\nruns:\n  script:\n    - git log\n",
+                "image: alpine\njobs:\n  script: git status\nruns:\n  script:\n    - git log\n",
                 "utf-8",
             )
             declared = _declared(root)
