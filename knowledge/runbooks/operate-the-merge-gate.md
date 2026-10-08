@@ -477,7 +477,7 @@ protection exists. The last resort is then the owner, as admin:
    `GET /repos/ktogias/gnostoa/pulls/<N>/commits?per_page=100`, and last, just before
    the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again. The commits list
    stops at 250 without saying so, so the owner stops unless the commits listed number
-   that read's `commits`, at most 250.
+   that read's `commits`, and fewer than 250, since either count may stop at 250.
    The owner stops unless that read's `head.sha` is still `<head>`, and stops if the
    commits' messages, or that read's `title` or `body`, carry a closing keyword.
    GitHub closes an issue that one names in the description, and the repository

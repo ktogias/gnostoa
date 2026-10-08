@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import shutil
@@ -704,7 +705,8 @@ class MergeGateRecordTests(unittest.TestCase):
             "and last, just before the merge, reads `GET /repos/ktogias/gnostoa/pulls/<N>` again",
             # The stop needs the PR's own count, since the list stops at 250 without
             # saying so (cubic on #400).
-            "stops unless the commits listed number that read's `commits`, at most 250",
+            # Fewer than 250, since either count may stop there (Claude on #400).
+            "stops unless the commits listed number that read's `commits`, and fewer than 250",
             "stops unless that read's `head.sha` is still `<head>`",
             "stops if the commits' messages, or that read's `title` or `body`, carry a closing keyword",
             "the commits' messages and its title from the PR's title or its one",
@@ -713,7 +715,11 @@ class MergeGateRecordTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, procedure)
                 self.assertLess(procedure.index(phrase), procedure.index("```sh"))
-        self.assertLess(procedure.index(phrases[0]), procedure.index(phrases[1]))
+        # In order: the commits, the final read, then the stops that compare with
+        # that read, so no stop checks a stale one (Claude on #400).
+        for earlier, later in itertools.pairwise(phrases[:4]):
+            with self.subTest(earlier=earlier[:40]):
+                self.assertLess(procedure.index(earlier), procedure.index(later))
         # A failed mint stops the merge: `gh` would otherwise fall back to the
         # owner's stored login and merge as the owner (Codex on #400).
         self.assertIn("instead of letting `gh` fall back to a stored login", procedure)
