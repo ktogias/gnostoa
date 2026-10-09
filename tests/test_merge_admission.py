@@ -21,6 +21,7 @@ from tools import (
     verdict_cli,
 )
 from tools.check_change_policy import load_change_policy
+from tools.knowledge_common import KnowledgeFormatError
 
 ROOT = Path(__file__).resolve().parents[1]
 HEAD = "a" * 40
@@ -569,11 +570,12 @@ class MergeAdmissionTests(unittest.TestCase):
             with self.subTest(field=field, value=value):
                 policy = copy.deepcopy(POLICY)
                 policy["change_classes"]["normal"][field] = value
+                evidence = _evidence()
                 with self.assertRaises(
                     assurance_completeness.AssuranceCompletenessError
                 ):
                     merge_admission.evaluate(
-                        _evidence(), declaration=declaration, change_policy=policy
+                        evidence, declaration=declaration, change_policy=policy
                     )
 
     def test_m16_the_declarer_or_the_author_cannot_approve_an_independent_class(
@@ -857,6 +859,33 @@ class PolicyLoadingTests(unittest.TestCase):
                 merge_admission.load_policy(
                     project / "policy" / "change-control.yaml", project_root=project
                 )
+
+    def test_the_inheritance_bound_is_exact(self) -> None:
+        """Claude on #410: a chain of exactly the bound loads, one more file does
+        not, so an off-by-one in the bound fails a test."""
+        bound = check_change_policy.MAX_INHERITANCE_DEPTH
+        for files, refused in ((bound, False), (bound + 1, True)):
+            with self.subTest(files=files), tempfile.TemporaryDirectory() as directory:
+                project = Path(directory)
+                for level in range(files):
+                    parent = [f"level-{level + 1}.yaml"] if level + 1 < files else []
+                    (project / f"level-{level}.yaml").write_text(
+                        yaml.safe_dump(
+                            {
+                                **_core_policy(),
+                                "id": f"example.level-{level}",
+                                "extends": parent,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                entry = project / "level-0.yaml"
+                if refused:
+                    with self.assertRaisesRegex(KnowledgeFormatError, "deeper than"):
+                        load_change_policy(entry, project_root=project)
+                else:
+                    policy = load_change_policy(entry, project_root=project)
+                    self.assertEqual("example.level-0", policy["id"])
 
     def test_a_policy_outside_the_schema_is_refused(self) -> None:
         """cubic on #410: a malformed policy could disable required links."""
