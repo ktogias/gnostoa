@@ -78,6 +78,33 @@ query ConversationEdits(
   }
 }
 """
+# The issues merging the pull request would close, keyword-linked or linked by
+# hand in the Development sidebar (Codex on #413; #407, 6086122133).
+_CLOSING_ISSUES_QUERY = """
+query ClosingIssues(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: 100, after: $cursor) {
+        nodes {
+          number
+          repository {
+            nameWithOwner
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"""
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
@@ -1067,6 +1094,23 @@ def _edit_states(nodes: list[Any]) -> list[dict[str, Any]]:
     return states
 
 
+def _closing_issues(nodes: list[Any]) -> list[dict[str, Any]]:
+    issues = []
+    for raw_node in nodes:
+        node = _mapping(raw_node, "graphql.closingIssue")
+        repository = _mapping(node.get("repository"), "graphql.closingIssue.repository")
+        issues.append(
+            {
+                "repository": _text(
+                    repository.get("nameWithOwner"),
+                    "graphql.closingIssue.repository.nameWithOwner",
+                ),
+                "number": _integer(node.get("number"), "graphql.closingIssue.number"),
+            }
+        )
+    return issues
+
+
 def _mark_edits(
     client: JsonReader, snapshot: dict[str, Any], repository: str, pull_number: int
 ) -> None:
@@ -1137,6 +1181,16 @@ def _collect_merge_evidence_once(
         snapshot[name] = items
         snapshot["coverage"][name] = coverage
     _mark_edits(client, snapshot, repository, pull_number)
+    owner, name = repository.split("/", 1)
+    snapshot["closing_issues"], snapshot["coverage"]["closing_issues"] = (
+        _collect_connection(
+            client,
+            _CLOSING_ISSUES_QUERY,
+            {"owner": owner, "name": name, "number": pull_number},
+            "closingIssuesReferences",
+            _closing_issues,
+        )
+    )
     return snapshot
 
 
@@ -1152,8 +1206,8 @@ def collect_snapshot(
 
     With `merge_evidence`, the snapshot also carries what the merge-evidence
     adapter reads: the pull request's draft, merged, target, default branch,
-    author and body, and its commits and changed files with their coverage (#407,
-    slice 1b.3a)."""
+    author and body, its commits and changed files, and the issues merging it
+    would close, each with its coverage (#407, slice 1b.3a)."""
     previous: dict[str, Any] | None = None
     previous_cut: str | None = None
     snapshot: dict[str, Any] = {}

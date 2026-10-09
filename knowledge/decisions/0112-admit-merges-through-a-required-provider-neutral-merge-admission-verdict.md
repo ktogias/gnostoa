@@ -205,8 +205,9 @@ provider-neutral public change-governance contract of
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
     fields are the items of the one top-level section's top-level bullet lists,
     so code, HTML blocks and comments are never fields. An item's field is its
-    first paragraph; a continuation paragraph is not read, as the owner chose
-    (#407, 6085825905). The section's heading is
+    first block, when that block is a paragraph: a continuation paragraph is not
+    read, and an item that opens with code or HTML has no field, as the owner
+    chose (#407, 6085825905). The section's heading is
     compared by its visible text. CommonMark does not track HTML nesting, so a
     heading or field that GitHub renders inside an open raw HTML element, such as
     a collapsed `<details>`, fails the run. So does a heading or field containing
@@ -228,7 +229,13 @@ provider-neutral public change-governance contract of
     commit message, read in the raw text, code and comments included. The
     asymmetry with the class and links is deliberate. Reading a hidden field
     could satisfy M14, so code is skipped there. Reporting a hidden keyword can
-    only deny M12, while missing one would let a merge close a Work Item.
+    only deny M12, while missing one would let a merge close a Work Item. An
+    issue linked by hand in the Development sidebar closes on merge too, so L1
+    also reads GraphQL's `closingIssuesReferences`, through the same pager and in
+    each readback pass. Each listed issue is found, and M12's coverage is
+    `COMPLETE` only when that read, the commit list and every message are (#407,
+    6086122133). Whether the relation can change after the verdict, with the
+    head unchanged, is 1b.4's and 1b.5's concern (#407, 6086106156).
   - The protected target is the repository's default branch, which the change
     policy declares protected.
   - Until 1b.3b and 1b.3c, the receipts are empty and the suppressions and

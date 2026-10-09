@@ -353,7 +353,13 @@ def _closing_references(
     subject: Mapping[str, Any],
     commits: Sequence[Mapping[str, Any]],
     commit_coverage: str,
+    closing: tuple[Sequence[Mapping[str, Any]], str],
 ) -> dict[str, Any]:
+    """GitHub's closing keywords in the title, the body and every commit message,
+    and the issues the provider lists as closed by the merge, keyword-linked or
+    linked by hand (Codex on #413; #407, 6086122133). The coverage is COMPLETE
+    only when every source is."""
+
     surfaces = [("title", subject.get("title") or ""), ("body", subject["body"])]
     surfaces += [(f"commit {c['sha']}", c["message"]) for c in commits]
     found = [
@@ -361,8 +367,18 @@ def _closing_references(
         for surface, text in surfaces
         for match in _CLOSING.finditer(text)
     ]
+    issues, issue_coverage = closing
+    found += [
+        {
+            "surface": "github.closingIssuesReferences",
+            "reference": f"{issue['repository']}#{issue['number']}",
+        }
+        for issue in issues
+    ]
     if commit_coverage != "COMPLETE":
         coverage = commit_coverage
+    elif issue_coverage != "COMPLETE":
+        coverage = issue_coverage
     elif any(c["message_truncated"] for c in commits):
         coverage = "PARTIAL"
     else:
@@ -682,7 +698,9 @@ def evidence_from_snapshot(
             "coverage": coverage["review_threads"]["status"],
             "unresolved": sum(1 for t in threads if t.get("state") != "resolved"),
         },
-        "closing_references": _closing_references(provider, commits, commit_coverage),
+        "closing_references": _closing_references(
+            provider, commits, commit_coverage, _source(document, "closing_issues")
+        ),
         # Produced by slice 1b.3b; until then they cannot be read.
         "suppressions": {"coverage": "UNAVAILABLE", "found": []},
         "trust_root_changes": {"coverage": "UNAVAILABLE", "paths": []},

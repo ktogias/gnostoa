@@ -36,6 +36,8 @@ PREVIOUS = "d" * 40
 # the merge base, and the GraphQL page of the conversation's edit state.
 COMPARE = f"{API}/compare/{BASE}...{HEAD}"
 EDITS = "graphql:comments:first"
+# The GraphQL page of the issues the merge would close (#413 round 10).
+CLOSING = "graphql:closingIssuesReferences:first"
 DECLARER = "gnostoa-agent[bot]"
 BODY = """## Outcome
 
@@ -78,6 +80,23 @@ def _comparison(
         },
         {},
     )
+
+
+def _closing(
+    *issues: tuple[str, int], next_cursor: str | None = None
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The issues the merge would close, keyword-linked or linked by hand."""
+
+    page = {
+        "nodes": [
+            {"number": number, "repository": {"nameWithOwner": repository}}
+            for repository, number in issues
+        ],
+        "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor},
+    }
+    return {
+        "data": {"repository": {"pullRequest": {"closingIssuesReferences": page}}}
+    }, {}
 
 
 def _edits(*comments: tuple[int, str | None]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -126,6 +145,7 @@ def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
         [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], FILES
     )
     replies[EDITS] = _edits((1, None))
+    replies[CLOSING] = _closing()
     for key, value in changes.items():
         replies[key] = value
     return replies
@@ -205,6 +225,7 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
             any("/commits?" in url or "/files?" in url for url in fake.calls)
         )
         self.assertNotIn(EDITS, fake.calls)
+        self.assertNotIn(CLOSING, fake.calls)
         self.assertNotIn("edited", snapshot["conversation"][0])
 
     def test_merge_evidence_adds_the_pull_fields_and_two_sources(self) -> None:
@@ -336,6 +357,16 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
                 "/pulls/300/commits" in u or "/pulls/300/files" in u for u in fake.calls
             )
         )
+
+    def test_the_issues_the_merge_would_close_are_read(self) -> None:
+        """Codex on #413: an issue linked by hand closes on merge too, and only
+        `closingIssuesReferences` lists it (#407, 6086122133)."""
+        snapshot = _snapshot(_replies(**{CLOSING: _closing(("ktogias/gnostoa", 407))}))
+        self.assertEqual(
+            [{"repository": "ktogias/gnostoa", "number": 407}],
+            snapshot["closing_issues"],
+        )
+        self.assertEqual("COMPLETE", snapshot["coverage"]["closing_issues"]["status"])
 
     def test_each_comment_carries_its_edit_state(self) -> None:
         """Codex on #413: timestamps in whole seconds cannot show an edit made in
@@ -701,6 +732,84 @@ class EvidenceDocumentTests(unittest.TestCase):
                     evidence["closing_references"],
                 )
                 self.assertIn("M12", _failed(evidence))
+
+    def test_an_issue_the_merge_would_close_denies(self) -> None:
+        """Codex on #413: M12 sees an issue linked by hand, and an incomplete
+        read of them is not COMPLETE coverage (#407, 6086122133)."""
+        linked = _evidence(
+            _snapshot(_replies(**{CLOSING: _closing(("ktogias/gnostoa", 407))}))
+        )
+        self.assertEqual(
+            [
+                {
+                    "surface": "github.closingIssuesReferences",
+                    "reference": "ktogias/gnostoa#407",
+                }
+            ],
+            linked["closing_references"]["found"],
+        )
+        self.assertIn("M12", _failed(linked))
+        # A complete, empty relation leaves M12 to the other sources.
+        self.assertNotIn("M12", _failed(_evidence()))
+        # A second page is read too.
+        paged = _evidence(
+            _snapshot(
+                _replies(
+                    **{
+                        CLOSING: _closing(next_cursor="page-2"),
+                        "graphql:closingIssuesReferences:page-2": _closing(
+                            ("ktogias/gnostoa", 15)
+                        ),
+                    }
+                )
+            )
+        )
+        self.assertEqual(
+            ["ktogias/gnostoa#15"],
+            [f["reference"] for f in paged["closing_references"]["found"]],
+        )
+        malformed = _closing()
+        malformed[0]["data"]["repository"]["pullRequest"]["closingIssuesReferences"][
+            "nodes"
+        ] = {}
+        missing = _closing()
+        del missing[0]["data"]["repository"]["pullRequest"]["closingIssuesReferences"]
+        for name, reply in (
+            ("malformed page", malformed),
+            ("missing connection", missing),
+            ("missing cursor", _closing(next_cursor="")),
+        ):
+            with self.subTest(name):
+                unread = _evidence(_snapshot(_replies(**{CLOSING: reply})))
+                self.assertNotEqual(
+                    "COMPLETE", unread["closing_references"]["coverage"]
+                )
+                self.assertIn("M12", _failed(unread))
+
+    def test_a_link_added_during_collection_is_not_missed(self) -> None:
+        """The relation is part of each pass, so a link added between passes is
+        in the certified snapshot, never a stale empty read."""
+        replies = _replies()
+        fake = paged_fake_fixture(replies)
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            reply: tuple[Any, dict[str, str]] = original(url)
+            if url == CLOSING:
+                # The link is added just after the first pass reads the relation.
+                replies[CLOSING] = _closing(("ktogias/gnostoa", 407))
+            return reply
+
+        fake.get = get
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertIn("M12", _failed(_evidence(snapshot)))
 
     def test_words_that_are_not_closing_keywords_are_not_references(self) -> None:
         for text in (

@@ -192,11 +192,15 @@ class _PagedFake:
 
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         cursor = variables.get("cursor")
-        if "lastEditedAt" in query:
-            # The conversation's edit state is served only from an explicit
-            # reply for its cursor (#413 round 5).
-            payload, _ = self.get(f"graphql:comments:{cursor or 'first'}")
-            return payload
+        # The merge-evidence connections are served only from an explicit reply
+        # for their cursor (#413 rounds 5 and 10).
+        for marker, name in (
+            ("lastEditedAt", "comments"),
+            ("closingIssuesReferences", "closingIssuesReferences"),
+        ):
+            if marker in query:
+                payload, _ = self.get(f"graphql:{name}:{cursor or 'first'}")
+                return payload
         if "reviewThreads" not in query:
             raise RuntimeError("unexpected GraphQL query")
         # skipcq: PTC-W0063 -- explicit default prevents StopIteration
