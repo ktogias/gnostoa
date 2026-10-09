@@ -8,6 +8,12 @@ subject: a repository, a change request and its head commit. Only a current
 that disagree fail closed at the worse status. Nothing here fetches evidence or
 grants any authority: the verdict is evidence for a consumer such as the
 merge-admission verdict (Decision 0112).
+
+The subject is compared exactly, field for field. Producers' adapters translate
+their own identifiers into the subject's form before the receipt reaches the
+reducer: for example, an analyzer readback's `owner/name` into the repository
+form the current-state observation uses (slice 1b.3). A receipt in another form
+is ignored and counted, so its items fail closed as `MISSING`.
 """
 
 from __future__ import annotations

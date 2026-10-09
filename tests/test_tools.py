@@ -1855,6 +1855,8 @@ class ProfileReadBoundaryTests(unittest.TestCase):
             child = project / ".knowledge" / "profile.yaml"
             child.write_text("id: child\n", encoding="utf-8")
             with self.assertRaises(TypeError):
+                # skipcq: PYL-E1125 -- deliberate: this test asserts that a call
+                # without the keyword-only project_root is refused (4405520)
                 load_profile(child)  # type: ignore[call-arg]
 
     def test_profile_without_a_parent_still_loads(self) -> None:

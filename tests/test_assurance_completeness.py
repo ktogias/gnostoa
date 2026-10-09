@@ -651,8 +651,10 @@ class CommandTests(unittest.TestCase):
                 if key != "PYTHONUNBUFFERED"
             }
             environment["PYTHONPATH"] = str(ROOT)
+            # The suppressions below are for a fixed argument list: the interpreter
+            # running this test, on this repository's own command.
             try:
-                completed = subprocess.run(  # nosec B603 -- the interpreter running this test
+                completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                     [
                         sys.executable,
                         "-m",
