@@ -114,6 +114,7 @@ inherited, copied or loaded by adopting projects.
 - [Bind every merge to the owner's approval of the exact head](decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
 - [Keep the Gnostoa logos reserved, with their provenance](decisions/0111-keep-the-gnostoa-logos-reserved-with-their-provenance.md)
 - [Admit merges through a required, provider-neutral merge-admission verdict](decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)
+- [Read pull-request descriptions with a CommonMark parser](decisions/0113-read-pull-request-descriptions-with-a-commonmark-parser.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
