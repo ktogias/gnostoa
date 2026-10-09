@@ -55,7 +55,7 @@ _EVIDENCE_KEYS = frozenset(
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
 _CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
-_AUTHORITY_KEYS = frozenset({"declarer", "required_approvers"})
+_AUTHORITY_KEYS = frozenset({"declarer", "author", "required_approvers"})
 _REVIEW_KEYS = frozenset({"reviewer", "state", "commit_id", "submitted_at"})
 _REVIEW_STATES = frozenset(
     {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"}
@@ -129,8 +129,16 @@ def _reviews(value: object) -> list[dict[str, Any]]:
 
 
 def _latest(
-    reviews: list[dict[str, Any]], reviewer: str, states: frozenset[str] | None
+    reviews: list[dict[str, Any]],
+    reviewer: str,
+    states: frozenset[str] | None,
+    *,
+    by_commit: bool,
 ) -> dict[str, Any] | None:
+    """The reviewer's latest review among `states`. A tie is judged only by what
+    the criterion reads: the state, and with `by_commit` also the commit (cubic on
+    #410)."""
+
     own = [
         r
         for r in reviews
@@ -139,7 +147,11 @@ def _latest(
     if not own:
         return None
     newest = max(r["submitted_at"] for r in own)
-    tied = {(r["state"], r["commit_id"]) for r in own if r["submitted_at"] == newest}
+    tied = {
+        (r["state"], r["commit_id"] if by_commit else None)
+        for r in own
+        if r["submitted_at"] == newest
+    }
     if len(tied) > 1:
         # Timestamps have second resolution, so a tie has no order (cubic, CodeAnt
         # and Sourcery on #410).
@@ -202,7 +214,7 @@ def _threads(evidence: Mapping[str, Any]) -> dict[str, Any]:
 def _requests_for_changes(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     reasons = []
     for reviewer in sorted({r["reviewer"] for r in reviews}):
-        opinion = _latest(reviews, reviewer, _OPINIONS)
+        opinion = _latest(reviews, reviewer, _OPINIONS, by_commit=False)
         if opinion is None or opinion["state"] == "APPROVED":
             continue
         if opinion["state"] == _AMBIGUOUS:
@@ -257,6 +269,25 @@ def _suppressions(
     return _criterion("M13", reasons), justified
 
 
+def _class_requirements(
+    change_policy: Mapping[str, Any], change_class: str
+) -> tuple[str, Mapping[str, Any]]:
+    label = f"change policy class {change_class!r}"
+    return label, require_mapping(
+        require_mapping(
+            change_policy.get("change_classes"), "change policy classes"
+        ).get(change_class),
+        label,
+    )
+
+
+def _boolean_rule(requirements: Mapping[str, Any], field: str, label: str) -> bool:
+    value = requirements.get(field)
+    if not isinstance(value, bool):
+        raise AssuranceCompletenessError(f"{label} has {field} {value!r}")
+    return value
+
+
 def _class_links(
     evidence: Mapping[str, Any], change_class: str, change_policy: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -270,23 +301,13 @@ def _class_links(
     # Parsed whatever the class requires (Codex on #410).
     work_items = _texts(links["work_items"], "links work_items")
     decisions = _texts(links["decisions"], "links decisions")
-    label = f"change policy class {change_class!r}"
-    requirements = require_mapping(
-        require_mapping(
-            change_policy.get("change_classes"), "change policy classes"
-        ).get(change_class),
-        label,
-    )
+    label, requirements = _class_requirements(change_policy, change_class)
     # The schema's own values only: a malformed field must not read as "not
     # required" (cubic, CodeAnt and Sourcery on #410).
     work_item = requirements.get("work_item")
     if not isinstance(work_item, str) or work_item not in _WORK_ITEM_RULES:
         raise AssuranceCompletenessError(f"{label} has work_item {work_item!r}")
-    decision_record = requirements.get("decision_record")
-    if not isinstance(decision_record, bool):
-        raise AssuranceCompletenessError(
-            f"{label} has decision_record {decision_record!r}"
-        )
+    decision_record = _boolean_rule(requirements, "decision_record", label)
     reasons = []
     if work_item == "required" and not work_items:
         reasons.append(f"a {change_class} change needs a linked Work Item")
@@ -296,13 +317,41 @@ def _class_links(
 
 
 def _approval(
-    reviews: list[dict[str, Any]], head: str, approvers: list[str]
+    reviews: list[dict[str, Any]],
+    head: str,
+    authorities: Mapping[str, Any],
+    rules: tuple[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
+    """Runbook step 8, bound to the class's approval rules (CodeAnt on #410).
+
+    Who the required approvers are, the protected target's code owners, and
+    whether each is human are the adapter's to establish (1b.3): a provider
+    account's type does not tell a person from a machine user.
+    """
+
+    label, requirements = rules
+    minimum = requirements.get("minimum_approvals")
+    if type(minimum) is not int or minimum < 0:
+        raise AssuranceCompletenessError(f"{label} has minimum_approvals {minimum!r}")
+    independent = _boolean_rule(requirements, "independent_approval", label)
+    approvers = authorities["required_approvers"]
     if not approvers:
         return _criterion("M16", ["no required approver is named"])
     reasons = []
+    if len(set(approvers)) < minimum:
+        reasons.append(
+            f"the class needs {minimum} approvals, and only "
+            f"{len(set(approvers))} approver(s) are required"
+        )
+    if independent:
+        for party in ("declarer", "author"):
+            if authorities[party] in approvers:
+                reasons.append(
+                    f"{authorities[party]} is the change's {party} and cannot "
+                    "approve it"
+                )
     for approver in approvers:
-        latest = _latest(reviews, approver, None)
+        latest = _latest(reviews, approver, None, by_commit=True)
         if latest is None:
             reasons.append(f"{approver} has not reviewed")
         elif latest["state"] != "APPROVED":
@@ -328,6 +377,7 @@ def evaluate(
     authorities = require_mapping(document["authorities"], "authorities")
     require_closed_keys(authorities, "authorities", _AUTHORITY_KEYS)
     declarer = require_text(authorities["declarer"], "authorities declarer")
+    author = require_text(authorities["author"], "authorities author")
     approvers = _texts(
         authorities["required_approvers"], "authorities required_approvers"
     )
@@ -356,7 +406,12 @@ def evaluate(
         _closing_references(document),
         suppressions,
         _class_links(document, change_class, change_policy),
-        _approval(reviews, head, approvers),
+        _approval(
+            reviews,
+            head,
+            {"declarer": declarer, "author": author, "required_approvers": approvers},
+            _class_requirements(change_policy, change_class),
+        ),
     ]
     allowed = all(c["status"] == "PASS" for c in criteria)
     return {

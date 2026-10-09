@@ -37,13 +37,35 @@ DECLARATION = {
         }
     ],
 }
+_APPROVED_BY_ONE_INDEPENDENT_HUMAN = {
+    "minimum_approvals": 1,
+    "independent_approval": True,
+    "human_approval": True,
+    "code_owner_approval": True,
+}
 POLICY = {
     "change_classes": {
-        "mechanical": {"work_item": "optional", "decision_record": False},
-        "normal": {"work_item": "required", "decision_record": True},
-        "normative": {"work_item": "required", "decision_record": True},
-        "critical": {"work_item": "required", "decision_record": True},
-        "emergency": {"work_item": "required-follow-up", "decision_record": True},
+        "mechanical": {
+            "work_item": "optional",
+            "decision_record": False,
+            **_APPROVED_BY_ONE_INDEPENDENT_HUMAN,
+        },
+        **{
+            name: {
+                "work_item": "required",
+                "decision_record": True,
+                **_APPROVED_BY_ONE_INDEPENDENT_HUMAN,
+            }
+            for name in ("normal", "normative", "critical")
+        },
+        "emergency": {
+            "work_item": "required-follow-up",
+            "decision_record": True,
+            "minimum_approvals": 0,
+            "independent_approval": False,
+            "human_approval": False,
+            "code_owner_approval": False,
+        },
     }
 }
 
@@ -73,7 +95,11 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         "change_class": "normal",
         "links": {"work_items": ["#407"], "decisions": ["0112"]},
         "declared_candidate": {"declarer": "agent-app", "head_commit": HEAD},
-        "authorities": {"declarer": "agent-app", "required_approvers": ["owner"]},
+        "authorities": {
+            "declarer": "agent-app",
+            "author": "agent-user",
+            "required_approvers": ["owner"],
+        },
         "reviews": [
             {
                 "reviewer": "owner",
@@ -217,6 +243,26 @@ class MergeAdmissionTests(unittest.TestCase):
         )
         self.assertNotIn("M11", _failed(_verdict(evidence)))
 
+    def test_m11_a_dismissed_request_for_changes_no_longer_counts(self) -> None:
+        """Claude on #410: a dismissal changes the review's own state to DISMISSED,
+        as GitHub records it, so the earlier opinion is the reviewer's last."""
+        evidence = _evidence()
+        evidence["reviews"] += [
+            {
+                "reviewer": "bot-reviewer",
+                "state": "APPROVED",
+                "commit_id": PREVIOUS,
+                "submitted_at": "2026-10-09T08:10:00Z",
+            },
+            {
+                "reviewer": "bot-reviewer",
+                "state": "DISMISSED",
+                "commit_id": HEAD,
+                "submitted_at": "2026-10-09T09:10:00Z",
+            },
+        ]
+        self.assertNotIn("M11", _failed(_verdict(evidence)))
+
     def test_m12_a_closing_reference_denies(self) -> None:
         evidence = _evidence()
         evidence["closing_references"]["found"] = [
@@ -324,6 +370,26 @@ class MergeAdmissionTests(unittest.TestCase):
         with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
             _verdict(evidence)
 
+    def test_a_tie_is_judged_by_what_each_criterion_reads(self) -> None:
+        """cubic on #410: M11 reads the opinion, M16 also its commit. Approvals of
+        two commits in one second are no request for changes, but they leave the
+        head's approval unordered."""
+        approvals = [
+            {
+                "reviewer": reviewer,
+                "state": "APPROVED",
+                "commit_id": commit,
+                "submitted_at": "2026-10-09T09:10:00Z",
+            }
+            for reviewer in ("bot-reviewer", "owner")
+            for commit in (HEAD, PREVIOUS)
+        ]
+        evidence = _evidence()
+        evidence["reviews"] = approvals
+        failed = _failed(_verdict(evidence))
+        self.assertNotIn("M11", failed)
+        self.assertIn("M16", failed)
+
     def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
         evidence = _evidence()
         evidence["reviews"].append(dict(evidence["reviews"][0]))
@@ -348,7 +414,14 @@ class MergeAdmissionTests(unittest.TestCase):
     def test_a_class_requirement_outside_the_schema_is_refused(self) -> None:
         """cubic on #410: `decision_record: "true"` read as false."""
         declaration = assurance_completeness.parse_declaration(DECLARATION)
-        for field, value in (("decision_record", "true"), ("work_item", "always")):
+        for field, value in (
+            ("decision_record", "true"),
+            ("work_item", "always"),
+            ("minimum_approvals", "1"),
+            ("minimum_approvals", -1),
+            ("minimum_approvals", True),
+            ("independent_approval", "yes"),
+        ):
             with self.subTest(field=field, value=value):
                 policy = copy.deepcopy(POLICY)
                 policy["change_classes"]["normal"][field] = value
@@ -358,6 +431,28 @@ class MergeAdmissionTests(unittest.TestCase):
                     merge_admission.evaluate(
                         _evidence(), declaration=declaration, change_policy=policy
                     )
+
+    def test_m16_the_declarer_or_the_author_cannot_approve_an_independent_class(
+        self,
+    ) -> None:
+        """CodeAnt on #410: the approver list came from the input unchecked, so
+        the agent's own approval could admit its change."""
+        for identity in ("agent-app", "agent-user"):
+            with self.subTest(approver=identity):
+                evidence = _evidence()
+                evidence["authorities"]["required_approvers"] = [identity]
+                evidence["reviews"][0]["reviewer"] = identity
+                self.assertDenied(evidence, "M16")
+
+    def test_m16_the_class_minimum_of_approvals_applies(self) -> None:
+        policy = copy.deepcopy(POLICY)
+        policy["change_classes"]["normal"]["minimum_approvals"] = 2
+        declaration = assurance_completeness.parse_declaration(DECLARATION)
+        verdict = merge_admission.evaluate(
+            _evidence(), declaration=declaration, change_policy=policy
+        )
+        self.assertEqual("DENY", verdict["status"])
+        self.assertIn("M16", _failed(verdict))
 
     def test_m16_no_required_approver_denies(self) -> None:
         evidence = _evidence()
@@ -466,17 +561,20 @@ def _core_policy() -> dict[str, Any]:
     return policy
 
 
+def _policy_project(base: Path, extends: list[str]) -> Path:
+    """A project whose policy is the core policy, extending `extends`."""
+
+    project = base / "project"
+    (project / "policy").mkdir(parents=True)
+    child = {**_core_policy(), "id": "example.child", "extends": extends}
+    (project / "policy" / "change-control.yaml").write_text(
+        yaml.safe_dump(child), encoding="utf-8"
+    )
+    return project
+
+
 class PolicyLoadingTests(unittest.TestCase):
     """The effective policy is the candidate's own and is schema-valid (#410)."""
-
-    def _project(self, base: Path, extends: list[str]) -> Path:
-        project = base / "project"
-        (project / "policy").mkdir(parents=True)
-        child = {**_core_policy(), "id": "example.child", "extends": extends}
-        (project / "policy" / "change-control.yaml").write_text(
-            yaml.safe_dump(child), encoding="utf-8"
-        )
-        return project
 
     def test_an_inherited_policy_outside_the_project_root_is_refused(self) -> None:
         """Codex and cubic on #410: only the entry path was confined."""
@@ -492,7 +590,7 @@ class PolicyLoadingTests(unittest.TestCase):
                 ("symlink", ["../core.yaml"]),
             ):
                 with self.subTest(name), tempfile.TemporaryDirectory(dir=base) as case:
-                    project = self._project(Path(case), extends)
+                    project = _policy_project(Path(case), extends)
                     if name == "traversal":
                         (Path(case) / "outside.yaml").write_text(
                             (base / "outside.yaml").read_text(encoding="utf-8"),
@@ -514,7 +612,7 @@ class PolicyLoadingTests(unittest.TestCase):
         """Decision 0033 F: a parent reference is relative, wherever it points."""
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            project = self._project(base, [str(base / "project" / "core.yaml")])
+            project = _policy_project(base, [str(base / "project" / "core.yaml")])
             (project / "core.yaml").write_text(
                 yaml.safe_dump({**_core_policy(), "id": "example.parent"}),
                 encoding="utf-8",
@@ -529,7 +627,7 @@ class PolicyLoadingTests(unittest.TestCase):
     def test_a_policy_outside_the_project_root_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            project = self._project(base, [])
+            project = _policy_project(base, [])
             (base / "elsewhere").mkdir()
             with self.assertRaisesRegex(
                 assurance_completeness.AssuranceCompletenessError,
@@ -542,7 +640,7 @@ class PolicyLoadingTests(unittest.TestCase):
 
     def test_an_inherited_policy_inside_the_project_root_is_followed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            project = self._project(Path(directory), ["../core.yaml"])
+            project = _policy_project(Path(directory), ["../core.yaml"])
             (project / "core.yaml").write_text(
                 yaml.safe_dump({**_core_policy(), "id": "example.parent"}),
                 encoding="utf-8",
@@ -555,7 +653,7 @@ class PolicyLoadingTests(unittest.TestCase):
     def test_a_policy_outside_the_schema_is_refused(self) -> None:
         """cubic on #410: a malformed policy could disable required links."""
         with tempfile.TemporaryDirectory() as directory:
-            project = self._project(Path(directory), [])
+            project = _policy_project(Path(directory), [])
             path = project / "policy" / "change-control.yaml"
             policy = yaml.safe_load(path.read_text(encoding="utf-8"))
             policy["change_classes"]["normal"]["decision_record"] = "true"

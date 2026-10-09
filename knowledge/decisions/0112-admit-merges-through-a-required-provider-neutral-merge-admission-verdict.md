@@ -137,14 +137,22 @@ provider-neutral public change-governance contract of
   waits for its evidence rather than passing without it.
 - **The verdict's input is a normalized evidence document,** which the GitHub
   adapter (1b.3) produces. It names the change's subject and lifecycle, its class
-  and links, the declared candidate, the declarer and the required approvers, the
+  and links, the declared candidate, the declarer, the author and the required approvers, the
   reviews, the threads, the closing references, the new suppressions, the
   trust-root changes, and the receipts for the reducer. Finding closing references
   is the adapter's job, since the keyword syntax is the provider's. The verdict
   denies unless their coverage is complete and none is found. The approval rule is
   runbook step 8's: each required approver's latest review, of any state, approves
   the exact head. A pending review is not submitted and is ignored. Reviews by one
-  reviewer that share the latest second and disagree have no order, so they deny.
+  reviewer that share the latest second and disagree in what a criterion reads (the
+  opinion for M11, the opinion and commit for M16) have no order, so they deny.
+- **The approval is bound to the class's rules.** M16 reads `minimum_approvals` and
+  `independent_approval` from the effective policy, as M14 reads the link rules.
+  In an independent class, an approval from the change's author or declarer
+  denies. Who the required approvers are, and that each is a person, is the
+  adapter's to establish (a 1b.3 acceptance case). It must take them from the
+  protected target's code owners, never from the candidate, since a provider
+  account's type does not tell a person from a machine user.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
