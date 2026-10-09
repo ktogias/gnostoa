@@ -143,9 +143,13 @@ provider-neutral public change-governance contract of
   is the adapter's job, since the keyword syntax is the provider's. The verdict
   denies unless their coverage is complete and none is found. The approval rule is
   runbook step 8's: each required approver's latest review, of any state, approves
-  the exact head. A pending review is not submitted and is ignored. Reviews by one
-  reviewer that share the latest second and disagree in what a criterion reads (the
-  opinion for M11, the opinion and commit for M16) have no order, so they deny.
+  the exact head. A pending review is not submitted and is ignored. A review's
+  commit may be null, as GitHub reports it once the commit is garbage-collected or
+  force-deleted, and such a review approves no head. Timestamps are compared in
+  whole seconds. Reviews by one reviewer that share the latest second and disagree
+  in what a criterion reads (the opinion for M11, the opinion and commit for M16)
+  have no order, so they deny. Mapping a deleted account, GitHub's null `user`, to
+  a stable reviewer identity is the 1b.3 adapter's job.
 - **The approval is bound to the class's rules.** M16 reads `minimum_approvals` and
   `independent_approval` from the effective policy, as M14 reads the link rules.
   In an independent class, the change's author and declarer can be neither a
@@ -153,7 +157,8 @@ provider-neutral public change-governance contract of
   (`may_approve_own_change: false`).
 - **Each required approver must approve; the adapter names exactly them.** The
   verdict requires every listed approver's latest review to approve the head, and
-  at least the class's minimum to be listed. Who they are, and that each is a
+  at least the class's minimum to be listed. A class whose minimum is zero, as in
+  the core policy, needs no approver. Who they are, and that each is a
   person, is the adapter's to establish (a 1b.3 acceptance case). It must take
   them from the protected target's code owners, never from the candidate, since a
   provider account's type does not tell a person from a machine user. An

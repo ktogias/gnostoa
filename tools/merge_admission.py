@@ -98,10 +98,13 @@ def _coverage(value: object, label: str, extra: frozenset[str]) -> Mapping[str, 
     return record
 
 
-def _reviews(value: object) -> list[dict[str, Any]]:
+def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
+    """The submitted reviews, grouped by reviewer once, so each criterion reads a
+    reviewer's own reviews in time linear in the input (CodeAnt on #410)."""
+
     if not isinstance(value, list):
         raise AssuranceCompletenessError("reviews must be a list")
-    reviews = []
+    by_reviewer: dict[str, list[dict[str, Any]]] = {}
     for index, item in enumerate(value):
         label = f"review {index}"
         review = require_mapping(item, label)
@@ -110,7 +113,13 @@ def _reviews(value: object) -> list[dict[str, Any]]:
         if not isinstance(state, str) or state not in _REVIEW_STATES:
             raise AssuranceCompletenessError(f"{label} has unknown state {state!r}")
         reviewer = require_text(review["reviewer"], f"{label} reviewer")
-        commit_id = require_text(review["commit_id"], f"{label} commit_id")
+        # GitHub's commit is null once the commit is garbage-collected or
+        # force-deleted (CodeAnt on #410); such a review approves no head.
+        commit_id = (
+            None
+            if review["commit_id"] is None
+            else require_text(review["commit_id"], f"{label} commit_id")
+        )
         if state == "PENDING" and review["submitted_at"] is None:
             # Not submitted, so no one's opinion yet; GitHub returns the reader's
             # own with no timestamp (Sourcery on #410). Only the timestamp may be
@@ -122,47 +131,43 @@ def _reviews(value: object) -> list[dict[str, Any]]:
             raise AssuranceCompletenessError(f"{label} submitted_at: {exc}") from exc
         if state == "PENDING":
             continue
-        reviews.append(
+        by_reviewer.setdefault(reviewer, []).append(
             {
-                "reviewer": reviewer,
                 "state": state,
                 "commit_id": commit_id,
-                "submitted_at": submitted,
+                # Whole seconds: a fraction cannot order two opinions inside the
+                # second the rule leaves unordered (CodeAnt on #410).
+                "second": submitted.timeline_seconds,
             }
         )
-    return reviews
+    return by_reviewer
 
 
 def _latest(
-    reviews: list[dict[str, Any]],
-    reviewer: str,
+    own: list[dict[str, Any]],
     states: frozenset[str] | None,
     *,
     by_commit: bool,
 ) -> dict[str, Any] | None:
-    """The reviewer's latest review among `states`. A tie is judged only by what
+    """One reviewer's latest review among `states`. A tie is judged only by what
     the criterion reads: the state, and with `by_commit` also the commit (cubic on
     #410)."""
 
-    own = [
-        r
-        for r in reviews
-        if r["reviewer"] == reviewer and (states is None or r["state"] in states)
-    ]
-    if not own:
+    considered = [r for r in own if states is None or r["state"] in states]
+    if not considered:
         return None
-    newest = max(r["submitted_at"] for r in own)
+    newest = max(r["second"] for r in considered)
     tied = {
         (r["state"], r["commit_id"] if by_commit else None)
-        for r in own
-        if r["submitted_at"] == newest
+        for r in considered
+        if r["second"] == newest
     }
     if len(tied) > 1:
         # Timestamps have second resolution, so a tie has no order (cubic, CodeAnt
         # and Sourcery on #410).
-        return {"reviewer": reviewer, "state": _AMBIGUOUS, "commit_id": None}
+        return {"state": _AMBIGUOUS, "commit_id": None}
     ((state, commit_id),) = tied
-    return {"reviewer": reviewer, "state": state, "commit_id": commit_id}
+    return {"state": state, "commit_id": commit_id}
 
 
 def _criterion(identifier: str, reasons: list[str]) -> dict[str, Any]:
@@ -216,10 +221,12 @@ def _threads(evidence: Mapping[str, Any]) -> dict[str, Any]:
     return _criterion("M10", reasons)
 
 
-def _requests_for_changes(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+def _requests_for_changes(
+    reviews: Mapping[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     reasons = []
-    for reviewer in sorted({r["reviewer"] for r in reviews}):
-        opinion = _latest(reviews, reviewer, _OPINIONS, by_commit=False)
+    for reviewer in sorted(reviews):
+        opinion = _latest(reviews[reviewer], _OPINIONS, by_commit=False)
         if opinion is None or opinion["state"] == "APPROVED":
             continue
         if opinion["state"] == _AMBIGUOUS:
@@ -296,16 +303,16 @@ def _boolean_rule(requirements: Mapping[str, Any], field: str, label: str) -> bo
 def _class_links(
     evidence: Mapping[str, Any], change_class: str, change_policy: Mapping[str, Any]
 ) -> dict[str, Any]:
+    links = require_mapping(evidence["links"], "links")
+    require_closed_keys(links, "links", _LINK_KEYS)
+    # Parsed whatever the class requires, emergencies included (Codex on #410).
+    work_items = _texts(links["work_items"], "links work_items")
+    decisions = _texts(links["decisions"], "links decisions")
     if change_class == "emergency":
         return _criterion(
             "M14",
             ["an emergency merges through break glass, never through this verdict"],
         )
-    links = require_mapping(evidence["links"], "links")
-    require_closed_keys(links, "links", _LINK_KEYS)
-    # Parsed whatever the class requires (Codex on #410).
-    work_items = _texts(links["work_items"], "links work_items")
-    decisions = _texts(links["decisions"], "links decisions")
     label, requirements = _class_requirements(change_policy, change_class)
     # The schema's own values only: a malformed field must not read as "not
     # required" (cubic, CodeAnt and Sourcery on #410).
@@ -322,7 +329,7 @@ def _class_links(
 
 
 def _approval(
-    reviews: list[dict[str, Any]],
+    reviews: Mapping[str, list[dict[str, Any]]],
     head: str,
     authorities: Mapping[str, Any],
     rules: tuple[str, Mapping[str, Any]],
@@ -340,13 +347,13 @@ def _approval(
         raise AssuranceCompletenessError(f"{label} has minimum_approvals {minimum!r}")
     independent = _boolean_rule(requirements, "independent_approval", label)
     approvers = authorities["required_approvers"]
-    if not approvers:
-        return _criterion("M16", ["no required approver is named"])
     reasons = []
+    # The class's minimum alone decides whether an empty list suffices: the core
+    # policy requires no approval (Codex on #410).
     if len(set(approvers)) < minimum:
         reasons.append(
-            f"the class needs {minimum} approvals, and only "
-            f"{len(set(approvers))} approver(s) are required"
+            f"the class needs {minimum} approval(s), and "
+            f"{len(set(approvers))} approver(s) are named"
         )
     if independent:
         # No self-approval, required or not (`may_approve_own_change: false`;
@@ -357,12 +364,10 @@ def _approval(
                 reasons.append(
                     f"{identity} is the change's {party} and cannot be an approver"
                 )
-            elif any(
-                r["reviewer"] == identity and r["state"] == "APPROVED" for r in reviews
-            ):
+            elif any(r["state"] == "APPROVED" for r in reviews.get(identity, [])):
                 reasons.append(f"{identity} is the change's {party} and approved it")
     for approver in approvers:
-        latest = _latest(reviews, approver, None, by_commit=True)
+        latest = _latest(reviews.get(approver, []), None, by_commit=True)
         if latest is None:
             reasons.append(f"{approver} has not reviewed")
         elif latest["state"] != "APPROVED":

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -184,6 +185,15 @@ class MergeAdmissionTests(unittest.TestCase):
         self.assertEqual("DENY", _verdict(evidence)["status"])
 
     # The merge criteria.
+
+    def test_e_an_emergency_s_evidence_is_still_validated(self) -> None:
+        """Codex on #410: the emergency denial returned before the links were
+        parsed, so corrupt evidence exited 1 instead of failing the run."""
+        evidence = _evidence()
+        evidence["change_class"] = "emergency"
+        evidence["links"] = None
+        with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
+            _verdict(evidence)
 
     def test_m1_a_draft_closed_or_retargeted_change_denies(self) -> None:
         for field, value in (
@@ -414,6 +424,56 @@ class MergeAdmissionTests(unittest.TestCase):
                 ):
                     _verdict(evidence)
 
+    def test_a_review_of_a_commit_that_no_longer_exists_is_valid(self) -> None:
+        """CodeAnt on #410: GitHub's `commit_id` is null when the commit was
+        garbage-collected or force-deleted. Such a review is valid evidence, and
+        it approves no head."""
+        evidence = _evidence()
+        evidence["reviews"].append(
+            {
+                "reviewer": "bot-reviewer",
+                "state": "COMMENTED",
+                "commit_id": None,
+                "submitted_at": "2026-10-09T09:10:00Z",
+            }
+        )
+        self.assertEqual("ALLOW", _verdict(evidence)["status"])
+        evidence["reviews"][0]["commit_id"] = None
+        self.assertDenied(evidence, "M16")
+
+    def test_a_tie_is_the_same_second_whatever_its_fraction(self) -> None:
+        """CodeAnt on #410: fractions ordered two opinions inside one second,
+        which the rule says have no order."""
+        evidence = _evidence()
+        evidence["reviews"] = [
+            {**evidence["reviews"][0], "submitted_at": "2026-10-09T09:10:00.900Z"},
+            {
+                **evidence["reviews"][0],
+                "state": "COMMENTED",
+                "submitted_at": "2026-10-09T09:10:00.100Z",
+            },
+        ]
+        self.assertDenied(evidence, "M16")
+
+    def test_many_reviewers_are_evaluated_in_linear_time(self) -> None:
+        """CodeAnt on #410: each reviewer rescanned every review. Measured on
+        be0fab1: 0.04 s, 0.14 s and 0.58 s for 1,000, 2,000 and 4,000
+        reviewers, about two minutes at the input bound."""
+        evidence = _evidence()
+        evidence["reviews"] += [
+            {
+                "reviewer": f"reviewer-{index}",
+                "state": "COMMENTED",
+                "commit_id": HEAD,
+                "submitted_at": "2026-10-09T09:00:00Z",
+            }
+            for index in range(20_000)
+        ]
+        start = time.perf_counter()
+        verdict = _verdict(evidence)
+        self.assertLess(time.perf_counter() - start, 5.0)
+        self.assertEqual("ALLOW", verdict["status"])
+
     def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
         evidence = _evidence()
         evidence["reviews"].append(dict(evidence["reviews"][0]))
@@ -491,6 +551,22 @@ class MergeAdmissionTests(unittest.TestCase):
         )
         self.assertEqual("DENY", verdict["status"])
         self.assertIn("M16", _failed(verdict))
+
+    def test_m16_a_class_that_requires_no_approval_needs_no_approver(
+        self,
+    ) -> None:
+        """Codex on #410: the core policy requires zero approvals for every class,
+        and an empty approver list denied regardless."""
+        core = load_change_policy(ROOT / "core" / "change-control.yaml")
+        declaration = assurance_completeness.parse_declaration(DECLARATION)
+        evidence = _evidence()
+        evidence["authorities"]["required_approvers"] = []
+        evidence["reviews"] = []
+        verdict = merge_admission.evaluate(
+            evidence, declaration=declaration, change_policy=core
+        )
+        self.assertNotIn("M16", _failed(verdict))
+        self.assertEqual("ALLOW", verdict["status"], _failed(verdict))
 
     def test_m16_no_required_approver_denies(self) -> None:
         evidence = _evidence()
