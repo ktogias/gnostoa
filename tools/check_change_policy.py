@@ -10,8 +10,10 @@ from jsonschema import Draft202012Validator
 
 from .knowledge_common import (
     KnowledgeFormatError,
+    confine_to_root,
     deep_merge,
     load_yaml,
+    resolve_parent_reference,
     toolkit_root,
 )
 
@@ -220,11 +222,25 @@ def _assert_monotonic(
             )
 
 
-def load_change_policy(path: Path) -> dict[str, Any]:
-    return _load_change_policy(path.resolve(), ())
+def load_change_policy(
+    path: Path, *, project_root: Path | None = None
+) -> dict[str, Any]:
+    """Load the effective change policy at `path`.
+
+    With `project_root`, the whole inheritance chain is confined to it, as
+    Decision 0033 confines a profile's: `knowledge merge-admission` reads the
+    candidate's own policy, never a file it names outside the project (#410).
+    """
+
+    if project_root is None:
+        return _load_change_policy(path.resolve(), (), None)
+    resolved, root = confine_to_root(path, project_root, label="Change-control policy")
+    return _load_change_policy(resolved, (), root)
 
 
-def _load_change_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
+def _load_change_policy(
+    path: Path, stack: tuple[Path, ...], root: Path | None
+) -> dict[str, Any]:
     if path in stack:
         chain = " -> ".join(str(item) for item in (*stack, path))
         raise KnowledgeFormatError(f"Change-control inheritance cycle: {chain}")
@@ -240,16 +256,22 @@ def _load_change_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
 
     merged: dict[str, Any] = {}
     for reference in extends:
-        if not isinstance(reference, str):
-            raise KnowledgeFormatError(
-                f"Change-control parent reference must be a string in {path}"
+        if root is not None:
+            parent_path = resolve_parent_reference(
+                reference, child=path, root=root, label="Parent change-control policy"
             )
-        parent_path = (path.parent / reference).resolve()
-        if not parent_path.is_file():
-            raise KnowledgeFormatError(
-                f"Parent change-control policy {reference!r} from {path} does not exist"
-            )
-        parent = _load_change_policy(parent_path, (*stack, path))
+        else:
+            if not isinstance(reference, str):
+                raise KnowledgeFormatError(
+                    f"Change-control parent reference must be a string in {path}"
+                )
+            parent_path = (path.parent / reference).resolve()
+            if not parent_path.is_file():
+                raise KnowledgeFormatError(
+                    f"Parent change-control policy {reference!r} from {path} "
+                    "does not exist"
+                )
+        parent = _load_change_policy(parent_path, (*stack, path), root)
         _assert_monotonic(parent, current, path)
         merged = deep_merge(merged, parent)
 
@@ -265,7 +287,14 @@ def check_change_policy(
     policy_path: Path,
     schema_path: Path | None = None,
 ) -> list[str]:
-    policy = load_change_policy(policy_path)
+    return change_policy_issues(load_change_policy(policy_path), schema_path)
+
+
+def change_policy_issues(
+    policy: dict[str, Any], schema_path: Path | None = None
+) -> list[str]:
+    """Validate an effective policy against the change-control schema."""
+
     schema = (
         schema_path.resolve()
         if schema_path

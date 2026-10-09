@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,7 +11,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from tools import assurance_completeness, merge_admission
+import yaml
+
+from tools import assurance_completeness, merge_admission, verdict_cli
 from tools.check_change_policy import load_change_policy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,11 +39,11 @@ DECLARATION = {
 }
 POLICY = {
     "change_classes": {
-        "mechanical": {},
+        "mechanical": {"work_item": "optional", "decision_record": False},
         "normal": {"work_item": "required", "decision_record": True},
         "normative": {"work_item": "required", "decision_record": True},
         "critical": {"work_item": "required", "decision_record": True},
-        "emergency": {},
+        "emergency": {"work_item": "required-follow-up", "decision_record": True},
     }
 }
 
@@ -273,6 +276,89 @@ class MergeAdmissionTests(unittest.TestCase):
         evidence["reviews"][0]["reviewer"] = "another-writer"
         self.assertDenied(evidence, "M16")
 
+    def test_reviews_in_the_same_second_have_no_order_and_deny(self) -> None:
+        """Review timestamps have second resolution, so a tie with different
+        opinions is ambiguous, whatever order the list gives (M11 and M16)."""
+        for first, second in (("APPROVED", "COMMENTED"), ("COMMENTED", "APPROVED")):
+            with self.subTest(owner=(first, second)):
+                evidence = _evidence()
+                evidence["reviews"] = [
+                    {**evidence["reviews"][0], "state": state}
+                    for state in (first, second)
+                ]
+                self.assertDenied(evidence, "M16")
+        for first, second in (
+            ("CHANGES_REQUESTED", "APPROVED"),
+            ("APPROVED", "CHANGES_REQUESTED"),
+        ):
+            with self.subTest(bot=(first, second)):
+                evidence = _evidence()
+                evidence["reviews"] += [
+                    {
+                        "reviewer": "bot-reviewer",
+                        "state": state,
+                        "commit_id": HEAD,
+                        "submitted_at": "2026-10-09T09:10:00Z",
+                    }
+                    for state in (first, second)
+                ]
+                self.assertDenied(evidence, "M11")
+
+    def test_a_pending_review_is_not_submitted_and_is_ignored(self) -> None:
+        """Sourcery on #410: GitHub returns the reader's own pending review with
+        no `submitted_at`, and it is no one's opinion yet."""
+        for submitted_at in (None, "2026-10-09T09:30:00Z"):
+            with self.subTest(submitted_at=submitted_at):
+                evidence = _evidence()
+                evidence["reviews"].append(
+                    {
+                        "reviewer": "owner",
+                        "state": "PENDING",
+                        "commit_id": HEAD,
+                        "submitted_at": submitted_at,
+                    }
+                )
+                self.assertEqual("ALLOW", _verdict(evidence)["status"])
+        evidence = _evidence()
+        evidence["reviews"][0]["submitted_at"] = None
+        with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
+            _verdict(evidence)
+
+    def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
+        evidence = _evidence()
+        evidence["reviews"].append(dict(evidence["reviews"][0]))
+        self.assertEqual("ALLOW", _verdict(evidence)["status"])
+
+    def test_links_are_validated_whatever_the_class_requires(self) -> None:
+        """Codex on #410: a mechanical change's links were never parsed."""
+        cases: tuple[dict[str, object], ...] = (
+            {"work_items": None, "decisions": []},
+            {"work_items": [], "decisions": 7},
+        )
+        for links in cases:
+            with self.subTest(links=links):
+                evidence = _evidence()
+                evidence["change_class"] = "mechanical"
+                evidence["links"] = links
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _verdict(evidence)
+
+    def test_a_class_requirement_outside_the_schema_is_refused(self) -> None:
+        """cubic on #410: `decision_record: "true"` read as false."""
+        declaration = assurance_completeness.parse_declaration(DECLARATION)
+        for field, value in (("decision_record", "true"), ("work_item", "always")):
+            with self.subTest(field=field, value=value):
+                policy = copy.deepcopy(POLICY)
+                policy["change_classes"]["normal"][field] = value
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    merge_admission.evaluate(
+                        _evidence(), declaration=declaration, change_policy=policy
+                    )
+
     def test_m16_no_required_approver_denies(self) -> None:
         evidence = _evidence()
         evidence["authorities"]["required_approvers"] = []
@@ -295,13 +381,13 @@ class MergeAdmissionTests(unittest.TestCase):
                     _verdict(evidence)
 
 
-def _run(text: str, *, declaration: object | None = DECLARATION) -> tuple[int, str]:
+def _run(text: str, *, with_declaration: bool = True) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "policy").mkdir()
-        if declaration is not None:
+        if with_declaration:
             (root / "policy" / "assurance-evidence.yaml").write_text(
-                json.dumps(declaration), encoding="utf-8"
+                json.dumps(DECLARATION), encoding="utf-8"
             )
         (root / "policy" / "change-control.yaml").write_text(
             (ROOT / "policy" / "change-control.yaml").read_text(encoding="utf-8"),
@@ -332,7 +418,7 @@ class CommandTests(unittest.TestCase):
 
     def test_g_a_missing_declaration_is_a_failed_run_not_an_allow(self) -> None:
         """(g) A missing owner is never replaced locally."""
-        code, output = _run(json.dumps(_evidence()), declaration=None)
+        code, output = _run(json.dumps(_evidence()), with_declaration=False)
         self.assertEqual(2, code)
         self.assertIn("assurance", output.lower())
 
@@ -341,10 +427,163 @@ class CommandTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(2, _run(text)[0])
 
+    def test_an_input_past_the_nesting_bound_is_named_as_such(self) -> None:
+        """cubic on #410: valid JSON past the bound was reported as invalid JSON."""
+        nested: dict[str, Any] = {}
+        for _ in range(80):
+            nested = {"next": nested}
+        evidence = _evidence()
+        evidence["subject"] = nested
+        code, output = _run(json.dumps(evidence))
+        self.assertEqual(2, code)
+        self.assertIn("nests deeper than the 64-level operational bound", output)
+        self.assertNotIn("not valid JSON", output)
+
+    def test_a_failing_exit_predicate_is_a_failed_run(self) -> None:
+        """cubic on #410: the predicate ran outside the guard, so its exception
+        escaped, and Python's exit 1 would read as a negative verdict."""
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = verdict_cli.run(
+                "example",
+                dict,
+                positive=lambda verdict: verdict["status"] == "ALLOW",
+                input_errors=(ValueError,),
+            )
+        self.assertEqual(2, code)
+        self.assertIn("KeyError", err.getvalue())
+
     def test_the_knowledge_cli_routes_merge_admission(self) -> None:
         from tools import cli
 
         self.assertIs(merge_admission.main, cli.COMMANDS["merge-admission"][1])
+
+
+def _core_policy() -> dict[str, Any]:
+    policy: dict[str, Any] = yaml.safe_load(
+        (ROOT / "core" / "change-control.yaml").read_text(encoding="utf-8")
+    )
+    return policy
+
+
+class PolicyLoadingTests(unittest.TestCase):
+    """The effective policy is the candidate's own and is schema-valid (#410)."""
+
+    def _project(self, base: Path, extends: list[str]) -> Path:
+        project = base / "project"
+        (project / "policy").mkdir(parents=True)
+        child = {**_core_policy(), "id": "example.child", "extends": extends}
+        (project / "policy" / "change-control.yaml").write_text(
+            yaml.safe_dump(child), encoding="utf-8"
+        )
+        return project
+
+    def test_an_inherited_policy_outside_the_project_root_is_refused(self) -> None:
+        """Codex and cubic on #410: only the entry path was confined."""
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            (base / "outside.yaml").write_text(
+                yaml.safe_dump({**_core_policy(), "id": "example.outside"}),
+                encoding="utf-8",
+            )
+            for name, extends in (
+                ("traversal", ["../../outside.yaml"]),
+                ("absolute", [str(base / "outside.yaml")]),
+                ("symlink", ["../core.yaml"]),
+            ):
+                with self.subTest(name), tempfile.TemporaryDirectory(dir=base) as case:
+                    project = self._project(Path(case), extends)
+                    if name == "traversal":
+                        (Path(case) / "outside.yaml").write_text(
+                            (base / "outside.yaml").read_text(encoding="utf-8"),
+                            encoding="utf-8",
+                        )
+                    os.symlink(base / "outside.yaml", project / "core.yaml")
+                    with self.assertRaisesRegex(
+                        assurance_completeness.AssuranceCompletenessError,
+                        "relative|escapes",
+                    ):
+                        merge_admission.load_policy(
+                            project / "policy" / "change-control.yaml",
+                            project_root=project,
+                        )
+
+    def test_an_absolute_parent_reference_is_refused_even_inside_the_root(
+        self,
+    ) -> None:
+        """Decision 0033 F: a parent reference is relative, wherever it points."""
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            project = self._project(base, [str(base / "project" / "core.yaml")])
+            (project / "core.yaml").write_text(
+                yaml.safe_dump({**_core_policy(), "id": "example.parent"}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError, "must be relative"
+            ):
+                merge_admission.load_policy(
+                    project / "policy" / "change-control.yaml", project_root=project
+                )
+
+    def test_a_policy_outside_the_project_root_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            project = self._project(base, [])
+            (base / "elsewhere").mkdir()
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError,
+                "outside the project root",
+            ):
+                merge_admission.load_policy(
+                    project / "policy" / "change-control.yaml",
+                    project_root=base / "elsewhere",
+                )
+
+    def test_an_inherited_policy_inside_the_project_root_is_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self._project(Path(directory), ["../core.yaml"])
+            (project / "core.yaml").write_text(
+                yaml.safe_dump({**_core_policy(), "id": "example.parent"}),
+                encoding="utf-8",
+            )
+            policy = merge_admission.load_policy(
+                project / "policy" / "change-control.yaml", project_root=project
+            )
+            self.assertEqual("example.child", policy["id"])
+
+    def test_a_policy_outside_the_schema_is_refused(self) -> None:
+        """cubic on #410: a malformed policy could disable required links."""
+        with tempfile.TemporaryDirectory() as directory:
+            project = self._project(Path(directory), [])
+            path = project / "policy" / "change-control.yaml"
+            policy = yaml.safe_load(path.read_text(encoding="utf-8"))
+            policy["change_classes"]["normal"]["decision_record"] = "true"
+            path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError, "decision_record"
+            ):
+                merge_admission.load_policy(path, project_root=project)
+
+
+class GuardrailRegistrationTests(unittest.TestCase):
+    def test_every_test_in_this_module_is_registered_in_its_guardrail(self) -> None:
+        """cubic on #410: the CLI routing test was missing from the guardrail."""
+        manifest = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        )
+        (entry,) = [
+            g for g in manifest["guardrails"] if g["id"] == "merge-admission-verdict"
+        ]
+        prefix = "tests/test_merge_admission.py::"
+        registered = {t[len(prefix) :] for t in entry["tests"] if t.startswith(prefix)}
+        defined = {
+            f"{name}.{method}"
+            for name, case in globals().items()
+            if isinstance(case, type) and issubclass(case, unittest.TestCase)
+            for method in unittest.defaultTestLoader.getTestCaseNames(case)
+        }
+        self.assertEqual(set(), defined - registered)
 
 
 class GnostoaPolicyTests(unittest.TestCase):

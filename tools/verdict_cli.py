@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .knowledge_common import KnowledgeFormatError, confine_to_root
 from .review_check import assert_document_depth, strict_json_loads
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
@@ -45,10 +46,14 @@ def read_json_input(label: str, error: type[ValueError]) -> object:
         raise error(f"input is larger than the {MAX_INPUT_BYTES}-byte bound")
     try:
         value = strict_json_loads(raw.decode("utf-8"), label=label)
-        assert_document_depth(value, label)
     except ValueError as exc:
         # UnicodeDecodeError and json's errors are ValueErrors.
         raise error(f"input is not valid JSON: {exc}") from exc
+    try:
+        assert_document_depth(value, label)
+    except ValueError as exc:
+        # Valid JSON past an operational bound (cubic on #410).
+        raise error(f"input is out of bounds: {exc}") from exc
     return value
 
 
@@ -58,15 +63,12 @@ def confine(
     """Resolve `path` and refuse it outside `project_root`."""
 
     try:
-        root = project_root.resolve()
-        resolved = path.resolve()
+        resolved, _ = confine_to_root(path, project_root, label=label)
     except (OSError, RuntimeError) as exc:
         # A symbolic-link loop raises RuntimeError before Python 3.13.
         raise error(f"cannot resolve the {label}: {exc}") from exc
-    if not root.is_dir():
-        raise error(f"project root {root} is not a directory")
-    if not resolved.is_relative_to(root):
-        raise error(f"{label} {resolved} is outside the project root {root}")
+    except KnowledgeFormatError as exc:
+        raise error(str(exc)) from exc
     return resolved
 
 
@@ -96,6 +98,9 @@ def run(
         verdict = compute()
         print(json.dumps(verdict, indent=2, sort_keys=True))
         sys.stdout.flush()
+        # Inside the guard, so a predicate that fails is a failed run (cubic on
+        # #410).
+        code = 0 if positive(verdict) else 1
     except input_errors as exc:
         print(f"{prog}: {exc}", file=sys.stderr)
         return 2
@@ -112,4 +117,4 @@ def run(
             discard_stdout()
         print(f"{prog}: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
-    return 0 if positive(verdict) else 1
+    return code

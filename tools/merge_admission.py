@@ -28,10 +28,10 @@ from .assurance_completeness import (
     require_mapping,
     require_text,
 )
-from .check_change_policy import load_change_policy
+from .check_change_policy import change_policy_issues, load_change_policy
 from .knowledge_common import KnowledgeFormatError
 from .review_model import parse_rfc3339
-from .verdict_cli import confine, read_json_input, run
+from .verdict_cli import read_json_input, run
 
 VERDICT_SCHEMA = "gnostoa-merge-admission/v1"
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
@@ -61,6 +61,11 @@ _REVIEW_STATES = frozenset(
     {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"}
 )
 _OPINIONS = frozenset({"APPROVED", "CHANGES_REQUESTED"})
+# Reviews from one reviewer that share the latest second and disagree have no
+# order: their state reads as this, which is neither an approval nor a pass.
+_AMBIGUOUS = "AMBIGUOUS"
+# The values the change-control schema allows for the fields M14 reads.
+_WORK_ITEM_RULES = frozenset({"optional", "required-follow-up", "required"})
 _COVERAGE_KEYS = frozenset({"coverage"})
 _SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
@@ -104,6 +109,10 @@ def _reviews(value: object) -> list[dict[str, Any]]:
         state = review["state"]
         if not isinstance(state, str) or state not in _REVIEW_STATES:
             raise AssuranceCompletenessError(f"{label} has unknown state {state!r}")
+        if state == "PENDING":
+            # Not submitted, so no one's opinion yet; GitHub returns the reader's
+            # own with no timestamp (Sourcery on #410).
+            continue
         try:
             submitted = parse_rfc3339(review["submitted_at"])
         except ValueError as exc:
@@ -127,7 +136,16 @@ def _latest(
         for r in reviews
         if r["reviewer"] == reviewer and (states is None or r["state"] in states)
     ]
-    return max(own, key=lambda r: r["submitted_at"]) if own else None
+    if not own:
+        return None
+    newest = max(r["submitted_at"] for r in own)
+    tied = {(r["state"], r["commit_id"]) for r in own if r["submitted_at"] == newest}
+    if len(tied) > 1:
+        # Timestamps have second resolution, so a tie has no order (cubic, CodeAnt
+        # and Sourcery on #410).
+        return {"reviewer": reviewer, "state": _AMBIGUOUS, "commit_id": None}
+    ((state, commit_id),) = tied
+    return {"reviewer": reviewer, "state": state, "commit_id": commit_id}
 
 
 def _criterion(identifier: str, reasons: list[str]) -> dict[str, Any]:
@@ -185,7 +203,13 @@ def _requests_for_changes(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     reasons = []
     for reviewer in sorted({r["reviewer"] for r in reviews}):
         opinion = _latest(reviews, reviewer, _OPINIONS)
-        if opinion is not None and opinion["state"] == "CHANGES_REQUESTED":
+        if opinion is None or opinion["state"] == "APPROVED":
+            continue
+        if opinion["state"] == _AMBIGUOUS:
+            reasons.append(
+                f"{reviewer}'s latest opinions share one second and disagree"
+            )
+        else:
             reasons.append(f"{reviewer} requests changes")
     return _criterion("M11", reasons)
 
@@ -243,20 +267,30 @@ def _class_links(
         )
     links = require_mapping(evidence["links"], "links")
     require_closed_keys(links, "links", _LINK_KEYS)
+    # Parsed whatever the class requires (Codex on #410).
+    work_items = _texts(links["work_items"], "links work_items")
+    decisions = _texts(links["decisions"], "links decisions")
+    label = f"change policy class {change_class!r}"
     requirements = require_mapping(
         require_mapping(
             change_policy.get("change_classes"), "change policy classes"
         ).get(change_class),
-        f"change policy class {change_class!r}",
+        label,
     )
+    # The schema's own values only: a malformed field must not read as "not
+    # required" (cubic, CodeAnt and Sourcery on #410).
+    work_item = requirements.get("work_item")
+    if not isinstance(work_item, str) or work_item not in _WORK_ITEM_RULES:
+        raise AssuranceCompletenessError(f"{label} has work_item {work_item!r}")
+    decision_record = requirements.get("decision_record")
+    if not isinstance(decision_record, bool):
+        raise AssuranceCompletenessError(
+            f"{label} has decision_record {decision_record!r}"
+        )
     reasons = []
-    if requirements.get("work_item") == "required" and not _texts(
-        links["work_items"], "links work_items"
-    ):
+    if work_item == "required" and not work_items:
         reasons.append(f"a {change_class} change needs a linked Work Item")
-    if requirements.get("decision_record") is True and not _texts(
-        links["decisions"], "links decisions"
-    ):
+    if decision_record and not decisions:
         reasons.append(f"a {change_class} change needs a linked Decision")
     return _criterion("M14", reasons)
 
@@ -340,15 +374,20 @@ def evaluate(
 
 
 def load_policy(path: Path, *, project_root: Path) -> dict[str, Any]:
-    """Load the effective change policy from inside `project_root`."""
+    """Load the effective change policy, its whole inheritance chain confined to
+    `project_root`, and refuse it unless the schema accepts it (Codex, cubic,
+    CodeAnt and Sourcery on #410)."""
 
-    resolved = confine(
-        path, project_root, label="change policy", error=AssuranceCompletenessError
-    )
     try:
-        return load_change_policy(resolved)
+        policy = load_change_policy(path, project_root=project_root)
+        issues = change_policy_issues(policy)
     except KnowledgeFormatError as exc:
         raise AssuranceCompletenessError(str(exc)) from exc
+    if issues:
+        raise AssuranceCompletenessError(
+            "the change policy does not match its schema: " + "; ".join(issues)
+        )
+    return policy
 
 
 def _inside(root: Path, path: Path) -> Path:
