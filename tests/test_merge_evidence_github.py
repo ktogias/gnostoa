@@ -1144,25 +1144,21 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         self.assertEqual("normative", _evidence(_snapshot(replies))["change_class"])
 
-    def test_a_work_item_is_this_repository_s_issue(self) -> None:
-        """Codex on #413: another repository's issue is not `#N` here."""
+    def test_a_work_item_is_a_visible_issue_number(self) -> None:
+        """The owner's #402 decision (#407, 6086766086): a Work Item is a visible
+        `#N` in ASCII digits. An issue URL is not read, which ends its grammar's
+        variants: another repository (Codex), a lookalike host (cubic), a
+        suffix after the number (Codex) and non-ASCII digits (CodeAnt)."""
         cases = {
+            "#407, #15": ["#407", "#15"],
+            "https://github.com/ktogias/gnostoa/issues/407": [],
             "https://github.com/unrelated/project/issues/999999": [],
-            "https://github.com/KTogias/Gnostoa/issues/407": ["#407"],
-            # Claude on #413: the scheme and host compare without case too.
-            "HTTPS://GitHub.com/ktogias/gnostoa/issues/407": ["#407"],
-            # cubic on #413: only ASCII letters fold, so a lookalike host is
-            # not GitHub.
             "https://g\u0131thub.com/ktogias/gnostoa/issues/999": [],
-            "https://G\u0130THUB.com/ktogias/gnostoa/issues/999": [],
+            "https://github.com/ktogias/gnostoa/issues/407/not-an-issue": [],
+            "https://github.com/ktogias/gnostoa/issues/407#issuecomment-1": [],
             "#407 https://github.com/ktogias/gnostoa-x/issues/9": ["#407"],
             "other/project#999": [],
-            # Codex on #413: the number must end at a boundary, as `#N` does.
-            "https://github.com/ktogias/gnostoa/issues/407junk": [],
-            "https://github.com/ktogias/gnostoa/issues/407#issuecomment-1": ["#407"],
-            # CodeAnt on #413: an issue number is ASCII digits.
             "#\u0661": [],
-            "https://github.com/ktogias/gnostoa/issues/\u0661": [],
         }
         for text, expected in cases.items():
             with self.subTest(text=text):

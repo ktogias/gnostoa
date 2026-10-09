@@ -98,15 +98,10 @@ _VOID_ELEMENTS = frozenset(
         "wbr",
     }
 )
-# `#N`, or an issue's URL, which keeps its repository (Codex on #413); the scheme
-# and host compare without case, as the owner and name do (Claude on #413), and
-# only ASCII letters fold, so a lookalike host is not GitHub (cubic on #413). The
-# number is ASCII digits (CodeAnt on #413) and ends at a boundary, as `#N`'s does
-# (Codex on #413).
-_ISSUE = re.compile(
-    r"(?<![\w/])#([0-9]+)\b"
-    r"|(?ai:https://github\.com/)([^/\s]+/[^/\s]+)/issues/([0-9]+)\b"
-)
+# A Work Item is a visible `#N` in ASCII digits, as the template writes it. An
+# issue URL is not read: the owner chose this over growing a URL grammar (#407,
+# 6086766086).
+_ISSUE = re.compile(r"(?<![\w/])#([0-9]+)\b")
 # A standalone four-digit id, or a link to a Decision record; anything else, such as
 # a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt
 # on #413). Only an id with a record in the protected target counts.
@@ -553,24 +548,16 @@ def _change_control_fields(body: str) -> dict[str, str]:
     return fields
 
 
-def _work_items(text: str, repository: str) -> list[str]:
-    """This repository's issues the field names: `#N`, or a link to one of its
-    issues. Another repository's issue is not this change's Work Item (Codex on
-    #413); whether each exists is 1b.3b's acceptance case (#407, 6085101448)."""
+def _work_items(text: str) -> list[str]:
+    """The issue numbers the field shows as `#N`. Whether each exists, and
+    whether a link's target agrees with its label, are 1b.3b's acceptance cases
+    (#407, 6085101448 and 6085544477)."""
 
-    # The subject's repository is its URL; owner and name compare without case.
-    own = login_key(repository)
-    return _unique(
-        [
-            f"#{local or linked}"
-            for local, linked_repository, linked in _ISSUE.findall(text)
-            if local or login_key(f"https://github.com/{linked_repository}") == own
-        ]
-    )
+    return _unique([f"#{number}" for number in _ISSUE.findall(text)])
 
 
 def _change_control(
-    body: str, decisions: frozenset[str], repository: str
+    body: str, decisions: frozenset[str]
 ) -> tuple[str, dict[str, list[str]]]:
     """The class, Work Items and Decisions from the change-request template's
     `## Change control` section (owner decision 3, #407). Examples in code blocks
@@ -581,7 +568,7 @@ def _change_control(
     change_class = fields.get("Class", "").strip()
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = _work_items(fields.get("Work Item", ""), repository)
+    work_items = _work_items(fields.get("Work Item", ""))
     linked = _unique([a or b for a, b in _DECISION.findall(fields.get("Decision", ""))])
     return change_class, {
         "work_items": work_items,
@@ -673,9 +660,7 @@ def evidence_from_snapshot(
     if provider["body_truncated"]:
         # A cut description may have lost part of its section (CodeAnt on #413).
         raise MergeEvidenceError("the pull request's description is truncated")
-    change_class, links = _change_control(
-        provider["body"], decisions, subject["repository"]
-    )
+    change_class, links = _change_control(provider["body"], decisions)
     state = "merged" if provider["merged"] else provider["state"]
     return {
         "subject": subject_of(subject),

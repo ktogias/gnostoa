@@ -215,16 +215,14 @@ provider-neutral public change-governance contract of
     skipped. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
-    #402 (#407, 6085478125). A Work Item is `#N` or the URL of an issue of the
-    subject's own repository, its number in ASCII digits; another repository's
-    issue is not counted. A
-    visible `#N` whose link points elsewhere is still read as `#N`. Whether a
-    link's label and target agree, its reference integrity, is a proposed 1b.3b
-    acceptance case, distinct from existence and pending the owner's admission.
-    Like existence, it must be closed before 1b.4 activates the gate (#407,
-    6085507735). Whether each exists,
-    as an issue rather than a pull request, is 1b.3b's acceptance case. It must
-    be closed before 1b.4 activates the gate (#407, 6085101448 and 6085110011). A Decision counts only when the
+    #402 (#407, 6085478125). A Work Item is a visible `#N` in ASCII digits, as
+    the template writes it. An issue URL is not read, as the owner chose over
+    growing a URL grammar (#407, 6086766086). A visible `#N` whose link points
+    elsewhere is still read as `#N`. Two 1b.3b acceptance cases must be closed
+    before 1b.4 activates the gate: whether each Work Item exists, as an issue
+    rather than a pull request (#407, 6085101448 and 6085110011), and, proposed
+    and pending the owner's admission, whether a link's label and target agree,
+    its reference integrity (#407, 6085507735). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The
