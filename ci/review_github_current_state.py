@@ -1019,7 +1019,12 @@ def _comparison_sources(
         raw_files = comparison.get("files")
         if not isinstance(raw_commits, list) or not isinstance(raw_files, list):
             raise ProviderReadError("compare commits and files must be arrays")
-        total = _integer(comparison.get("total_commits"), "compare.total_commits")
+        total = comparison.get("total_commits")
+        # A comparison with no commits is empty, not an error (cubic on #413).
+        if type(total) is not int or total < 0:
+            raise ProviderReadError(
+                "compare.total_commits must be a non-negative integer"
+            )
         commits = [_normalize_commit(item) for item in raw_commits]
         files = [_normalize_file(item) for item in raw_files]
     except ProviderReadError as exc:

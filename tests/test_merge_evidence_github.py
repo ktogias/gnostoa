@@ -259,6 +259,27 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual("PARTIAL", short["coverage"]["commits"]["status"])
         self.assertEqual("commit_list_cap", short["coverage"]["commits"]["reason"])
 
+    def test_a_comparison_s_total_is_a_count(self) -> None:
+        """cubic on #413: a comparison with no commits is empty, not an error; a
+        missing or non-integer total is."""
+        empty = _snapshot(_replies(**{COMPARE: _comparison([], [])}))
+        for source in ("commits", "files"):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    {"status": "COMPLETE", "pages": 1, "count": 0},
+                    empty["coverage"][source],
+                )
+        for name, total in (("missing", None), ("text", "1"), ("negative", -1)):
+            with self.subTest(total=name):
+                reply = _comparison([_commit(HEAD, "x")], FILES)
+                if total is None:
+                    del reply[0]["total_commits"]
+                else:
+                    reply[0]["total_commits"] = total
+                snapshot = _snapshot(_replies(**{COMPARE: reply}))
+                self.assertEqual("ERROR", snapshot["coverage"]["commits"]["status"])
+                self.assertEqual("ERROR", snapshot["coverage"]["files"]["status"])
+
     def test_the_comparison_s_file_cap_is_partial(self) -> None:
         """GitHub lists at most 300 files on a comparison, so a list that reaches
         300 may be cut."""
@@ -384,6 +405,46 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
                 observed_at="2026-09-19T16:41:00Z",
                 merge_evidence=True,
             )
+
+    def test_a_description_edited_during_collection_is_paired_with_later_reads(
+        self,
+    ) -> None:
+        """CodeAnt on #413: an edit between the two pull reads cannot pair the new
+        description with reviews read before it. L1 certifies only two identical
+        passes, the second starting after the first ends."""
+        replies = _replies()
+        pull_url = f"{API}/pulls/300"
+        reviews_url = f"{API}/pulls/300/reviews?per_page=100"
+        edited = _replies()
+        edited[pull_url][0]["body"] = BODY + "\nEdited.\n"
+        for review in edited[reviews_url][0]:
+            review["state"] = "CHANGES_REQUESTED"
+        fake = paged_fake_fixture(replies)
+        reads = {"pull": 0}
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            if url == pull_url:
+                reads["pull"] += 1
+                if reads["pull"] == 2:
+                    # The body and the reviews change together, mid-pass.
+                    replies[pull_url] = edited[pull_url]
+                    replies[reviews_url] = edited[reviews_url]
+            reply: tuple[Any, dict[str, str]] = original(url)
+            return reply
+
+        fake.get = get
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        after = _snapshot(edited)
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual(after["subject"]["body"], snapshot["subject"]["body"])
+        self.assertEqual(after["reviews"], snapshot["reviews"])
 
     def test_the_reconciler_s_snapshot_validation_accepts_the_extension(self) -> None:
         from tools import review_reconcile
@@ -968,6 +1029,47 @@ class EvidenceDocumentTests(unittest.TestCase):
         links = _evidence(_snapshot(replies))["links"]
         self.assertEqual(["#407", "#15"], links["work_items"])
 
+    def test_fields_inside_raw_html_are_not_read(self) -> None:
+        """Codex on #413: Markdown inside an unclosed HTML element, such as a
+        collapsed `<details>`, is top-level to the parser but rendered inside the
+        element by GitHub."""
+        heading = "## Change control"
+        hidden = {
+            "the section in details": BODY.replace(
+                heading, f"<details>\n<summary>More</summary>\n\n{heading}"
+            )
+            + "\n</details>\n",
+            "the fields in details": BODY.replace("- Class:", "<details>\n\n- Class:")
+            + "\n</details>\n",
+            "the heading in details": BODY.replace(
+                heading, f"<details>\n\n{heading}\n\n</details>"
+            ),
+            "a self-closing details": BODY.replace(heading, f"<details/>\n\n{heading}"),
+            "an inline details": BODY.replace(heading, f"Note <details>\n\n{heading}"),
+        }
+        for name, body in hidden.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(_snapshot(replies))
+        visible = {
+            "a closed details before": BODY.replace(
+                heading,
+                f"<details>\n<summary>Notes</summary>\n\nNotes.\n\n</details>\n\n{heading}",
+            ),
+            "void elements before": BODY.replace(
+                heading, f"Line<br>\n\n<img src=x>\n\n{heading}"
+            ),
+            "inline markup in a value": BODY.replace("#407, #15", "<b>#407</b>, #15"),
+        }
+        for name, body in visible.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual(["#407", "#15"], links["work_items"])
+
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY + "\n" + BODY
@@ -1056,6 +1158,31 @@ class EvidenceDocumentTests(unittest.TestCase):
         # The old location's owners count too: one off the roster fails the run.
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
             _evidence(_snapshot(replies), codeowners="* @ktogias\n/docs/ @stranger\n")
+
+    def test_a_failed_roster_names_the_first_path_in_order(self) -> None:
+        """Claude on #413: a rename's two paths are visited in sorted order, so
+        the message does not depend on set order."""
+        for n in range(10):
+            with self.subTest(n=n):
+                new, old = f"z{n}/new.py", f"a{n}/old.py"
+                replies = _replies(
+                    **{
+                        COMPARE: _comparison(
+                            [_commit(HEAD, "x")],
+                            [
+                                {
+                                    "filename": new,
+                                    "status": "renamed",
+                                    "previous_filename": old,
+                                }
+                            ],
+                        )
+                    }
+                )
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, f"of {old} is"
+                ):
+                    _evidence(_snapshot(replies), codeowners="* @stranger\n")
 
     def test_a_truncated_description_cannot_vouch_for_its_change_control(self) -> None:
         """CodeAnt on #413: a cut body may have lost part of its section."""

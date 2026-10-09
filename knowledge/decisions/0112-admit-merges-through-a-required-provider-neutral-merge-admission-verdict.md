@@ -178,7 +178,7 @@ provider-neutral public change-governance contract of
     changed files with their coverage. Both lists come from the comparison of the
     subject's exact base and head commits, which L1 already reads for the merge
     base, so neither can be another head's. Fewer commits than the comparison's
-    total is `PARTIAL`. GitHub lists at most 300 files on a comparison, so 300 or
+    total is `PARTIAL`, and an empty comparison is empty, not an error. GitHub lists at most 300 files on a comparison, so 300 or
     more is `PARTIAL` too, and the run fails. L1 also marks each conversation
     comment `edited` from GraphQL's `lastEditedAt`. A comment it cannot mark makes
     the conversation `PARTIAL`. The advisory's snapshot is unchanged.
@@ -201,7 +201,9 @@ provider-neutral public change-governance contract of
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
     fields are the items of the one top-level section's top-level bullet lists,
     so code, HTML blocks and comments are never fields. The section's heading is
-    compared by its visible text. A Decision counts only when the
+    compared by its visible text. CommonMark does not track HTML nesting, so a
+    heading or field that GitHub renders inside an open raw HTML element, such as
+    a collapsed `<details>`, fails the run. A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The
