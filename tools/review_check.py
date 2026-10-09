@@ -86,7 +86,10 @@ def _schema_errors(document: object, schema_name: str) -> list[str]:
     return rendered
 
 
-def _assert_document_depth(document: object, label: str) -> None:
+def assert_document_depth(document: object, label: str) -> None:
+    """Refuse a decoded document nested past the operational bound, or holding a
+    non-finite number. `label` names the document in errors."""
+
     pending: list[tuple[object, int]] = [(document, 1)]
     processed_depth: dict[int, int] = {}
     while pending:
@@ -168,11 +171,11 @@ def evaluate_documents(
         return ERROR_EXIT_CODE, payload
 
     try:
-        _assert_document_depth(input_document, _INPUT_LABEL)
+        assert_document_depth(input_document, _INPUT_LABEL)
     except (ValueError, RecursionError) as exc:
         return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
     try:
-        _assert_document_depth(policy_document, "review policy")
+        assert_document_depth(policy_document, "review policy")
     except (ValueError, RecursionError) as exc:
         return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", str(exc))
 
@@ -269,7 +272,7 @@ def _load_json(path: Path) -> object:
     except UnicodeDecodeError as exc:
         raise ValueError(f"review-check input is not valid UTF-8: {exc}") from exc
     value = strict_json_loads(text, label=_INPUT_LABEL)
-    _assert_document_depth(value, _INPUT_LABEL)
+    assert_document_depth(value, _INPUT_LABEL)
     return value
 
 

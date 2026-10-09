@@ -674,6 +674,18 @@ class CommandTests(unittest.TestCase):
                 os.close(writer)
         self.assertEqual(2, completed.returncode, completed.stderr.decode())
 
+    def test_an_input_nested_past_the_bound_exits_two(self) -> None:
+        """Claude on #408: the input was decoded strictly but not bounded in depth,
+        where review-check bounds the same decoder's result at 64 levels."""
+        receipts = _complete()
+        nested: dict[str, Any] = {}
+        for _ in range(100):
+            nested = {"next": nested}
+        receipts[0]["provenance"] = nested
+        code, output = _run(_payload(receipts))
+        self.assertEqual(2, code)
+        self.assertIn("nests deeper than the 64-level operational bound", output)
+
     def test_unhashable_input_exits_two_without_a_traceback(self) -> None:
         text = json.dumps(
             {"subject": SUBJECT, "change_class": ["normal"], "receipts": []}

@@ -320,7 +320,7 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         for _ in range(10):
             shared = CountingDict({"left": shared, "right": shared})
 
-        review_check._assert_document_depth(shared, "review policy")
+        review_check.assert_document_depth(shared, "review policy")
 
         self.assertLessEqual(CountingDict.visits, 10)
 

@@ -29,7 +29,7 @@ from typing import Any
 
 from . import analyzer_readback
 from .knowledge_common import KnowledgeFormatError
-from .review_check import strict_json_loads
+from .review_check import assert_document_depth, strict_json_loads
 from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
 
@@ -56,6 +56,7 @@ _PRECEDENCE = (
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
+_INPUT_LABEL = "assurance-check input"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _DECLARATION_KEYS = frozenset({"schema_version", "id", "version", "requirements"})
@@ -363,10 +364,14 @@ def _read_input() -> object:
             f"input is larger than the {MAX_INPUT_BYTES}-byte bound"
         )
     try:
-        return strict_json_loads(raw.decode("utf-8"), label="assurance-check input")
+        value = strict_json_loads(raw.decode("utf-8"), label=_INPUT_LABEL)
+        # The nesting bound review-check pairs with the same decoder (Claude on
+        # #408).
+        assert_document_depth(value, _INPUT_LABEL)
     except ValueError as exc:
         # UnicodeDecodeError and json's errors are ValueErrors.
         raise AssuranceCompletenessError(f"input is not valid JSON: {exc}") from exc
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -673,6 +673,7 @@ guardrails:
       - tests/test_assurance_completeness.py::CommandTests.test_a_failed_read_of_standard_input_exits_two
       - tests/test_assurance_completeness.py::CommandTests.test_a_failed_write_of_the_verdict_exits_two
       - tests/test_assurance_completeness.py::CommandTests.test_a_closed_pipe_exits_two
+      - tests/test_assurance_completeness.py::CommandTests.test_an_input_nested_past_the_bound_exits_two
       - tests/test_assurance_completeness.py::CommandTests.test_no_failure_exits_as_a_verdict_would
       - tests/test_assurance_completeness.py::DeclarationTests.test_keys_that_are_not_strings_are_refused
       - tests/test_assurance_completeness.py::DeclarationTests.test_a_declaration_that_cannot_be_resolved_is_refused
