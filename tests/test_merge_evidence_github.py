@@ -30,7 +30,12 @@ from tools import assurance_completeness, merge_admission, merge_evidence_github
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://api.github.com/repos/ktogias/gnostoa"
 HEAD = "a" * 40
+BASE = "b" * 40
 PREVIOUS = "d" * 40
+# The comparison of the subject's exact base and head, which L1 already reads for
+# the merge base, and the GraphQL page of the conversation's edit state.
+COMPARE = f"{API}/compare/{BASE}...{HEAD}"
+EDITS = "graphql:comments:first"
 DECLARER = "gnostoa-agent[bot]"
 BODY = """## Outcome
 
@@ -47,6 +52,43 @@ The verdict reads normalized evidence.
 
 def _commit(sha: str, message: str) -> dict[str, Any]:
     return {"sha": sha, "commit": {"message": message}}
+
+
+FILES = [
+    {"filename": "tools/merge_admission.py", "status": "added"},
+    {"filename": "tests/test_merge_admission.py", "status": "added"},
+]
+
+
+def _comparison(
+    commits: list[dict[str, Any]],
+    files: list[dict[str, Any]],
+    *,
+    total: int | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """GitHub's comparison of the exact base and head: its merge base, its commits
+    with their total, and its changed files."""
+
+    return (
+        {
+            "merge_base_commit": {"sha": "c" * 40},
+            "total_commits": len(commits) if total is None else total,
+            "commits": commits,
+            "files": files,
+        },
+        {},
+    )
+
+
+def _edits(*comments: tuple[int, str | None]) -> tuple[dict[str, Any], dict[str, str]]:
+    """The conversation's edit state: each comment's id and `lastEditedAt`, null
+    when it was never edited."""
+
+    page = {
+        "nodes": [{"databaseId": i, "lastEditedAt": at} for i, at in comments],
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+    }
+    return {"data": {"repository": {"pullRequest": {"comments": page}}}}, {}
 
 
 def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
@@ -80,17 +122,10 @@ def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
     replies.pop("https://api.github.com/page2/issues", None)
     first_reviews = replies[f"{API}/pulls/300/reviews?per_page=100"][0]
     first_reviews[0]["user"] = {"login": "ktogias"}
-    replies[f"{API}/pulls/300/commits?per_page=100"] = (
-        [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")],
-        {},
+    replies[COMPARE] = _comparison(
+        [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], FILES
     )
-    replies[f"{API}/pulls/300/files?per_page=100"] = (
-        [
-            {"filename": "tools/merge_admission.py", "status": "added"},
-            {"filename": "tests/test_merge_admission.py", "status": "added"},
-        ],
-        {},
-    )
+    replies[EDITS] = _edits((1, None))
     for key, value in changes.items():
         replies[key] = value
     return replies
@@ -169,6 +204,8 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
         self.assertFalse(
             any("/commits?" in url or "/files?" in url for url in fake.calls)
         )
+        self.assertNotIn(EDITS, fake.calls)
+        self.assertNotIn("edited", snapshot["conversation"][0])
 
     def test_merge_evidence_adds_the_pull_fields_and_two_sources(self) -> None:
         snapshot = _snapshot()
@@ -212,64 +249,35 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
             [item["path"] for item in snapshot["files"]],
         )
 
-    def test_the_provider_s_commit_cap_is_partial(self) -> None:
-        """GitHub lists at most 250 commits for a pull request."""
+    def test_a_comparison_short_of_its_total_commits_is_partial(self) -> None:
+        """A comparison lists at most 250 commits; its total says how many it has."""
         commits = [_commit(f"{index:040x}", "x") for index in range(250)]
-        pages = {
-            f"{API}/pulls/300/commits?per_page=100": (
-                commits[:100],
-                {"link": '<https://api.github.com/page2/commits>; rel="next"'},
-            ),
-            "https://api.github.com/page2/commits": (
-                commits[100:200],
-                {"link": '<https://api.github.com/page3/commits>; rel="next"'},
-            ),
-            "https://api.github.com/page3/commits": (commits[200:], {}),
-        }
-        snapshot = _snapshot(_replies(**pages))
-        self.assertEqual("PARTIAL", snapshot["coverage"]["commits"]["status"])
-        self.assertEqual("commit_list_cap", snapshot["coverage"]["commits"]["reason"])
+        whole = _snapshot(_replies(**{COMPARE: _comparison(commits, FILES)}))
+        self.assertEqual("COMPLETE", whole["coverage"]["commits"]["status"])
+        self.assertEqual(250, len(whole["commits"]))
+        short = _snapshot(_replies(**{COMPARE: _comparison(commits, FILES, total=251)}))
+        self.assertEqual("PARTIAL", short["coverage"]["commits"]["status"])
+        self.assertEqual("commit_list_cap", short["coverage"]["commits"]["reason"])
 
-    def test_the_files_read_reaches_github_s_cap(self) -> None:
-        """CodeAnt and cubic on #413: 20 pages stopped at 2,000 files, below
-        GitHub's 3,000, so a 2,500-file change could never be read whole."""
+    def test_the_comparison_s_file_cap_is_partial(self) -> None:
+        """GitHub lists at most 300 files on a comparison, so a list that reaches
+        300 may be cut."""
 
-        def pages(count: int) -> dict[str, tuple[Any, dict[str, str]]]:
-            files = [
-                {"filename": f"f/{index}", "status": "added"} for index in range(count)
-            ]
-            urls = [f"{API}/pulls/300/files?per_page=100"] + [
-                f"https://api.github.com/files-page-{n}" for n in range(2, 31)
-            ]
-            replies: dict[str, tuple[Any, dict[str, str]]] = {}
-            for index in range(0, count, 100):
-                page = index // 100
-                link = (
-                    {"link": f'<{urls[page + 1]}>; rel="next"'}
-                    if index + 100 < count
-                    else {}
-                )
-                replies[urls[page]] = (files[index : index + 100], link)
-            return replies
+        def files(count: int) -> list[dict[str, Any]]:
+            return [{"filename": f"f/{n}", "status": "added"} for n in range(count)]
 
-        complete = _snapshot(_replies(**pages(2_500)))
-        self.assertEqual("COMPLETE", complete["coverage"]["files"]["status"])
-        self.assertEqual(2_500, len(complete["files"]))
-        capped = _snapshot(_replies(**pages(3_000)))
+        commits = [_commit(HEAD, "x")]
+        whole = _snapshot(_replies(**{COMPARE: _comparison(commits, files(299))}))
+        self.assertEqual("COMPLETE", whole["coverage"]["files"]["status"])
+        self.assertEqual(299, len(whole["files"]))
+        capped = _snapshot(_replies(**{COMPARE: _comparison(commits, files(300))}))
         self.assertEqual("PARTIAL", capped["coverage"]["files"]["status"])
         self.assertEqual("file_list_cap", capped["coverage"]["files"]["reason"])
 
     def test_a_long_commit_message_is_bounded_and_marked(self) -> None:
         message = "x" * 70_000
         snapshot = _snapshot(
-            _replies(
-                **{
-                    f"{API}/pulls/300/commits?per_page=100": (
-                        [_commit(HEAD, message)],
-                        {},
-                    )
-                }
-            )
+            _replies(**{COMPARE: _comparison([_commit(HEAD, message)], FILES)})
         )
         self.assertTrue(snapshot["commits"][0]["message_truncated"])
         # Bounded, not only flagged (cubic on #413).
@@ -277,23 +285,65 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
             len(snapshot["commits"][0]["message"].encode("utf-8")), 65_536
         )
 
-    def test_the_commits_must_end_at_the_head(self) -> None:
-        """CodeAnt on #413: a commit list that does not end at the head is not
-        the head's list."""
-        snapshot = _snapshot(
-            _replies(
-                **{
-                    f"{API}/pulls/300/commits?per_page=100": (
-                        [_commit(PREVIOUS, "x")],
-                        {},
-                    )
-                }
+    def test_the_lists_are_the_exact_comparison_s(self) -> None:
+        """cubic and Claude on #413: the pull request's commit and file lists are
+        not bound to the head they were read with. The comparison of the
+        subject's exact base and head is a function of those two commits."""
+        commits = [_commit(PREVIOUS, "first"), _commit(HEAD, "second")]
+        files = [{"filename": "docs/x.md", "status": "modified"}]
+        fake = paged_fake_fixture(_replies(**{COMPARE: _comparison(commits, files)}))
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertEqual([PREVIOUS, HEAD], [c["sha"] for c in snapshot["commits"]])
+        self.assertEqual(["docs/x.md"], [f["path"] for f in snapshot["files"]])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+        self.assertIn(COMPARE, fake.calls)
+        self.assertFalse(
+            any(
+                "/pulls/300/commits" in u or "/pulls/300/files" in u for u in fake.calls
             )
         )
-        self.assertEqual("PARTIAL", snapshot["coverage"]["commits"]["status"])
-        self.assertEqual(
-            "commits_not_at_head", snapshot["coverage"]["commits"]["reason"]
-        )
+
+    def test_each_comment_carries_its_edit_state(self) -> None:
+        """Codex on #413: timestamps in whole seconds cannot show an edit made in
+        the second the comment was posted. GraphQL's `lastEditedAt` can."""
+        for edited_at, edited in ((None, False), ("2026-09-19T16:40:00Z", True)):
+            with self.subTest(edited=edited):
+                snapshot = _snapshot(_replies(**{EDITS: _edits((1, edited_at))}))
+                self.assertEqual(edited, snapshot["conversation"][0]["edited"])
+                self.assertEqual(
+                    "COMPLETE", snapshot["coverage"]["conversation"]["status"]
+                )
+
+    def test_a_comment_without_its_edit_state_makes_the_conversation_partial(
+        self,
+    ) -> None:
+        malformed = _edits((1, None))
+        malformed[0]["data"]["repository"]["pullRequest"]["comments"]["nodes"] = {}
+        # The first page lists the comment, but the read was cut after it.
+        cut = _edits((1, None))
+        cut[0]["data"]["repository"]["pullRequest"]["comments"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": None,
+        }
+        for name, reply in (
+            ("missing comment", _edits((2, None))),
+            ("malformed page", malformed),
+            ("cut read", cut),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot(_replies(**{EDITS: reply}))
+                coverage = snapshot["coverage"]["conversation"]
+                self.assertEqual("PARTIAL", coverage["status"])
+                self.assertEqual("comment_edits_unavailable", coverage["reason"])
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
 
     def test_a_head_that_moves_between_reads_is_refused(self) -> None:
         """L1's collector is composed, not changed (DeepSource on #413): the pull
@@ -383,6 +433,16 @@ class CodeOwnersTests(unittest.TestCase):
         self.assertEqual([], _owners(text, "generated/x"))
         self.assertEqual(["@alice"], _owners(text, "src/x"))
 
+    def test_an_inline_comment_ends_a_rule_s_owners(self) -> None:
+        """Codex on #413: GitHub documents `*.js @js-owner #This is an inline
+        comment.`"""
+        text = "*.js @js-owner #This is an inline comment.\n/apps/ @a # @b\n"
+        self.assertEqual(["@js-owner"], _owners(text, "web/app.js"))
+        self.assertEqual(["@a"], _owners(text, "apps/x"))
+        self.assertEqual([], _owners("/apps/ # none\n", "apps/x"))
+        # Only a word that starts with `#` opens a comment.
+        self.assertEqual(["a#b@example.com"], _owners("* a#b@example.com\n", "x"))
+
     def test_syntax_github_does_not_support_is_refused(self) -> None:
         for line in ("!/keep @alice", "/file[0-9].txt @alice", "\\#literal @alice"):
             with (
@@ -468,7 +528,9 @@ class EvidenceDocumentTests(unittest.TestCase):
     def test_an_unsealed_head_denies(self) -> None:
         """#338: the head was never declared."""
         snapshot = _snapshot(
-            _replies(**{f"{API}/issues/300/comments?per_page=100": ([], {})})
+            _replies(
+                **{f"{API}/issues/300/comments?per_page=100": ([], {}), EDITS: _edits()}
+            )
         )
         evidence = _evidence(snapshot)
         self.assertIsNone(evidence["declared_candidate"])
@@ -487,6 +549,7 @@ class EvidenceDocumentTests(unittest.TestCase):
 
         for name, comments in (
             ("edited", [comment(updated_at="2026-09-19T16:40:30Z")]),
+            ("edited in its own second", [comment(edited_at="2026-09-19T16:40:00Z")]),
             ("foreign", [comment(user={"login": "someone-else"})]),
             ("previous head", [comment(body=f"Exact review candidate: {PREVIOUS}")]),
             (
@@ -507,9 +570,13 @@ class EvidenceDocumentTests(unittest.TestCase):
             ),
         ):
             with self.subTest(name):
+                edits = _edits(*((c["id"], c.pop("edited_at", None)) for c in comments))
                 snapshot = _snapshot(
                     _replies(
-                        **{f"{API}/issues/300/comments?per_page=100": (comments, {})}
+                        **{
+                            f"{API}/issues/300/comments?per_page=100": (comments, {}),
+                            EDITS: edits,
+                        }
                     )
                 )
                 self.assertIn("M9", _failed(_evidence(snapshot)))
@@ -522,15 +589,14 @@ class EvidenceDocumentTests(unittest.TestCase):
                 "body": BODY + "\nCloses ktogias/gnostoa#13\n",
             },
             "commit body": {
-                f"{API}/pulls/300/commits?per_page=100": (
-                    [_commit(HEAD, "Subject\n\nSome context.\nresolved: #14")],
-                    {},
+                COMPARE: _comparison(
+                    [_commit(HEAD, "Subject\n\nSome context.\nresolved: #14")], FILES
                 )
             },
             "issue URL": {
-                f"{API}/pulls/300/commits?per_page=100": (
+                COMPARE: _comparison(
                     [_commit(HEAD, "fix https://github.com/ktogias/gnostoa/issues/15")],
-                    {},
+                    FILES,
                 )
             },
         }
@@ -568,29 +634,12 @@ class EvidenceDocumentTests(unittest.TestCase):
 
     def test_closing_reference_coverage_follows_its_sources(self) -> None:
         commits = [_commit(f"{index:040x}", "x") for index in range(250)]
-        capped = _replies(
-            **{
-                f"{API}/pulls/300/commits?per_page=100": (
-                    commits[:100],
-                    {"link": '<https://api.github.com/page2/commits>; rel="next"'},
-                ),
-                "https://api.github.com/page2/commits": (
-                    commits[100:200],
-                    {"link": '<https://api.github.com/page3/commits>; rel="next"'},
-                ),
-                "https://api.github.com/page3/commits": (commits[200:], {}),
-            }
-        )
+        capped = _replies(**{COMPARE: _comparison(commits, FILES, total=251)})
         truncated_message = _replies(
-            **{
-                f"{API}/pulls/300/commits?per_page=100": (
-                    [_commit(HEAD, "y" * 70_000)],
-                    {},
-                )
-            }
+            **{COMPARE: _comparison([_commit(HEAD, "y" * 70_000)], FILES)}
         )
         for name, replies in (
-            ("250 commits", capped),
+            ("fewer commits than the total", capped),
             ("truncated message", truncated_message),
         ):
             with self.subTest(name):
@@ -691,9 +740,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         """The candidate may edit `.github/CODEOWNERS`; the protected copy decides."""
         replies = _replies(
             **{
-                f"{API}/pulls/300/files?per_page=100": (
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
                     [{"filename": ".github/CODEOWNERS", "status": "modified"}],
-                    {},
                 )
             }
         )
@@ -910,6 +959,15 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
 
+    def test_a_heading_is_compared_by_its_visible_text(self) -> None:
+        """cubic on #413: inline HTML in the heading is not part of its text."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "## Change control", "## Change control <!-- the template's fields -->"
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
+
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY + "\n" + BODY
@@ -933,13 +991,45 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
 
+    def test_only_ascii_letters_fold_in_logins(self) -> None:
+        """cubic on #413: `casefold` folds the Kelvin sign to `k`, so a roster
+        entry or a login containing it would match another account."""
+        kelvin = "\u212atogias"
+        for name, change in (
+            ("roster", {"human_approvers": [kelvin]}),
+            ("roster with a space", {"human_approvers": ["kto gias"]}),
+            ("an App on the human roster", {"human_approvers": [DECLARER]}),
+            ("declarer", {"declarer": "gnostoa agent[bot]"}),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_authorities(
+                    {
+                        "schema_version": "1.0",
+                        "id": "example.merge-authorities",
+                        "version": "0.1.0",
+                        "declarer": DECLARER,
+                        "human_approvers": ["ktogias"],
+                        **change,
+                    }
+                )
+        replies = _replies()
+        for review in replies[f"{API}/pulls/300/reviews?per_page=100"][0]:
+            if review["user"] == {"login": "ktogias"}:
+                review["user"] = {"login": kelvin}
+        evidence = _evidence(_snapshot(replies))
+        self.assertNotIn("ktogias", [r["reviewer"] for r in evidence["reviews"]])
+        self.assertIn("M16", _failed(evidence))
+
     def test_a_rename_without_its_previous_path_fails_the_run(self) -> None:
         """CodeAnt on #413: the old location's code owner would be skipped."""
         replies = _replies(
             **{
-                f"{API}/pulls/300/files?per_page=100": (
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
                     [{"filename": "tools/new.py", "status": "renamed"}],
-                    {},
                 )
             }
         )
@@ -947,7 +1037,8 @@ class EvidenceDocumentTests(unittest.TestCase):
             _evidence(_snapshot(replies))
         replies = _replies(
             **{
-                f"{API}/pulls/300/files?per_page=100": (
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
                     [
                         {
                             "filename": "tools/new.py",
@@ -955,7 +1046,6 @@ class EvidenceDocumentTests(unittest.TestCase):
                             "previous_filename": "docs/old.py",
                         }
                     ],
-                    {},
                 )
             }
         )
@@ -992,6 +1082,10 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
             _evidence(plain)
+        unmarked = _snapshot()
+        del unmarked["conversation"][0]["edited"]
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(unmarked)
 
 
 def _project(directory: Path, *, authorities: bool = True) -> Path:

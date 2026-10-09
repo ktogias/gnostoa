@@ -190,8 +190,15 @@ class _PagedFake:
             raise RuntimeError(f"unexpected URL: {url}")
         return self.replies[url]
 
-    def graphql(self, _query: str, variables: dict[str, Any]) -> Any:
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         cursor = variables.get("cursor")
+        if "lastEditedAt" in query:
+            # The conversation's edit state is served only from an explicit
+            # reply for its cursor (#413 round 5).
+            payload, _ = self.get(f"graphql:comments:{cursor or 'first'}")
+            return payload
+        if "reviewThreads" not in query:
+            raise RuntimeError("unexpected GraphQL query")
         # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         first_url = next(
             (

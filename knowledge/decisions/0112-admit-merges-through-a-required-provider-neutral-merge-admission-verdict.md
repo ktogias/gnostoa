@@ -175,21 +175,33 @@ provider-neutral public change-governance contract of
   target.** It reads nothing from the provider itself:
   - L1 (Decision 0086), asked for merge evidence, adds the pull request's draft,
     merged, target, default branch, author and bounded body, and its commits and
-    changed files with their coverage. GitHub caps the commits at 250, so a list
-    that reaches the cap is `PARTIAL`. The advisory's snapshot is unchanged.
+    changed files with their coverage. Both lists come from the comparison of the
+    subject's exact base and head commits, which L1 already reads for the merge
+    base, so neither can be another head's. Fewer commits than the comparison's
+    total is `PARTIAL`. GitHub lists at most 300 files on a comparison, so 300 or
+    more is `PARTIAL` too, and the run fails. L1 also marks each conversation
+    comment `edited` from GraphQL's `lastEditedAt`. A comment it cannot mark makes
+    the conversation `PARTIAL`. The advisory's snapshot is unchanged.
   - The project root is a checkout of the protected target, whose change policy,
     `policy/merge-authorities.yaml` and CODEOWNERS apply, never the candidate's.
   - The seal is the declarer's last unedited top-level comment whose first line
-    is `Exact review candidate: <sha>`.
+    is `Exact review candidate: <sha>`. Unedited means GraphQL records no edit,
+    since timestamps in whole seconds cannot show an edit made in the comment's
+    own second, and the timestamps agree.
+  - Logins are compared without case, and only their ASCII letters fold, so a
+    Unicode compatibility character matches no other account. The roster and the
+    declarer must be in GitHub's login syntax.
   - The required approvers are each changed file's code owners on the human
     roster (owner decision 2 on #407). A rule whose owners include no rostered
     person fails the run. The CODEOWNERS reader follows GitHub's documented
-    rules, and refuses the syntax GitHub skips.
+    rules, inline comments and ownerless rules included, and refuses the syntax
+    GitHub skips.
   - The class, Work Item and Decision come from the change-request template's
     `## Change control` fields (owner decision 3), read as CommonMark ([Decision
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
-    fields are the items of the one top-level section's top-level lists, so code,
-    HTML blocks and comments are never fields. A Decision counts only when the
+    fields are the items of the one top-level section's top-level bullet lists,
+    so code, HTML blocks and comments are never fields. The section's heading is
+    compared by its visible text. A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The

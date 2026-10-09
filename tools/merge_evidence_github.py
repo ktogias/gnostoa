@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import argparse
 import re
-from collections.abc import Mapping, Sequence
+import string
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,13 @@ CODEOWNERS_LOCATIONS = (
 )
 CODEOWNERS_LIMIT = 3 * 1024 * 1024
 _OWNER = re.compile(r"@[A-Za-z0-9-]+(?:/[A-Za-z0-9_.-]+)?|[^@\s]+@[^@\s]+")
+# GitHub's login syntax: ASCII letters, digits and hyphens, and an App's `[bot]`.
+_LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+_BOT_LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\]")
+# Only ASCII letters fold. Unicode case folding maps compatibility characters,
+# such as the Kelvin sign to `k`, so a login containing one would match another
+# account (cubic on #413).
+_ASCII_FOLD = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 _SEAL = re.compile(r"Exact review candidate: ([0-9a-f]{40})")
 # GitHub's closing keywords, then an issue in one of its reference forms.
 _CLOSING = re.compile(
@@ -97,6 +105,22 @@ class MergeEvidenceError(ValueError):
     """The snapshot or the protected target's declarations cannot give evidence."""
 
 
+def login_key(login: str) -> str:
+    """A login as compared and emitted: GitHub logins are case-insensitive
+    (CodeAnt on #413), and only their ASCII letters fold."""
+
+    return login.translate(_ASCII_FOLD)
+
+
+def _declared_login(
+    value: object, label: str, syntax: tuple[re.Pattern[str], ...]
+) -> str:
+    login = require_text(value, label)
+    if not any(pattern.fullmatch(login) for pattern in syntax):
+        raise MergeEvidenceError(f"{label} {login!r} is not a GitHub login")
+    return login
+
+
 def parse_authorities(document: object) -> dict[str, Any]:
     """The merge authorities: the seal's declarer and the human approvers' roster."""
 
@@ -107,11 +131,15 @@ def parse_authorities(document: object) -> dict[str, Any]:
             raise MergeEvidenceError("merge authorities schema_version must be 1.0")
         require_text(record["id"], "merge authorities id")
         require_text(record["version"], "merge authorities version")
+        approvers = require_unique_texts(record["human_approvers"], "human_approvers")
         return {
-            "declarer": require_text(record["declarer"], "declarer"),
-            "human_approvers": require_unique_texts(
-                record["human_approvers"], "human_approvers"
+            "declarer": _declared_login(
+                record["declarer"], "declarer", (_LOGIN, _BOT_LOGIN)
             ),
+            "human_approvers": [
+                _declared_login(login, "human approver", (_LOGIN,))
+                for login in approvers
+            ],
         }
     except AssuranceCompletenessError as exc:
         raise MergeEvidenceError(str(exc)) from exc
@@ -194,7 +222,10 @@ def parse_codeowners(text: str) -> CodeOwners:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        pattern, *owners = stripped.split()
+        pattern, *words = stripped.split()
+        # An inline comment ends the owners, as GitHub documents (Codex on #413).
+        comment = next((i for i, w in enumerate(words) if w.startswith("#")), None)
+        owners = words[:comment]
         for owner in owners:
             if _OWNER.fullmatch(owner) is None:
                 raise MergeEvidenceError(
@@ -243,11 +274,10 @@ def _required_approvers(
             owners = codeowners.owners(path)
             if not owners:
                 continue
-            # GitHub logins are case-insensitive (CodeAnt on #413).
             people = {
-                o[1:].casefold() for o in owners if o.startswith("@") and "/" not in o
+                login_key(o[1:]) for o in owners if o.startswith("@") and "/" not in o
             }
-            on_roster = people & {r.casefold() for r in roster}
+            on_roster = people & {login_key(r) for r in roster}
             if not on_roster:
                 raise MergeEvidenceError(
                     f"no code owner of {path} is on the human approvers' roster"
@@ -261,8 +291,14 @@ def _seal(
 ) -> dict[str, Any] | None:
     seals = []
     for comment in conversation:
+        edited = comment.get("edited")
+        if not isinstance(edited, bool):
+            raise MergeEvidenceError(
+                "the snapshot was not collected with merge evidence: comment edits"
+            )
         if (
-            comment["author"].casefold() != declarer.casefold()
+            login_key(comment["author"]) != login_key(declarer)
+            or edited
             or comment["created_at"] != comment["updated_at"]
         ):
             continue
@@ -273,7 +309,7 @@ def _seal(
             )
     if not seals:
         return None
-    return {"declarer": declarer.casefold(), "head_commit": max(seals)[2]}
+    return {"declarer": login_key(declarer), "head_commit": max(seals)[2]}
 
 
 def _closing_references(
@@ -339,18 +375,20 @@ def _inline_value(token: Token) -> str:
     return "".join(parts)
 
 
-def _change_control_fields(body: str) -> dict[str, str]:
-    """The fields of the description's one top-level `## Change control` section:
-    the items of its top-level bullet lists, up to the next top-level h1 or h2."""
+def _is_top_heading(token: Token, tags: tuple[str, ...]) -> bool:
+    return token.type == "heading_open" and token.level == 0 and token.tag in tags
 
-    tokens = _MARKDOWN.parse(body)
+
+def _section_start(tokens: Sequence[Token]) -> int:
+    """The index of the one top-level `## Change control` heading."""
+
     starts = [
         index
         for index, token in enumerate(tokens)
-        if token.type == "heading_open"
-        and token.level == 0
-        and token.tag == "h2"
-        and tokens[index + 1].content.strip() == "Change control"
+        if _is_top_heading(token, ("h2",))
+        # Its visible text: inline HTML in a heading is not part of it (cubic on
+        # #413).
+        and _inline_value(tokens[index + 1]).strip() == "Change control"
     ]
     if not starts:
         raise MergeEvidenceError("the description has no Change control section")
@@ -358,29 +396,38 @@ def _change_control_fields(body: str) -> dict[str, str]:
         raise MergeEvidenceError(
             "the description has more than one Change control section"
         )
-    fields: dict[str, str] = {}
+    return starts[0]
+
+
+def _section_items(tokens: Sequence[Token], start: int) -> Iterator[Token]:
+    """The inline tokens of the section's top-level list items, up to the next
+    top-level h1 or h2."""
+
     in_list = False
-    for index in range(starts[0] + 3, len(tokens)):
-        token = tokens[index]
-        if (
-            token.type == "heading_open"
-            and token.level == 0
-            and token.tag in ("h1", "h2")
-        ):
-            break
-        if token.type == "bullet_list_open" and token.level == 0:
-            in_list = True
-        elif token.type == "bullet_list_close" and token.level == 0:
-            in_list = False
+    for token in tokens[start + 3 :]:
+        if _is_top_heading(token, ("h1", "h2")):
+            return
+        if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
+            in_list = token.type == "bullet_list_open"
         elif in_list and token.type == "inline" and token.level == 3:
-            match = _FIELD.fullmatch(_inline_value(token).strip())
-            if match is None:
-                continue
-            if match.group(1) in fields:
-                raise MergeEvidenceError(
-                    f"the Change control section repeats {match.group(1)}"
-                )
-            fields[match.group(1)] = match.group(2)
+            yield token
+
+
+def _change_control_fields(body: str) -> dict[str, str]:
+    """The fields of the description's one top-level `## Change control` section:
+    the items of its top-level bullet lists, up to the next top-level h1 or h2."""
+
+    tokens = _MARKDOWN.parse(body)
+    fields: dict[str, str] = {}
+    for token in _section_items(tokens, _section_start(tokens)):
+        match = _FIELD.fullmatch(_inline_value(token).strip())
+        if match is None:
+            continue
+        if match.group(1) in fields:
+            raise MergeEvidenceError(
+                f"the Change control section repeats {match.group(1)}"
+            )
+        fields[match.group(1)] = match.group(2)
     return fields
 
 
@@ -443,7 +490,7 @@ def _reviews(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         )
     return [
         {
-            "reviewer": item["reviewer_id"].casefold(),
+            "reviewer": login_key(item["reviewer_id"]),
             "state": item["recommendation_state"],
             "commit_id": item["head_commit"],
             "submitted_at": item["observed_at"],
@@ -504,8 +551,8 @@ def evidence_from_snapshot(
         "links": links,
         "declared_candidate": _seal(conversation, authorities["declarer"]),
         "authorities": {
-            "declarer": authorities["declarer"].casefold(),
-            "author": provider["author"].casefold(),
+            "declarer": login_key(authorities["declarer"]),
+            "author": login_key(provider["author"]),
             "required_approvers": _required_approvers(
                 files, codeowners, authorities["human_approvers"]
             ),

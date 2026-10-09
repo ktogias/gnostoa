@@ -776,16 +776,19 @@ guardrails:
     tests:
       - tests/test_github_rest.py
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_long_commit_message_is_bounded_and_marked
-      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_files_read_reaches_github_s_cap
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_comparison_s_file_cap_is_partial
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_merge_evidence_adds_the_pull_fields_and_two_sources
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_default_snapshot_is_unchanged_and_reads_nothing_new
-      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_provider_s_commit_cap_is_partial
-      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_commits_must_end_at_the_head
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comparison_short_of_its_total_commits_is_partial
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_lists_are_the_exact_comparison_s
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_each_comment_carries_its_edit_state
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comment_without_its_edit_state_makes_the_conversation_partial
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_head_that_moves_between_reads_is_refused
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_reconciler_s_snapshot_validation_accepts_the_extension
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_a_file_over_github_s_limit_is_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_comments_blank_lines_and_ownerless_rules
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_patterns_follow_github_s_documented_forms
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_an_inline_comment_ends_a_rule_s_owners
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_syntax_github_does_not_support_is_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_last_matching_rule_wins
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_protected_target_s_file_is_found_in_github_s_order
@@ -809,6 +812,8 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_decision_link_counts_by_its_target
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_two_change_control_sections_are_ambiguous
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_logins_compare_without_case
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_only_ascii_letters_fold_in_logins
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_heading_is_compared_by_its_visible_text
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_rename_without_its_previous_path_fails_the_run
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_truncated_description_cannot_vouch_for_its_change_control
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_incomplete_conversation_or_files_fail_the_run

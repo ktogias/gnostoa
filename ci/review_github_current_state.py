@@ -5,6 +5,7 @@ import json
 import os
 import re
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -52,17 +53,38 @@ query ReviewThreads(
   }
 }
 """
+# The conversation's edit state, which REST does not carry: `lastEditedAt` is
+# null for a comment that was never edited (#407, slice 1b.3a).
+_CONVERSATION_EDITS_QUERY = """
+query ConversationEdits(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      comments(first: 100, after: $cursor) {
+        nodes {
+          databaseId
+          lastEditedAt
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"""
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
-# GitHub lists at most this many commits and files for one pull request; a list
-# that reaches the cap may be truncated (#407, slice 1b.3a).
-_PROVIDER_COMMIT_CAP = 250
-_PROVIDER_FILE_CAP = 3_000
-# Pages of 100 needed to reach the file cap; the default page bound stops at 2,000
-# (CodeAnt and cubic on #413).
-_FILE_PAGES = _PROVIDER_FILE_CAP // 100
+# GitHub lists at most 300 files on a comparison, so a list that reaches it may be
+# cut (#407, slice 1b.3a).
+_COMPARE_FILE_CAP = 300
 _MAX_OPEN_PULLS = 8
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _MAX_COLLECTION_PASSES = 3
@@ -214,14 +236,13 @@ def _collect_pages(
     *,
     page_items: Any = _list_page,
     normalize: Any,
-    max_pages: int = _MAX_PAGES,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     url: str | None = first_url
     items: list[dict[str, Any]] = []
     pages = 0
     omitted_total = 0
     while url is not None:
-        if pages >= max_pages:
+        if pages >= _MAX_PAGES:
             return items, {
                 "status": "PARTIAL",
                 "pages": pages,
@@ -282,24 +303,19 @@ def _combined_coverage_status(*coverages: dict[str, Any]) -> str:
     return "COMPLETE"
 
 
-def _collect_review_threads(
+def _collect_connection(
     client: JsonReader,
-    *,
-    repository: str,
-    pull_number: int,
-    review_comments: list[dict[str, Any]],
-    review_observation_ids: set[str],
+    query: str,
+    variables: dict[str, Any],
+    connection: str,
+    normalize_nodes: Callable[[list[Any]], list[dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    owner, name = repository.split("/", 1)
-    comments_by_id = {
-        item["id"]: item for item in review_comments if isinstance(item.get("id"), str)
-    }
+    """Every page of one pull request's GraphQL connection, under the REST
+    sources' page and item bounds."""
+
     cursor: str | None = None
     items: list[dict[str, Any]] = []
     pages = 0
-    omitted_roots = 0
-    omitted_reviews = 0
-
     while True:
         if pages >= _MAX_PAGES:
             return items, {
@@ -309,15 +325,7 @@ def _collect_review_threads(
                 "limit": "page_limit",
             }
         try:
-            payload = client.graphql(
-                _REVIEW_THREADS_QUERY,
-                {
-                    "owner": owner,
-                    "name": name,
-                    "number": pull_number,
-                    "cursor": cursor,
-                },
-            )
+            payload = client.graphql(query, {**variables, "cursor": cursor})
             graphql_payload = _mapping(payload, "graphql response")
             data = _mapping(graphql_payload.get("data"), "graphql.data")
             repository_payload = _mapping(
@@ -328,83 +336,20 @@ def _collect_review_threads(
                 repository_payload.get("pullRequest"),
                 "graphql.data.repository.pullRequest",
             )
-            connection = _mapping(
-                pull_payload.get("reviewThreads"),
-                "graphql.reviewThreads",
-            )
-            nodes = connection.get("nodes")
+            page = _mapping(pull_payload.get(connection), f"graphql.{connection}")
+            nodes = page.get("nodes")
             if not isinstance(nodes, list):
-                raise ProviderReadError("GitHub reviewThreads.nodes must be an array")
+                raise ProviderReadError(f"GitHub {connection}.nodes must be an array")
             page_info = _mapping(
-                connection.get("pageInfo"),
-                "graphql.reviewThreads.pageInfo",
+                page.get("pageInfo"),
+                f"graphql.{connection}.pageInfo",
             )
             has_next = _boolean(
                 page_info.get("hasNextPage"),
-                "graphql.reviewThreads.pageInfo.hasNextPage",
+                f"graphql.{connection}.pageInfo.hasNextPage",
             )
             end_cursor = page_info.get("endCursor")
-
-            normalized: list[dict[str, Any]] = []
-            for raw_node in nodes:
-                node = _mapping(raw_node, "graphql.reviewThread")
-                thread_id = _text(node.get("id"), "graphql.reviewThread.id")
-                resolved = _boolean(
-                    node.get("isResolved"),
-                    "graphql.reviewThread.isResolved",
-                )
-                outdated = _boolean(
-                    node.get("isOutdated"),
-                    "graphql.reviewThread.isOutdated",
-                )
-                comments = _mapping(
-                    node.get("comments"),
-                    "graphql.reviewThread.comments",
-                ).get("nodes")
-                if not isinstance(comments, list) or not comments:
-                    omitted_roots += 1
-                    continue
-                root_comment = _mapping(
-                    comments[0],
-                    "graphql.reviewThread.comments[0]",
-                )
-                reply_to = root_comment.get("replyTo")
-                identity_comment = (
-                    _mapping(
-                        reply_to,
-                        "graphql.reviewThread.comments[0].replyTo",
-                    )
-                    if reply_to is not None
-                    else root_comment
-                )
-                database_id = _integer(
-                    identity_comment.get("databaseId"),
-                    "graphql.reviewThread.rootComment.databaseId",
-                )
-                retained = comments_by_id.get(f"github-review-comment-{database_id}")
-                if retained is None:
-                    omitted_roots += 1
-                    continue
-                if retained["review_observation_id"] not in review_observation_ids:
-                    omitted_reviews += 1
-                    continue
-                normalized.append(
-                    {
-                        "id": f"github-review-thread-{thread_id}",
-                        "review_observation_id": retained["review_observation_id"],
-                        "reviewer_id": retained["reviewer_id"],
-                        "observed_at": retained["observed_at"],
-                        "head_commit": retained["head_commit"],
-                        "body": retained["body"],
-                        "body_truncated": retained["body_truncated"],
-                        "source_url": (
-                            _optional_text(identity_comment.get("url"))
-                            or retained["source_url"]
-                        ),
-                        "state": "resolved" if resolved else "unresolved",
-                        "outdated": outdated,
-                    }
-                )
+            normalized = normalize_nodes(nodes)
         except ProviderReadError as exc:
             return items, {
                 "status": _error_status(exc, pages),
@@ -435,8 +380,97 @@ def _collect_review_threads(
                 }
             cursor = end_cursor
             continue
-        break
+        return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
 
+
+def _collect_review_threads(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    review_comments: list[dict[str, Any]],
+    review_observation_ids: set[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    owner, name = repository.split("/", 1)
+    comments_by_id = {
+        item["id"]: item for item in review_comments if isinstance(item.get("id"), str)
+    }
+    omitted = {"roots": 0, "reviews": 0}
+
+    def normalize_nodes(nodes: list[Any]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for raw_node in nodes:
+            node = _mapping(raw_node, "graphql.reviewThread")
+            thread_id = _text(node.get("id"), "graphql.reviewThread.id")
+            resolved = _boolean(
+                node.get("isResolved"),
+                "graphql.reviewThread.isResolved",
+            )
+            outdated = _boolean(
+                node.get("isOutdated"),
+                "graphql.reviewThread.isOutdated",
+            )
+            comments = _mapping(
+                node.get("comments"),
+                "graphql.reviewThread.comments",
+            ).get("nodes")
+            if not isinstance(comments, list) or not comments:
+                omitted["roots"] += 1
+                continue
+            root_comment = _mapping(
+                comments[0],
+                "graphql.reviewThread.comments[0]",
+            )
+            reply_to = root_comment.get("replyTo")
+            identity_comment = (
+                _mapping(
+                    reply_to,
+                    "graphql.reviewThread.comments[0].replyTo",
+                )
+                if reply_to is not None
+                else root_comment
+            )
+            database_id = _integer(
+                identity_comment.get("databaseId"),
+                "graphql.reviewThread.rootComment.databaseId",
+            )
+            retained = comments_by_id.get(f"github-review-comment-{database_id}")
+            if retained is None:
+                omitted["roots"] += 1
+                continue
+            if retained["review_observation_id"] not in review_observation_ids:
+                omitted["reviews"] += 1
+                continue
+            normalized.append(
+                {
+                    "id": f"github-review-thread-{thread_id}",
+                    "review_observation_id": retained["review_observation_id"],
+                    "reviewer_id": retained["reviewer_id"],
+                    "observed_at": retained["observed_at"],
+                    "head_commit": retained["head_commit"],
+                    "body": retained["body"],
+                    "body_truncated": retained["body_truncated"],
+                    "source_url": (
+                        _optional_text(identity_comment.get("url"))
+                        or retained["source_url"]
+                    ),
+                    "state": "resolved" if resolved else "unresolved",
+                    "outdated": outdated,
+                }
+            )
+        return normalized
+
+    items, coverage = _collect_connection(
+        client,
+        _REVIEW_THREADS_QUERY,
+        {"owner": owner, "name": name, "number": pull_number},
+        "reviewThreads",
+        normalize_nodes,
+    )
+    if coverage["status"] != "COMPLETE":
+        return items, coverage
+    pages = coverage["pages"]
+    omitted_reviews, omitted_roots = omitted["reviews"], omitted["roots"]
     if omitted_reviews:
         return items, {
             "status": "PARTIAL",
@@ -969,6 +1003,96 @@ def _capped(coverage: dict[str, Any], cap: int, reason: str) -> dict[str, Any]:
     return coverage
 
 
+def _comparison_sources(
+    client: JsonReader, root: str, subject: dict[str, Any]
+) -> dict[str, tuple[list[dict[str, Any]], dict[str, Any]]]:
+    """The commits and changed files of the comparison of the subject's exact base
+    and head, which L1 already reads for the merge base. Both lists are a function
+    of the two commits, so neither can be another head's (cubic and Claude on
+    #413)."""
+
+    url = f"{root}/compare/{subject['base_commit']}...{subject['head_commit']}"
+    try:
+        payload, _ = client.get(url)
+        comparison = _mapping(payload, "compare")
+        raw_commits = comparison.get("commits")
+        raw_files = comparison.get("files")
+        if not isinstance(raw_commits, list) or not isinstance(raw_files, list):
+            raise ProviderReadError("compare commits and files must be arrays")
+        total = _integer(comparison.get("total_commits"), "compare.total_commits")
+        commits = [_normalize_commit(item) for item in raw_commits]
+        files = [_normalize_file(item) for item in raw_files]
+    except ProviderReadError as exc:
+        failed = {
+            "status": _error_status(exc, 0),
+            "pages": 0,
+            "count": 0,
+            "error": str(exc),
+        }
+        return {"commits": ([], failed), "files": ([], dict(failed))}
+    commit_coverage: dict[str, Any] = {
+        "status": "COMPLETE",
+        "pages": 1,
+        "count": len(commits),
+    }
+    if len(commits) != total:
+        # A comparison lists at most 250 commits; fewer than its total is a cut list.
+        commit_coverage.update(status="PARTIAL", reason="commit_list_cap")
+    file_coverage = _capped(
+        {"status": "COMPLETE", "pages": 1, "count": len(files)},
+        _COMPARE_FILE_CAP,
+        "file_list_cap",
+    )
+    return {"commits": (commits, commit_coverage), "files": (files, file_coverage)}
+
+
+def _edit_states(nodes: list[Any]) -> list[dict[str, Any]]:
+    states = []
+    for raw_node in nodes:
+        node = _mapping(raw_node, "graphql.comment")
+        edited_at = _optional_timestamp(
+            node.get("lastEditedAt"), "graphql.comment.lastEditedAt"
+        )
+        states.append(
+            {
+                "id": _integer(node.get("databaseId"), "graphql.comment.databaseId"),
+                "edited": edited_at is not None,
+            }
+        )
+    return states
+
+
+def _mark_edits(
+    client: JsonReader, snapshot: dict[str, Any], repository: str, pull_number: int
+) -> None:
+    """Mark each conversation comment `edited` from GraphQL's `lastEditedAt`:
+    timestamps in whole seconds cannot show an edit made in the second the comment
+    was posted (Codex on #413). A comment left unmarked makes the conversation
+    PARTIAL."""
+
+    owner, name = repository.split("/", 1)
+    states, coverage = _collect_connection(
+        client,
+        _CONVERSATION_EDITS_QUERY,
+        {"owner": owner, "name": name, "number": pull_number},
+        "comments",
+        _edit_states,
+    )
+    edited = {state["id"]: state["edited"] for state in states}
+    conversation = snapshot["conversation"]
+    if coverage["status"] == "COMPLETE" and all(
+        comment["id"] in edited for comment in conversation
+    ):
+        for comment in conversation:
+            comment["edited"] = edited[comment["id"]]
+    elif snapshot["coverage"]["conversation"]["status"] == "COMPLETE":
+        snapshot["coverage"]["conversation"] = {
+            **snapshot["coverage"]["conversation"],
+            "status": "PARTIAL",
+            "reason": "comment_edits_unavailable",
+        }
+
+
 def _collect_merge_evidence_once(
     client: JsonReader,
     *,
@@ -1004,33 +1128,10 @@ def _collect_merge_evidence_once(
     ):
         raise ProviderReadError("Pull Request changed during collection")
     snapshot["subject"].update(_merge_evidence_subject(pull_payload))
-    commits, commit_coverage = _collect_pages(
-        client,
-        f"{root}/pulls/{pull_number}/commits?per_page=100",
-        normalize=_normalize_commit,
-    )
-    files, file_coverage = _collect_pages(
-        client,
-        f"{root}/pulls/{pull_number}/files?per_page=100",
-        normalize=_normalize_file,
-        max_pages=_FILE_PAGES,
-    )
-    commit_coverage = _capped(commit_coverage, _PROVIDER_COMMIT_CAP, "commit_list_cap")
-    if commit_coverage.get("status") == "COMPLETE" and (
-        not commits or commits[-1]["sha"] != again["head_sha"]
-    ):
-        # The list must be the head's own (CodeAnt on #413).
-        commit_coverage = {
-            **commit_coverage,
-            "status": "PARTIAL",
-            "reason": "commits_not_at_head",
-        }
-    snapshot["coverage"]["commits"] = commit_coverage
-    snapshot["coverage"]["files"] = _capped(
-        file_coverage, _PROVIDER_FILE_CAP, "file_list_cap"
-    )
-    snapshot["commits"] = commits
-    snapshot["files"] = files
+    for name, (items, coverage) in _comparison_sources(client, root, subject).items():
+        snapshot[name] = items
+        snapshot["coverage"][name] = coverage
+    _mark_edits(client, snapshot, repository, pull_number)
     return snapshot
 
 
