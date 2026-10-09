@@ -722,10 +722,12 @@ guardrails:
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_latest_review_of_any_state_must_approve_the_head
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_an_approval_by_someone_else_denies
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_declarer_or_the_author_cannot_approve_an_independent_class
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_a_self_approval_denies_even_when_it_is_not_required
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_class_minimum_of_approvals_applies
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_no_required_approver_denies
       - tests/test_merge_admission.py::MergeAdmissionTests.test_reviews_in_the_same_second_have_no_order_and_deny
       - tests/test_merge_admission.py::MergeAdmissionTests.test_a_tie_is_judged_by_what_each_criterion_reads
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_pending_review_is_still_validated
       - tests/test_merge_admission.py::MergeAdmissionTests.test_the_same_review_repeated_in_one_second_is_not_ambiguous
       - tests/test_merge_admission.py::MergeAdmissionTests.test_a_pending_review_is_not_submitted_and_is_ignored
       - tests/test_merge_admission.py::MergeAdmissionTests.test_links_are_validated_whatever_the_class_requires

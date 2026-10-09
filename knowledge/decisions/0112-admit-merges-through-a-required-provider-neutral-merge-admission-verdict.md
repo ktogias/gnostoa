@@ -148,11 +148,17 @@ provider-neutral public change-governance contract of
   opinion for M11, the opinion and commit for M16) have no order, so they deny.
 - **The approval is bound to the class's rules.** M16 reads `minimum_approvals` and
   `independent_approval` from the effective policy, as M14 reads the link rules.
-  In an independent class, an approval from the change's author or declarer
-  denies. Who the required approvers are, and that each is a person, is the
-  adapter's to establish (a 1b.3 acceptance case). It must take them from the
-  protected target's code owners, never from the candidate, since a provider
-  account's type does not tell a person from a machine user.
+  In an independent class, the change's author and declarer can be neither a
+  required approver nor an approver: any approval by either denies
+  (`may_approve_own_change: false`).
+- **Each required approver must approve; the adapter names exactly them.** The
+  verdict requires every listed approver's latest review to approve the head, and
+  at least the class's minimum to be listed. Who they are, and that each is a
+  person, is the adapter's to establish (a 1b.3 acceptance case). It must take
+  them from the protected target's code owners, never from the candidate, since a
+  provider account's type does not tell a person from a machine user. An
+  any-of-several owner rule would need the contract to carry eligible approvers
+  and a count, which this slice does not.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The

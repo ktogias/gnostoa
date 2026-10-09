@@ -390,6 +390,30 @@ class MergeAdmissionTests(unittest.TestCase):
         self.assertNotIn("M11", failed)
         self.assertIn("M16", failed)
 
+    def test_a_pending_review_is_still_validated(self) -> None:
+        """Codex on #410: only its absent timestamp is special; a malformed
+        record is corrupt evidence."""
+        for change in (
+            {"reviewer": None},
+            {"commit_id": 7},
+            {"submitted_at": "not a time"},
+        ):
+            with self.subTest(change=change):
+                evidence = _evidence()
+                evidence["reviews"].append(
+                    {
+                        "reviewer": "owner",
+                        "state": "PENDING",
+                        "commit_id": HEAD,
+                        "submitted_at": None,
+                        **change,
+                    }
+                )
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _verdict(evidence)
+
     def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
         evidence = _evidence()
         evidence["reviews"].append(dict(evidence["reviews"][0]))
@@ -442,6 +466,20 @@ class MergeAdmissionTests(unittest.TestCase):
                 evidence = _evidence()
                 evidence["authorities"]["required_approvers"] = [identity]
                 evidence["reviews"][0]["reviewer"] = identity
+                self.assertDenied(evidence, "M16")
+
+    def test_m16_a_self_approval_denies_even_when_it_is_not_required(
+        self,
+    ) -> None:
+        """cubic on #410: the declarer's or author's approval was ignored unless
+        they were a required approver; the policy forbids it outright
+        (`may_approve_own_change: false`)."""
+        for identity in ("agent-app", "agent-user"):
+            with self.subTest(approver=identity):
+                evidence = _evidence()
+                evidence["reviews"].append(
+                    {**evidence["reviews"][0], "reviewer": identity}
+                )
                 self.assertDenied(evidence, "M16")
 
     def test_m16_the_class_minimum_of_approvals_applies(self) -> None:

@@ -109,19 +109,24 @@ def _reviews(value: object) -> list[dict[str, Any]]:
         state = review["state"]
         if not isinstance(state, str) or state not in _REVIEW_STATES:
             raise AssuranceCompletenessError(f"{label} has unknown state {state!r}")
-        if state == "PENDING":
+        reviewer = require_text(review["reviewer"], f"{label} reviewer")
+        commit_id = require_text(review["commit_id"], f"{label} commit_id")
+        if state == "PENDING" and review["submitted_at"] is None:
             # Not submitted, so no one's opinion yet; GitHub returns the reader's
-            # own with no timestamp (Sourcery on #410).
+            # own with no timestamp (Sourcery on #410). Only the timestamp may be
+            # absent: the rest is validated first (Codex on #410).
             continue
         try:
             submitted = parse_rfc3339(review["submitted_at"])
         except ValueError as exc:
             raise AssuranceCompletenessError(f"{label} submitted_at: {exc}") from exc
+        if state == "PENDING":
+            continue
         reviews.append(
             {
-                "reviewer": require_text(review["reviewer"], f"{label} reviewer"),
+                "reviewer": reviewer,
                 "state": state,
-                "commit_id": require_text(review["commit_id"], f"{label} commit_id"),
+                "commit_id": commit_id,
                 "submitted_at": submitted,
             }
         )
@@ -344,12 +349,18 @@ def _approval(
             f"{len(set(approvers))} approver(s) are required"
         )
     if independent:
+        # No self-approval, required or not (`may_approve_own_change: false`;
+        # cubic on #410). A dismissed approval is DISMISSED, so it no longer counts.
         for party in ("declarer", "author"):
-            if authorities[party] in approvers:
+            identity = authorities[party]
+            if identity in approvers:
                 reasons.append(
-                    f"{authorities[party]} is the change's {party} and cannot "
-                    "approve it"
+                    f"{identity} is the change's {party} and cannot be an approver"
                 )
+            elif any(
+                r["reviewer"] == identity and r["state"] == "APPROVED" for r in reviews
+            ):
+                reasons.append(f"{identity} is the change's {party} and approved it")
     for approver in approvers:
         latest = _latest(reviews, approver, None, by_commit=True)
         if latest is None:
