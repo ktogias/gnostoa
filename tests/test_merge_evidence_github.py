@@ -1094,7 +1094,10 @@ class EvidenceDocumentTests(unittest.TestCase):
         replies[f"{API}/pulls/300"][0]["body"] = (
             stripped + "\n<pre>\n- Work Item: #999\n</pre>\n"
         )
-        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        # A raw `<pre>` in the section can hold content, so the run fails (the
+        # owner's choice, #407 6086999580).
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
         # A fence that opens before a comment closes at its own marker, so what
         # follows renders as a visible item (Decision 0113): here a second Work
         # Item, which is ambiguous.
@@ -1217,12 +1220,13 @@ class EvidenceDocumentTests(unittest.TestCase):
         links = _evidence(_snapshot(replies))["links"]
         self.assertEqual(["#407", "#15"], links["work_items"])
 
-    def test_fields_inside_raw_html_are_not_read(self) -> None:
-        """Codex on #413: Markdown inside an unclosed HTML element, such as a
-        collapsed `<details>`, is top-level to the parser but rendered inside the
-        element by GitHub."""
+    def test_raw_html_that_can_hold_content_fails_the_run(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6086999580): GitHub may
+        render Markdown inside a raw HTML element, and HTML5 nesting is not
+        modelled, so any raw tag that can hold content before the end of the
+        section fails the run. Comments and void elements hold nothing."""
         heading = "## Change control"
-        hidden = {
+        refused = {
             "the section in details": BODY.replace(
                 heading, f"<details>\n<summary>More</summary>\n\n{heading}"
             )
@@ -1232,9 +1236,17 @@ class EvidenceDocumentTests(unittest.TestCase):
             "the heading in details": BODY.replace(
                 heading, f"<details>\n\n{heading}\n\n</details>"
             ),
+            "a closed details before": BODY.replace(
+                heading,
+                f"<details>\n<summary>Notes</summary>\n\nNotes.\n\n</details>\n\n{heading}",
+            ),
+            # Codex on #413: HTML5 closes the <p> at <details>, so the stray </p>
+            # leaves <details> open.
+            "a misnested details": BODY.replace(
+                heading, f"<p><details></p>\n\n{heading}"
+            ),
             "a self-closing details": BODY.replace(heading, f"<details/>\n\n{heading}"),
             "an inline details": BODY.replace(heading, f"Note <details>\n\n{heading}"),
-            # cubic and Codex on #413: a tag inside the field's own item.
             "a hidden span": BODY.replace(
                 "- Class: `normative`", "- <span hidden>Class: `normative`</span>"
             ),
@@ -1242,43 +1254,36 @@ class EvidenceDocumentTests(unittest.TestCase):
                 "#407, #15", "#407, <details>metadata #999</details>"
             ),
             "inline markup in a value": BODY.replace("#407, #15", "<b>#407</b>, #15"),
+            "a stray end tag": BODY.replace("#407, #15", "#407</span>, #15"),
             "a tag in the heading": BODY.replace(
                 heading, "## <span>Change control</span>"
             ),
+            "an item opening with details": BODY.replace(
+                "- Work Item: #407, #15", "- <details>Work Item: #407, #15</details>"
+            ),
         }
-        for name, body in hidden.items():
+        for name, body in refused.items():
             with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = body
                 with self.assertRaises(merge_evidence_github.MergeEvidenceError):
                     _evidence(_snapshot(replies))
-        visible = {
-            "a closed details before": BODY.replace(
-                heading,
-                f"<details>\n<summary>Notes</summary>\n\nNotes.\n\n</details>\n\n{heading}",
-            ),
+        accepted = {
             "void elements before": BODY.replace(
                 heading, f"Line<br>\n\n<img src=x>\n\n<param name=x>\n\n{heading}"
             ),
             "a comment in a value": BODY.replace(
                 "#407, #15", "#407, #15 <!-- note -->"
             ),
+            "raw HTML after the section": BODY
+            + "\n## Later\n\n<details>\n\nNotes.\n\n</details>\n",
         }
-        for name, body in visible.items():
+        for name, body in accepted.items():
             with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = body
                 links = _evidence(_snapshot(replies))["links"]
                 self.assertEqual(["#407", "#15"], links["work_items"])
-        # A `<details>` that opens an item is an HTML block, not a field, so the
-        # Work Item is not read and M14 has none.
-        replies = _replies()
-        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            "- Work Item: #407, #15", "- <details>Work Item: #407, #15</details>"
-        )
-        evidence = _evidence(_snapshot(replies))
-        self.assertEqual([], evidence["links"]["work_items"])
-        self.assertIn("M14", _failed(evidence))
 
     def test_an_item_s_field_is_its_first_paragraph(self) -> None:
         """Codex on #413, and the owner's choice (#407, 6085825905 and

@@ -208,11 +208,12 @@ provider-neutral public change-governance contract of
     first block, when that block is a paragraph: a continuation paragraph is not
     read, and an item that opens with code or HTML has no field, as the owner
     chose (#407, 6085825905). The section's heading is
-    compared by its visible text. CommonMark does not track HTML nesting, so a
-    heading or field that GitHub renders inside an open raw HTML element, such as
-    a collapsed `<details>`, fails the run. So does a heading or field containing
-    a raw HTML tag, since GitHub may hide what the tag wraps. HTML comments are
-    skipped. A field's value is its visible text and inline code: a link's
+    compared by its visible text. GitHub may render Markdown inside a raw HTML
+    element, such as a collapsed `<details>`, and CommonMark does not track HTML
+    nesting. So any raw HTML tag of an element that can hold content, anywhere
+    before the section's end, fails the run, as the owner chose over modelling
+    HTML5 nesting (#407, 6086999580). Comments and void elements, such as `<br>`,
+    hold nothing and are allowed. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
     #402 (#407, 6085478125). A Work Item is a visible `#N` in ASCII digits, as

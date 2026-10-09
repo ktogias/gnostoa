@@ -424,62 +424,46 @@ def _inline_value(token: Token) -> str:
     return "".join(parts)
 
 
-class _OpenElements(HTMLParser):
-    """The raw HTML elements open at a point in the description. CommonMark does
-    not track HTML nesting, so Markdown inside an unclosed element, such as a
-    collapsed `<details>`, is top-level to the parser while GitHub renders it
-    inside the element (Codex on #413)."""
+class _ContainerTags(HTMLParser):
+    """Whether raw HTML holds a tag of an element that can hold content: any
+    element but a void one. GitHub may render Markdown inside such an element,
+    for example a collapsed `<details>`, and HTML5 nesting, which closes and
+    reopens elements, is not modelled, so any such tag is refused (Codex on #413;
+    the owner's choice, #407 6086999580). Comments are not tags."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.open: list[str] = []
+        self.found = False
 
+    # `HTMLParser` reports `<details/>` here too, as HTML parses it.
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag not in _VOID_ELEMENTS:
-            self.open.append(tag)
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        # HTML ignores the slash: `<details/>` opens a details element.
-        self.handle_starttag(tag, attrs)
+        self.found = self.found or tag not in _VOID_ELEMENTS
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in self.open:
-            del self.open[len(self.open) - 1 - self.open[::-1].index(tag) :]
+        self.handle_starttag(tag, [])
 
 
-def _has_raw_tag(token: Token) -> bool:
-    """Whether an inline token holds a raw HTML tag. GitHub may hide what a tag
-    wraps, such as `<span hidden>` or `<details>`, so a heading or field holding
-    one is not read; comments hide only themselves (cubic and Codex on #413)."""
+def _holds_container_tag(tokens: Sequence[Token]) -> bool:
+    """Whether any raw HTML among the tokens, block or inline, holds such a
+    tag."""
 
-    return any(
-        child.type == "html_inline" and not child.content.startswith("<!--")
-        for child in token.children or []
-    )
-
-
-def _inside_raw_html(tokens: Sequence[Token]) -> list[bool]:
-    """For each token, whether a raw HTML element before it is still open."""
-
-    elements = _OpenElements()
-    inside = []
+    tags = _ContainerTags()
     for token in tokens:
-        inside.append(bool(elements.open))
         if token.type == "html_block":
-            elements.feed(token.content)
+            tags.feed(token.content)
         for child in token.children or []:
             if child.type == "html_inline":
-                elements.feed(child.content)
-    return inside
+                tags.feed(child.content)
+    tags.close()
+    return tags.found
 
 
 def _is_top_heading(token: Token, tags: tuple[str, ...]) -> bool:
     return token.type == "heading_open" and token.level == 0 and token.tag in tags
 
 
-def _section_start(tokens: Sequence[Token], inside: Sequence[bool]) -> int:
-    """The index of the one top-level `## Change control` heading, which must not
-    be inside raw HTML."""
+def _section_start(tokens: Sequence[Token]) -> int:
+    """The index of the one top-level `## Change control` heading."""
 
     starts = [
         index
@@ -495,24 +479,30 @@ def _section_start(tokens: Sequence[Token], inside: Sequence[bool]) -> int:
         raise MergeEvidenceError(
             "the description has more than one Change control section"
         )
-    if inside[starts[0]] or _has_raw_tag(tokens[starts[0] + 1]):
-        raise MergeEvidenceError("the Change control heading is in raw HTML")
     return starts[0]
 
 
-def _section_items(
-    tokens: Sequence[Token], start: int, inside: Sequence[bool]
-) -> Iterator[tuple[Token, bool]]:
-    """Each top-level list item's field, up to the next top-level h1 or h2, with
-    whether it is in raw HTML. The field is the inline token of the item's first
-    block when that is a paragraph: a continuation paragraph is not a field, as
-    the owner chose (Codex on #413; #407, 6085825905)."""
+def _section_end(tokens: Sequence[Token], start: int) -> int:
+    """The index of the next top-level h1 or h2, or the description's end."""
+
+    return next(
+        (
+            index
+            for index in range(start + 3, len(tokens))
+            if _is_top_heading(tokens[index], ("h1", "h2"))
+        ),
+        len(tokens),
+    )
+
+
+def _section_items(tokens: Sequence[Token], start: int, end: int) -> Iterator[Token]:
+    """Each top-level list item's field. The field is the inline token of the
+    item's first block when that is a paragraph: a continuation paragraph is not
+    a field, as the owner chose (Codex on #413; #407, 6085825905)."""
 
     in_list = False
-    for index in range(start + 3, len(tokens)):
+    for index in range(start + 3, end):
         token = tokens[index]
-        if _is_top_heading(token, ("h1", "h2")):
-            return
         if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
             in_list = token.type == "bullet_list_open"
         elif (
@@ -521,25 +511,28 @@ def _section_items(
             and token.level == 1
             and tokens[index + 1].type == "paragraph_open"
         ):
-            field = tokens[index + 2]
-            yield field, inside[index + 2] or _has_raw_tag(field)
+            yield tokens[index + 2]
 
 
 def _change_control_fields(body: str) -> dict[str, str]:
     """The fields of the description's one top-level `## Change control` section:
-    the items of its top-level bullet lists, up to the next top-level h1 or h2."""
+    the items of its top-level bullet lists, up to the next top-level h1 or h2.
+    Raw HTML that can hold content anywhere before the section's end fails the
+    run."""
 
     tokens = _MARKDOWN.parse(body)
-    inside = _inside_raw_html(tokens)
+    start = _section_start(tokens)
+    end = _section_end(tokens, start)
+    if _holds_container_tag(tokens[:end]):
+        raise MergeEvidenceError(
+            "raw HTML that can hold content precedes the end of the Change "
+            "control section"
+        )
     fields: dict[str, str] = {}
-    for token, hidden in _section_items(tokens, _section_start(tokens, inside), inside):
+    for token in _section_items(tokens, start, end):
         match = _FIELD.fullmatch(_inline_value(token).strip())
         if match is None:
             continue
-        if hidden:
-            raise MergeEvidenceError(
-                f"the Change control field {match.group(1)} is in raw HTML"
-            )
         if match.group(1) in fields:
             raise MergeEvidenceError(
                 f"the Change control section repeats {match.group(1)}"
