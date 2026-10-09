@@ -74,26 +74,33 @@ _CLOSING = re.compile(
 # and comments are their own tokens, never list items, so none can be a field.
 _MARKDOWN = MarkdownIt("commonmark")
 _FIELD = re.compile(r"(Class|Work Item|Decision):[ \t]*(.*)", re.DOTALL)
-# HTML's void elements, which have no content and so contain nothing.
+# The elements HTML's tree construction closes at once, so they contain nothing
+# (cubic on #413).
 _VOID_ELEMENTS = frozenset(
     {
         "area",
         "base",
+        "basefont",
+        "bgsound",
         "br",
         "col",
         "embed",
+        "frame",
         "hr",
         "img",
         "input",
+        "keygen",
         "link",
         "meta",
+        "param",
         "source",
         "track",
         "wbr",
     }
 )
+# `#N`, or a link to an issue, which keeps its repository (Codex on #413).
 _ISSUE = re.compile(
-    r"(?<![\w/])#(\d+)\b|https://github\.com/[^/\s]+/[^/\s]+/issues/(\d+)"
+    r"(?<![\w/])#(\d+)\b|https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)"
 )
 # A standalone four-digit id, or a link to a Decision record; anything else, such as
 # a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt
@@ -175,15 +182,21 @@ def load_authorities(path: Path, *, project_root: Path) -> dict[str, Any]:
     return parse_authorities(document)
 
 
+def _is_directories_segment(text: str, index: int) -> bool:
+    """Whether a leading or middle `**/` starts at `index`: gitignore's any
+    directories. Anywhere else consecutive asterisks are ordinary ones (Codex on
+    #413); a trailing `/**` needs no case, since the rule's directory suffix
+    already matches everything inside."""
+
+    return text.startswith("**/", index) and text[index - 1 : index] in ("", "/")
+
+
 def _glob(text: str) -> str:
     pattern, index = "", 0
     while index < len(text):
-        if text.startswith("**/", index):
+        if _is_directories_segment(text, index):
             pattern += "(?:.*/)?"
             index += 3
-        elif text.startswith("**", index):
-            pattern += ".*"
-            index += 2
         elif text[index] == "*":
             pattern += "[^/]*"
             index += 1
@@ -419,6 +432,17 @@ class _OpenElements(HTMLParser):
             del self.open[len(self.open) - 1 - self.open[::-1].index(tag) :]
 
 
+def _has_raw_tag(token: Token) -> bool:
+    """Whether an inline token holds a raw HTML tag. GitHub may hide what a tag
+    wraps, such as `<span hidden>` or `<details>`, so a heading or field holding
+    one is not read; comments hide only themselves (cubic and Codex on #413)."""
+
+    return any(
+        child.type == "html_inline" and not child.content.startswith("<!--")
+        for child in token.children or []
+    )
+
+
 def _inside_raw_html(tokens: Sequence[Token]) -> list[bool]:
     """For each token, whether a raw HTML element before it is still open."""
 
@@ -456,8 +480,8 @@ def _section_start(tokens: Sequence[Token], inside: Sequence[bool]) -> int:
         raise MergeEvidenceError(
             "the description has more than one Change control section"
         )
-    if inside[starts[0]]:
-        raise MergeEvidenceError("the Change control section is inside raw HTML")
+    if inside[starts[0]] or _has_raw_tag(tokens[starts[0] + 1]):
+        raise MergeEvidenceError("the Change control heading is in raw HTML")
     return starts[0]
 
 
@@ -475,7 +499,7 @@ def _section_items(
         if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
             in_list = token.type == "bullet_list_open"
         elif in_list and token.type == "inline" and token.level == 3:
-            yield token, inside[index]
+            yield token, inside[index] or _has_raw_tag(token)
 
 
 def _change_control_fields(body: str) -> dict[str, str]:
@@ -491,7 +515,7 @@ def _change_control_fields(body: str) -> dict[str, str]:
             continue
         if hidden:
             raise MergeEvidenceError(
-                f"the Change control field {match.group(1)} is inside raw HTML"
+                f"the Change control field {match.group(1)} is in raw HTML"
             )
         if match.group(1) in fields:
             raise MergeEvidenceError(
@@ -501,8 +525,24 @@ def _change_control_fields(body: str) -> dict[str, str]:
     return fields
 
 
+def _work_items(text: str, repository: str) -> list[str]:
+    """This repository's issues the field names: `#N`, or a link to one of its
+    issues. Another repository's issue is not this change's Work Item (Codex on
+    #413); whether each exists is 1b.3b's acceptance case (#407, 6085101448)."""
+
+    # The subject's repository is its URL; owner and name compare without case.
+    own = login_key(repository)
+    return _unique(
+        [
+            f"#{local or linked}"
+            for local, linked_repository, linked in _ISSUE.findall(text)
+            if local or login_key(f"https://github.com/{linked_repository}") == own
+        ]
+    )
+
+
 def _change_control(
-    body: str, decisions: frozenset[str]
+    body: str, decisions: frozenset[str], repository: str
 ) -> tuple[str, dict[str, list[str]]]:
     """The class, Work Items and Decisions from the change-request template's
     `## Change control` section (owner decision 3, #407). Examples in code blocks
@@ -513,9 +553,7 @@ def _change_control(
     change_class = fields.get("Class", "").strip()
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = _unique(
-        [f"#{a or b}" for a, b in _ISSUE.findall(fields.get("Work Item", ""))]
-    )
+    work_items = _work_items(fields.get("Work Item", ""), repository)
     linked = _unique([a or b for a, b in _DECISION.findall(fields.get("Decision", ""))])
     return change_class, {
         "work_items": work_items,
@@ -607,7 +645,9 @@ def evidence_from_snapshot(
     if provider["body_truncated"]:
         # A cut description may have lost part of its section (CodeAnt on #413).
         raise MergeEvidenceError("the pull request's description is truncated")
-    change_class, links = _change_control(provider["body"], decisions)
+    change_class, links = _change_control(
+        provider["body"], decisions, subject["repository"]
+    )
     state = "merged" if provider["merged"] else provider["state"]
     return {
         "subject": subject_of(subject),

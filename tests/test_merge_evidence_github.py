@@ -291,9 +291,15 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
         whole = _snapshot(_replies(**{COMPARE: _comparison(commits, files(299))}))
         self.assertEqual("COMPLETE", whole["coverage"]["files"]["status"])
         self.assertEqual(299, len(whole["files"]))
-        capped = _snapshot(_replies(**{COMPARE: _comparison(commits, files(300))}))
-        self.assertEqual("PARTIAL", capped["coverage"]["files"]["status"])
-        self.assertEqual("file_list_cap", capped["coverage"]["files"]["reason"])
+        # The owner accepted 300 as initial MA0's domain (#407, 6084981368).
+        for count in (300, 301):
+            with self.subTest(files=count):
+                capped = _snapshot(
+                    _replies(**{COMPARE: _comparison(commits, files(count))})
+                )
+                coverage = capped["coverage"]["files"]
+                self.assertEqual("PARTIAL", coverage["status"])
+                self.assertEqual("file_list_cap", coverage["reason"])
 
     def test_a_long_commit_message_is_bounded_and_marked(self) -> None:
         message = "x" * 70_000
@@ -484,6 +490,23 @@ class CodeOwnersTests(unittest.TestCase):
             "a/b/logs/x": ["@anylogs"],
             "scripts/run.sh": ["@runner"],
             "other/scripts/run.sh": None,
+        }
+        for path, owners in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_double_asterisks_are_special_only_as_a_segment(self) -> None:
+        """Codex on #413: gitignore's `**` matches across `/` only as a leading
+        `**/`, a middle `/**/` or a trailing `/**`; elsewhere it is `*`."""
+        text = "* @root\nfoo**bar @x\nup**/down @y\na/**/b @m\nabc/** @t\n"
+        cases = {
+            "foo/x/bar": ["@root"],
+            "fooXYbar": ["@x"],
+            "up/x/down": ["@root"],
+            "upX/down": ["@y"],
+            "a/b": ["@m"],
+            "a/x/y/b": ["@m"],
+            "abc/x/y": ["@t"],
         }
         for path, owners in cases.items():
             with self.subTest(path=path):
@@ -1012,6 +1035,21 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         self.assertEqual("normative", _evidence(_snapshot(replies))["change_class"])
 
+    def test_a_work_item_is_this_repository_s_issue(self) -> None:
+        """Codex on #413: another repository's issue is not `#N` here."""
+        cases = {
+            "https://github.com/unrelated/project/issues/999999": [],
+            "https://github.com/KTogias/Gnostoa/issues/407": ["#407"],
+            "#407 https://github.com/ktogias/gnostoa-x/issues/9": ["#407"],
+            "other/project#999": [],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual(expected, links["work_items"])
+
     def test_a_decision_link_counts_by_its_target(self) -> None:
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
@@ -1046,6 +1084,17 @@ class EvidenceDocumentTests(unittest.TestCase):
             ),
             "a self-closing details": BODY.replace(heading, f"<details/>\n\n{heading}"),
             "an inline details": BODY.replace(heading, f"Note <details>\n\n{heading}"),
+            # cubic and Codex on #413: a tag inside the field's own item.
+            "a hidden span": BODY.replace(
+                "- Class: `normative`", "- <span hidden>Class: `normative`</span>"
+            ),
+            "a value in details": BODY.replace(
+                "#407, #15", "#407, <details>metadata #999</details>"
+            ),
+            "inline markup in a value": BODY.replace("#407, #15", "<b>#407</b>, #15"),
+            "a tag in the heading": BODY.replace(
+                heading, "## <span>Change control</span>"
+            ),
         }
         for name, body in hidden.items():
             with self.subTest(name):
@@ -1059,9 +1108,11 @@ class EvidenceDocumentTests(unittest.TestCase):
                 f"<details>\n<summary>Notes</summary>\n\nNotes.\n\n</details>\n\n{heading}",
             ),
             "void elements before": BODY.replace(
-                heading, f"Line<br>\n\n<img src=x>\n\n{heading}"
+                heading, f"Line<br>\n\n<img src=x>\n\n<param name=x>\n\n{heading}"
             ),
-            "inline markup in a value": BODY.replace("#407, #15", "<b>#407</b>, #15"),
+            "a comment in a value": BODY.replace(
+                "#407, #15", "#407, #15 <!-- note -->"
+            ),
         }
         for name, body in visible.items():
             with self.subTest(name):
@@ -1069,6 +1120,15 @@ class EvidenceDocumentTests(unittest.TestCase):
                 replies[f"{API}/pulls/300"][0]["body"] = body
                 links = _evidence(_snapshot(replies))["links"]
                 self.assertEqual(["#407", "#15"], links["work_items"])
+        # A `<details>` that opens an item is an HTML block, not a field, so the
+        # Work Item is not read and M14 has none.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15", "- <details>Work Item: #407, #15</details>"
+        )
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual([], evidence["links"]["work_items"])
+        self.assertIn("M14", _failed(evidence))
 
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()

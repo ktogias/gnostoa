@@ -177,9 +177,13 @@ provider-neutral public change-governance contract of
     merged, target, default branch, author and bounded body, and its commits and
     changed files with their coverage. Both lists come from the comparison of the
     subject's exact base and head commits, which L1 already reads for the merge
-    base, so neither can be another head's. Fewer commits than the comparison's
-    total is `PARTIAL`, and an empty comparison is empty, not an error. GitHub lists at most 300 files on a comparison, so 300 or
-    more is `PARTIAL` too, and the run fails. L1 also marks each conversation
+    base, so neither can be another head's. An empty comparison is empty, not an
+    error. **The supported domain is 250 commits and 300 files.** A comparison's
+    one page holds at most 250 commits, the cap the pull request's commit list
+    had, so fewer commits than the total is `PARTIAL`. It lists at most 300
+    files, so 300 or more is `PARTIAL`, and the run fails. The owner accepted the
+    300-file domain for initial MA0, and a larger one is a separately owned
+    extension (#407, 6084981368). L1 also marks each conversation
     comment `edited` from GraphQL's `lastEditedAt`. A comment it cannot mark makes
     the conversation `PARTIAL`. The advisory's snapshot is unchanged.
   - The project root is a checkout of the protected target, whose change policy,
@@ -195,7 +199,7 @@ provider-neutral public change-governance contract of
     roster (owner decision 2 on #407). A rule whose owners include no rostered
     person fails the run. The CODEOWNERS reader follows GitHub's documented
     rules, inline comments and ownerless rules included, and refuses the syntax
-    GitHub skips.
+    GitHub skips. As in gitignore, `**` is special only as a whole segment.
   - The class, Work Item and Decision come from the change-request template's
     `## Change control` fields (owner decision 3), read as CommonMark ([Decision
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
@@ -203,7 +207,12 @@ provider-neutral public change-governance contract of
     so code, HTML blocks and comments are never fields. The section's heading is
     compared by its visible text. CommonMark does not track HTML nesting, so a
     heading or field that GitHub renders inside an open raw HTML element, such as
-    a collapsed `<details>`, fails the run. A Decision counts only when the
+    a collapsed `<details>`, fails the run. So does a heading or field containing
+    a raw HTML tag, since GitHub may hide what the tag wraps. HTML comments are
+    skipped. A Work Item is `#N` or a link to an issue of the subject's own
+    repository; another repository's issue is not counted. Whether each exists,
+    as an issue rather than a pull request, is 1b.3b's acceptance case. It must
+    be closed before 1b.4 activates the gate (#407, 6085101448 and 6085110011). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The
