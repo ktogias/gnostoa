@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess  # nosec B404 -- test-only: runs the command under a real pipe
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -628,6 +631,46 @@ class CommandTests(unittest.TestCase):
                 code = assurance_completeness.main(["--project-root", str(root)])
         self.assertEqual(2, code)
         self.assertIn("BrokenPipeError", err.getvalue())
+
+    def test_a_closed_pipe_exits_two(self) -> None:
+        """Claude on #408: on a pipe, stdout is block-buffered, so `print` returns
+        and the write fails in the flush at shutdown, after `main` has returned:
+        Python then exits 120. Run for real, with stdout a pipe whose reader has
+        already gone."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "policy").mkdir()
+            (root / "policy" / "assurance-evidence.yaml").write_text(
+                json.dumps(DECLARATION), encoding="utf-8"
+            )
+            reader, writer = os.pipe()
+            os.close(reader)
+            environment = {
+                key: value
+                for key, value in os.environ.items()
+                if key != "PYTHONUNBUFFERED"
+            }
+            environment["PYTHONPATH"] = str(ROOT)
+            try:
+                completed = subprocess.run(  # nosec B603 -- the interpreter running this test
+                    [
+                        sys.executable,
+                        "-m",
+                        "tools.cli",
+                        "assurance-check",
+                        "--project-root",
+                        str(root),
+                    ],
+                    input=_payload(_complete()).encode("utf-8"),
+                    stdout=writer,
+                    stderr=subprocess.PIPE,
+                    env=environment,
+                    check=False,
+                    timeout=60,
+                )
+            finally:
+                os.close(writer)
+        self.assertEqual(2, completed.returncode, completed.stderr.decode())
 
     def test_unhashable_input_exits_two_without_a_traceback(self) -> None:
         text = json.dumps(

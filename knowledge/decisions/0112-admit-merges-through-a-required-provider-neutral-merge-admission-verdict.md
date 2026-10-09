@@ -133,6 +133,11 @@ provider-neutral public change-governance contract of
 - **While an item has no producer, the reducer reports it `MISSING`.** SonarCloud's
   inventory is one such item until 1b.3. So once the check is required, a merge
   waits for its evidence rather than passing without it.
+- **SB2 grows by two files.** `knowledge assurance-check` is a supported entrypoint, so
+  `tools/assurance_completeness.py` and the vocabulary it imports,
+  `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).
+  Under [Decision 0035](0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md),
+  the next OCI candidate's G3 re-binding replays the affected boundary for them.
 - **More owner configuration** is needed by 1b.3 and 1b.4: `SONAR_TOKEN`, the
   `gnostoa-ma0` App and its environment, and the requirement in R-main.
 

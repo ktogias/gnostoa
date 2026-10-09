@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections.abc import Mapping
@@ -393,6 +394,19 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _discard_stdout() -> None:
+    """Point standard output at the null device after a broken pipe, as Python's
+    `signal` documentation recommends, so the flush at shutdown cannot fail again
+    and turn exit 2 into 120."""
+
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null, sys.stdout.fileno())
+    except (OSError, ValueError):
+        # A stream without a file descriptor has nothing left to flush to a pipe.
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -410,9 +424,12 @@ def main(argv: list[str] | None = None) -> int:
             change_class=payload["change_class"],
             receipts=payload["receipts"],
         )
-        # Written inside the guard too: a broken pipe is a failed run (cubic on
-        # #408).
+        # Written and flushed inside the guard, so a broken pipe is a failed run
+        # (cubic and Claude on #408). On a pipe, stdout is block-buffered: without
+        # the flush the write fails at shutdown, after main returned, and Python
+        # exits 120.
         print(json.dumps(verdict, indent=2, sort_keys=True))
+        sys.stdout.flush()
     except AssuranceCompletenessError as exc:
         print(f"assurance-check: {exc}", file=sys.stderr)
         return 2
@@ -427,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
         # Whatever else fails is a failed run, never a verdict: Python's own exit
         # 1 for an uncaught exception would read as INCOMPLETE (#408).
         # RuntimeError includes RecursionError.
+        if isinstance(exc, BrokenPipeError):
+            _discard_stdout()
         print(f"assurance-check: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     return 0 if verdict["status"] == "COMPLETE" else 1
