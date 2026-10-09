@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 ROOT = Path(__file__).resolve().parents[1]
 PINS = {
@@ -37,8 +38,22 @@ def _entry(lock: str, name: str, version: str) -> str:
     return match.group(0)
 
 
+def _visible(token: Token) -> str:
+    """An inline token's rendered text: its text and code spans, with soft breaks
+    as newlines. Inline HTML, comments included, renders as nothing (cubic and
+    CodeAnt on #414)."""
+
+    parts = []
+    for child in token.children or []:
+        if child.type in ("text", "code_inline"):
+            parts.append(child.content)
+        elif child.type in ("softbreak", "hardbreak"):
+            parts.append("\n")
+    return "".join(parts)
+
+
 def _list_item_texts(markdown: str) -> list[str]:
-    """The inline text of every list item the parser finds."""
+    """The rendered text of every list item the parser finds."""
 
     tokens = MarkdownIt("commonmark").parse(markdown)
     texts, depth = [], 0
@@ -48,7 +63,7 @@ def _list_item_texts(markdown: str) -> list[str]:
         elif token.type == "list_item_close":
             depth -= 1
         elif depth and token.type == "inline":
-            texts.append(token.content)
+            texts.append(_visible(token))
     return texts
 
 
@@ -91,6 +106,7 @@ class CommonMarkPropertyTests(unittest.TestCase):
             "div block": f"<div>\n{FIELD}\n</div>\n",
             "comment": f"<!--\n{FIELD}\n-->\n",
             "unclosed comment": f"<!--\n{FIELD}\n",
+            "inline comment in an item": "- Note <!-- Work Item: #999 -->\n",
         }
         for name, markdown in cases.items():
             with self.subTest(name):
