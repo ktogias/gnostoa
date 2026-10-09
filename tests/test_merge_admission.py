@@ -124,9 +124,10 @@ def _verdict(evidence: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _verdict_steps(reviewers: int) -> int:
+def _verdict_steps(reviewers: int) -> tuple[int, dict[str, Any]]:
     """The line events the verdict's own module executes for `reviewers` distinct
-    reviewers: a deterministic measure of its work, unlike a clock."""
+    reviewers, a deterministic measure of its work unlike a clock, and the
+    verdict."""
 
     evidence = _evidence()
     evidence["reviews"] += [
@@ -153,11 +154,11 @@ def _verdict_steps(reviewers: int) -> int:
     previous = sys.gettrace()
     sys.settrace(tracer)
     try:
-        _verdict(evidence)
+        verdict = _verdict(evidence)
     finally:
         # Restored, so a coverage tracer keeps measuring the rest of the suite.
         sys.settrace(previous)
-    return steps
+    return steps, verdict
 
 
 def _failed(verdict: dict[str, Any]) -> dict[str, list[str]]:
@@ -522,8 +523,11 @@ class MergeAdmissionTests(unittest.TestCase):
         two minutes at the input bound. cubic on #410: a wall-clock bound is not
         deterministic, so the work is counted instead. Four times the reviewers
         must cost about four times the steps, not sixteen."""
-        small, large = _verdict_steps(250), _verdict_steps(1_000)
+        (small, few), (large, many) = _verdict_steps(250), _verdict_steps(1_000)
         self.assertLess(large / small, 6, (small, large))
+        # The work counted is the work of a correct verdict (cubic on #410).
+        for verdict in (few, many):
+            self.assertEqual("ALLOW", verdict["status"], _failed(verdict))
 
     def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
         evidence = _evidence()
