@@ -216,7 +216,8 @@ provider-neutral public change-governance contract of
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
     #402 (#407, 6085478125). A Work Item is `#N` or the URL of an issue of the
-    subject's own repository; another repository's issue is not counted. A
+    subject's own repository, its number in ASCII digits; another repository's
+    issue is not counted. A
     visible `#N` whose link points elsewhere is still read as `#N`. Whether a
     link's label and target agree, its reference integrity, is a proposed 1b.3b
     acceptance case, distinct from existence and pending the owner's admission.
@@ -233,8 +234,8 @@ provider-neutral public change-governance contract of
     issue linked by hand in the Development sidebar closes on merge too, so L1
     also reads GraphQL's `closingIssuesReferences`, through the same pager and in
     each readback pass. Each listed issue is found, and M12's coverage is
-    `COMPLETE` only when that read, the commit list and every message are (#407,
-    6086122133). Whether the relation can change after the verdict, with the
+    `COMPLETE` only when that read and the commit list are complete and no
+    commit message is truncated (#407, 6086122133). Whether the relation can change after the verdict, with the
     head unchanged, is 1b.4's and 1b.5's concern (#407, 6086106156).
   - The protected target is the repository's default branch, which the change
     policy declares protected.

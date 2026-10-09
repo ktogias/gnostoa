@@ -101,9 +101,11 @@ _VOID_ELEMENTS = frozenset(
 # `#N`, or an issue's URL, which keeps its repository (Codex on #413); the scheme
 # and host compare without case, as the owner and name do (Claude on #413), and
 # only ASCII letters fold, so a lookalike host is not GitHub (cubic on #413). The
-# number ends at a boundary, as `#N`'s does (Codex on #413).
+# number is ASCII digits (CodeAnt on #413) and ends at a boundary, as `#N`'s does
+# (Codex on #413).
 _ISSUE = re.compile(
-    r"(?<![\w/])#(\d+)\b|(?ai:https://github\.com/)([^/\s]+/[^/\s]+)/issues/(\d+)\b"
+    r"(?<![\w/])#([0-9]+)\b"
+    r"|(?ai:https://github\.com/)([^/\s]+/[^/\s]+)/issues/([0-9]+)\b"
 )
 # A standalone four-digit id, or a link to a Decision record; anything else, such as
 # a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt

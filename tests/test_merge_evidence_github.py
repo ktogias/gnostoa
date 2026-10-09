@@ -1160,6 +1160,9 @@ class EvidenceDocumentTests(unittest.TestCase):
             # Codex on #413: the number must end at a boundary, as `#N` does.
             "https://github.com/ktogias/gnostoa/issues/407junk": [],
             "https://github.com/ktogias/gnostoa/issues/407#issuecomment-1": ["#407"],
+            # CodeAnt on #413: an issue number is ASCII digits.
+            "#\u0661": [],
+            "https://github.com/ktogias/gnostoa/issues/\u0661": [],
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
