@@ -811,6 +811,15 @@ class EvidenceDocumentTests(unittest.TestCase):
         self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
         self.assertIn("M12", _failed(_evidence(snapshot)))
 
+    def test_a_missing_title_is_not_complete_coverage(self) -> None:
+        """CodeAnt on #413: L1 records a missing title as None, and its keywords
+        were then never read while M12 reported COMPLETE."""
+        replies = _replies()
+        del replies[f"{API}/pulls/300"][0]["title"]
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual("PARTIAL", evidence["closing_references"]["coverage"])
+        self.assertIn("M12", _failed(evidence))
+
     def test_words_that_are_not_closing_keywords_are_not_references(self) -> None:
         for text in (
             "Refs #407",
@@ -1275,6 +1284,10 @@ class EvidenceDocumentTests(unittest.TestCase):
             "a comment in a value": BODY.replace(
                 "#407, #15", "#407, #15 <!-- note -->"
             ),
+            # A comment renders as nothing, so the text around it joins.
+            "a comment inside a number": BODY.replace(
+                "#407, #15", "#4<!-- x -->07, #15"
+            ),
             "raw HTML after the section": BODY
             + "\n## Later\n\n<details>\n\nNotes.\n\n</details>\n",
         }
@@ -1284,6 +1297,16 @@ class EvidenceDocumentTests(unittest.TestCase):
                 replies[f"{API}/pulls/300"][0]["body"] = body
                 links = _evidence(_snapshot(replies))["links"]
                 self.assertEqual(["#407", "#15"], links["work_items"])
+
+    def test_a_void_element_separates_a_value_s_text(self) -> None:
+        """cubic on #413: `#40<br>7` renders as `#40` and a `7` on the next line,
+        so it is not `#407`."""
+        for text, expected in (("#40<br>7", ["#40"]), ("#40<img src=x>7", ["#40"])):
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual(expected, links["work_items"])
 
     def test_an_item_s_field_is_its_first_paragraph(self) -> None:
         """Codex on #413, and the owner's choice (#407, 6085825905 and

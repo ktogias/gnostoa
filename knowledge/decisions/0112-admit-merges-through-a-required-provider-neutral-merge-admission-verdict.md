@@ -213,7 +213,8 @@ provider-neutral public change-governance contract of
     nesting. So any raw HTML tag of an element that can hold content, anywhere
     before the section's end, fails the run, as the owner chose over modelling
     HTML5 nesting (#407, 6086999580). Comments and void elements, such as `<br>`,
-    hold nothing and are allowed. A field's value is its visible text and inline code: a link's
+    hold nothing and are allowed. In a value, as in its rendering, a comment
+    joins the text around it and a void element separates it. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
     #402 (#407, 6085478125). A Work Item is a visible `#N` in ASCII digits, as
@@ -233,8 +234,8 @@ provider-neutral public change-governance contract of
     issue linked by hand in the Development sidebar closes on merge too, so L1
     also reads GraphQL's `closingIssuesReferences`, through the same pager and in
     each readback pass. Each listed issue is found, and M12's coverage is
-    `COMPLETE` only when that read and the commit list are complete and no
-    commit message is truncated (#407, 6086122133). Whether the relation can change after the verdict, with the
+    `COMPLETE` only when that read and the commit list are complete, the title
+    was read, and no commit message is truncated (#407, 6086122133). Whether the relation can change after the verdict, with the
     head unchanged, is 1b.4's and 1b.5's concern (#407, 6086106156).
   - The protected target is the repository's default branch, which the change
     policy declares protected.

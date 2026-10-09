@@ -357,7 +357,11 @@ def _closing_references(
     linked by hand (Codex on #413; #407, 6086122133). The coverage is COMPLETE
     only when every source is."""
 
-    surfaces = [("title", subject.get("title") or ""), ("body", subject["body"])]
+    title = subject.get("title")
+    surfaces = [
+        ("title", title if isinstance(title, str) else ""),
+        ("body", subject["body"]),
+    ]
     surfaces += [(f"commit {c['sha']}", c["message"]) for c in commits]
     found = [
         {"surface": surface, "reference": match.group(2)}
@@ -376,6 +380,9 @@ def _closing_references(
         coverage = commit_coverage
     elif issue_coverage != "COMPLETE":
         coverage = issue_coverage
+    elif not isinstance(title, str):
+        # L1 had no title, so its keywords were not read (CodeAnt on #413).
+        coverage = "PARTIAL"
     elif any(c["message_truncated"] for c in commits):
         coverage = "PARTIAL"
     else:
@@ -419,7 +426,11 @@ def _inline_value(token: Token) -> str:
     for child in token.children or []:
         if child.type in ("text", "code_inline"):
             parts.append(child.content)
-        elif child.type in ("softbreak", "hardbreak"):
+        elif child.type in ("softbreak", "hardbreak") or (
+            # A void element, such as `<br>`, renders between the text around it,
+            # while a comment renders as nothing (cubic on #413).
+            child.type == "html_inline" and not child.content.startswith("<!--")
+        ):
             parts.append(" ")
     return "".join(parts)
 
