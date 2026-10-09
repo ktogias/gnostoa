@@ -570,7 +570,8 @@ class CommandTests(unittest.TestCase):
         code that means INCOMPLETE."""
 
         class _Unreadable:
-            def read(self, _size: int = -1) -> bytes:
+            @staticmethod
+            def read(_size: int = -1) -> bytes:
                 raise OSError("input/output error")
 
         class _Stdin:
@@ -600,6 +601,33 @@ class CommandTests(unittest.TestCase):
                 code, output = _run(_payload(_complete()))
                 self.assertEqual(2, code)
                 self.assertIn(type(error).__name__, output)
+
+    def test_a_failed_write_of_the_verdict_exits_two(self) -> None:
+        """cubic on #408: the verdict was written after the guarded block, so a
+        broken pipe escaped with exit 1, the code that means INCOMPLETE."""
+
+        class _Closed(io.StringIO):
+            def write(self, _text: str) -> int:
+                raise BrokenPipeError("broken pipe")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "policy").mkdir()
+            (root / "policy" / "assurance-evidence.yaml").write_text(
+                json.dumps(DECLARATION), encoding="utf-8"
+            )
+            stdin = io.TextIOWrapper(
+                io.BytesIO(_payload(_complete()).encode("utf-8")), encoding="utf-8"
+            )
+            err = io.StringIO()
+            with (
+                patch("sys.stdin", stdin),
+                patch("sys.stdout", _Closed()),
+                redirect_stderr(err),
+            ):
+                code = assurance_completeness.main(["--project-root", str(root)])
+        self.assertEqual(2, code)
+        self.assertIn("BrokenPipeError", err.getvalue())
 
     def test_unhashable_input_exits_two_without_a_traceback(self) -> None:
         text = json.dumps(

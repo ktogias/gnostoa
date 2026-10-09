@@ -410,13 +410,15 @@ def main(argv: list[str] | None = None) -> int:
             change_class=payload["change_class"],
             receipts=payload["receipts"],
         )
+        # Written inside the guard too: a broken pipe is a failed run (cubic on
+        # #408).
+        print(json.dumps(verdict, indent=2, sort_keys=True))
     except AssuranceCompletenessError as exc:
         print(f"assurance-check: {exc}", file=sys.stderr)
         return 2
     except (
         OSError,
         RuntimeError,
-        RecursionError,
         TypeError,
         ValueError,
         LookupError,
@@ -424,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         # Whatever else fails is a failed run, never a verdict: Python's own exit
         # 1 for an uncaught exception would read as INCOMPLETE (#408).
+        # RuntimeError includes RecursionError.
         print(f"assurance-check: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps(verdict, indent=2, sort_keys=True))
     return 0 if verdict["status"] == "COMPLETE" else 1

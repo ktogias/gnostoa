@@ -657,6 +657,8 @@ guardrails:
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_executed_scope_smaller_than_configured_is_incomplete
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_every_status_but_complete_fails_closed
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_disagreeing_receipts_fail_closed_at_the_worse_status
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_a_current_receipt_outranks_a_stale_one
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_only_requirements_for_the_class_apply
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_receipts_for_another_change_are_ignored_and_counted
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_no_applicable_requirement_is_incomplete
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_receipt_statuses_reuse_the_existing_coverage_vocabularies
@@ -669,6 +671,7 @@ guardrails:
       - tests/test_assurance_completeness.py::CommandTests.test_input_that_is_not_utf_8_exits_two
       - tests/test_assurance_completeness.py::CommandTests.test_input_over_the_bound_exits_two_unread
       - tests/test_assurance_completeness.py::CommandTests.test_a_failed_read_of_standard_input_exits_two
+      - tests/test_assurance_completeness.py::CommandTests.test_a_failed_write_of_the_verdict_exits_two
       - tests/test_assurance_completeness.py::CommandTests.test_no_failure_exits_as_a_verdict_would
       - tests/test_assurance_completeness.py::DeclarationTests.test_keys_that_are_not_strings_are_refused
       - tests/test_assurance_completeness.py::DeclarationTests.test_a_declaration_that_cannot_be_resolved_is_refused
