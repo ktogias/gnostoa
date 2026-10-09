@@ -25,8 +25,10 @@ from .assurance_completeness import (
     parse_change_class,
     parse_subject,
     require_closed_keys,
+    require_commit,
     require_mapping,
     require_text,
+    require_unique_texts,
 )
 from .check_change_policy import change_policy_issues, load_change_policy
 from .knowledge_common import KnowledgeFormatError
@@ -118,7 +120,7 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
         commit_id = (
             None
             if review["commit_id"] is None
-            else require_text(review["commit_id"], f"{label} commit_id")
+            else require_commit(review["commit_id"], f"{label} commit_id")
         )
         if state == "PENDING" and review["submitted_at"] is None:
             # Not submitted, so no one's opinion yet; GitHub returns the reader's
@@ -205,7 +207,10 @@ def _candidate(evidence: Mapping[str, Any], head: str, declarer: str) -> dict[st
         reasons.append(
             f"the candidate is declared by {candidate['declarer']!r}, not {declarer!r}"
         )
-    if require_text(candidate["head_commit"], "declared_candidate head_commit") != head:
+    if (
+        require_commit(candidate["head_commit"], "declared_candidate head_commit")
+        != head
+    ):
         reasons.append("the declared candidate is not the head")
     return _criterion("M9", reasons)
 
@@ -350,10 +355,10 @@ def _approval(
     reasons = []
     # The class's minimum alone decides whether an empty list suffices: the core
     # policy requires no approval (Codex on #410).
-    if len(set(approvers)) < minimum:
+    if len(approvers) < minimum:
         reasons.append(
             f"the class needs {minimum} approval(s), and "
-            f"{len(set(approvers))} approver(s) are named"
+            f"{len(approvers)} approver(s) are named"
         )
     if independent:
         # No self-approval, required or not (`may_approve_own_change: false`;
@@ -394,8 +399,12 @@ def evaluate(
     require_closed_keys(authorities, "authorities", _AUTHORITY_KEYS)
     declarer = require_text(authorities["declarer"], "authorities declarer")
     author = require_text(authorities["author"], "authorities author")
-    approvers = _texts(
-        authorities["required_approvers"], "authorities required_approvers"
+    # Distinct, or a repeat would be corrupt evidence that rescans the same
+    # reviews (Codex on #410); empty when the class requires none.
+    approvers = require_unique_texts(
+        authorities["required_approvers"],
+        "authorities required_approvers",
+        allow_empty=True,
     )
     reviews = _reviews(document["reviews"])
     trust_roots = _texts(document["trust_root_changes"], "trust_root_changes")

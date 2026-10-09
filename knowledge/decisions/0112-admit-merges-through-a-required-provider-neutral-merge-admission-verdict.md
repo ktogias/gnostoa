@@ -144,8 +144,9 @@ provider-neutral public change-governance contract of
   denies unless their coverage is complete and none is found. The approval rule is
   runbook step 8's: each required approver's latest review, of any state, approves
   the exact head. A pending review is not submitted and is ignored. A review's
-  commit may be null, as GitHub reports it once the commit is garbage-collected or
-  force-deleted, and such a review approves no head. Timestamps are compared in
+  commit is an exact SHA, as the subject's is, or null, as GitHub reports it once
+  the commit is garbage-collected or force-deleted; a null commit approves no
+  head. The required approvers are distinct. Timestamps are compared in
   whole seconds. Reviews by one reviewer that share the latest second and disagree
   in what a criterion reads (the opinion for M11, the opinion and commit for M16)
   have no order, so they deny. Mapping a deleted account, GitHub's null `user`, to

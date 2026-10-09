@@ -118,8 +118,10 @@ def _identifier(value: object, label: str) -> str:
     return text
 
 
-def require_unique_texts(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or not value:
+def require_unique_texts(
+    value: object, label: str, *, allow_empty: bool = False
+) -> list[str]:
+    if not isinstance(value, list) or not (value or allow_empty):
         raise AssuranceCompletenessError(f"{label} must be a non-empty list")
     items = [require_text(item, label) for item in value]
     if len(set(items)) != len(items):
@@ -192,6 +194,15 @@ def load_declaration(path: Path, *, project_root: Path) -> dict[str, Any]:
     return parse_declaration(document)
 
 
+def require_commit(value: object, label: str) -> str:
+    """An exact commit identity: 40 lowercase hexadecimal characters."""
+
+    commit = require_text(value, label)
+    if _SHA40.fullmatch(commit) is None:
+        raise AssuranceCompletenessError(f"{label} must be an exact 40-character SHA")
+    return commit
+
+
 def parse_subject(value: object, label: str) -> dict[str, Any]:
     subject = require_mapping(value, label)
     require_closed_keys(subject, label, _SUBJECT_KEYS)
@@ -199,11 +210,7 @@ def parse_subject(value: object, label: str) -> dict[str, Any]:
         subject["change_request"], f"{label} change_request"
     )
     require_closed_keys(change_request, f"{label} change_request", _CHANGE_REQUEST_KEYS)
-    head = require_text(subject["head_commit"], f"{label} head_commit")
-    if _SHA40.fullmatch(head) is None:
-        raise AssuranceCompletenessError(
-            f"{label} head_commit must be an exact 40-character SHA"
-        )
+    head = require_commit(subject["head_commit"], f"{label} head_commit")
     return {
         "repository": require_text(subject["repository"], f"{label} repository"),
         "change_request": {

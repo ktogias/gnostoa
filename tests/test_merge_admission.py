@@ -4,8 +4,8 @@ import copy
 import io
 import json
 import os
+import sys
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -122,6 +122,42 @@ def _verdict(evidence: dict[str, Any]) -> dict[str, Any]:
     return merge_admission.evaluate(
         evidence, declaration=declaration, change_policy=POLICY
     )
+
+
+def _verdict_steps(reviewers: int) -> int:
+    """The line events the verdict's own module executes for `reviewers` distinct
+    reviewers: a deterministic measure of its work, unlike a clock."""
+
+    evidence = _evidence()
+    evidence["reviews"] += [
+        {
+            "reviewer": f"reviewer-{index}",
+            "state": "COMMENTED",
+            "commit_id": HEAD,
+            "submitted_at": "2026-10-09T09:00:00Z",
+        }
+        for index in range(reviewers)
+    ]
+    target = merge_admission.__file__
+    steps = 0
+
+    def local(_frame: Any, event: str, _arg: Any) -> Any:
+        nonlocal steps
+        if event == "line":
+            steps += 1
+        return local
+
+    def tracer(frame: Any, _event: str, _arg: Any) -> Any:
+        return local if frame.f_code.co_filename == target else None
+
+    previous = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        _verdict(evidence)
+    finally:
+        # Restored, so a coverage tracer keeps measuring the rest of the suite.
+        sys.settrace(previous)
+    return steps
 
 
 def _failed(verdict: dict[str, Any]) -> dict[str, list[str]]:
@@ -441,6 +477,32 @@ class MergeAdmissionTests(unittest.TestCase):
         evidence["reviews"][0]["commit_id"] = None
         self.assertDenied(evidence, "M16")
 
+    def test_a_commit_is_an_exact_sha_or_null(self) -> None:
+        """Codex on #410: any non-empty string passed as a review's commit, or as
+        the declared candidate's, though the subject's must be an exact SHA."""
+        for commit in ("not-a-sha", "A" * 40, "a" * 39):
+            with self.subTest(review_commit=commit):
+                evidence = _evidence()
+                evidence["reviews"].append(
+                    {
+                        "reviewer": "bot-reviewer",
+                        "state": "COMMENTED",
+                        "commit_id": commit,
+                        "submitted_at": "2026-10-09T09:10:00Z",
+                    }
+                )
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _verdict(evidence)
+            with self.subTest(declared_commit=commit):
+                evidence = _evidence()
+                evidence["declared_candidate"]["head_commit"] = commit
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _verdict(evidence)
+
     def test_a_tie_is_the_same_second_whatever_its_fraction(self) -> None:
         """CodeAnt on #410: fractions ordered two opinions inside one second,
         which the rule says have no order."""
@@ -456,23 +518,12 @@ class MergeAdmissionTests(unittest.TestCase):
         self.assertDenied(evidence, "M16")
 
     def test_many_reviewers_are_evaluated_in_linear_time(self) -> None:
-        """CodeAnt on #410: each reviewer rescanned every review. Measured on
-        be0fab1: 0.04 s, 0.14 s and 0.58 s for 1,000, 2,000 and 4,000
-        reviewers, about two minutes at the input bound."""
-        evidence = _evidence()
-        evidence["reviews"] += [
-            {
-                "reviewer": f"reviewer-{index}",
-                "state": "COMMENTED",
-                "commit_id": HEAD,
-                "submitted_at": "2026-10-09T09:00:00Z",
-            }
-            for index in range(20_000)
-        ]
-        start = time.perf_counter()
-        verdict = _verdict(evidence)
-        self.assertLess(time.perf_counter() - start, 5.0)
-        self.assertEqual("ALLOW", verdict["status"])
+        """CodeAnt on #410: each reviewer rescanned every review, which took about
+        two minutes at the input bound. cubic on #410: a wall-clock bound is not
+        deterministic, so the work is counted instead. Four times the reviewers
+        must cost about four times the steps, not sixteen."""
+        small, large = _verdict_steps(250), _verdict_steps(1_000)
+        self.assertLess(large / small, 6, (small, large))
 
     def test_the_same_review_repeated_in_one_second_is_not_ambiguous(self) -> None:
         evidence = _evidence()
@@ -567,6 +618,14 @@ class MergeAdmissionTests(unittest.TestCase):
         )
         self.assertNotIn("M16", _failed(verdict))
         self.assertEqual("ALLOW", verdict["status"], _failed(verdict))
+
+    def test_m16_a_repeated_required_approver_is_refused(self) -> None:
+        """Codex on #410: each repeat rescanned the approver's reviews, which is
+        quadratic, and a repeated identity is corrupt evidence."""
+        evidence = _evidence()
+        evidence["authorities"]["required_approvers"] = ["owner", "owner"]
+        with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
+            _verdict(evidence)
 
     def test_m16_no_required_approver_denies(self) -> None:
         evidence = _evidence()
