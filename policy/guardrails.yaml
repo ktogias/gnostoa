@@ -814,7 +814,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_html_and_code_spans_follow_commonmark
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_section_is_the_top_level_heading_and_its_own_items
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_value_is_its_visible_text
-      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_void_element_separates_a_value_s_text
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_raw_html_in_a_field_fails_the_run
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_item_s_field_is_its_first_paragraph
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_two_change_control_sections_are_ambiguous
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_logins_compare_without_case

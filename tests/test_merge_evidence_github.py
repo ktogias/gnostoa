@@ -1298,15 +1298,26 @@ class EvidenceDocumentTests(unittest.TestCase):
                 links = _evidence(_snapshot(replies))["links"]
                 self.assertEqual(["#407", "#15"], links["work_items"])
 
-    def test_a_void_element_separates_a_value_s_text(self) -> None:
-        """cubic on #413: `#40<br>7` renders as `#40` and a `7` on the next line,
-        so it is not `#407`."""
-        for text, expected in (("#40<br>7", ["#40"]), ("#40<img src=x>7", ["#40"])):
-            with self.subTest(text=text):
+    def test_raw_html_in_a_field_fails_the_run(self) -> None:
+        """cubic and Codex on #413, and the owner's choice (#407, 6087507517): how
+        a void element renders differs, `<wbr>` joining and `<br>` breaking, so a
+        field holding raw HTML other than a comment fails the run. A comment
+        renders as nothing, and the text around it joins."""
+        for text in ("#40<br>7", "#40<wbr>7", "#40<img src=x>7", "#40<meta>7"):
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
-                links = _evidence(_snapshot(replies))["links"]
-                self.assertEqual(expected, links["work_items"])
+                _evidence(_snapshot(replies))
+        # A void element in an item that is not a field is unaffected.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "@ktogias", "@ktogias<br>"
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
 
     def test_an_item_s_field_is_its_first_paragraph(self) -> None:
         """Codex on #413, and the owner's choice (#407, 6085825905 and

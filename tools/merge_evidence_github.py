@@ -426,11 +426,7 @@ def _inline_value(token: Token) -> str:
     for child in token.children or []:
         if child.type in ("text", "code_inline"):
             parts.append(child.content)
-        elif child.type in ("softbreak", "hardbreak") or (
-            # A void element, such as `<br>`, renders between the text around it,
-            # while a comment renders as nothing (cubic on #413).
-            child.type == "html_inline" and not child.content.startswith("<!--")
-        ):
+        elif child.type in ("softbreak", "hardbreak"):
             parts.append(" ")
     return "".join(parts)
 
@@ -544,6 +540,17 @@ def _change_control_fields(body: str) -> dict[str, str]:
         match = _FIELD.fullmatch(_inline_value(token).strip())
         if match is None:
             continue
+        if any(
+            child.type == "html_inline" and not child.content.startswith("<!--")
+            for child in token.children or []
+        ):
+            # How a void element renders differs, `<wbr>` joining and `<br>`
+            # breaking, so a field holding one is not read (cubic and Codex on
+            # #413; the owner's choice, #407 6087507517). A comment renders as
+            # nothing, so the text around it joins.
+            raise MergeEvidenceError(
+                f"the Change control field {match.group(1)} holds raw HTML"
+            )
         if match.group(1) in fields:
             raise MergeEvidenceError(
                 f"the Change control section repeats {match.group(1)}"
