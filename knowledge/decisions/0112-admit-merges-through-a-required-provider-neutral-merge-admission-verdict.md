@@ -123,7 +123,7 @@ provider-neutral public change-governance contract of
   | Slice | Contents | Status |
   |---|---|---|
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
-  | 1b.2 | the verdict | not yet admitted |
+  | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3 | the GitHub adapter and SonarCloud's inventory | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
@@ -133,6 +133,19 @@ provider-neutral public change-governance contract of
 - **While an item has no producer, the reducer reports it `MISSING`.** SonarCloud's
   inventory is one such item until 1b.3. So once the check is required, a merge
   waits for its evidence rather than passing without it.
+- **The verdict's input is a normalized evidence document,** which the GitHub
+  adapter (1b.3) produces. It names the change's subject and lifecycle, its class
+  and links, the declared candidate, the declarer and the required approvers, the
+  reviews, the threads, the closing references, the new suppressions, the
+  trust-root changes, and the receipts for the reducer. Finding closing references
+  is the adapter's job, since the keyword syntax is the provider's. The verdict
+  denies unless their coverage is complete and none is found. The approval rule is
+  runbook step 8's: each required approver's latest review, of any state, approves
+  the exact head.
+- **The two commands share one command-line boundary,** `tools/verdict_cli.py`,
+  factored from 1b.1's: bounded strict input on standard input, the project-root
+  confinement, the write and flush inside the guard, and exit 2 for every failed
+  run. Slice 1b.2 adds both of its files to SB2 (21 → 23).
 - **SB2 grows by two files.** `knowledge assurance-check` is a supported entrypoint, so
   `tools/assurance_completeness.py` and the vocabulary it imports,
   `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).

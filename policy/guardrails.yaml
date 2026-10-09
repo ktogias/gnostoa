@@ -682,6 +682,41 @@ guardrails:
       - tests/test_assurance_completeness.py::GnostoaDeclarationTests.test_gnostoa_declares_the_merge_evidence_for_every_merging_class
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
+  - id: merge-admission-verdict
+    title: A merge is admitted only when every criterion holds for the exact head, and unknown evidence denies
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
+    implementation:
+      - tools/merge_admission.py
+      - tools/verdict_cli.py
+      - tools/assurance_completeness.py
+      - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+    tests:
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_converged_change_is_allowed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_an_approval_of_the_previous_head_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_b_incomplete_evidence_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_c_unknown_coverage_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_e_an_emergency_is_never_allowed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_f_equivalent_evidence_gets_the_same_verdict_on_any_provider
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m1_a_draft_closed_or_retargeted_change_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m9_the_seal_must_name_the_head_from_the_declarer
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m10_an_unresolved_thread_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m11_an_effective_request_for_changes_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m12_a_closing_reference_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m13_an_unjustified_suppression_denies_and_justified_ones_are_listed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m14_the_class_needs_its_work_item_and_decision
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m15_trust_root_changes_are_listed_for_the_approval
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_latest_review_of_any_state_must_approve_the_head
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_an_approval_by_someone_else_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_no_required_approver_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_an_evidence_document_that_breaks_the_contract_is_refused
+      - tests/test_merge_admission.py::CommandTests.test_allow_exits_zero_and_deny_exits_one
+      - tests/test_merge_admission.py::CommandTests.test_g_a_missing_declaration_is_a_failed_run_not_an_allow
+      - tests/test_merge_admission.py::CommandTests.test_invalid_input_exits_two
+      - tests/test_merge_admission.py::GnostoaPolicyTests.test_gnostoa_s_effective_policy_drives_the_class_criterion
+
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
     applies_to: [kit]

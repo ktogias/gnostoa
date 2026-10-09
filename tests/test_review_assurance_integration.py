@@ -93,8 +93,32 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         for path in reducer_paths:
             with self.subTest(path=path):
                 self.assertEqual(1, binding.count(path))
-        self.assertIn("sb2.membership=21", binding)
         self.assertNotIn("sb2.membership=19", binding)
+
+    def test_candidate_binding_extends_sb2_with_the_merge_admission_verdict(
+        self,
+    ) -> None:
+        """`knowledge merge-admission` is a supported entrypoint, so its module and
+        the command-line boundary it shares join SB2 after the reducer's block
+        (Decision 0035; #407, slice 1b.2)."""
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split("- name: Bind the exact PR executable candidate", 1)[1]
+        previous = 'test "$(wc -l < "${sb2_paths_file}")" -eq 21'
+        final = 'test "$(wc -l < "${sb2_paths_file}")" -eq 23'
+        paths = ("tools/merge_admission.py", "tools/verdict_cli.py")
+        self.assertIn(final, binding)
+        self.assertIn(
+            'test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 23', binding
+        )
+        self.assertLess(binding.index(previous), binding.index(paths[0]))
+        self.assertLess(binding.index(paths[-1]), binding.index(final))
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(1, binding.count(path))
+        self.assertIn("sb2.membership=23", binding)
+        self.assertNotIn("sb2.membership=21", binding)
 
     def test_fast_suite_runs_the_pre_registered_review_assurance_oracle(self) -> None:
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")

@@ -167,9 +167,10 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     # assertion; the gate's one step is that assertion, with two more results.
     "regression-suite": "1b36d5d2086758692a13b9f6c4c1506f7f4d5de9575b6d68c437c0ae035609a9",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "regression": "485b7a341e434bdc2e6b4178268b9ef4397bbed9b834d801b1e65455b4f82415",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    # #408: the executable-candidate binding adds the completeness reducer and
-    # the vocabulary it imports to SB2 (19 -> 21 files).
-    "smoke": "7d4e20d49be48120e75f3dca441c622c6e9b964b1eac65317e90651a32ba252e",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    # #408 added the completeness reducer and the vocabulary it imports to SB2
+    # (19 -> 21 files); #407's slice 1b.2 adds the merge-admission verdict and
+    # the command-line boundary it shares (21 -> 23).
+    "smoke": "3c7ba6ef878bd3c19b2aa0bc807da899842093dd3669cea543bb3f05ad8432c6",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended-route": "27ed1f35eb9984d3ad3e9fdf42873bb8b2c9b8bf86df8743c9ee6c3cb8da7106",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0bd52547e3e739aea968487808e533d5d5355075f8c08c81a9191f2372d4d3f3",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (
