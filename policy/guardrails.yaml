@@ -261,6 +261,8 @@ guardrails:
       - Dockerfile
       - requirements/runtime.lock
       - requirements/development.lock
+      - pyproject.toml
+      - knowledge/decisions/0113-read-pull-request-descriptions-with-a-commonmark-parser.md
       - .devcontainer/devcontainer.json
       - tools/cli.py#main
       - tools/knowledge_common.py#toolkit_root
@@ -278,6 +280,12 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_explicit_public_source_binding_rejects_wrong_root
       - tests/test_tools.py::RuntimeTests.test_execution_wheel_must_not_duplicate_canonical_source
       - tests/test_tools.py::RuntimeTests.test_release_build_frontend_and_backend_are_pinned
+      - tests/test_markdown_parser_dependency.py::PinTests.test_the_runtime_lock_pins_the_parser_with_the_reviewed_hashes
+      - tests/test_markdown_parser_dependency.py::PinTests.test_the_project_declares_the_parser
+      - tests/test_markdown_parser_dependency.py::CommonMarkPropertyTests.test_a_real_field_is_a_list_item
+      - tests/test_markdown_parser_dependency.py::CommonMarkPropertyTests.test_code_html_and_comments_are_never_list_items
+      - tests/test_markdown_parser_dependency.py::CommonMarkPropertyTests.test_a_fence_that_opens_before_a_comment_closes_at_its_own_marker
+      - tests/test_markdown_parser_dependency.py::CommonMarkPropertyTests.test_a_comment_delimiter_in_a_code_span_is_text
 
   - id: runtime-source-lockstep
     title: Runtime image, toolkit public-surface digest and revisions match
