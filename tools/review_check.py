@@ -30,6 +30,8 @@ from .review_policy import (
 # operationally bounded. The limit is four times the existing 512 KiB task
 # envelope source cap; semantic eligibility still comes from the public schemas.
 MAX_REVIEW_INPUT_BYTES = 2_097_152
+# How errors name the input this command reads.
+_INPUT_LABEL = "review-check input"
 MAX_REVIEW_DOCUMENT_DEPTH = 64
 FORMAT_CHECKER = FormatChecker()
 
@@ -166,7 +168,7 @@ def evaluate_documents(
         return ERROR_EXIT_CODE, payload
 
     try:
-        _assert_document_depth(input_document, "review-check input")
+        _assert_document_depth(input_document, _INPUT_LABEL)
     except (ValueError, RecursionError) as exc:
         return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
     try:
@@ -266,8 +268,8 @@ def _load_json(path: Path) -> object:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"review-check input is not valid UTF-8: {exc}") from exc
-    value = strict_json_loads(text, label="review-check input")
-    _assert_document_depth(value, "review-check input")
+    value = strict_json_loads(text, label=_INPUT_LABEL)
+    _assert_document_depth(value, _INPUT_LABEL)
     return value
 
 
