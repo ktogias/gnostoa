@@ -17,6 +17,12 @@ from .knowledge_common import (
     toolkit_root,
 )
 
+# An operational bound on the inheritance walk, checked before a parent is
+# opened, so a long chain cannot reach the interpreter's recursion limit (CodeAnt
+# on #410). The schema, not this bound, decides that an effective policy has one
+# parent.
+MAX_INHERITANCE_DEPTH = 8
+
 WORK_ITEM_RANK = {
     "optional": 0,
     "required-follow-up": 1,
@@ -244,6 +250,11 @@ def _load_change_policy(
     if path in stack:
         chain = " -> ".join(str(item) for item in (*stack, path))
         raise KnowledgeFormatError(f"Change-control inheritance cycle: {chain}")
+    if len(stack) >= MAX_INHERITANCE_DEPTH:
+        raise KnowledgeFormatError(
+            f"Change-control inheritance from {stack[0]} is deeper than "
+            f"{MAX_INHERITANCE_DEPTH} policies"
+        )
 
     current = load_yaml(path)
     extends = current.get("extends", [])

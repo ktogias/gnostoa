@@ -744,6 +744,7 @@ guardrails:
       - tests/test_merge_admission.py::PolicyLoadingTests.test_an_absolute_parent_reference_is_refused_even_inside_the_root
       - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_project_root_is_refused
       - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inherited_policy_inside_the_project_root_is_followed
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inheritance_chain_past_the_bound_is_refused
       - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_schema_is_refused
 
   - id: authenticated-analyzer-readback

@@ -14,7 +14,12 @@ from unittest.mock import patch
 
 import yaml
 
-from tools import assurance_completeness, merge_admission, verdict_cli
+from tools import (
+    assurance_completeness,
+    check_change_policy,
+    merge_admission,
+    verdict_cli,
+)
 from tools.check_change_policy import load_change_policy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -826,6 +831,32 @@ class PolicyLoadingTests(unittest.TestCase):
                 project / "policy" / "change-control.yaml", project_root=project
             )
             self.assertEqual("example.child", policy["id"])
+
+    def test_an_inheritance_chain_past_the_bound_is_refused(self) -> None:
+        """CodeAnt on #410: an in-root chain was unbounded, so a long one reached
+        the interpreter's recursion limit. One parent per policy means a real
+        chain is a few levels deep."""
+        with tempfile.TemporaryDirectory() as directory:
+            project = _policy_project(Path(directory), ["../level-1.yaml"])
+            depth = check_change_policy.MAX_INHERITANCE_DEPTH + 2
+            for level in range(1, depth):
+                parent = [f"level-{level + 1}.yaml"] if level + 1 < depth else []
+                (project / f"level-{level}.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            **_core_policy(),
+                            "id": f"example.level-{level}",
+                            "extends": parent,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError, "deeper than"
+            ):
+                merge_admission.load_policy(
+                    project / "policy" / "change-control.yaml", project_root=project
+                )
 
     def test_a_policy_outside_the_schema_is_refused(self) -> None:
         """cubic on #410: a malformed policy could disable required links."""

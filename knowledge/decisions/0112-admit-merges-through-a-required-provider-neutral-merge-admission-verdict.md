@@ -169,7 +169,9 @@ provider-neutral public change-governance contract of
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
   policy must also match the change-control schema, so a malformed requirement
-  cannot read as "not required".
+  cannot read as "not required". The inheritance walk is bounded at eight
+  policies before a parent is opened, so a long chain fails the run with that
+  reason instead of reaching the interpreter's recursion limit.
 - **The head-move invariant (d) of the owner's acceptance list** (#398,
   6061573600) is 1b.4's, not the verdict's. The check is posted on the exact head
   commit, so a new head has no passing check, and the App's merge names the head
