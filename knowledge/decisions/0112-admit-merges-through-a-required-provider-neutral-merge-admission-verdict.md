@@ -204,7 +204,9 @@ provider-neutral public change-governance contract of
     `## Change control` fields (owner decision 3), read as CommonMark ([Decision
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
     fields are the items of the one top-level section's top-level bullet lists,
-    so code, HTML blocks and comments are never fields. The section's heading is
+    so code, HTML blocks and comments are never fields. An item's field is its
+    first paragraph; a continuation paragraph is not read, as the owner chose
+    (#407, 6085825905). The section's heading is
     compared by its visible text. CommonMark does not track HTML nesting, so a
     heading or field that GitHub renders inside an open raw HTML element, such as
     a collapsed `<details>`, fails the run. So does a heading or field containing

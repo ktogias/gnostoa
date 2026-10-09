@@ -99,9 +99,11 @@ _VOID_ELEMENTS = frozenset(
     }
 )
 # `#N`, or an issue's URL, which keeps its repository (Codex on #413); the scheme
-# and host compare without case, as the owner and name do (Claude on #413).
+# and host compare without case, as the owner and name do (Claude on #413), and
+# only ASCII letters fold, so a lookalike host is not GitHub (cubic on #413). The
+# number ends at a boundary, as `#N`'s does (Codex on #413).
 _ISSUE = re.compile(
-    r"(?<![\w/])#(\d+)\b|(?i:https://github\.com/)([^/\s]+/[^/\s]+)/issues/(\d+)"
+    r"(?<![\w/])#(\d+)\b|(?ai:https://github\.com/)([^/\s]+/[^/\s]+)/issues/(\d+)\b"
 )
 # A standalone four-digit id, or a link to a Decision record; anything else, such as
 # a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt
@@ -488,8 +490,10 @@ def _section_start(tokens: Sequence[Token], inside: Sequence[bool]) -> int:
 def _section_items(
     tokens: Sequence[Token], start: int, inside: Sequence[bool]
 ) -> Iterator[tuple[Token, bool]]:
-    """The inline tokens of the section's top-level list items, up to the next
-    top-level h1 or h2, each with whether it is inside raw HTML."""
+    """Each top-level list item's field, up to the next top-level h1 or h2, with
+    whether it is in raw HTML. The field is the inline token of the item's first
+    block when that is a paragraph: a continuation paragraph is not a field, as
+    the owner chose (Codex on #413; #407, 6085825905)."""
 
     in_list = False
     for index in range(start + 3, len(tokens)):
@@ -498,8 +502,14 @@ def _section_items(
             return
         if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
             in_list = token.type == "bullet_list_open"
-        elif in_list and token.type == "inline" and token.level == 3:
-            yield token, inside[index] or _has_raw_tag(token)
+        elif (
+            in_list
+            and token.type == "list_item_open"
+            and token.level == 1
+            and tokens[index + 1].type == "paragraph_open"
+        ):
+            field = tokens[index + 2]
+            yield field, inside[index + 2] or _has_raw_tag(field)
 
 
 def _change_control_fields(body: str) -> dict[str, str]:

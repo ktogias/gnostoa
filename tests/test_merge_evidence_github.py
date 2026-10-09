@@ -1042,8 +1042,15 @@ class EvidenceDocumentTests(unittest.TestCase):
             "https://github.com/KTogias/Gnostoa/issues/407": ["#407"],
             # Claude on #413: the scheme and host compare without case too.
             "HTTPS://GitHub.com/ktogias/gnostoa/issues/407": ["#407"],
+            # cubic on #413: only ASCII letters fold, so a lookalike host is
+            # not GitHub.
+            "https://g\u0131thub.com/ktogias/gnostoa/issues/999": [],
+            "https://G\u0130THUB.com/ktogias/gnostoa/issues/999": [],
             "#407 https://github.com/ktogias/gnostoa-x/issues/9": ["#407"],
             "other/project#999": [],
+            # Codex on #413: the number must end at a boundary, as `#N` does.
+            "https://github.com/ktogias/gnostoa/issues/407junk": [],
+            "https://github.com/ktogias/gnostoa/issues/407#issuecomment-1": ["#407"],
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
@@ -1164,6 +1171,31 @@ class EvidenceDocumentTests(unittest.TestCase):
         evidence = _evidence(_snapshot(replies))
         self.assertEqual([], evidence["links"]["work_items"])
         self.assertIn("M14", _failed(evidence))
+
+    def test_an_item_s_field_is_its_first_paragraph(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6085825905 and
+        6085819873): a continuation paragraph of an item is not a field."""
+        field = "- Work Item: #407, #15\n"
+        cases = {
+            "a tight list": (field, ["#407", "#15"]),
+            "a loose list": (f"\n{field}\n", ["#407", "#15"]),
+            "a soft break in the first paragraph": (
+                "- Work Item: #407,\n  #15\n",
+                ["#407", "#15"],
+            ),
+            "a field and a continuation": (
+                f"{field}\n  Work Item: #999\n",
+                ["#407", "#15"],
+            ),
+            "a Notes continuation": ("- Notes\n\n  Work Item: #407, #15\n", []),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(expected, evidence["links"]["work_items"])
+                self.assertEqual(not expected, "M14" in _failed(evidence))
 
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()
