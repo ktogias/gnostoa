@@ -10,6 +10,7 @@ will rely on.
 from __future__ import annotations
 
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -64,8 +65,11 @@ class PinTests(unittest.TestCase):
                 )
 
     def test_the_project_declares_the_parser(self) -> None:
-        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('"markdown-it-py>=4.2,<5",', pyproject)
+        """A required dependency, not an optional one or a comment (CodeAnt on
+        #414)."""
+        with (ROOT / "pyproject.toml").open("rb") as handle:
+            project = tomllib.load(handle)["project"]
+        self.assertIn("markdown-it-py>=4.2,<5", project["dependencies"])
 
 
 class CommonMarkPropertyTests(unittest.TestCase):
@@ -87,11 +91,25 @@ class CommonMarkPropertyTests(unittest.TestCase):
             "div block": f"<div>\n{FIELD}\n</div>\n",
             "comment": f"<!--\n{FIELD}\n-->\n",
             "unclosed comment": f"<!--\n{FIELD}\n",
-            "fence straddling a comment": f"```\n<!--\n```\n{FIELD}\n-->\n",
         }
         for name, markdown in cases.items():
             with self.subTest(name):
-                self.assertNotIn("Work Item: #999", _list_item_texts(markdown))
+                # No list item carries the field, even as part of its text
+                # (Sourcery on #414).
+                self.assertFalse(
+                    any(
+                        "Work Item: #999" in text for text in _list_item_texts(markdown)
+                    )
+                )
+
+    def test_a_fence_that_opens_before_a_comment_closes_at_its_own_marker(
+        self,
+    ) -> None:
+        """Sourcery on #414: the `<!--` is code inside the fence, the fence closes
+        at the next marker, and what follows renders as a list item. The parser
+        reads what GitHub renders, so this field is visible."""
+        texts = _list_item_texts(f"```\n<!--\n```\n{FIELD}\n-->\n")
+        self.assertEqual(["Work Item: #999\n-->"], texts)
 
     def test_a_comment_delimiter_in_a_code_span_is_text(self) -> None:
         """cubic on #413: `<!--` inside backticks opens no comment."""

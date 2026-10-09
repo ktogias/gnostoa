@@ -61,8 +61,11 @@ the reader still read as a field:
 - indented code blocks;
 - unclosed HTML comments;
 - raw HTML blocks such as `<pre>`;
-- a fence straddling a comment;
 - a comment delimiter inside a code span.
+
+Hand-written rules also got the opposite case wrong. A fence that opens before a
+comment makes the `<!--` code, and it closes at its own marker, so what follows
+renders as a visible list item. A parser reads that as GitHub renders it.
 
 Each patch fixed an instance, and the next round found another. The capability
 was the defect.
@@ -78,9 +81,10 @@ was the defect.
    wheel's SHA-256 was checked against the file downloaded from PyPI, as
    [Decision 0095](0095-refresh-vulnerable-development-dependency-pins.md)
    requires. `markdown-it-py>=4.2,<5` joins `pyproject.toml`'s dependencies.
-4. **A test pins the property the reader relies on.** Every case from #413's
-   rounds, run through the locked parser, is a code, HTML-block or comment token,
-   and never a list item.
+4. **A test pins the property the reader relies on.** Every hidden case from
+   #413's rounds, run through the locked parser, is a code, HTML-block or comment
+   token, and no list item carries its text. A case that GitHub renders as a list
+   item is read as one.
 
 ## Evidence
 
