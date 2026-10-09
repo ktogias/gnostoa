@@ -13,8 +13,9 @@ from .review_model import canonical_json, parse_rfc3339
 _INTERNAL_SCHEMA_VERSION = "gnostoa-l1-current-state/v1"
 PROVIDER_STATE_SCHEMA_VERSION = "gnostoa-review-provider-state/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-# Decision 0086's coverage vocabulary, which other owners consume.
-COVERAGE_STATUSES = frozenset(
+# Decision 0086's L1 coverage vocabulary. Decision 0091's analyzer readback adds
+# INCOMPLETE to it (`analyzer_readback.COVERAGE_STATUSES`); a test pins that.
+L1_COVERAGE_STATUSES = frozenset(
     {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
@@ -171,7 +172,7 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     ):
         item = _mapping(coverage.get(source), f"coverage.{source}")
         status = _string(item.get("status"), f"coverage.{source}.status")
-        if status not in COVERAGE_STATUSES:
+        if status not in L1_COVERAGE_STATUSES:
             raise ReconciliationInputError(f"coverage.{source}.status is unsupported")
         pages = item.get("pages")
         if type(pages) is not int or pages < 0:

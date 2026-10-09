@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import yaml
+
 from tools import analyzer_readback, assurance_completeness, review_reconcile
 from tools.review_policy import CHANGE_CLASSES
 
@@ -291,9 +293,11 @@ class AssuranceCompletenessTests(unittest.TestCase):
     def test_receipt_statuses_reuse_the_existing_coverage_vocabularies(self) -> None:
         """Decision 0086's and 0091's coverage statuses, plus #389's SKIPPED; the
         reducer derives MISSING and STALE itself."""
-        self.assertLessEqual(
-            review_reconcile.COVERAGE_STATUSES,
-            assurance_completeness.RECEIPT_STATUSES,
+        # The two owners' vocabularies, related exactly, so neither can drift from
+        # the other unnoticed (Claude on #408).
+        self.assertEqual(
+            review_reconcile.L1_COVERAGE_STATUSES | {"INCOMPLETE"},
+            analyzer_readback.COVERAGE_STATUSES,
         )
         self.assertLessEqual(
             analyzer_readback.COVERAGE_STATUSES,
@@ -380,12 +384,44 @@ class DeclarationTests(unittest.TestCase):
             outside.write_text(json.dumps(DECLARATION), encoding="utf-8")
             (root / "link.yaml").symlink_to(outside)
             for path in (outside, root / ".." / "declaration.yaml", root / "link.yaml"):
-                with self.subTest(path=path):
-                    with self.assertRaisesRegex(
+                with (
+                    self.subTest(path=path),
+                    self.assertRaisesRegex(
                         assurance_completeness.AssuranceCompletenessError,
                         "outside the project root",
-                    ):
-                        assurance_completeness.load_declaration(path, project_root=root)
+                    ),
+                ):
+                    assurance_completeness.load_declaration(path, project_root=root)
+
+    def test_keys_that_are_not_strings_are_refused(self) -> None:
+        """Codex and CodeAnt on #408: an integer key beside an unknown string key
+        made the sort of unknown keys raise TypeError."""
+        mixed: dict[Any, Any] = {1: "one", "extra": True, **DECLARATION}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "declaration.yaml"
+            path.write_text(
+                yaml.safe_dump(mixed, sort_keys=False),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError, "not a string"
+            ):
+                assurance_completeness.load_declaration(path, project_root=root)
+        self._rejects(mixed, "not a string")
+
+    def test_a_declaration_that_cannot_be_resolved_is_refused(self) -> None:
+        """Codex and CodeAnt on #408: a symbolic-link loop made resolve() raise."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.yaml").symlink_to(root / "b.yaml")
+            (root / "b.yaml").symlink_to(root / "a.yaml")
+            with self.assertRaisesRegex(
+                assurance_completeness.AssuranceCompletenessError, "cannot resolve"
+            ):
+                assurance_completeness.load_declaration(
+                    root / "a.yaml", project_root=root
+                )
 
 
 class ReceiptTests(unittest.TestCase):
@@ -422,13 +458,15 @@ class ReceiptTests(unittest.TestCase):
         string belongs raised TypeError on the set membership."""
         declaration = assurance_completeness.parse_declaration(DECLARATION)
         for value in ([], {}, ["normal"], {"normal": True}):
-            with self.subTest(change_class=value):
-                with self.assertRaisesRegex(
+            with (
+                self.subTest(change_class=value),
+                self.assertRaisesRegex(
                     assurance_completeness.AssuranceCompletenessError, "change class"
-                ):
-                    assurance_completeness.evaluate(
-                        declaration, subject=SUBJECT, change_class=value, receipts=[]
-                    )
+                ),
+            ):
+                assurance_completeness.evaluate(
+                    declaration, subject=SUBJECT, change_class=value, receipts=[]
+                )
             with self.subTest(status=value):
                 receipt = _receipt("sonarcloud", ["quality-gate"])
                 receipt["status"] = value
@@ -438,14 +476,14 @@ class ReceiptTests(unittest.TestCase):
                     _evaluate([receipt])
         for value in ([], {}):
             document = _with(applies_to=[value])
-            with self.subTest(applies_to=value):
-                with self.assertRaises(
-                    assurance_completeness.AssuranceCompletenessError
-                ):
-                    assurance_completeness.parse_declaration(document)
+            with (
+                self.subTest(applies_to=value),
+                self.assertRaises(assurance_completeness.AssuranceCompletenessError),
+            ):
+                assurance_completeness.parse_declaration(document)
 
 
-def _run(text: str, declaration: object | None = None) -> tuple[int, str]:
+def _run(text: str | bytes, declaration: object | None = None) -> tuple[int, str]:
     """Run the command in a scratch project, with `text` on standard input."""
 
     with tempfile.TemporaryDirectory() as directory:
@@ -455,7 +493,8 @@ def _run(text: str, declaration: object | None = None) -> tuple[int, str]:
             json.dumps(DECLARATION if declaration is None else declaration),
             encoding="utf-8",
         )
-        stdin = io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8")
+        raw = text if isinstance(text, bytes) else text.encode("utf-8")
+        stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")
         out, err = io.StringIO(), io.StringIO()
         with patch("sys.stdin", stdin), redirect_stdout(out), redirect_stderr(err):
             code = assurance_completeness.main(["--project-root", str(root)])
@@ -507,6 +546,60 @@ class CommandTests(unittest.TestCase):
         code, output = _run(_payload(_complete())[:-1] + ', "extra": NaN}')
         self.assertEqual(2, code)
         self.assertIn("non-finite", output)
+
+    def test_input_that_is_not_utf_8_exits_two(self) -> None:
+        """cubic on #408: the harness only ever supplied UTF-8."""
+        code, output = _run(b'{"subject": "\xff"}')
+        self.assertEqual(2, code)
+        self.assertIn("not valid JSON", output)
+
+    def test_input_over_the_bound_exits_two_unread(self) -> None:
+        """cubic on #408: no test crossed the input bound. Valid JSON one byte
+        over it is refused before decoding."""
+        padding = assurance_completeness.MAX_INPUT_BYTES - len(_payload(_complete()))
+        text = _payload(_complete())[:-1] + ', "pad": "' + "x" * padding + '"}'
+        self.assertGreater(
+            len(text.encode("utf-8")), assurance_completeness.MAX_INPUT_BYTES
+        )
+        code, output = _run(text)
+        self.assertEqual(2, code)
+        self.assertIn("larger than the", output)
+
+    def test_a_failed_read_of_standard_input_exits_two(self) -> None:
+        """cubic on #408: a read error escaped as a traceback with exit 1, the
+        code that means INCOMPLETE."""
+
+        class _Unreadable:
+            def read(self, _size: int = -1) -> bytes:
+                raise OSError("input/output error")
+
+        class _Stdin:
+            buffer = _Unreadable()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "policy").mkdir()
+            (root / "policy" / "assurance-evidence.yaml").write_text(
+                json.dumps(DECLARATION), encoding="utf-8"
+            )
+            err = io.StringIO()
+            with patch("sys.stdin", _Stdin()), redirect_stderr(err):
+                code = assurance_completeness.main(["--project-root", str(root)])
+        self.assertEqual(2, code)
+        self.assertIn("cannot read the input", err.getvalue())
+
+    def test_no_failure_exits_as_a_verdict_would(self) -> None:
+        """Four rounds on #408 found an exception that escaped with Python's exit
+        1, the code that means INCOMPLETE. Whatever fails inside the command, it
+        exits 2 and names the failure."""
+        for error in (TypeError("t"), RuntimeError("r"), KeyError("k"), OSError("o")):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(assurance_completeness, "evaluate", side_effect=error),
+            ):
+                code, output = _run(_payload(_complete()))
+                self.assertEqual(2, code)
+                self.assertIn(type(error).__name__, output)
 
     def test_unhashable_input_exits_two_without_a_traceback(self) -> None:
         text = json.dumps(

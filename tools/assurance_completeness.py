@@ -86,6 +86,9 @@ def _closed(
     required: frozenset[str],
     optional: frozenset[str] = frozenset(),
 ) -> None:
+    # YAML admits keys of any type; sorting a mix of them would raise TypeError.
+    if not all(isinstance(key, str) for key in value):
+        raise AssuranceCompletenessError(f"{label} has a key that is not a string")
     unknown = sorted(set(value) - required - optional)
     if unknown:
         raise AssuranceCompletenessError(f"{label} has unknown key {unknown[0]!r}")
@@ -171,10 +174,16 @@ def load_declaration(path: Path, *, project_root: Path) -> dict[str, Any]:
     as Decisions 0033 and 0034 confine a project's own references.
     """
 
-    root = project_root.resolve()
+    try:
+        root = project_root.resolve()
+        resolved = path.resolve()
+    except (OSError, RuntimeError) as exc:
+        # A symbolic-link loop raises RuntimeError before Python 3.13.
+        raise AssuranceCompletenessError(
+            f"cannot resolve the declaration: {exc}"
+        ) from exc
     if not root.is_dir():
         raise AssuranceCompletenessError(f"project root {root} is not a directory")
-    resolved = path.resolve()
     if not resolved.is_relative_to(root):
         raise AssuranceCompletenessError(
             f"declaration {resolved} is outside the project root {root}"
@@ -237,8 +246,7 @@ def _worst(statuses: list[str]) -> str:
     return "COMPLETE"
 
 
-def _item_status(item: str, current: list[dict[str, Any]], stale: bool) -> str:
-    statuses = [r["status"] for r in current if item in r["coverage"]]
+def _item_status(statuses: list[str], stale: bool) -> str:
     if statuses:
         return _worst(statuses)
     return "STALE" if stale else "MISSING"
@@ -270,14 +278,20 @@ def _by_requirement(
 def _requirement_result(
     requirement: Mapping[str, Any], own: list[dict[str, Any]], head: str
 ) -> dict[str, Any]:
-    current = [r for r in own if r["subject"]["head_commit"] == head]
-    stale = [r for r in own if r["subject"]["head_commit"] != head]
+    # One pass over the receipts' coverage, so the work grows with the input
+    # rather than with items times receipts (CodeAnt on #408).
+    current: dict[str, list[str]] = {}
+    stale: set[str] = set()
+    for receipt in own:
+        if receipt["subject"]["head_commit"] == head:
+            for item in receipt["coverage"]:
+                current.setdefault(item, []).append(receipt["status"])
+        else:
+            stale.update(receipt["coverage"])
     items = [
         {
             "item": item,
-            "status": _item_status(
-                item, current, any(item in r["coverage"] for r in stale)
-            ),
+            "status": _item_status(current.get(item, []), item in stale),
         }
         for item in requirement["coverage"]
     ]
@@ -332,7 +346,11 @@ def _read_input() -> object:
     """Read the input from standard input, so no input path reaches a file read
     (SonarCloud S8707 on #408)."""
 
-    raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+    try:
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        # A closed stream raises ValueError; neither may exit as INCOMPLETE does.
+        raise AssuranceCompletenessError(f"cannot read the input: {exc}") from exc
     if len(raw) > MAX_INPUT_BYTES:
         raise AssuranceCompletenessError(
             f"input is larger than the {MAX_INPUT_BYTES}-byte bound"
@@ -394,6 +412,19 @@ def main(argv: list[str] | None = None) -> int:
         )
     except AssuranceCompletenessError as exc:
         print(f"assurance-check: {exc}", file=sys.stderr)
+        return 2
+    except (
+        OSError,
+        RuntimeError,
+        RecursionError,
+        TypeError,
+        ValueError,
+        LookupError,
+        AttributeError,
+    ) as exc:
+        # Whatever else fails is a failed run, never a verdict: Python's own exit
+        # 1 for an uncaught exception would read as INCOMPLETE (#408).
+        print(f"assurance-check: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(verdict, indent=2, sort_keys=True))
     return 0 if verdict["status"] == "COMPLETE" else 1
