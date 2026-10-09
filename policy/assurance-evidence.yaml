@@ -1,0 +1,26 @@
+# Gnostoa's required-evidence declaration (#389 S1, Decision 0112).
+#
+# `knowledge assurance-check` reduces exact-subject receipts against it: a
+# requirement is COMPLETE only when a current COMPLETE receipt covers each of its
+# coverage items. Producers' adapters name the same items (#407, slice 1b.3);
+# until an item has a producer, it stays MISSING and the verdict INCOMPLETE.
+schema_version: "1.0"
+id: gnostoa.required-evidence
+version: "0.1.0"
+requirements:
+  - id: verification-checks
+    title: The status checks R-main requires ran on the exact head
+    applies_to: [mechanical, normal, normative, critical]
+    coverage: [policy, fast, regression, smoke]
+  - id: codeql
+    title: CodeQL analysed the exact head
+    applies_to: [mechanical, normal, normative, critical]
+    coverage: [codeql]
+  - id: analyzer-readback
+    title: The authenticated analyzer readback is bound to the exact head (Decision 0107)
+    applies_to: [mechanical, normal, normative, critical]
+    coverage: [deepsource-diff, deepsource-full, codacy]
+  - id: sonarcloud
+    title: SonarCloud's quality gate and its issue inventory for the exact head (#359)
+    applies_to: [mechanical, normal, normative, critical]
+    coverage: [quality-gate, issue-inventory]

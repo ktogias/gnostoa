@@ -96,6 +96,25 @@ class MergeGateRecordTests(unittest.TestCase):
             for rule in self._r_main()["rules"]
         }
 
+    def test_the_required_evidence_declares_the_checks_r_main_requires(
+        self,
+    ) -> None:
+        """Gnostoa's required-evidence declaration covers exactly the status checks
+        R-main requires, so the merge-admission verdict cannot require fewer (#407)."""
+        from tools.assurance_completeness import load_declaration
+
+        declaration = load_declaration(ROOT / "policy" / "assurance-evidence.yaml")
+        [checks] = [
+            r for r in declaration["requirements"] if r["id"] == "verification-checks"
+        ]
+        required = cast(
+            list[dict[str, object]],
+            self._rules()["required_status_checks"]["required_status_checks"],
+        )
+        self.assertEqual(
+            [str(check["context"]) for check in required], checks["coverage"]
+        )
+
     def test_the_change_control_policy_requires_what_r_main_enforces(self) -> None:
         """Gnostoa's change-control policy requires, for every class that merges
         through R-main, the approval R-main enforces, read through this module's one

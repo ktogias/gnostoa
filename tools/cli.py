@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from . import (
     adoption_check,
+    assurance_completeness,
     build_context_pack,
     build_docs,
     check_change_policy,
@@ -22,6 +23,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "adoption-check": (
         "produce bounded mechanical adoption evidence",
         adoption_check.main,
+    ),
+    "assurance-check": (
+        "reduce exact-subject evidence receipts into a completeness verdict",
+        assurance_completeness.main,
     ),
     "validate": ("validate an OKF bundle", validate_bundle.main),
     "context-pack": ("build a bounded orientation pack", build_context_pack.main),

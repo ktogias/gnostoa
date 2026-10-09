@@ -419,6 +419,7 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_every_decision_cited_exists
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_decision_and_runbook_link_each_other_and_are_indexed
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_change_control_policy_requires_what_r_main_enforces
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration
@@ -633,6 +634,36 @@ guardrails:
       - tests/test_review_reconcile_l1_render_compat.py
       - tests/test_review_reconcile_l1_full_review_followups.py
       - tests/test_github_rest.py
+
+  - id: required-evidence-completeness
+    title: Only current, COMPLETE receipts for the exact subject satisfy required evidence
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
+    implementation:
+      - tools/assurance_completeness.py
+      - policy/assurance-evidence.yaml
+      - tools/review_policy.py#load_policy_yaml
+      - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+    tests:
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_every_item_complete_on_the_exact_head_is_complete
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_an_analyzer_that_never_ran_is_missing
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_a_receipt_for_the_previous_head_is_stale
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_a_green_gate_without_the_inventory_is_not_complete
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_a_green_check_does_not_stand_in_for_an_absent_receipt
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_a_skipped_required_check_is_not_executed
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_executed_scope_smaller_than_configured_is_incomplete
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_every_status_but_complete_fails_closed
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_disagreeing_receipts_fail_closed_at_the_worse_status
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_receipts_for_another_change_are_ignored_and_counted
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_no_applicable_requirement_is_incomplete
+      - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_receipt_statuses_reuse_the_existing_coverage_vocabularies
+      - tests/test_assurance_completeness.py::ReceiptTests.test_a_malformed_receipt_is_refused_not_ignored
+      - tests/test_assurance_completeness.py::CommandTests.test_incomplete_exits_one_with_the_verdict
+      - tests/test_assurance_completeness.py::CommandTests.test_invalid_input_exits_two
+      - tests/test_assurance_completeness.py::GnostoaDeclarationTests.test_gnostoa_declares_the_merge_evidence_for_every_merging_class
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
