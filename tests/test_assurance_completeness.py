@@ -7,6 +7,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from tools import analyzer_readback, assurance_completeness, review_reconcile
 from tools.review_policy import CHANGE_CLASSES
@@ -291,7 +292,7 @@ class AssuranceCompletenessTests(unittest.TestCase):
         """Decision 0086's and 0091's coverage statuses, plus #389's SKIPPED; the
         reducer derives MISSING and STALE itself."""
         self.assertLessEqual(
-            review_reconcile._ALLOWED_COVERAGE,
+            review_reconcile.COVERAGE_STATUSES,
             assurance_completeness.RECEIPT_STATUSES,
         )
         self.assertLessEqual(
@@ -311,17 +312,18 @@ class AssuranceCompletenessTests(unittest.TestCase):
         )
 
 
+def _with(**changes: object) -> dict[str, Any]:
+    document: dict[str, Any] = json.loads(json.dumps(DECLARATION))
+    document["requirements"][0].update(changes)
+    return document
+
+
 class DeclarationTests(unittest.TestCase):
     def _rejects(self, document: object, message: str) -> None:
         with self.assertRaisesRegex(
             assurance_completeness.AssuranceCompletenessError, message
         ):
             assurance_completeness.parse_declaration(document)
-
-    def _with(self, **changes: object) -> dict[str, Any]:
-        document = json.loads(json.dumps(DECLARATION))
-        document["requirements"][0].update(changes)
-        return document
 
     def test_a_valid_declaration_parses(self) -> None:
         declaration = assurance_completeness.parse_declaration(DECLARATION)
@@ -333,7 +335,7 @@ class DeclarationTests(unittest.TestCase):
 
     def test_unknown_keys_are_refused(self) -> None:
         self._rejects(dict(DECLARATION, extra=True), "unknown key")
-        self._rejects(self._with(optional=True), "unknown key")
+        self._rejects(_with(optional=True), "unknown key")
 
     def test_requirement_ids_are_unique(self) -> None:
         document = json.loads(json.dumps(DECLARATION))
@@ -341,21 +343,22 @@ class DeclarationTests(unittest.TestCase):
         self._rejects(document, "duplicate requirement")
 
     def test_classes_are_known_and_unique(self) -> None:
-        self._rejects(self._with(applies_to=["routine"]), "change class")
-        self._rejects(self._with(applies_to=["normal", "normal"]), "duplicate")
-        self._rejects(self._with(applies_to=[]), "applies_to")
+        self._rejects(_with(applies_to=["routine"]), "change class")
+        self._rejects(_with(applies_to=["normal", "normal"]), "duplicate")
+        self._rejects(_with(applies_to=[]), "applies_to")
 
     def test_coverage_items_are_unique_and_present(self) -> None:
-        self._rejects(self._with(coverage=[]), "coverage")
-        self._rejects(self._with(coverage=["fast", "fast"]), "duplicate")
-        self._rejects(self._with(coverage=[""]), "coverage")
+        self._rejects(_with(coverage=[]), "coverage")
+        self._rejects(_with(coverage=["fast", "fast"]), "duplicate")
+        self._rejects(_with(coverage=[""]), "coverage")
 
     def test_at_least_one_requirement(self) -> None:
         self._rejects(dict(DECLARATION, requirements=[]), "requirements")
 
     def test_the_file_loader_refuses_duplicate_and_merge_keys(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "declaration.yaml"
+            root = Path(directory)
+            path = root / "declaration.yaml"
             for text in (
                 'schema_version: "1.0"\nschema_version: "1.0"\n',
                 "base: &b {id: x}\nother:\n  <<: *b\n",
@@ -365,19 +368,37 @@ class DeclarationTests(unittest.TestCase):
                     with self.assertRaises(
                         assurance_completeness.AssuranceCompletenessError
                     ):
-                        assurance_completeness.load_declaration(path)
+                        assurance_completeness.load_declaration(path, project_root=root)
+
+    def test_the_declaration_must_lie_inside_the_project_root(self) -> None:
+        """SonarCloud S8707 on #408: a declaration path from the command line is
+        confined to the project the declaration belongs to."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            root.mkdir()
+            outside = Path(directory) / "declaration.yaml"
+            outside.write_text(json.dumps(DECLARATION), encoding="utf-8")
+            (root / "link.yaml").symlink_to(outside)
+            for path in (outside, root / ".." / "declaration.yaml", root / "link.yaml"):
+                with self.subTest(path=path):
+                    with self.assertRaisesRegex(
+                        assurance_completeness.AssuranceCompletenessError,
+                        "outside the project root",
+                    ):
+                        assurance_completeness.load_declaration(path, project_root=root)
 
 
 class ReceiptTests(unittest.TestCase):
     def test_a_malformed_receipt_is_refused_not_ignored(self) -> None:
-        for change in (
+        changes: tuple[dict[str, object], ...] = (
             {"schema": "other/v1"},
             {"status": "CLEAN"},
             {"status": "MISSING"},
             {"coverage": []},
             {"head_commit": "abc"},
             {"extra": 1},
-        ):
+        )
+        for change in changes:
             with self.subTest(change=change):
                 receipt = _receipt("sonarcloud", ["quality-gate"])
                 if "head_commit" in change:
@@ -390,57 +411,110 @@ class ReceiptTests(unittest.TestCase):
                     _evaluate([receipt])
 
     def test_an_unknown_change_class_is_refused(self) -> None:
+        receipts = _complete()
         with self.assertRaisesRegex(
             assurance_completeness.AssuranceCompletenessError, "change class"
         ):
-            _evaluate(_complete(), change_class="routine")
+            _evaluate(receipts, change_class="routine")
+
+    def test_unhashable_values_are_refused_not_crashed_on(self) -> None:
+        """Codex, Sourcery and CodeAnt on #408: a JSON array or object where a
+        string belongs raised TypeError on the set membership."""
+        declaration = assurance_completeness.parse_declaration(DECLARATION)
+        for value in ([], {}, ["normal"], {"normal": True}):
+            with self.subTest(change_class=value):
+                with self.assertRaisesRegex(
+                    assurance_completeness.AssuranceCompletenessError, "change class"
+                ):
+                    assurance_completeness.evaluate(
+                        declaration, subject=SUBJECT, change_class=value, receipts=[]
+                    )
+            with self.subTest(status=value):
+                receipt = _receipt("sonarcloud", ["quality-gate"])
+                receipt["status"] = value
+                with self.assertRaisesRegex(
+                    assurance_completeness.AssuranceCompletenessError, "status"
+                ):
+                    _evaluate([receipt])
+        for value in ([], {}):
+            document = _with(applies_to=[value])
+            with self.subTest(applies_to=value):
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    assurance_completeness.parse_declaration(document)
+
+
+def _run(text: str, declaration: object | None = None) -> tuple[int, str]:
+    """Run the command in a scratch project, with `text` on standard input."""
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "policy").mkdir()
+        (root / "policy" / "assurance-evidence.yaml").write_text(
+            json.dumps(DECLARATION if declaration is None else declaration),
+            encoding="utf-8",
+        )
+        stdin = io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with patch("sys.stdin", stdin), redirect_stdout(out), redirect_stderr(err):
+            code = assurance_completeness.main(["--project-root", str(root)])
+        return code, out.getvalue() + err.getvalue()
+
+
+def _payload(receipts: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        {"subject": SUBJECT, "change_class": "normal", "receipts": receipts}
+    )
 
 
 class CommandTests(unittest.TestCase):
-    def _run(
-        self, payload: object, declaration: object = DECLARATION
-    ) -> tuple[int, str]:
-        with tempfile.TemporaryDirectory() as directory:
-            declaration_path = Path(directory) / "declaration.yaml"
-            declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
-            input_path = Path(directory) / "input.json"
-            input_path.write_text(json.dumps(payload), encoding="utf-8")
-            out, err = io.StringIO(), io.StringIO()
-            with redirect_stdout(out), redirect_stderr(err):
-                code = assurance_completeness.main(
-                    [
-                        "--declaration",
-                        str(declaration_path),
-                        "--input",
-                        str(input_path),
-                    ]
-                )
-            return code, out.getvalue() + err.getvalue()
-
-    def _payload(self, receipts: list[dict[str, Any]]) -> dict[str, Any]:
-        return {"subject": SUBJECT, "change_class": "normal", "receipts": receipts}
-
     def test_complete_exits_zero_with_the_verdict(self) -> None:
-        code, output = self._run(self._payload(_complete()))
+        code, output = _run(_payload(_complete()))
         self.assertEqual(0, code)
         self.assertEqual("COMPLETE", json.loads(output)["status"])
 
     def test_incomplete_exits_one_with_the_verdict(self) -> None:
-        code, output = self._run(self._payload(_complete()[:1]))
+        code, output = _run(_payload(_complete()[:1]))
         self.assertEqual(1, code)
         self.assertEqual("INCOMPLETE", json.loads(output)["status"])
 
     def test_invalid_input_exits_two(self) -> None:
-        for payload in (
-            {"subject": SUBJECT, "change_class": "normal"},
-            self._payload([{"schema": "other/v1"}]),
-            [],
+        for text in (
+            json.dumps({"subject": SUBJECT, "change_class": "normal"}),
+            _payload([{"schema": "other/v1"}]),
+            "[]",
+            "not json",
         ):
-            with self.subTest(payload=payload):
-                code, _ = self._run(payload)
+            with self.subTest(text=text):
+                code, _ = _run(text)
                 self.assertEqual(2, code)
-        code, _ = self._run(self._payload(_complete()), declaration={"id": "x"})
+        code, _ = _run(_payload(_complete()), declaration={"id": "x"})
         self.assertEqual(2, code)
+
+    def test_a_repeated_json_field_is_refused(self) -> None:
+        """Sourcery and CodeAnt on #408: JSON keeps the last of a repeated field,
+        so a receipt saying both ERROR and COMPLETE was read as COMPLETE."""
+        receipts = _complete()
+        text = _payload(receipts).replace(
+            '"status": "COMPLETE"', '"status": "ERROR", "status": "COMPLETE"', 1
+        )
+        code, output = _run(text)
+        self.assertEqual(2, code)
+        self.assertIn("repeats JSON object field 'status'", output)
+
+    def test_a_non_finite_number_is_refused(self) -> None:
+        code, output = _run(_payload(_complete())[:-1] + ', "extra": NaN}')
+        self.assertEqual(2, code)
+        self.assertIn("non-finite", output)
+
+    def test_unhashable_input_exits_two_without_a_traceback(self) -> None:
+        text = json.dumps(
+            {"subject": SUBJECT, "change_class": ["normal"], "receipts": []}
+        )
+        code, output = _run(text)
+        self.assertEqual(2, code)
+        self.assertNotIn("Traceback", output)
 
     def test_the_knowledge_cli_routes_assurance_check(self) -> None:
         from tools import cli
@@ -453,7 +527,7 @@ class GnostoaDeclarationTests(unittest.TestCase):
         self,
     ) -> None:
         declaration = assurance_completeness.load_declaration(
-            ROOT / "policy" / "assurance-evidence.yaml"
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
         requirements = {r["id"]: r for r in declaration["requirements"]}
         self.assertEqual(
@@ -464,6 +538,9 @@ class GnostoaDeclarationTests(unittest.TestCase):
         for requirement in requirements.values():
             with self.subTest(requirement=requirement["id"]):
                 self.assertEqual(merging, sorted(requirement["applies_to"]))
+        # Every requirement's items, so none can drift to another name (cubic on
+        # #408); the verification checks are bound to R-main in the merge-gate test.
+        self.assertEqual(["codeql"], requirements["codeql"]["coverage"])
         self.assertEqual(
             ["deepsource-diff", "deepsource-full", "codacy"],
             requirements["analyzer-readback"]["coverage"],

@@ -645,6 +645,7 @@ guardrails:
       - tools/assurance_completeness.py
       - policy/assurance-evidence.yaml
       - tools/review_policy.py#load_policy_yaml
+      - tools/review_check.py#strict_json_loads
       - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
     tests:
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_every_item_complete_on_the_exact_head_is_complete
@@ -660,6 +661,11 @@ guardrails:
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_no_applicable_requirement_is_incomplete
       - tests/test_assurance_completeness.py::AssuranceCompletenessTests.test_receipt_statuses_reuse_the_existing_coverage_vocabularies
       - tests/test_assurance_completeness.py::ReceiptTests.test_a_malformed_receipt_is_refused_not_ignored
+      - tests/test_assurance_completeness.py::ReceiptTests.test_unhashable_values_are_refused_not_crashed_on
+      - tests/test_assurance_completeness.py::DeclarationTests.test_the_declaration_must_lie_inside_the_project_root
+      - tests/test_assurance_completeness.py::CommandTests.test_a_repeated_json_field_is_refused
+      - tests/test_assurance_completeness.py::CommandTests.test_a_non_finite_number_is_refused
+      - tests/test_assurance_completeness.py::CommandTests.test_unhashable_input_exits_two_without_a_traceback
       - tests/test_assurance_completeness.py::CommandTests.test_incomplete_exits_one_with_the_verdict
       - tests/test_assurance_completeness.py::CommandTests.test_invalid_input_exits_two
       - tests/test_assurance_completeness.py::GnostoaDeclarationTests.test_gnostoa_declares_the_merge_evidence_for_every_merging_class

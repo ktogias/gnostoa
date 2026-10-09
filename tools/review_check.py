@@ -109,28 +109,41 @@ def _assert_document_depth(document: object, label: str) -> None:
         pending.extend((child, depth + 1) for child in children)
 
 
-def _object_without_duplicate_fields(
-    pairs: list[tuple[str, Any]],
-) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"review-check input repeats JSON object field {key!r}")
-        result[key] = value
-    return result
+def strict_json_loads(text: str, *, label: str) -> object:
+    """Decode JSON, refusing a repeated object field and a non-finite number.
 
+    `json.loads` keeps the last of a repeated field, so an object could say two
+    things and be read as one. `label` names the input in errors.
+    """
 
-def _reject_non_finite_constant(value: str) -> NoReturn:
-    raise ValueError(f"review-check input contains non-finite JSON number {value!r}")
+    def object_without_duplicate_fields(
+        pairs: list[tuple[str, Any]],
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"{label} repeats JSON object field {key!r}")
+            result[key] = value
+        return result
 
+    def reject_non_finite_constant(value: str) -> NoReturn:
+        raise ValueError(f"{label} contains non-finite JSON number {value!r}")
 
-def _parse_finite_float(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed):
-        raise ValueError(
-            f"review-check input contains non-finite JSON number {value!r}"
+    def parse_finite_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"{label} contains non-finite JSON number {value!r}")
+        return parsed
+
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=object_without_duplicate_fields,
+            parse_constant=reject_non_finite_constant,
+            parse_float=parse_finite_float,
         )
-    return parsed
+    except RecursionError as exc:
+        raise ValueError(f"{label} nesting exhausted the JSON parser") from exc
 
 
 def evaluate_documents(
@@ -253,17 +266,7 @@ def _load_json(path: Path) -> object:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"review-check input is not valid UTF-8: {exc}") from exc
-    try:
-        value = json.loads(
-            text,
-            object_pairs_hook=_object_without_duplicate_fields,
-            parse_constant=_reject_non_finite_constant,
-            parse_float=_parse_finite_float,
-        )
-    except RecursionError as exc:
-        raise ValueError(
-            "review-check input nesting exhausted the JSON parser"
-        ) from exc
+    value = strict_json_loads(text, label="review-check input")
     _assert_document_depth(value, "review-check input")
     return value
 

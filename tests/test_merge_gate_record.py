@@ -103,7 +103,9 @@ class MergeGateRecordTests(unittest.TestCase):
         R-main requires, so the merge-admission verdict cannot require fewer (#407)."""
         from tools.assurance_completeness import load_declaration
 
-        declaration = load_declaration(ROOT / "policy" / "assurance-evidence.yaml")
+        declaration = load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
         [checks] = [
             r for r in declaration["requirements"] if r["id"] == "verification-checks"
         ]
@@ -111,7 +113,9 @@ class MergeGateRecordTests(unittest.TestCase):
             list[dict[str, object]],
             self._rules()["required_status_checks"]["required_status_checks"],
         )
-        self.assertEqual(
+        # The same checks, each once; their order is not part of either contract
+        # (cubic on #408).
+        self.assertCountEqual(
             [str(check["context"]) for check in required], checks["coverage"]
         )
 

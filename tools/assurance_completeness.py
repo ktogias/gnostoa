@@ -22,6 +22,7 @@ from typing import Any
 
 from . import analyzer_readback
 from .knowledge_common import KnowledgeFormatError
+from .review_check import strict_json_loads
 from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
 
@@ -47,6 +48,7 @@ _PRECEDENCE = (
 )
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
+DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _DECLARATION_KEYS = frozenset({"schema_version", "id", "version", "requirements"})
@@ -117,9 +119,10 @@ def _unique_texts(value: object, label: str) -> list[str]:
 
 
 def _change_class(value: object) -> str:
-    if value not in CHANGE_CLASSES:
+    # A string first: a JSON array or object is unhashable in the membership test.
+    if not isinstance(value, str) or value not in CHANGE_CLASSES:
         raise AssuranceCompletenessError(f"unknown change class {value!r}")
-    return str(value)
+    return value
 
 
 def parse_declaration(document: object) -> dict[str, Any]:
@@ -161,11 +164,23 @@ def parse_declaration(document: object) -> dict[str, Any]:
     }
 
 
-def load_declaration(path: Path) -> dict[str, Any]:
-    """Load a declaration through the strict, bounded policy loader."""
+def load_declaration(path: Path, *, project_root: Path) -> dict[str, Any]:
+    """Load a declaration from inside `project_root`, strictly and within bounds.
 
+    The path is resolved, symbolic links included, and refused outside the root,
+    as Decisions 0033 and 0034 confine a project's own references.
+    """
+
+    root = project_root.resolve()
+    if not root.is_dir():
+        raise AssuranceCompletenessError(f"project root {root} is not a directory")
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise AssuranceCompletenessError(
+            f"declaration {resolved} is outside the project root {root}"
+        )
     try:
-        document = load_policy_yaml(path, label="Required-evidence declaration")
+        document = load_policy_yaml(resolved, label="Required-evidence declaration")
     except KnowledgeFormatError as exc:
         raise AssuranceCompletenessError(str(exc)) from exc
     return parse_declaration(document)
@@ -198,7 +213,7 @@ def _receipt(value: object, index: int) -> dict[str, Any]:
     if receipt["schema"] != RECEIPT_SCHEMA:
         raise AssuranceCompletenessError(f"{label} schema must be {RECEIPT_SCHEMA!r}")
     status = receipt["status"]
-    if status not in RECEIPT_STATUSES:
+    if not isinstance(status, str) or status not in RECEIPT_STATUSES:
         raise AssuranceCompletenessError(f"{label} has unknown status {status!r}")
     try:
         parse_rfc3339(receipt["observed_at"])
@@ -210,7 +225,7 @@ def _receipt(value: object, index: int) -> dict[str, Any]:
     return {
         "requirement": _identifier(receipt["requirement"], f"{label} requirement"),
         "subject": _subject(receipt["subject"], f"{label} subject"),
-        "status": str(status),
+        "status": status,
         "coverage": _unique_texts(receipt["coverage"], f"{label} coverage"),
     }
 
@@ -227,6 +242,50 @@ def _item_status(item: str, current: list[dict[str, Any]], stale: bool) -> str:
     if statuses:
         return _worst(statuses)
     return "STALE" if stale else "MISSING"
+
+
+def _change_of(subject: Mapping[str, Any]) -> tuple[str, str, str]:
+    change_request = subject["change_request"]
+    return subject["repository"], change_request["kind"], change_request["id"]
+
+
+def _by_requirement(
+    receipts: list[dict[str, Any]], exact: Mapping[str, Any], applicable: set[str]
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
+    """Group the receipts for this change by requirement, counting the rest."""
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    ignored = 0
+    for receipt in receipts:
+        if (
+            _change_of(receipt["subject"]) != _change_of(exact)
+            or receipt["requirement"] not in applicable
+        ):
+            ignored += 1
+            continue
+        grouped.setdefault(receipt["requirement"], []).append(receipt)
+    return grouped, ignored
+
+
+def _requirement_result(
+    requirement: Mapping[str, Any], own: list[dict[str, Any]], head: str
+) -> dict[str, Any]:
+    current = [r for r in own if r["subject"]["head_commit"] == head]
+    stale = [r for r in own if r["subject"]["head_commit"] != head]
+    items = [
+        {
+            "item": item,
+            "status": _item_status(
+                item, current, any(item in r["coverage"] for r in stale)
+            ),
+        }
+        for item in requirement["coverage"]
+    ]
+    return {
+        "id": requirement["id"],
+        "status": _worst([entry["status"] for entry in items]),
+        "items": items,
+    }
 
 
 def evaluate(
@@ -247,47 +306,11 @@ def evaluate(
     applicable = [
         r for r in declaration["requirements"] if change_class in r["applies_to"]
     ]
-    applicable_ids = {r["id"] for r in applicable}
-    same_change = {
-        "repository": exact["repository"],
-        "change_request": exact["change_request"],
-    }
-    ignored = 0
-    by_requirement: dict[str, list[dict[str, Any]]] = {}
-    for receipt in parsed:
-        receipt_change = {
-            "repository": receipt["subject"]["repository"],
-            "change_request": receipt["subject"]["change_request"],
-        }
-        if (
-            receipt_change != same_change
-            or receipt["requirement"] not in applicable_ids
-        ):
-            ignored += 1
-            continue
-        by_requirement.setdefault(receipt["requirement"], []).append(receipt)
-
-    results: list[dict[str, Any]] = []
-    for requirement in applicable:
-        own = by_requirement.get(requirement["id"], [])
-        current = [
-            r for r in own if r["subject"]["head_commit"] == exact["head_commit"]
-        ]
-        items = []
-        for item in requirement["coverage"]:
-            stale = any(
-                item in r["coverage"]
-                for r in own
-                if r["subject"]["head_commit"] != exact["head_commit"]
-            )
-            items.append({"item": item, "status": _item_status(item, current, stale)})
-        results.append(
-            {
-                "id": requirement["id"],
-                "status": _worst([entry["status"] for entry in items]),
-                "items": items,
-            }
-        )
+    grouped, ignored = _by_requirement(parsed, exact, {r["id"] for r in applicable})
+    results = [
+        _requirement_result(r, grouped.get(r["id"], []), exact["head_commit"])
+        for r in applicable
+    ]
 
     reasons: list[str] = []
     if not applicable:
@@ -305,22 +328,20 @@ def evaluate(
     }
 
 
-def _read_input(path: Path) -> object:
-    try:
-        with path.open("rb") as handle:
-            raw = handle.read(MAX_INPUT_BYTES + 1)
-    except OSError as exc:
-        raise AssuranceCompletenessError(f"cannot read input {path}: {exc}") from exc
+def _read_input() -> object:
+    """Read the input from standard input, so no input path reaches a file read
+    (SonarCloud S8707 on #408)."""
+
+    raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         raise AssuranceCompletenessError(
-            f"input {path} is larger than the {MAX_INPUT_BYTES}-byte bound"
+            f"input is larger than the {MAX_INPUT_BYTES}-byte bound"
         )
     try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-        raise AssuranceCompletenessError(
-            f"input {path} is not valid JSON: {exc}"
-        ) from exc
+        return strict_json_loads(raw.decode("utf-8"), label="assurance-check input")
+    except ValueError as exc:
+        # UnicodeDecodeError and json's errors are ValueErrors.
+        raise AssuranceCompletenessError(f"input is not valid JSON: {exc}") from exc
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -332,12 +353,24 @@ def _parser() -> argparse.ArgumentParser:
             "INCOMPLETE, 2 when the input is invalid."
         ),
     )
-    parser.add_argument("--declaration", type=Path, required=True)
     parser.add_argument(
-        "--input",
+        "--project-root",
         type=Path,
-        required=True,
-        help="JSON with the subject, the change class and the receipts",
+        default=Path("."),
+        help="the project whose declaration applies (default: the working directory)",
+    )
+    parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=DEFAULT_DECLARATION,
+        help=(
+            "the required-evidence declaration, inside the project root "
+            f"(default: {DEFAULT_DECLARATION})"
+        ),
+    )
+    parser.epilog = (
+        "The input, JSON with the subject, the change class and the receipts, is "
+        "read from standard input."
     )
     return parser
 
@@ -345,8 +378,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        declaration = load_declaration(args.declaration)
-        payload = _mapping(_read_input(args.input), "input")
+        declaration_path = (
+            args.declaration
+            if args.declaration.is_absolute()
+            else args.project_root / args.declaration
+        )
+        declaration = load_declaration(declaration_path, project_root=args.project_root)
+        payload = _mapping(_read_input(), "input")
         _closed(payload, "input", _INPUT_KEYS)
         verdict = evaluate(
             declaration,
