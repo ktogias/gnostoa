@@ -178,12 +178,12 @@ provider-neutral public change-governance contract of
     changed files with their coverage. Both lists come from the comparison of the
     subject's exact base and head commits, which L1 already reads for the merge
     base, so neither can be another head's. An empty comparison is empty, not an
-    error. **The supported domain is 250 commits and 300 files.** A comparison's
-    one page holds at most 250 commits, the cap the pull request's commit list
-    had, so fewer commits than the total is `PARTIAL`. It lists at most 300
-    files, so 300 or more is `PARTIAL`, and the run fails. The owner accepted the
-    300-file domain for initial MA0, and a larger one is a separately owned
-    extension (#407, 6084981368). L1 also marks each conversation
+    error. **The supported domain is up to 250 commits and fewer than 300
+    files.** A comparison's one page holds at most 250 commits, the cap the pull
+    request's commit list had, so fewer commits than the total is `PARTIAL`. It
+    lists at most 300 files, so 300 or more is `PARTIAL`, and the run fails. The
+    owner accepted that file domain for initial MA0, and a larger one is a
+    separately owned extension (#407, 6084981368). L1 also marks each conversation
     comment `edited` from GraphQL's `lastEditedAt`. A comment it cannot mark makes
     the conversation `PARTIAL`. The advisory's snapshot is unchanged.
   - The project root is a checkout of the protected target, whose change policy,
@@ -209,8 +209,16 @@ provider-neutral public change-governance contract of
     heading or field that GitHub renders inside an open raw HTML element, such as
     a collapsed `<details>`, fails the run. So does a heading or field containing
     a raw HTML tag, since GitHub may hide what the tag wraps. HTML comments are
-    skipped. A Work Item is `#N` or a link to an issue of the subject's own
-    repository; another repository's issue is not counted. Whether each exists,
+    skipped. A field's value is its visible text and inline code: a link's
+    target is never read, so an empty link contributes nothing, and a Decision
+    counts only by the id it shows. That is the owner's re-slice decision under
+    #402 (#407, 6085478125). A Work Item is `#N` or the URL of an issue of the
+    subject's own repository; another repository's issue is not counted. A
+    visible `#N` whose link points elsewhere is still read as `#N`. Whether a
+    link's label and target agree, its reference integrity, is a proposed 1b.3b
+    acceptance case, distinct from existence and pending the owner's admission.
+    Like existence, it must be closed before 1b.4 activates the gate (#407,
+    6085507735). Whether each exists,
     as an issue rather than a pull request, is 1b.3b's acceptance case. It must
     be closed before 1b.4 activates the gate (#407, 6085101448 and 6085110011). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.

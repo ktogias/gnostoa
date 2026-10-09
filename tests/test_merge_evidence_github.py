@@ -1040,6 +1040,8 @@ class EvidenceDocumentTests(unittest.TestCase):
         cases = {
             "https://github.com/unrelated/project/issues/999999": [],
             "https://github.com/KTogias/Gnostoa/issues/407": ["#407"],
+            # Claude on #413: the scheme and host compare without case too.
+            "HTTPS://GitHub.com/ktogias/gnostoa/issues/407": ["#407"],
             "#407 https://github.com/ktogias/gnostoa-x/issues/9": ["#407"],
             "other/project#999": [],
         }
@@ -1050,13 +1052,46 @@ class EvidenceDocumentTests(unittest.TestCase):
                 links = _evidence(_snapshot(replies))["links"]
                 self.assertEqual(expected, links["work_items"])
 
-    def test_a_decision_link_counts_by_its_target(self) -> None:
-        replies = _replies()
-        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            "[0112](knowledge/decisions/0112-admit-merges.md)",
-            "[the verdict's record](knowledge/decisions/0112-admit-merges.md)",
-        )
-        self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
+    def test_a_value_is_its_visible_text(self) -> None:
+        """Codex on #413, and the owner's re-slice decision (#407, 6085478125): a
+        link's target is never read, so an empty link contributes nothing and a
+        Decision counts only by the id it shows."""
+        cases = {
+            "an empty Work Item link": (
+                ("#407, #15", "[](https://github.com/ktogias/gnostoa/issues/407)"),
+                "work_items",
+                [],
+            ),
+            "a descriptive Work Item link": (
+                (
+                    "#407, #15",
+                    "[the issue](https://github.com/ktogias/gnostoa/issues/407)",
+                ),
+                "work_items",
+                [],
+            ),
+            "a Work Item in inline code": (
+                ("#407, #15", "`#407`"),
+                "work_items",
+                ["#407"],
+            ),
+            "a Work Item link showing its number": (
+                ("#407, #15", "[#407](https://github.com/ktogias/gnostoa/issues/407)"),
+                "work_items",
+                ["#407"],
+            ),
+            "a Decision named only by its target": (
+                ("[0112]", "[the verdict's record]"),
+                "decisions",
+                [],
+            ),
+            "a Decision showing its id": ((BODY, BODY), "decisions", ["0112"]),
+        }
+        for name, ((old, new), key, expected) in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(old, new)
+                self.assertEqual(expected, _evidence(_snapshot(replies))["links"][key])
 
     def test_a_heading_is_compared_by_its_visible_text(self) -> None:
         """cubic on #413: inline HTML in the heading is not part of its text."""

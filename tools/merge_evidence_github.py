@@ -98,9 +98,10 @@ _VOID_ELEMENTS = frozenset(
         "wbr",
     }
 )
-# `#N`, or a link to an issue, which keeps its repository (Codex on #413).
+# `#N`, or an issue's URL, which keeps its repository (Codex on #413); the scheme
+# and host compare without case, as the owner and name do (Claude on #413).
 _ISSUE = re.compile(
-    r"(?<![\w/])#(\d+)\b|https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)"
+    r"(?<![\w/])#(\d+)\b|(?i:https://github\.com/)([^/\s]+/[^/\s]+)/issues/(\d+)"
 )
 # A standalone four-digit id, or a link to a Decision record; anything else, such as
 # a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt
@@ -395,15 +396,14 @@ def load_decisions(project_root: Path) -> frozenset[str]:
 
 
 def _inline_value(token: Token) -> str:
-    """An item's visible value: its text, inline code and link targets. Inline
-    HTML, comments included, is not part of it."""
+    """An item's visible value: its text and inline code. A link's target is not
+    visible, so it is never read (Codex on #413; the owner's re-slice decision,
+    #407 6085478125), and inline HTML, comments included, is not part of it."""
 
     parts: list[str] = []
     for child in token.children or []:
         if child.type in ("text", "code_inline"):
             parts.append(child.content)
-        elif child.type == "link_open":
-            parts.append(f" {child.attrGet('href') or ''} ")
         elif child.type in ("softbreak", "hardbreak"):
             parts.append(" ")
     return "".join(parts)
