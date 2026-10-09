@@ -56,6 +56,13 @@ _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
+# GitHub lists at most this many commits and files for one pull request; a list
+# that reaches the cap may be truncated (#407, slice 1b.3a).
+_PROVIDER_COMMIT_CAP = 250
+_PROVIDER_FILE_CAP = 3_000
+# Pages of 100 needed to reach the file cap; the default page bound stops at 2,000
+# (CodeAnt and cubic on #413).
+_FILE_PAGES = _PROVIDER_FILE_CAP // 100
 _MAX_OPEN_PULLS = 8
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _MAX_COLLECTION_PASSES = 3
@@ -207,13 +214,14 @@ def _collect_pages(
     *,
     page_items: Any = _list_page,
     normalize: Any,
+    max_pages: int = _MAX_PAGES,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     url: str | None = first_url
     items: list[dict[str, Any]] = []
     pages = 0
     omitted_total = 0
     while url is not None:
-        if pages >= _MAX_PAGES:
+        if pages >= max_pages:
             return items, {
                 "status": "PARTIAL",
                 "pages": pages,
@@ -907,24 +915,150 @@ def _collect_snapshot_once(
     }
 
 
+def _merge_evidence_subject(value: Any) -> dict[str, Any]:
+    """The pull request's fields the merge-evidence adapter reads (#407, slice
+    1b.3a): read only when asked, so the advisory's snapshot is unchanged."""
+
+    item = _mapping(value, "pull request")
+    base = _mapping(item.get("base"), "pull.base")
+    base_repo = _mapping(base.get("repo"), "pull.base.repo")
+    draft = item.get("draft")
+    merged = item.get("merged")
+    if not isinstance(draft, bool) or not isinstance(merged, bool):
+        raise ProviderReadError("pull request draft and merged must be booleans")
+    author = item.get("user")
+    body, truncated = _bounded_body(item.get("body"))
+    return {
+        "draft": draft,
+        "merged": merged,
+        "target": _text(base.get("ref"), "pull.base.ref"),
+        # The repository's default branch, from the same response: the policy's
+        # `protected_default_branch` names no branch (#407, slice 1b.3a).
+        "default_branch": _text(
+            base_repo.get("default_branch"), "pull.base.repo.default_branch"
+        ),
+        "author": None if author is None else _login(author, "pull.user"),
+        "body": body,
+        "body_truncated": truncated,
+    }
+
+
+def _normalize_commit(value: Any) -> dict[str, Any]:
+    item = _mapping(value, "commit")
+    commit = _mapping(item.get("commit"), "commit.commit")
+    message, truncated = _bounded_body(commit.get("message"))
+    return {
+        "sha": _sha(item.get("sha"), "commit.sha"),
+        "message": message,
+        "message_truncated": truncated,
+    }
+
+
+def _normalize_file(value: Any) -> dict[str, Any]:
+    item = _mapping(value, "file")
+    return {
+        "path": _text(item.get("filename"), "file.filename"),
+        "status": _text(item.get("status"), "file.status"),
+        "previous_path": _optional_text(item.get("previous_filename")),
+    }
+
+
+def _capped(coverage: dict[str, Any], cap: int, reason: str) -> dict[str, Any]:
+    if coverage.get("status") == "COMPLETE" and coverage.get("count", 0) >= cap:
+        return {**coverage, "status": "PARTIAL", "reason": reason}
+    return coverage
+
+
+def _collect_merge_evidence_once(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    observed_at: str | None,
+    merge_evidence: bool,
+) -> dict[str, Any]:
+    """One pass of L1's collector, and, when asked, what the merge-evidence
+    adapter reads (#407, slice 1b.3a). The collector itself is unchanged; the pull
+    request is read again here, and a head that moved in between is refused, as
+    the collector refuses a changed identity."""
+
+    snapshot = _collect_snapshot_once(
+        client,
+        repository=repository,
+        pull_number=pull_number,
+        observed_at=observed_at,
+    )
+    if not merge_evidence:
+        return snapshot
+    root = f"{_API_ROOT}/repos/{repository}"
+    pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
+    again = _normalize_pull(pull_payload)
+    subject = snapshot["subject"]
+    # Every field both reads carry must agree, or the certified snapshot would
+    # mix two moments (cubic on #413).
+    if (again["head_sha"], again["base_sha"], again["state"], again["title"]) != (
+        subject["head_commit"],
+        subject["base_commit"],
+        subject["state"],
+        subject["title"],
+    ):
+        raise ProviderReadError("Pull Request changed during collection")
+    snapshot["subject"].update(_merge_evidence_subject(pull_payload))
+    commits, commit_coverage = _collect_pages(
+        client,
+        f"{root}/pulls/{pull_number}/commits?per_page=100",
+        normalize=_normalize_commit,
+    )
+    files, file_coverage = _collect_pages(
+        client,
+        f"{root}/pulls/{pull_number}/files?per_page=100",
+        normalize=_normalize_file,
+        max_pages=_FILE_PAGES,
+    )
+    commit_coverage = _capped(commit_coverage, _PROVIDER_COMMIT_CAP, "commit_list_cap")
+    if commit_coverage.get("status") == "COMPLETE" and (
+        not commits or commits[-1]["sha"] != again["head_sha"]
+    ):
+        # The list must be the head's own (CodeAnt on #413).
+        commit_coverage = {
+            **commit_coverage,
+            "status": "PARTIAL",
+            "reason": "commits_not_at_head",
+        }
+    snapshot["coverage"]["commits"] = commit_coverage
+    snapshot["coverage"]["files"] = _capped(
+        file_coverage, _PROVIDER_FILE_CAP, "file_list_cap"
+    )
+    snapshot["commits"] = commits
+    snapshot["files"] = files
+    return snapshot
+
+
 def collect_snapshot(
     client: JsonReader,
     *,
     repository: str,
     pull_number: int,
     observed_at: str | None,
+    merge_evidence: bool = False,
 ) -> dict[str, Any]:
-    """Confirm a cut that is covered by a subsequent full provider reread."""
+    """Confirm a cut that is covered by a subsequent full provider reread.
+
+    With `merge_evidence`, the snapshot also carries what the merge-evidence
+    adapter reads: the pull request's draft, merged, target, default branch,
+    author and body, and its commits and changed files with their coverage (#407,
+    slice 1b.3a)."""
     previous: dict[str, Any] | None = None
     previous_cut: str | None = None
     snapshot: dict[str, Any] = {}
     for attempt in range(1, _MAX_COLLECTION_PASSES + 1):
         read_started_at = _now()
-        snapshot = _collect_snapshot_once(
+        snapshot = _collect_merge_evidence_once(
             client,
             repository=repository,
             pull_number=pull_number,
             observed_at=observed_at,
+            merge_evidence=merge_evidence,
         )
         read_completed_at = _now()
         if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):

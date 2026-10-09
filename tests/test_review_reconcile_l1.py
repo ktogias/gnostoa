@@ -387,6 +387,17 @@ def _complete_replies_without_review_comments(
     return replies
 
 
+def paged_fake_fixture(replies: dict[str, tuple[Any, dict[str, str]]]) -> Any:
+    """Public test-only access to the fake provider, which refuses any URL it was
+    not given (#407, slice 1b.3a)."""
+    return _PagedFake(replies)
+
+
+def complete_replies_fixture(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
+    """Public test-only access to the complete provider replies for PR 300."""
+    return _complete_replies(root)
+
+
 class UsefulL1RedContractTests(unittest.TestCase):
     def test_reducer_binds_exact_subject_and_preserves_existing_r2a_semantics(
         self,

@@ -1,0 +1,1112 @@
+"""The GitHub evidence adapter, MA0 Phase 1b slice 1b.3a (#407).
+
+Every adapter test runs on a snapshot that L1 itself collects from the fake
+provider, which refuses any URL it was not given, so a mismatch between L1's
+contract and the adapter's fails here rather than in production.
+"""
+
+from __future__ import annotations
+
+import copy
+import io
+import json
+import shutil
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import yaml
+from test_review_reconcile_l1 import (
+    adapter_fixture,
+    complete_replies_fixture,
+    paged_fake_fixture,
+)
+
+from tools import assurance_completeness, merge_admission, merge_evidence_github
+
+ROOT = Path(__file__).resolve().parents[1]
+API = "https://api.github.com/repos/ktogias/gnostoa"
+HEAD = "a" * 40
+PREVIOUS = "d" * 40
+DECLARER = "gnostoa-agent[bot]"
+BODY = """## Outcome
+
+The verdict reads normalized evidence.
+
+## Change control
+
+- Class: `normative`
+- Work Item: #407, #15
+- Decision: [0112](knowledge/decisions/0112-admit-merges.md)
+- Accountable owner: @ktogias
+"""
+
+
+def _commit(sha: str, message: str) -> dict[str, Any]:
+    return {"sha": sha, "commit": {"message": message}}
+
+
+def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
+    """PR 300 in the shape of a converged change, with the merge-evidence reads."""
+
+    replies = copy.deepcopy(complete_replies_fixture(API))
+    pull = replies[f"{API}/pulls/300"][0]
+    pull.update(
+        {
+            "draft": False,
+            "merged": False,
+            "title": "Admit or deny one merge",
+            "body": BODY,
+            "user": {"login": "gnostoa-agent-user"},
+        }
+    )
+    pull["base"]["ref"] = "main"
+    pull["base"]["repo"] = {"default_branch": "main"}
+    replies[f"{API}/issues/300/comments?per_page=100"] = (
+        [
+            {
+                "id": 1,
+                "user": {"login": DECLARER},
+                "created_at": "2026-09-19T16:40:00Z",
+                "updated_at": "2026-09-19T16:40:00Z",
+                "body": f"Exact review candidate: {HEAD}",
+            }
+        ],
+        {},
+    )
+    replies.pop("https://api.github.com/page2/issues", None)
+    first_reviews = replies[f"{API}/pulls/300/reviews?per_page=100"][0]
+    first_reviews[0]["user"] = {"login": "ktogias"}
+    replies[f"{API}/pulls/300/commits?per_page=100"] = (
+        [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")],
+        {},
+    )
+    replies[f"{API}/pulls/300/files?per_page=100"] = (
+        [
+            {"filename": "tools/merge_admission.py", "status": "added"},
+            {"filename": "tests/test_merge_admission.py", "status": "added"},
+        ],
+        {},
+    )
+    for key, value in changes.items():
+        replies[key] = value
+    return replies
+
+
+def _snapshot(
+    replies: dict[str, tuple[Any, dict[str, str]]] | None = None,
+) -> dict[str, Any]:
+    adapter = adapter_fixture()
+    snapshot: dict[str, Any] = adapter.collect_snapshot(
+        paged_fake_fixture(_replies() if replies is None else replies),
+        repository="ktogias/gnostoa",
+        pull_number=300,
+        observed_at="2026-09-19T16:41:00Z",
+        merge_evidence=True,
+    )
+    return snapshot
+
+
+def _authorities() -> dict[str, Any]:
+    return merge_evidence_github.parse_authorities(
+        {
+            "schema_version": "1.0",
+            "id": "example.merge-authorities",
+            "version": "0.1.0",
+            "declarer": DECLARER,
+            "human_approvers": ["ktogias"],
+        }
+    )
+
+
+def _policy() -> dict[str, Any]:
+    return merge_admission.load_policy(
+        ROOT / "policy" / "change-control.yaml", project_root=ROOT
+    )
+
+
+def _evidence(
+    snapshot: dict[str, Any] | None = None,
+    *,
+    codeowners: str = "* @ktogias\n",
+) -> dict[str, Any]:
+    return merge_evidence_github.evidence_from_snapshot(
+        _snapshot() if snapshot is None else snapshot,
+        authorities=_authorities(),
+        change_policy=_policy(),
+        codeowners=merge_evidence_github.parse_codeowners(codeowners),
+        decisions=merge_evidence_github.load_decisions(ROOT),
+    )
+
+
+def _failed(evidence: dict[str, Any]) -> dict[str, list[str]]:
+    declaration = assurance_completeness.load_declaration(
+        ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+    )
+    verdict = merge_admission.evaluate(
+        evidence, declaration=declaration, change_policy=_policy()
+    )
+    return {c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"}
+
+
+class L1MergeEvidenceSnapshotTests(unittest.TestCase):
+    def test_the_default_snapshot_is_unchanged_and_reads_nothing_new(self) -> None:
+        """The current-state advisory keeps its reads and its keys."""
+        adapter = adapter_fixture()
+        fake = paged_fake_fixture(complete_replies_fixture(API))
+        snapshot = adapter.collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        self.assertNotIn("commits", snapshot)
+        self.assertNotIn("files", snapshot)
+        self.assertNotIn("draft", snapshot["subject"])
+        self.assertFalse(
+            any("/commits?" in url or "/files?" in url for url in fake.calls)
+        )
+
+    def test_merge_evidence_adds_the_pull_fields_and_two_sources(self) -> None:
+        snapshot = _snapshot()
+        subject = snapshot["subject"]
+        self.assertEqual(
+            {
+                "draft": False,
+                "merged": False,
+                "target": "main",
+                "author": "gnostoa-agent-user",
+                "body": BODY,
+                "body_truncated": False,
+            },
+            {
+                key: subject[key]
+                for key in (
+                    "draft",
+                    "merged",
+                    "target",
+                    "author",
+                    "body",
+                    "body_truncated",
+                )
+            },
+        )
+        self.assertEqual("main", subject["default_branch"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+        self.assertEqual(
+            [
+                {
+                    "sha": HEAD,
+                    "message": "Admit or deny one merge\n\nRefs #407",
+                    "message_truncated": False,
+                }
+            ],
+            snapshot["commits"],
+        )
+        self.assertEqual(
+            ["tools/merge_admission.py", "tests/test_merge_admission.py"],
+            [item["path"] for item in snapshot["files"]],
+        )
+
+    def test_the_provider_s_commit_cap_is_partial(self) -> None:
+        """GitHub lists at most 250 commits for a pull request."""
+        commits = [_commit(f"{index:040x}", "x") for index in range(250)]
+        pages = {
+            f"{API}/pulls/300/commits?per_page=100": (
+                commits[:100],
+                {"link": '<https://api.github.com/page2/commits>; rel="next"'},
+            ),
+            "https://api.github.com/page2/commits": (
+                commits[100:200],
+                {"link": '<https://api.github.com/page3/commits>; rel="next"'},
+            ),
+            "https://api.github.com/page3/commits": (commits[200:], {}),
+        }
+        snapshot = _snapshot(_replies(**pages))
+        self.assertEqual("PARTIAL", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual("commit_list_cap", snapshot["coverage"]["commits"]["reason"])
+
+    def test_the_files_read_reaches_github_s_cap(self) -> None:
+        """CodeAnt and cubic on #413: 20 pages stopped at 2,000 files, below
+        GitHub's 3,000, so a 2,500-file change could never be read whole."""
+
+        def pages(count: int) -> dict[str, tuple[Any, dict[str, str]]]:
+            files = [
+                {"filename": f"f/{index}", "status": "added"} for index in range(count)
+            ]
+            urls = [f"{API}/pulls/300/files?per_page=100"] + [
+                f"https://api.github.com/files-page-{n}" for n in range(2, 31)
+            ]
+            replies: dict[str, tuple[Any, dict[str, str]]] = {}
+            for index in range(0, count, 100):
+                page = index // 100
+                link = (
+                    {"link": f'<{urls[page + 1]}>; rel="next"'}
+                    if index + 100 < count
+                    else {}
+                )
+                replies[urls[page]] = (files[index : index + 100], link)
+            return replies
+
+        complete = _snapshot(_replies(**pages(2_500)))
+        self.assertEqual("COMPLETE", complete["coverage"]["files"]["status"])
+        self.assertEqual(2_500, len(complete["files"]))
+        capped = _snapshot(_replies(**pages(3_000)))
+        self.assertEqual("PARTIAL", capped["coverage"]["files"]["status"])
+        self.assertEqual("file_list_cap", capped["coverage"]["files"]["reason"])
+
+    def test_a_long_commit_message_is_bounded_and_marked(self) -> None:
+        message = "x" * 70_000
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    f"{API}/pulls/300/commits?per_page=100": (
+                        [_commit(HEAD, message)],
+                        {},
+                    )
+                }
+            )
+        )
+        self.assertTrue(snapshot["commits"][0]["message_truncated"])
+        # Bounded, not only flagged (cubic on #413).
+        self.assertLessEqual(
+            len(snapshot["commits"][0]["message"].encode("utf-8")), 65_536
+        )
+
+    def test_the_commits_must_end_at_the_head(self) -> None:
+        """CodeAnt on #413: a commit list that does not end at the head is not
+        the head's list."""
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    f"{API}/pulls/300/commits?per_page=100": (
+                        [_commit(PREVIOUS, "x")],
+                        {},
+                    )
+                }
+            )
+        )
+        self.assertEqual("PARTIAL", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual(
+            "commits_not_at_head", snapshot["coverage"]["commits"]["reason"]
+        )
+
+    def test_a_head_that_moves_between_reads_is_refused(self) -> None:
+        """L1's collector is composed, not changed (DeepSource on #413): the pull
+        request is read again for the merge-evidence fields, and a change in
+        between fails the read, as L1 refuses a changed identity. cubic on #413:
+        the state and title too, not only the head."""
+        for name, change in (
+            ("head", {"head": {"sha": "e" * 40}}),
+            ("state", {"state": "closed"}),
+            ("title", {"title": "Fixes #12"}),
+        ):
+            with self.subTest(name):
+                self._assert_refused_when_second_read_differs(change)
+
+    def _assert_refused_when_second_read_differs(self, change: dict[str, Any]) -> None:
+        adapter = adapter_fixture()
+        replies = _replies()
+        fake = paged_fake_fixture(replies)
+        moved = copy.deepcopy(replies[f"{API}/pulls/300"])
+        moved[0].update(change)
+        reads = {"pull": 0}
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            if url == f"{API}/pulls/300":
+                reads["pull"] += 1
+                if reads["pull"] % 2 == 0:
+                    return moved
+            reply: tuple[Any, dict[str, str]] = original(url)
+            return reply
+
+        fake.get = get
+        with self.assertRaises(adapter.ProviderReadError):
+            adapter.collect_snapshot(
+                fake,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:41:00Z",
+                merge_evidence=True,
+            )
+
+    def test_the_reconciler_s_snapshot_validation_accepts_the_extension(self) -> None:
+        from tools import review_reconcile
+
+        subject, _, coverage = review_reconcile.validate_snapshot(_snapshot())
+        self.assertEqual(HEAD, subject["head_commit"])
+        self.assertEqual("COMPLETE", coverage["reviews"]["status"])
+
+
+def _owners(text: str, path: str) -> list[str] | None:
+    return merge_evidence_github.parse_codeowners(text).owners(path)
+
+
+class CodeOwnersTests(unittest.TestCase):
+    def test_the_last_matching_rule_wins(self) -> None:
+        text = "* @alice\n/docs/ @bob\n"
+        self.assertEqual(["@alice"], _owners(text, "tools/x.py"))
+        self.assertEqual(["@bob"], _owners(text, "docs/guide.md"))
+
+    def test_patterns_follow_github_s_documented_forms(self) -> None:
+        text = "\n".join(
+            [
+                "*.js @js",
+                "**/logs @anylogs",
+                "/build/logs/ @logs",
+                "docs/* @docs-direct",
+                "apps/ @apps",
+                "/scripts/run.sh @runner",
+            ]
+        )
+        cases = {
+            "web/app.js": ["@js"],
+            "build/logs/a/b.txt": ["@logs"],
+            "docs/getting-started.md": ["@docs-direct"],
+            "docs/build-app/troubleshooting.md": None,
+            "deep/apps/x.py": ["@apps"],
+            "a/b/logs/x": ["@anylogs"],
+            "scripts/run.sh": ["@runner"],
+            "other/scripts/run.sh": None,
+        }
+        for path, owners in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_comments_blank_lines_and_ownerless_rules(self) -> None:
+        text = "# owners\n\n* @alice\n/generated/\n"
+        self.assertEqual([], _owners(text, "generated/x"))
+        self.assertEqual(["@alice"], _owners(text, "src/x"))
+
+    def test_syntax_github_does_not_support_is_refused(self) -> None:
+        for line in ("!/keep @alice", "/file[0-9].txt @alice", "\\#literal @alice"):
+            with (
+                self.subTest(line=line),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(line + "\n")
+
+    def test_the_protected_target_s_file_is_found_in_github_s_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs").mkdir()
+            (root / "docs" / "CODEOWNERS").write_text("* @docs\n", encoding="utf-8")
+            (root / "CODEOWNERS").write_text("* @root\n", encoding="utf-8")
+            self.assertEqual(
+                ["@root"],
+                merge_evidence_github.load_codeowners(root).owners("x"),
+            )
+            (root / ".github").mkdir()
+            (root / ".github" / "CODEOWNERS").write_text(
+                "* @github\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                ["@github"],
+                merge_evidence_github.load_codeowners(root).owners("x"),
+            )
+
+    def test_a_file_over_github_s_limit_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CODEOWNERS").write_text(
+                "# " + "x" * (3 * 1024 * 1024) + "\n", encoding="utf-8"
+            )
+            with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                merge_evidence_github.load_codeowners(root)
+
+
+class EvidenceDocumentTests(unittest.TestCase):
+    def test_a_converged_change_fails_only_on_evidence_not_yet_produced(self) -> None:
+        """Receipts are 1b.3b's and 1b.3c's; so are suppressions and trust roots."""
+        evidence = _evidence()
+        self.assertEqual({"M2-M8", "M13", "M15"}, set(_failed(evidence)))
+        self.assertEqual(
+            {
+                "repository": "https://github.com/ktogias/gnostoa",
+                "change_request": {"kind": "github-pull-request", "id": "300"},
+                "head_commit": HEAD,
+            },
+            evidence["subject"],
+        )
+        self.assertEqual(
+            {
+                "state": "open",
+                "draft": False,
+                "target": "main",
+                "protected_target": "main",
+            },
+            evidence["lifecycle"],
+        )
+        self.assertEqual("normative", evidence["change_class"])
+        self.assertEqual(
+            {"work_items": ["#407", "#15"], "decisions": ["0112"]}, evidence["links"]
+        )
+        self.assertEqual(
+            {"declarer": DECLARER, "head_commit": HEAD}, evidence["declared_candidate"]
+        )
+        self.assertEqual(
+            {
+                "declarer": DECLARER,
+                "author": "gnostoa-agent-user",
+                "required_approvers": ["ktogias"],
+            },
+            evidence["authorities"],
+        )
+        self.assertEqual({"coverage": "COMPLETE", "unresolved": 0}, evidence["threads"])
+        self.assertEqual(
+            {"coverage": "COMPLETE", "found": []}, evidence["closing_references"]
+        )
+        self.assertEqual("UNAVAILABLE", evidence["suppressions"]["coverage"])
+        self.assertEqual("UNAVAILABLE", evidence["trust_root_changes"]["coverage"])
+        self.assertEqual([], evidence["receipts"])
+
+    def test_an_unsealed_head_denies(self) -> None:
+        """#338: the head was never declared."""
+        snapshot = _snapshot(
+            _replies(**{f"{API}/issues/300/comments?per_page=100": ([], {})})
+        )
+        evidence = _evidence(snapshot)
+        self.assertIsNone(evidence["declared_candidate"])
+        self.assertIn("M9", _failed(evidence))
+
+    def test_only_an_unedited_seal_by_the_declarer_counts(self) -> None:
+        def comment(**changes: Any) -> dict[str, Any]:
+            return {
+                "id": 1,
+                "user": {"login": DECLARER},
+                "created_at": "2026-09-19T16:40:00Z",
+                "updated_at": "2026-09-19T16:40:00Z",
+                "body": f"Exact review candidate: {HEAD}",
+                **changes,
+            }
+
+        for name, comments in (
+            ("edited", [comment(updated_at="2026-09-19T16:40:30Z")]),
+            ("foreign", [comment(user={"login": "someone-else"})]),
+            ("previous head", [comment(body=f"Exact review candidate: {PREVIOUS}")]),
+            (
+                "not the first line",
+                [comment(body=f"Note\nExact review candidate: {HEAD}")],
+            ),
+            (
+                "superseded",
+                [
+                    comment(),
+                    comment(
+                        id=2,
+                        created_at="2026-09-19T16:40:10Z",
+                        updated_at="2026-09-19T16:40:10Z",
+                        body=f"Exact review candidate: {PREVIOUS}",
+                    ),
+                ],
+            ),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot(
+                    _replies(
+                        **{f"{API}/issues/300/comments?per_page=100": (comments, {})}
+                    )
+                )
+                self.assertIn("M9", _failed(_evidence(snapshot)))
+
+    def test_closing_references_are_found_on_every_surface(self) -> None:
+        cases: dict[str, dict[str, Any]] = {
+            "title": {f"{API}/pulls/300": None, "title": "Fixes #12: the gate"},
+            "body": {
+                f"{API}/pulls/300": None,
+                "body": BODY + "\nCloses ktogias/gnostoa#13\n",
+            },
+            "commit body": {
+                f"{API}/pulls/300/commits?per_page=100": (
+                    [_commit(HEAD, "Subject\n\nSome context.\nresolved: #14")],
+                    {},
+                )
+            },
+            "issue URL": {
+                f"{API}/pulls/300/commits?per_page=100": (
+                    [_commit(HEAD, "fix https://github.com/ktogias/gnostoa/issues/15")],
+                    {},
+                )
+            },
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                pull = replies[f"{API}/pulls/300"][0]
+                for key in ("title", "body"):
+                    if key in change:
+                        pull[key] = change[key]
+                for key, value in change.items():
+                    if key.startswith("https://") and value is not None:
+                        replies[key] = value
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(
+                    1,
+                    len(evidence["closing_references"]["found"]),
+                    evidence["closing_references"],
+                )
+                self.assertIn("M12", _failed(evidence))
+
+    def test_words_that_are_not_closing_keywords_are_not_references(self) -> None:
+        for text in (
+            "Refs #407",
+            "prefix #3",
+            "unfixed #3",
+            "fixture #12",
+            "closes the gap",
+        ):
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["title"] = text
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual([], evidence["closing_references"]["found"])
+
+    def test_closing_reference_coverage_follows_its_sources(self) -> None:
+        commits = [_commit(f"{index:040x}", "x") for index in range(250)]
+        capped = _replies(
+            **{
+                f"{API}/pulls/300/commits?per_page=100": (
+                    commits[:100],
+                    {"link": '<https://api.github.com/page2/commits>; rel="next"'},
+                ),
+                "https://api.github.com/page2/commits": (
+                    commits[100:200],
+                    {"link": '<https://api.github.com/page3/commits>; rel="next"'},
+                ),
+                "https://api.github.com/page3/commits": (commits[200:], {}),
+            }
+        )
+        truncated_message = _replies(
+            **{
+                f"{API}/pulls/300/commits?per_page=100": (
+                    [_commit(HEAD, "y" * 70_000)],
+                    {},
+                )
+            }
+        )
+        for name, replies in (
+            ("250 commits", capped),
+            ("truncated message", truncated_message),
+        ):
+            with self.subTest(name):
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual("PARTIAL", evidence["closing_references"]["coverage"])
+                self.assertIn("M12", _failed(evidence))
+
+    def test_threads_map_their_count_and_coverage(self) -> None:
+        snapshot = _snapshot()
+        snapshot["review_threads"][0]["state"] = "unresolved"
+        self.assertEqual(1, _evidence(snapshot)["threads"]["unresolved"])
+        snapshot["coverage"]["review_threads"]["status"] = "PARTIAL"
+        self.assertEqual("PARTIAL", _evidence(snapshot)["threads"]["coverage"])
+
+    def test_reviews_are_raw_and_their_partial_reads_fail_the_run(self) -> None:
+        evidence = _evidence()
+        self.assertEqual(
+            {
+                "reviewer": "ktogias",
+                "state": "APPROVED",
+                "commit_id": HEAD,
+                "submitted_at": "2026-09-19T16:40:02Z",
+            },
+            evidence["reviews"][0],
+        )
+        snapshot = _snapshot()
+        snapshot["coverage"]["reviews"].update(
+            {"status": "PARTIAL", "limit": "page_limit"}
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_l1_s_semantic_partial_reasons_keep_every_review(self) -> None:
+        for reason in (
+            "unsubmitted_provider_items",
+            "unavailable_reviewer_identity",
+            "ambiguous_latest_reviewer_opinion",
+        ):
+            with self.subTest(reason=reason):
+                snapshot = _snapshot()
+                snapshot["coverage"]["reviews"].update(
+                    {"status": "PARTIAL", "reason": reason}
+                )
+                self.assertEqual(2, len(_evidence(snapshot)["reviews"]))
+
+    def test_a_deleted_reviewer_keeps_a_per_review_identity(self) -> None:
+        replies = _replies()
+        replies[f"{API}/pulls/300/reviews?per_page=100"][0][0]["user"] = None
+        reviewers = [r["reviewer"] for r in _evidence(_snapshot(replies))["reviews"]]
+        self.assertEqual("github-unavailable-reviewer:10", reviewers[0])
+
+    def test_lifecycle_reflects_draft_target_and_merge(self) -> None:
+        for change, criterion in (
+            ({"draft": True}, "M1"),
+            ({"merged": True, "state": "closed"}, "M1"),
+            ({"state": "closed"}, "M1"),
+        ):
+            with self.subTest(change=change):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0].update(change)
+                self.assertIn(criterion, _failed(_evidence(_snapshot(replies))))
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0].update({"merged": True, "state": "closed"})
+        self.assertEqual("merged", _evidence(_snapshot(replies))["lifecycle"]["state"])
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["base"]["ref"] = "release"
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual("release", evidence["lifecycle"]["target"])
+        self.assertIn("M1", _failed(evidence))
+
+    def test_the_required_approvers_come_from_the_protected_codeowners_and_roster(
+        self,
+    ) -> None:
+        self.assertEqual(
+            ["ktogias"],
+            _evidence(codeowners="* @ktogias\n")["authorities"]["required_approvers"],
+        )
+        self.assertEqual(
+            [],
+            _evidence(codeowners="/docs/ @ktogias\n")["authorities"][
+                "required_approvers"
+            ],
+        )
+        for text in (
+            "* @org/maintainers\n",
+            "* someone@example.com\n",
+            "* @stranger\n",
+        ):
+            with (
+                self.subTest(codeowners=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                _evidence(codeowners=text)
+
+    def test_a_candidate_s_own_codeowners_change_does_not_choose_its_approvers(
+        self,
+    ) -> None:
+        """The candidate may edit `.github/CODEOWNERS`; the protected copy decides."""
+        replies = _replies(
+            **{
+                f"{API}/pulls/300/files?per_page=100": (
+                    [{"filename": ".github/CODEOWNERS", "status": "modified"}],
+                    {},
+                )
+            }
+        )
+        evidence = _evidence(_snapshot(replies), codeowners="* @ktogias\n")
+        self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
+
+    def test_change_control_comes_from_the_template_fields(self) -> None:
+        for body in (
+            "## Outcome\n\nNo change-control section.\n",
+            BODY.replace(
+                "`normative`",
+                "`mechanical | normal | normative | critical | emergency`",
+            ),
+            BODY.replace("`normative`", "`urgent`"),
+        ):
+            with self.subTest(body=body[:40]):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(_snapshot(replies))
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15", "- Work Item:"
+        ).replace(
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)",
+            "- Decision:",
+        )
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual({"work_items": [], "decisions": []}, evidence["links"])
+        self.assertIn("M14", _failed(evidence))
+
+    def test_a_decision_must_name_an_existing_decision(self) -> None:
+        """Codex, cubic and CodeAnt on #413: any four digits counted as a
+        Decision, so "wait until 2026" satisfied M14."""
+        line = "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)"
+        for value, expected in (
+            ("wait until 2026", []),
+            ("see https://github.com/ktogias/gnostoa/issues/0112", []),
+            ("9999", []),
+            ("0112", ["0112"]),
+            ("Decision 0016 and 0112", ["0016", "0112"]),
+            ("[0112](knowledge/decisions/0112-admit-merges.md)", ["0112"]),
+        ):
+            with self.subTest(value=value):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                    line, f"- Decision: {value}"
+                )
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(expected, evidence["links"]["decisions"])
+                if not expected:
+                    self.assertIn("M14", _failed(evidence))
+
+    def test_the_protected_target_s_decisions_are_its_decision_records(self) -> None:
+        decisions = merge_evidence_github.load_decisions(ROOT)
+        self.assertIn("0112", decisions)
+        self.assertIn("0016", decisions)
+        self.assertNotIn("9999", decisions)
+
+    def test_a_protected_target_without_decision_records_fails_the_run(self) -> None:
+        """cubic on #413: every other declaration fails loudly when missing; an
+        absent directory silently dropped every reference."""
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaises(merge_evidence_github.MergeEvidenceError),
+        ):
+            merge_evidence_github.load_decisions(Path(directory))
+
+    def test_a_decision_record_outside_the_protected_target_does_not_count(
+        self,
+    ) -> None:
+        """cubic on #413: a symlink could lend an external record."""
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "9999-fake.md").write_text("x", encoding="utf-8")
+            project = base / "project"
+            records = project / "knowledge" / "decisions"
+            records.mkdir(parents=True)
+            (records / "0001-real.md").write_text("x", encoding="utf-8")
+            (records / "9998-linked.md").symlink_to(outside / "9999-fake.md")
+            self.assertEqual(
+                frozenset({"0001"}), merge_evidence_github.load_decisions(project)
+            )
+            linked = base / "linked"
+            (linked / "knowledge").mkdir(parents=True)
+            (linked / "knowledge" / "decisions").symlink_to(outside)
+            with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                merge_evidence_github.load_decisions(linked)
+
+    def test_an_example_in_a_code_block_is_not_change_control(self) -> None:
+        """CodeAnt on #413: fields inside a fenced example supplied links."""
+        example = (
+            "## Notes\n\n```markdown\n## Change control\n\n- Class: `normal`\n"
+            "- Work Item: #999\n- Decision: 0112\n```\n"
+        )
+        for body in (
+            example,
+            BODY.replace("- Work Item: #407, #15", "- Work Item:")
+            + "\n~~~\n- Work Item: #999\n~~~\n<!--\n- Decision: 0016\n-->\n",
+        ):
+            with self.subTest(body=body[:30]):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                if body is example:
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        _evidence(_snapshot(replies))
+                else:
+                    links = _evidence(_snapshot(replies))["links"]
+                    self.assertEqual([], links["work_items"])
+                    self.assertEqual(["0112"], links["decisions"])
+
+    def test_every_markdown_code_form_hides_its_fields(self) -> None:
+        """Codex on #413: a fence may be indented by up to three spaces, may be
+        longer than three, and an indented block is code too; none of their
+        lines is a field."""
+        stripped = BODY.replace("- Work Item: #407, #15", "- Work Item:")
+        for name, extra in (
+            # A paragraph ends the list first: after a list item, an indented fence
+            # would sit inside the item, and the next line would break out as a
+            # visible item, as GitHub renders it.
+            ("indented fence", "\nText.\n\n  ```\n- Work Item: #999\n  ```\n"),
+            ("long fence", "\n````text\n```\n- Work Item: #999\n````\n"),
+            ("mixed markers", "\n~~~\n```\n- Work Item: #999\n~~~\n"),
+            ("tilde fence", "\nText.\n\n   ~~~~\n- Work Item: #999\n   ~~~~\n"),
+            ("indented code block", "\n    - Work Item: #999\n"),
+            ("unclosed fence", "\n```\n- Work Item: #999\n"),
+        ):
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = stripped + extra
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual([], links["work_items"])
+
+    def test_an_unclosed_comment_hides_the_rest_of_the_description(self) -> None:
+        """Codex on #413: GitHub renders an unclosed comment as hiding
+        everything after it, so its fields are not visible evidence."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            BODY.replace("- Work Item: #407, #15", "- Work Item:")
+            + "\n<!--\n- Work Item: #999\n"
+        )
+        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = "<!--\n" + BODY
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+
+    def test_html_and_code_spans_follow_commonmark(self) -> None:
+        """Codex, cubic, CodeAnt and Claude on #413: a raw HTML block is code; a
+        fence can straddle a comment; `<!--` in a code span opens nothing; an
+        inline comment in a value is not part of it (Decision 0113)."""
+        stripped = BODY.replace("- Work Item: #407, #15", "- Work Item:")
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            stripped + "\n<pre>\n- Work Item: #999\n</pre>\n"
+        )
+        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        # A fence that opens before a comment closes at its own marker, so what
+        # follows renders as a visible item (Decision 0113): here a second Work
+        # Item, which is ambiguous.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            stripped + "\n```\n<!--\n```\n- Work Item: #999\n-->\n"
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            "Write `<!--` to open a comment.\n\n" + BODY
+        )
+        self.assertEqual(
+            ["#407", "#15"], _evidence(_snapshot(replies))["links"]["work_items"]
+        )
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)",
+            "- Decision: 0112 <!-- 0016 -->",
+        )
+        self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
+
+    def test_the_section_is_the_top_level_heading_and_its_own_items(self) -> None:
+        """Only the top-level section's own top-level items are fields: not a
+        later section's, not a nested item, not a heading inside a quote."""
+        cases = {
+            "a later section": BODY + "\n## Notes\n\n- Work Item: #999\n",
+            "a nested item": BODY.replace(
+                "- Accountable owner: @ktogias",
+                "- Accountable owner: @ktogias\n  - Work Item: #999",
+            ),
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                self.assertEqual(
+                    ["#407", "#15"],
+                    _evidence(_snapshot(replies))["links"]["work_items"],
+                )
+        # A quoted section is not the description's own, so it neither counts
+        # nor makes the real one ambiguous.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            BODY + "\n> ## Change control\n>\n> - Class: `normal`\n"
+        )
+        self.assertEqual("normative", _evidence(_snapshot(replies))["change_class"])
+
+    def test_a_decision_link_counts_by_its_target(self) -> None:
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "[0112](knowledge/decisions/0112-admit-merges.md)",
+            "[the verdict's record](knowledge/decisions/0112-admit-merges.md)",
+        )
+        self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
+
+    def test_two_change_control_sections_are_ambiguous(self) -> None:
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY + "\n" + BODY
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+
+    def test_logins_compare_without_case(self) -> None:
+        """CodeAnt on #413: GitHub logins are case-insensitive."""
+        approvers = _evidence(codeowners="* @KTogias\n")["authorities"][
+            "required_approvers"
+        ]
+        self.assertEqual(["ktogias"], approvers)
+        self.assertNotIn("M16", _failed(_evidence(codeowners="* @KTogias\n")))
+        roster = {**_authorities(), "human_approvers": ["KTogias"]}
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            _snapshot(),
+            authorities=roster,
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+        )
+        self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
+
+    def test_a_rename_without_its_previous_path_fails_the_run(self) -> None:
+        """CodeAnt on #413: the old location's code owner would be skipped."""
+        replies = _replies(
+            **{
+                f"{API}/pulls/300/files?per_page=100": (
+                    [{"filename": "tools/new.py", "status": "renamed"}],
+                    {},
+                )
+            }
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+        replies = _replies(
+            **{
+                f"{API}/pulls/300/files?per_page=100": (
+                    [
+                        {
+                            "filename": "tools/new.py",
+                            "status": "renamed",
+                            "previous_filename": "docs/old.py",
+                        }
+                    ],
+                    {},
+                )
+            }
+        )
+        approvers = _evidence(
+            _snapshot(replies), codeowners="* @ktogias\n/docs/ @ktogias\n"
+        )["authorities"]["required_approvers"]
+        self.assertEqual(["ktogias"], approvers)
+        # The old location's owners count too: one off the roster fails the run.
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies), codeowners="* @ktogias\n/docs/ @stranger\n")
+
+    def test_a_truncated_description_cannot_vouch_for_its_change_control(self) -> None:
+        """CodeAnt on #413: a cut body may have lost part of its section."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY + "x" * 70_000
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+
+    def test_incomplete_conversation_or_files_fail_the_run(self) -> None:
+        for source in ("conversation", "files", "subject"):
+            with self.subTest(source=source):
+                snapshot = _snapshot()
+                snapshot["coverage"][source]["status"] = "PARTIAL"
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+
+    def test_a_snapshot_without_the_merge_evidence_fields_is_refused(self) -> None:
+        adapter = adapter_fixture()
+        plain = adapter.collect_snapshot(
+            paged_fake_fixture(complete_replies_fixture(API)),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(plain)
+
+
+def _project(directory: Path, *, authorities: bool = True) -> Path:
+    project = directory / "project"
+    (project / "policy").mkdir(parents=True)
+    (project / "core").mkdir()
+    (project / ".github").mkdir()
+    for name in ("policy/change-control.yaml", "core/change-control.yaml"):
+        shutil.copyfile(ROOT / name, project / name)
+    shutil.copytree(
+        ROOT / "knowledge" / "decisions", project / "knowledge" / "decisions"
+    )
+    (project / ".github" / "CODEOWNERS").write_text("* @ktogias\n", encoding="utf-8")
+    if authorities:
+        (project / "policy" / "merge-authorities.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": "1.0",
+                    "id": "example.merge-authorities",
+                    "version": "0.1.0",
+                    "declarer": DECLARER,
+                    "human_approvers": ["ktogias"],
+                }
+            ),
+            encoding="utf-8",
+        )
+    return project
+
+
+def _run(project: Path, text: str) -> tuple[int, str, str]:
+    stdin = io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8")
+    out, err = io.StringIO(), io.StringIO()
+    with patch("sys.stdin", stdin), redirect_stdout(out), redirect_stderr(err):
+        code = merge_evidence_github.main(["--project-root", str(project)])
+    return code, out.getvalue(), err.getvalue()
+
+
+class CommandTests(unittest.TestCase):
+    def test_the_command_writes_the_evidence_document(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            code, out, err = _run(_project(Path(directory)), json.dumps(_snapshot()))
+        self.assertEqual(0, code, err)
+        self.assertEqual(HEAD, json.loads(out)["subject"]["head_commit"])
+
+    def test_a_failed_run_exits_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            for text in ("[]", "not json", json.dumps({"schema_version": "x"})):
+                with self.subTest(text=text):
+                    self.assertEqual(2, _run(project, text)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            missing = _project(Path(directory), authorities=False)
+            self.assertEqual(2, _run(missing, json.dumps(_snapshot()))[0])
+
+    def test_the_knowledge_cli_routes_merge_evidence(self) -> None:
+        from tools import cli
+
+        self.assertIs(merge_evidence_github.main, cli.COMMANDS["merge-evidence"][1])
+
+
+class AuthoritiesTests(unittest.TestCase):
+    def test_the_declaration_has_a_closed_contract(self) -> None:
+        valid = {
+            "schema_version": "1.0",
+            "id": "example.merge-authorities",
+            "version": "0.1.0",
+            "declarer": DECLARER,
+            "human_approvers": ["ktogias"],
+        }
+        changes: tuple[dict[str, Any], ...] = (
+            {"extra": 1},
+            {"declarer": ""},
+            {"human_approvers": []},
+            {"human_approvers": ["ktogias", "ktogias"]},
+            {"human_approvers": "ktogias"},
+        )
+        for change in changes:
+            with (
+                self.subTest(change=change),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_authorities({**valid, **change})
+
+    def test_gnostoa_s_authorities_and_codeowners(self) -> None:
+        authorities = merge_evidence_github.load_authorities(
+            ROOT / "policy" / "merge-authorities.yaml", project_root=ROOT
+        )
+        self.assertEqual(DECLARER, authorities["declarer"])
+        self.assertEqual(["ktogias"], authorities["human_approvers"])
+        owners = merge_evidence_github.load_codeowners(ROOT)
+        for path in ("tools/merge_admission.py", ".github/workflows/verification.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(["@ktogias"], owners.owners(path))
+
+
+class GuardrailRegistrationTests(unittest.TestCase):
+    def test_every_test_in_this_module_is_registered_in_its_guardrail(self) -> None:
+        manifest = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        )
+        (entry,) = [
+            g for g in manifest["guardrails"] if g["id"] == "github-merge-evidence"
+        ]
+        prefix = "tests/test_merge_evidence_github.py::"
+        registered = {t[len(prefix) :] for t in entry["tests"] if t.startswith(prefix)}
+        defined = {
+            f"{name}.{method}"
+            for name, case in globals().items()
+            if isinstance(case, type) and issubclass(case, unittest.TestCase)
+            for method in unittest.defaultTestLoader.getTestCaseNames(case)
+        }
+        self.assertEqual(set(), defined - registered)
+        # The command's route is part of the entry point (cubic on #413).
+        self.assertIn("tools/cli.py", entry["implementation"])
+
+
+if __name__ == "__main__":
+    unittest.main()

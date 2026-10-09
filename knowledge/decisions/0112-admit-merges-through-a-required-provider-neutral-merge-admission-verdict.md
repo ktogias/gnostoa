@@ -126,20 +126,26 @@ provider-neutral public change-governance contract of
   |---|---|---|
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
-  | 1b.3 | the GitHub adapter and SonarCloud's inventory | not yet admitted |
+  | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts | not yet admitted |
+  | 1b.3c | SonarCloud's readback (#359) | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
 
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no producer, the reducer reports it `MISSING`.** SonarCloud's
-  inventory is one such item until 1b.3. So once the check is required, a merge
+  inventory is one such item until 1b.3c. So once the check is required, a merge
   waits for its evidence rather than passing without it.
 - **The verdict's input is a normalized evidence document,** which the GitHub
   adapter (1b.3) produces. It names the change's subject and lifecycle, its class
   and links, the declared candidate, the declarer, the author and the required approvers, the
   reviews, the threads, the closing references, the new suppressions, the
-  trust-root changes, and the receipts for the reducer. Finding closing references
+  trust-root changes, and the receipts for the reducer. Every list the adapter
+  reads from the provider carries its coverage, so "not read" cannot pass as
+  "none": the suppressions and trust-root changes, like the threads and the
+  closing references, deny unless their coverage is `COMPLETE`, and M15 is a
+  criterion. Finding closing references
   is the adapter's job, since the keyword syntax is the provider's. The verdict
   denies unless their coverage is complete and none is found. The approval rule is
   runbook step 8's: each required approver's latest review, of any state, approves
@@ -165,6 +171,36 @@ provider-neutral public change-governance contract of
   provider account's type does not tell a person from a machine user. An
   any-of-several owner rule would need the contract to carry eligible approvers
   and a count, which this slice does not.
+- **The GitHub evidence adapter (1b.3a) reads one L1 snapshot and the protected
+  target.** It reads nothing from the provider itself:
+  - L1 (Decision 0086), asked for merge evidence, adds the pull request's draft,
+    merged, target, default branch, author and bounded body, and its commits and
+    changed files with their coverage. GitHub caps the commits at 250, so a list
+    that reaches the cap is `PARTIAL`. The advisory's snapshot is unchanged.
+  - The project root is a checkout of the protected target, whose change policy,
+    `policy/merge-authorities.yaml` and CODEOWNERS apply, never the candidate's.
+  - The seal is the declarer's last unedited top-level comment whose first line
+    is `Exact review candidate: <sha>`.
+  - The required approvers are each changed file's code owners on the human
+    roster (owner decision 2 on #407). A rule whose owners include no rostered
+    person fails the run. The CODEOWNERS reader follows GitHub's documented
+    rules, and refuses the syntax GitHub skips.
+  - The class, Work Item and Decision come from the change-request template's
+    `## Change control` fields (owner decision 3), read as CommonMark ([Decision
+    0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
+    fields are the items of the one top-level section's top-level lists, so code,
+    HTML blocks and comments are never fields. A Decision counts only when the
+    protected target has its record, and a truncated description fails the run.
+  - Closing references are GitHub's keywords in the title, the body and every
+    commit message, read in the raw text, code and comments included. The
+    asymmetry with the class and links is deliberate. Reading a hidden field
+    could satisfy M14, so code is skipped there. Reporting a hidden keyword can
+    only deny M12, while missing one would let a merge close a Work Item.
+  - The protected target is the repository's default branch, which the change
+    policy declares protected.
+  - Until 1b.3b and 1b.3c, the receipts are empty and the suppressions and
+    trust-root changes are `UNAVAILABLE`, so the verdict denies rather than
+    passing them vacuously.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
