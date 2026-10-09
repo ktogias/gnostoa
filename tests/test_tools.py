@@ -167,7 +167,9 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     # assertion; the gate's one step is that assertion, with two more results.
     "regression-suite": "1b36d5d2086758692a13b9f6c4c1506f7f4d5de9575b6d68c437c0ae035609a9",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "regression": "485b7a341e434bdc2e6b4178268b9ef4397bbed9b834d801b1e65455b4f82415",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    # #408: the executable-candidate binding adds the completeness reducer and
+    # the vocabulary it imports to SB2 (19 -> 21 files).
+    "smoke": "7d4e20d49be48120e75f3dca441c622c6e9b964b1eac65317e90651a32ba252e",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended-route": "27ed1f35eb9984d3ad3e9fdf42873bb8b2c9b8bf86df8743c9ee6c3cb8da7106",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0bd52547e3e739aea968487808e533d5d5355075f8c08c81a9191f2372d4d3f3",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (
@@ -1853,6 +1855,8 @@ class ProfileReadBoundaryTests(unittest.TestCase):
             child = project / ".knowledge" / "profile.yaml"
             child.write_text("id: child\n", encoding="utf-8")
             with self.assertRaises(TypeError):
+                # skipcq: PYL-E1125 -- deliberate: this test asserts that a call
+                # without the keyword-only project_root is refused (4405520)
                 load_profile(child)  # type: ignore[call-arg]
 
     def test_profile_without_a_parent_still_loads(self) -> None:

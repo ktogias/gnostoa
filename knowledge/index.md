@@ -113,6 +113,7 @@ inherited, copied or loaded by adopting projects.
 - [Run the test suite in parallel processes through one owner](decisions/0109-run-the-test-suite-in-parallel-processes-through-one-owner.md)
 - [Bind every merge to the owner's approval of the exact head](decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
 - [Keep the Gnostoa logos reserved, with their provenance](decisions/0111-keep-the-gnostoa-logos-reserved-with-their-provenance.md)
+- [Admit merges through a required, provider-neutral merge-admission verdict](decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

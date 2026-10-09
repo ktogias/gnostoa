@@ -317,6 +317,15 @@ jobs:
           test "$(wc -l < "${sb2_paths_file}")" -eq 19
           test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 19
 
+          # knowledge assurance-check (#408): the reducer and the vocabulary it
+          # imports join the supported entrypoints' source (Decision 0035).
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/analyzer_readback.py
+          tools/assurance_completeness.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 21
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 21
+
           source_sb2_manifest="${sb2_root}/source.sha256"
           runtime_sb2_manifest="${sb2_root}/runtime.sha256"
           vendored_sb2_manifest="${sb2_root}/vendored.sha256"
@@ -367,7 +376,7 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.membership=19\n'
+          printf 'sb2.membership=21\n'
           printf 'sb2.source.begin\n'
           cat "${source_sb2_manifest}"
           printf 'sb2.source.end\n'

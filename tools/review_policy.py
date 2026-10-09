@@ -29,9 +29,9 @@ class ReviewPolicyLoader(KnowledgeLoader):
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
         if any(key_node.tag == "tag:yaml.org,2002:merge" for key_node, _ in node.value):
             raise yaml.constructor.ConstructorError(
-                "while constructing review policy",
+                "while constructing a policy document",
                 node.start_mark,
-                "YAML merge keys are not supported in review policies",
+                "YAML merge keys are not supported in policy documents",
                 node.start_mark,
             )
         super().flatten_mapping(node)
@@ -95,14 +95,16 @@ def _as_mapping(value: object, *, context: str) -> dict[str, Any]:
     return value
 
 
-def _assert_policy_document_depth(document: object, path: Path) -> None:
+def _assert_policy_document_depth(
+    document: object, path: Path, label: str = "Review policy"
+) -> None:
     pending: list[tuple[object, int]] = [(document, 1)]
     processed_depth: dict[int, int] = {}
     while pending:
         value, depth = pending.pop()
         if depth > MAX_REVIEW_POLICY_DOCUMENT_DEPTH:
             raise KnowledgeFormatError(
-                f"Review policy {path} nests deeper than the "
+                f"{label} {path} nests deeper than the "
                 f"{MAX_REVIEW_POLICY_DOCUMENT_DEPTH}-level operational bound"
             )
         if not isinstance(value, (dict, list)):
@@ -116,38 +118,46 @@ def _assert_policy_document_depth(document: object, path: Path) -> None:
         pending.extend((child, depth + 1) for child in children)
 
 
-def _load_policy_yaml(path: Path) -> dict[str, Any]:
+def load_policy_yaml(path: Path, *, label: str = "Review policy") -> dict[str, Any]:
+    """Load one policy document strictly and within the operational bounds.
+
+    Duplicate and merge keys are refused, and the size and nesting are bounded.
+    `label` names the document in errors; review policies keep the default.
+    """
+
     try:
         with path.open("rb") as handle:
             raw = handle.read(MAX_REVIEW_POLICY_BYTES + 1)
     except OSError as exc:
-        raise KnowledgeFormatError(f"Cannot read review policy {path}: {exc}") from exc
+        raise KnowledgeFormatError(
+            f"Cannot read {label.lower()} {path}: {exc}"
+        ) from exc
 
     if len(raw) > MAX_REVIEW_POLICY_BYTES:
         raise KnowledgeFormatError(
-            f"Review policy {path} is larger than the "
+            f"{label} {path} is larger than the "
             f"{MAX_REVIEW_POLICY_BYTES}-byte operational bound"
         )
 
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise KnowledgeFormatError(
-            f"Review policy {path} is not valid UTF-8: {exc}"
-        ) from exc
+        raise KnowledgeFormatError(f"{label} {path} is not valid UTF-8: {exc}") from exc
 
     try:
         value = yaml.load(text, Loader=ReviewPolicyLoader)
     except RecursionError as exc:
         raise KnowledgeFormatError(
-            f"Review policy {path} exhausted the YAML parser nesting bound"
+            f"{label} {path} exhausted the YAML parser nesting bound"
         ) from exc
     except yaml.YAMLError as exc:
-        raise KnowledgeFormatError(f"Cannot load review policy {path}: {exc}") from exc
+        raise KnowledgeFormatError(
+            f"Cannot load {label.lower()} {path}: {exc}"
+        ) from exc
 
     if not isinstance(value, dict):
         raise KnowledgeFormatError(f"Expected a YAML mapping in {path}")
-    _assert_policy_document_depth(value, path)
+    _assert_policy_document_depth(value, path, label)
     return value
 
 
@@ -162,7 +172,7 @@ def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
             f"{MAX_REVIEW_POLICY_INHERITANCE_DEPTH}-policy operational bound"
         )
 
-    current = _load_policy_yaml(resolved)
+    current = load_policy_yaml(resolved)
     extends = current.get("extends", [])
     if not isinstance(extends, list) or len(extends) > 1:
         raise KnowledgeFormatError(
