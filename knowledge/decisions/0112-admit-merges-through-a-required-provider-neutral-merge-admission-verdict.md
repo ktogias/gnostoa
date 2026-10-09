@@ -92,10 +92,11 @@ provider-neutral public change-governance contract of
      Decision 0086's, plus `SKIPPED`.
    - The reducer fetches nothing and grants nothing.
 3. **The owner's native approval of the exact head is the only per-merge human act.**
-   - The verdict lists, for that approval:
-     - reviewer convergence;
-     - justified suppressions;
-     - changes to the gate's trust roots.
+   - What the approval rests on:
+     - reviewer convergence: item 4's subset is criteria of the verdict, and the
+       rest is in the agent's convergence report;
+     - justified suppressions, which the verdict lists;
+     - changes to the gate's trust roots, which the verdict lists.
    - Channel C, the environment attestation of MA0 design decision 2, is not used
      for merges. **There is no evidence waiver**: when required evidence is
      unavailable, the merge waits, or goes through break glass with its mandatory
@@ -104,7 +105,8 @@ provider-neutral public change-governance contract of
    phase:**
    - no unresolved thread;
    - no effective `CHANGES_REQUESTED`;
-   - the readback and the analyzers.
+   - the readback and the analyzers, as coverage items of the declaration that the
+     reducer covers (M2–M8).
 
    The convergence of the reviewers themselves stays in the agent's convergence
    report until MA0 Phase 2's per-reviewer adapters.
@@ -123,7 +125,7 @@ provider-neutral public change-governance contract of
   | Slice | Contents | Status |
   |---|---|---|
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
-  | 1b.2 | the verdict | not yet admitted |
+  | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3 | the GitHub adapter and SonarCloud's inventory | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
@@ -133,6 +135,53 @@ provider-neutral public change-governance contract of
 - **While an item has no producer, the reducer reports it `MISSING`.** SonarCloud's
   inventory is one such item until 1b.3. So once the check is required, a merge
   waits for its evidence rather than passing without it.
+- **The verdict's input is a normalized evidence document,** which the GitHub
+  adapter (1b.3) produces. It names the change's subject and lifecycle, its class
+  and links, the declared candidate, the declarer, the author and the required approvers, the
+  reviews, the threads, the closing references, the new suppressions, the
+  trust-root changes, and the receipts for the reducer. Finding closing references
+  is the adapter's job, since the keyword syntax is the provider's. The verdict
+  denies unless their coverage is complete and none is found. The approval rule is
+  runbook step 8's: each required approver's latest review, of any state, approves
+  the exact head. A pending review is not submitted and is ignored. A review's
+  commit is an exact SHA, as the subject's is, or null, as GitHub reports it once
+  the commit is garbage-collected or force-deleted; a null commit approves no
+  head. The required approvers are distinct. Timestamps are compared in
+  whole seconds. Reviews by one reviewer that share the latest second and disagree
+  in what a criterion reads (the opinion for M11, the opinion and commit for M16)
+  have no order, so they deny. Mapping a deleted account, GitHub's null `user`, to
+  a stable reviewer identity is the 1b.3 adapter's job.
+- **The approval is bound to the class's rules.** M16 reads `minimum_approvals` and
+  `independent_approval` from the effective policy, as M14 reads the link rules.
+  In an independent class, the change's author and declarer can be neither a
+  required approver nor an approver: any approval by either denies
+  (`may_approve_own_change: false`).
+- **Each required approver must approve; the adapter names exactly them.** The
+  verdict requires every listed approver's latest review to approve the head, and
+  at least the class's minimum to be listed. A class whose minimum is zero, as in
+  the core policy, needs no approver. Who they are, and that each is a
+  person, is the adapter's to establish (a 1b.3 acceptance case). It must take
+  them from the protected target's code owners, never from the candidate, since a
+  provider account's type does not tell a person from a machine user. An
+  any-of-several owner rule would need the contract to carry eligible approvers
+  and a count, which this slice does not.
+- **The effective change policy is the candidate's own.** Its whole inheritance
+  chain is confined to the project root, through the parent-reference resolver
+  that Decision 0033 established for profiles and that both loaders now share. The
+  policy must also match the change-control schema, so a malformed requirement
+  cannot read as "not required". The inheritance walk is bounded at eight
+  policies before a parent is opened, so a long chain fails the run with that
+  reason instead of reaching the interpreter's recursion limit.
+- **The head-move invariant (d) of the owner's acceptance list** (#398,
+  6061573600) is 1b.4's, not the verdict's. The check is posted on the exact head
+  commit, so a new head has no passing check, and the App's merge names the head
+  it expects.
+- **The two commands share one command-line boundary,** `tools/verdict_cli.py`,
+  factored from 1b.1's: bounded strict input on standard input, the project-root
+  confinement, the write and flush inside the guard, and exit 2 for every failed
+  run. Slice 1b.2 adds both of its files to SB2 (21 → 23). The owners it also
+  imports, `tools/check_change_policy.py` and `tools/knowledge_common.py`, are
+  already members.
 - **SB2 grows by two files.** `knowledge assurance-check` is a supported entrypoint, so
   `tools/assurance_completeness.py` and the vocabulary it imports,
   `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).

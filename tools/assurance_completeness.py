@@ -19,19 +19,16 @@ is ignored and counted, so its items fail closed as `MISSING`.
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from . import analyzer_readback
+from . import analyzer_readback, verdict_cli
 from .knowledge_common import KnowledgeFormatError
-from .review_check import assert_document_depth, strict_json_loads
 from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
+from .verdict_cli import confine, read_json_input, run
 
 DECLARATION_SCHEMA_VERSION = "1.0"
 RECEIPT_SCHEMA = "gnostoa-evidence-receipt/v1"
@@ -54,7 +51,8 @@ _PRECEDENCE = (
     "MISSING",
 )
 
-MAX_INPUT_BYTES = 8 * 1024 * 1024
+# The shared boundary's bound, named here for this command's callers.
+MAX_INPUT_BYTES = verdict_cli.MAX_INPUT_BYTES
 DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 _INPUT_LABEL = "assurance-check input"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -82,13 +80,13 @@ class AssuranceCompletenessError(ValueError):
     """A declaration, subject or receipt violates the closed contract."""
 
 
-def _mapping(value: object, label: str) -> Mapping[str, Any]:
+def require_mapping(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AssuranceCompletenessError(f"{label} must be a mapping")
     return value
 
 
-def _closed(
+def require_closed_keys(
     value: Mapping[str, Any],
     label: str,
     required: frozenset[str],
@@ -105,14 +103,14 @@ def _closed(
         raise AssuranceCompletenessError(f"{label} lacks {missing[0]!r}")
 
 
-def _text(value: object, label: str) -> str:
+def require_text(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AssuranceCompletenessError(f"{label} must be a non-empty string")
     return value
 
 
 def _identifier(value: object, label: str) -> str:
-    text = _text(value, label)
+    text = require_text(value, label)
     if _IDENTIFIER.fullmatch(text) is None:
         raise AssuranceCompletenessError(
             f"{label} must be lowercase letters, digits and hyphens"
@@ -120,16 +118,18 @@ def _identifier(value: object, label: str) -> str:
     return text
 
 
-def _unique_texts(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or not value:
+def require_unique_texts(
+    value: object, label: str, *, allow_empty: bool = False
+) -> list[str]:
+    if not isinstance(value, list) or not (value or allow_empty):
         raise AssuranceCompletenessError(f"{label} must be a non-empty list")
-    items = [_text(item, label) for item in value]
+    items = [require_text(item, label) for item in value]
     if len(set(items)) != len(items):
         raise AssuranceCompletenessError(f"{label} has a duplicate entry")
     return items
 
 
-def _change_class(value: object) -> str:
+def parse_change_class(value: object) -> str:
     # A string first: a JSON array or object is unhashable in the membership test.
     if not isinstance(value, str) or value not in CHANGE_CLASSES:
         raise AssuranceCompletenessError(f"unknown change class {value!r}")
@@ -139,8 +139,8 @@ def _change_class(value: object) -> str:
 def parse_declaration(document: object) -> dict[str, Any]:
     """Validate a required-evidence declaration and return it normalized."""
 
-    value = _mapping(document, "declaration")
-    _closed(value, "declaration", _DECLARATION_KEYS)
+    value = require_mapping(document, "declaration")
+    require_closed_keys(value, "declaration", _DECLARATION_KEYS)
     if value["schema_version"] != DECLARATION_SCHEMA_VERSION:
         raise AssuranceCompletenessError(
             f"declaration schema_version must be {DECLARATION_SCHEMA_VERSION!r}"
@@ -151,17 +151,19 @@ def parse_declaration(document: object) -> dict[str, Any]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(requirements):
         label = f"requirement {index}"
-        requirement = _mapping(item, label)
-        _closed(requirement, label, _REQUIREMENT_KEYS)
-        classes = _unique_texts(requirement["applies_to"], f"{label} applies_to")
+        requirement = require_mapping(item, label)
+        require_closed_keys(requirement, label, _REQUIREMENT_KEYS)
+        classes = require_unique_texts(requirement["applies_to"], f"{label} applies_to")
         for change_class in classes:
-            _change_class(change_class)
+            parse_change_class(change_class)
         normalized.append(
             {
                 "id": _identifier(requirement["id"], f"{label} id"),
-                "title": _text(requirement["title"], f"{label} title"),
+                "title": require_text(requirement["title"], f"{label} title"),
                 "applies_to": classes,
-                "coverage": _unique_texts(requirement["coverage"], f"{label} coverage"),
+                "coverage": require_unique_texts(
+                    requirement["coverage"], f"{label} coverage"
+                ),
             }
         )
     ids = [requirement["id"] for requirement in normalized]
@@ -169,8 +171,8 @@ def parse_declaration(document: object) -> dict[str, Any]:
         raise AssuranceCompletenessError("declaration has a duplicate requirement id")
     return {
         "schema_version": DECLARATION_SCHEMA_VERSION,
-        "id": _text(value["id"], "declaration id"),
-        "version": _text(value["version"], "declaration version"),
+        "id": require_text(value["id"], "declaration id"),
+        "version": require_text(value["version"], "declaration version"),
         "requirements": normalized,
     }
 
@@ -182,20 +184,9 @@ def load_declaration(path: Path, *, project_root: Path) -> dict[str, Any]:
     as Decisions 0033 and 0034 confine a project's own references.
     """
 
-    try:
-        root = project_root.resolve()
-        resolved = path.resolve()
-    except (OSError, RuntimeError) as exc:
-        # A symbolic-link loop raises RuntimeError before Python 3.13.
-        raise AssuranceCompletenessError(
-            f"cannot resolve the declaration: {exc}"
-        ) from exc
-    if not root.is_dir():
-        raise AssuranceCompletenessError(f"project root {root} is not a directory")
-    if not resolved.is_relative_to(root):
-        raise AssuranceCompletenessError(
-            f"declaration {resolved} is outside the project root {root}"
-        )
+    resolved = confine(
+        path, project_root, label="declaration", error=AssuranceCompletenessError
+    )
     try:
         document = load_policy_yaml(resolved, label="Required-evidence declaration")
     except KnowledgeFormatError as exc:
@@ -203,21 +194,30 @@ def load_declaration(path: Path, *, project_root: Path) -> dict[str, Any]:
     return parse_declaration(document)
 
 
-def _subject(value: object, label: str) -> dict[str, Any]:
-    subject = _mapping(value, label)
-    _closed(subject, label, _SUBJECT_KEYS)
-    change_request = _mapping(subject["change_request"], f"{label} change_request")
-    _closed(change_request, f"{label} change_request", _CHANGE_REQUEST_KEYS)
-    head = _text(subject["head_commit"], f"{label} head_commit")
-    if _SHA40.fullmatch(head) is None:
-        raise AssuranceCompletenessError(
-            f"{label} head_commit must be an exact 40-character SHA"
-        )
+def require_commit(value: object, label: str) -> str:
+    """An exact commit identity: 40 lowercase hexadecimal characters."""
+
+    commit = require_text(value, label)
+    if _SHA40.fullmatch(commit) is None:
+        raise AssuranceCompletenessError(f"{label} must be an exact 40-character SHA")
+    return commit
+
+
+def parse_subject(value: object, label: str) -> dict[str, Any]:
+    subject = require_mapping(value, label)
+    require_closed_keys(subject, label, _SUBJECT_KEYS)
+    change_request = require_mapping(
+        subject["change_request"], f"{label} change_request"
+    )
+    require_closed_keys(change_request, f"{label} change_request", _CHANGE_REQUEST_KEYS)
+    head = require_commit(subject["head_commit"], f"{label} head_commit")
     return {
-        "repository": _text(subject["repository"], f"{label} repository"),
+        "repository": require_text(subject["repository"], f"{label} repository"),
         "change_request": {
-            "kind": _text(change_request["kind"], f"{label} change_request kind"),
-            "id": _text(change_request["id"], f"{label} change_request id"),
+            "kind": require_text(
+                change_request["kind"], f"{label} change_request kind"
+            ),
+            "id": require_text(change_request["id"], f"{label} change_request id"),
         },
         "head_commit": head,
     }
@@ -225,8 +225,8 @@ def _subject(value: object, label: str) -> dict[str, Any]:
 
 def _receipt(value: object, index: int) -> dict[str, Any]:
     label = f"receipt {index}"
-    receipt = _mapping(value, label)
-    _closed(receipt, label, _RECEIPT_KEYS, _RECEIPT_OPTIONAL_KEYS)
+    receipt = require_mapping(value, label)
+    require_closed_keys(receipt, label, _RECEIPT_KEYS, _RECEIPT_OPTIONAL_KEYS)
     if receipt["schema"] != RECEIPT_SCHEMA:
         raise AssuranceCompletenessError(f"{label} schema must be {RECEIPT_SCHEMA!r}")
     status = receipt["status"]
@@ -237,13 +237,13 @@ def _receipt(value: object, index: int) -> dict[str, Any]:
     except ValueError as exc:
         raise AssuranceCompletenessError(f"{label} observed_at: {exc}") from exc
     if "provenance" in receipt:
-        _mapping(receipt["provenance"], f"{label} provenance")
-    _text(receipt["producer"], f"{label} producer")
+        require_mapping(receipt["provenance"], f"{label} provenance")
+    require_text(receipt["producer"], f"{label} producer")
     return {
         "requirement": _identifier(receipt["requirement"], f"{label} requirement"),
-        "subject": _subject(receipt["subject"], f"{label} subject"),
+        "subject": parse_subject(receipt["subject"], f"{label} subject"),
         "status": status,
-        "coverage": _unique_texts(receipt["coverage"], f"{label} coverage"),
+        "coverage": require_unique_texts(receipt["coverage"], f"{label} coverage"),
     }
 
 
@@ -319,8 +319,8 @@ def evaluate(
 ) -> dict[str, Any]:
     """Reduce `receipts` for `subject` against a parsed declaration."""
 
-    exact = _subject(subject, "subject")
-    change_class = _change_class(change_class)
+    exact = parse_subject(subject, "subject")
+    change_class = parse_change_class(change_class)
     if not isinstance(receipts, list):
         raise AssuranceCompletenessError("receipts must be a list")
     parsed = [_receipt(value, index) for index, value in enumerate(receipts)]
@@ -348,30 +348,6 @@ def evaluate(
         "reasons": reasons,
         "ignored_receipts": ignored,
     }
-
-
-def _read_input() -> object:
-    """Read the input from standard input, so no input path reaches a file read
-    (SonarCloud S8707 on #408)."""
-
-    try:
-        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
-    except (OSError, ValueError) as exc:
-        # A closed stream raises ValueError; neither may exit as INCOMPLETE does.
-        raise AssuranceCompletenessError(f"cannot read the input: {exc}") from exc
-    if len(raw) > MAX_INPUT_BYTES:
-        raise AssuranceCompletenessError(
-            f"input is larger than the {MAX_INPUT_BYTES}-byte bound"
-        )
-    try:
-        value = strict_json_loads(raw.decode("utf-8"), label=_INPUT_LABEL)
-        # The nesting bound review-check pairs with the same decoder (Claude on
-        # #408).
-        assert_document_depth(value, _INPUT_LABEL)
-    except ValueError as exc:
-        # UnicodeDecodeError and json's errors are ValueErrors.
-        raise AssuranceCompletenessError(f"input is not valid JSON: {exc}") from exc
-    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -405,58 +381,30 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _discard_stdout() -> None:
-    """Point standard output at the null device after a broken pipe, as Python's
-    `signal` documentation recommends, so the flush at shutdown cannot fail again
-    and turn exit 2 into 120."""
-
-    try:
-        null = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(null, sys.stdout.fileno())
-    except (OSError, ValueError):
-        # A stream without a file descriptor has nothing left to flush to a pipe.
-        return
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    try:
+
+    def compute() -> dict[str, Any]:
         declaration_path = (
             args.declaration
             if args.declaration.is_absolute()
             else args.project_root / args.declaration
         )
         declaration = load_declaration(declaration_path, project_root=args.project_root)
-        payload = _mapping(_read_input(), "input")
-        _closed(payload, "input", _INPUT_KEYS)
-        verdict = evaluate(
+        payload = require_mapping(
+            read_json_input(_INPUT_LABEL, AssuranceCompletenessError), "input"
+        )
+        require_closed_keys(payload, "input", _INPUT_KEYS)
+        return evaluate(
             declaration,
             subject=payload["subject"],
             change_class=payload["change_class"],
             receipts=payload["receipts"],
         )
-        # Written and flushed inside the guard, so a broken pipe is a failed run
-        # (cubic and Claude on #408). On a pipe, stdout is block-buffered: without
-        # the flush the write fails at shutdown, after main returned, and Python
-        # exits 120.
-        print(json.dumps(verdict, indent=2, sort_keys=True))
-        sys.stdout.flush()
-    except AssuranceCompletenessError as exc:
-        print(f"assurance-check: {exc}", file=sys.stderr)
-        return 2
-    except (
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-        LookupError,
-        AttributeError,
-    ) as exc:
-        # Whatever else fails is a failed run, never a verdict: Python's own exit
-        # 1 for an uncaught exception would read as INCOMPLETE (#408).
-        # RuntimeError includes RecursionError.
-        if isinstance(exc, BrokenPipeError):
-            _discard_stdout()
-        print(f"assurance-check: error: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 2
-    return 0 if verdict["status"] == "COMPLETE" else 1
+
+    return run(
+        "assurance-check",
+        compute,
+        positive=lambda verdict: verdict["status"] == "COMPLETE",
+        input_errors=(AssuranceCompletenessError,),
+    )

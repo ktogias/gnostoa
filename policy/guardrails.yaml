@@ -682,6 +682,72 @@ guardrails:
       - tests/test_assurance_completeness.py::GnostoaDeclarationTests.test_gnostoa_declares_the_merge_evidence_for_every_merging_class
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
+  - id: merge-admission-verdict
+    title: A merge is admitted only when every criterion holds for the exact head, and unknown evidence denies
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
+    implementation:
+      - tools/merge_admission.py
+      - tools/verdict_cli.py
+      - tools/assurance_completeness.py
+      - tools/check_change_policy.py
+      - tools/knowledge_common.py
+      - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+    tests:
+      - tests/test_merge_admission.py::CommandTests.test_a_failing_exit_predicate_is_a_failed_run
+      - tests/test_merge_admission.py::CommandTests.test_allow_exits_zero_and_deny_exits_one
+      - tests/test_merge_admission.py::CommandTests.test_an_input_past_the_nesting_bound_is_named_as_such
+      - tests/test_merge_admission.py::CommandTests.test_g_a_missing_declaration_is_a_failed_run_not_an_allow
+      - tests/test_merge_admission.py::CommandTests.test_invalid_input_exits_two
+      - tests/test_merge_admission.py::CommandTests.test_the_knowledge_cli_routes_merge_admission
+      - tests/test_merge_admission.py::GnostoaPolicyTests.test_gnostoa_s_effective_policy_drives_the_class_criterion
+      - tests/test_merge_admission.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_converged_change_is_allowed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_an_approval_of_the_previous_head_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_b_incomplete_evidence_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_c_unknown_coverage_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_e_an_emergency_is_never_allowed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_e_an_emergency_s_evidence_is_still_validated
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_f_equivalent_evidence_gets_the_same_verdict_on_any_provider
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m1_a_draft_closed_or_retargeted_change_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m9_the_seal_must_name_the_head_from_the_declarer
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m10_an_unresolved_thread_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m11_an_effective_request_for_changes_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m11_a_dismissed_request_for_changes_no_longer_counts
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m12_a_closing_reference_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m13_an_unjustified_suppression_denies_and_justified_ones_are_listed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m14_the_class_needs_its_work_item_and_decision
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m15_trust_root_changes_are_listed_for_the_approval
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_latest_review_of_any_state_must_approve_the_head
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_an_approval_by_someone_else_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_declarer_or_the_author_cannot_approve_an_independent_class
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_a_self_approval_denies_even_when_it_is_not_required
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_class_minimum_of_approvals_applies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_a_class_that_requires_no_approval_needs_no_approver
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_a_repeated_required_approver_is_refused
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_no_required_approver_denies
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_reviews_in_the_same_second_have_no_order_and_deny
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_tie_is_judged_by_what_each_criterion_reads
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_pending_review_is_still_validated
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_review_of_a_commit_that_no_longer_exists_is_valid
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_commit_is_an_exact_sha_or_null
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_tie_is_the_same_second_whatever_its_fraction
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_many_reviewers_are_evaluated_in_linear_time
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_the_same_review_repeated_in_one_second_is_not_ambiguous
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_pending_review_is_not_submitted_and_is_ignored
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_links_are_validated_whatever_the_class_requires
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_a_class_requirement_outside_the_schema_is_refused
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_an_evidence_document_that_breaks_the_contract_is_refused
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inherited_policy_outside_the_project_root_is_refused
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_an_absolute_parent_reference_is_refused_even_inside_the_root
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_project_root_is_refused
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inherited_policy_inside_the_project_root_is_followed
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inheritance_chain_past_the_bound_is_refused
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_the_inheritance_bound_is_exact
+      - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_schema_is_refused
+
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
     applies_to: [kit]

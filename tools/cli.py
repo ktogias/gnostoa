@@ -13,6 +13,7 @@ from . import (
     check_ci_policy,
     check_guardrails,
     check_runtime_lock,
+    merge_admission,
     review_check,
     self_check,
     task_envelope,
@@ -27,6 +28,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "assurance-check": (
         "reduce exact-subject evidence receipts into a completeness verdict",
         assurance_completeness.main,
+    ),
+    "merge-admission": (
+        "admit or deny one merge from normalized evidence",
+        merge_admission.main,
     ),
     "validate": ("validate an OKF bundle", validate_bundle.main),
     "context-pack": ("build a bounded orientation pack", build_context_pack.main),
