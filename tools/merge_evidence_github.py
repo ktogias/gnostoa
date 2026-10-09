@@ -537,20 +537,19 @@ def _change_control_fields(body: str) -> dict[str, str]:
         )
     fields: dict[str, str] = {}
     for token in _section_items(tokens, start, end):
-        match = _FIELD.fullmatch(_inline_value(token).strip())
-        if match is None:
-            continue
         if any(
             child.type == "html_inline" and not child.content.startswith("<!--")
             for child in token.children or []
         ):
             # How a void element renders differs, `<wbr>` joining and `<br>`
-            # breaking, so a field holding one is not read (cubic and Codex on
-            # #413; the owner's choice, #407 6087507517). A comment renders as
-            # nothing, so the text around it joins.
-            raise MergeEvidenceError(
-                f"the Change control field {match.group(1)} holds raw HTML"
-            )
+            # breaking, so a candidate holding one is refused before it is read,
+            # label included (cubic and Codex on #413; the owner's choice, #407
+            # 6087507517 and 6087484196). A comment renders as nothing, so the
+            # text around it joins.
+            raise MergeEvidenceError("a Change control item holds raw HTML")
+        match = _FIELD.fullmatch(_inline_value(token).strip())
+        if match is None:
+            continue
         if match.group(1) in fields:
             raise MergeEvidenceError(
                 f"the Change control section repeats {match.group(1)}"

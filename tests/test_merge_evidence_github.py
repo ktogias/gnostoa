@@ -1303,18 +1303,31 @@ class EvidenceDocumentTests(unittest.TestCase):
         a void element renders differs, `<wbr>` joining and `<br>` breaking, so a
         field holding raw HTML other than a comment fails the run. A comment
         renders as nothing, and the text around it joins."""
-        for text in ("#40<br>7", "#40<wbr>7", "#40<img src=x>7", "#40<meta>7"):
+        field = "- Work Item: #407, #15"
+        refused = {
+            "a break in a value": "- Work Item: #40<br>7",
+            "a zero-width break in a value": "- Work Item: #40<wbr>7",
+            "an image in a value": "- Work Item: #40<img src=x>7",
+            "a stripped tag in a value": "- Work Item: #40<meta>7",
+            "a tag in a label": "- Wo<wbr>rk Item: #407",
+            "a tag in a Decision": "- Decision: 01<wbr>12",
+            # #407, 6087484196: every candidate is checked before extraction, so
+            # HTML that keeps a label from matching is refused too.
+            "a label the tag breaks": f"{field}\n- Work<br>Item: #999",
+            "an item that is not a field": f"{field}\n- Note: see below<br>",
+        }
+        for name, text in refused.items():
             with (
-                self.subTest(text=text),
+                self.subTest(name),
                 self.assertRaises(merge_evidence_github.MergeEvidenceError),
             ):
                 replies = _replies()
-                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
                 _evidence(_snapshot(replies))
-        # A void element in an item that is not a field is unaffected.
+        # Inline code is code, not raw HTML, even when it shows a tag.
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            "@ktogias", "@ktogias<br>"
+            field, "- Work Item: #407 `<wbr>`, #15"
         )
         links = _evidence(_snapshot(replies))["links"]
         self.assertEqual(["#407", "#15"], links["work_items"])

@@ -213,10 +213,12 @@ provider-neutral public change-governance contract of
     nesting. So any raw HTML tag of an element that can hold content, anywhere
     before the section's end, fails the run, as the owner chose over modelling
     HTML5 nesting (#407, 6086999580). Comments and void elements, such as `<br>`,
-    hold nothing and are allowed there. A field holding raw HTML other than a
-    comment fails the run, since how a void element renders differs, `<wbr>`
-    joining text and `<br>` breaking it (#407, 6087507517). A comment in a
-    value is skipped, so the text around it joins. A field's value is its visible text and inline code: a link's
+    hold nothing and are allowed there. A Change control item holding raw HTML
+    other than a comment, in its label or its value, fails the run before it is
+    read, since how a void element renders differs, `<wbr>` joining text and
+    `<br>` breaking it (#407, 6087507517 and 6087484196). Inline code showing a
+    tag is code, not raw HTML. A comment in a value is skipped, so the text
+    around it joins. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
     #402 (#407, 6085478125). A Work Item is a visible `#N` in ASCII digits, as
