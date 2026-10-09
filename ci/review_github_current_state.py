@@ -1167,9 +1167,17 @@ def _collect_merge_evidence_once(
     pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
     again = _normalize_pull(pull_payload)
     subject = snapshot["subject"]
-    # Every field both reads carry must agree, or the certified snapshot would
-    # mix two moments (cubic on #413).
-    if (again["head_sha"], again["base_sha"], again["state"], again["title"]) != (
+    # Every field both reads carry must agree, the number included, or the
+    # certified snapshot would mix two moments or two pull requests (cubic and
+    # CodeAnt on #413).
+    if (
+        again["number"],
+        again["head_sha"],
+        again["base_sha"],
+        again["state"],
+        again["title"],
+    ) != (
+        pull_number,
         subject["head_commit"],
         subject["base_commit"],
         subject["state"],

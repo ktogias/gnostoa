@@ -412,6 +412,8 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
             ("head", {"head": {"sha": "e" * 40}}),
             ("state", {"state": "closed"}),
             ("title", {"title": "Fixes #12"}),
+            # CodeAnt on #413: the first read binds the number; so does this one.
+            ("number", {"number": 301}),
         ):
             with self.subTest(name):
                 self._assert_refused_when_second_read_differs(change)
