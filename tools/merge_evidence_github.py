@@ -98,14 +98,13 @@ _VOID_ELEMENTS = frozenset(
         "wbr",
     }
 )
-# A Work Item is a visible `#N` in ASCII digits, as the template writes it. An
-# issue URL is not read: the owner chose this over growing a URL grammar (#407,
-# 6086766086).
-_ISSUE = re.compile(r"(?<![\w/])#([0-9]+)\b")
-# A standalone four-digit id, or a link to a Decision record; anything else, such as
-# a year or an issue number in a URL, is not a reference (Codex, cubic and CodeAnt
-# on #413). Only an id with a record in the protected target counts.
-_DECISION = re.compile(r"knowledge/decisions/(\d{4})-|(?<![\w/.#-])(\d{4})(?![\w/.-])")
+# A Work Item value is `#N` entries in ASCII digits, and a Decision value
+# four-digit ids, separated by spaces or by one comma with optional spaces.
+# Anything else, such as an invisible character, a URL or prose, fails the run:
+# the owner chose a strict grammar over reading identifiers out of free text
+# (#407, 6086766086, 6088050686 and 6088035894).
+_WORK_ITEM_VALUE = re.compile(r"#[0-9]+(?:(?: +| *, *)#[0-9]+)*")
+_DECISION_VALUE = re.compile(r"[0-9]{4}(?:(?: +| *, *)[0-9]{4})*")
 _DECISION_RECORD = re.compile(r"(\d{4})-[a-z0-9-]+\.md")
 DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
@@ -547,7 +546,7 @@ def _change_control_fields(body: str) -> dict[str, str]:
             # 6087507517 and 6087484196). A comment renders as nothing, so the
             # text around it joins.
             raise MergeEvidenceError("a Change control item holds raw HTML")
-        match = _FIELD.fullmatch(_inline_value(token).strip())
+        match = _FIELD.fullmatch(_inline_value(token).strip(" \t"))
         if match is None:
             continue
         if match.group(1) in fields:
@@ -558,12 +557,17 @@ def _change_control_fields(body: str) -> dict[str, str]:
     return fields
 
 
-def _work_items(text: str) -> list[str]:
-    """The issue numbers the field shows as `#N`. Whether each exists, and
-    whether a link's target agrees with its label, are 1b.3b's acceptance cases
-    (#407, 6085101448 and 6085544477)."""
+def _listed(
+    fields: Mapping[str, str], name: str, grammar: re.Pattern[str]
+) -> list[str]:
+    """The numbers a field lists, in order. An empty field lists nothing; a value
+    that is not the field's grammar fails the run."""
 
-    return _unique([f"#{number}" for number in _ISSUE.findall(text)])
+    # Only ASCII spaces pad a value: a Unicode space is not erased.
+    value = fields.get(name, "").strip(" ")
+    if value and grammar.fullmatch(value) is None:
+        raise MergeEvidenceError(f"the {name} field is not a list the template allows")
+    return _unique(re.findall(r"[0-9]+", value))
 
 
 def _change_control(
@@ -578,8 +582,8 @@ def _change_control(
     change_class = fields.get("Class", "").strip()
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = _work_items(fields.get("Work Item", ""))
-    linked = _unique([a or b for a, b in _DECISION.findall(fields.get("Decision", ""))])
+    work_items = [f"#{n}" for n in _listed(fields, "Work Item", _WORK_ITEM_VALUE)]
+    linked = _listed(fields, "Decision", _DECISION_VALUE)
     return change_class, {
         "work_items": work_items,
         "decisions": [d for d in linked if d in decisions],

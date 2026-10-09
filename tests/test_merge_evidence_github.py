@@ -322,6 +322,22 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
                 self.assertEqual("PARTIAL", coverage["status"])
                 self.assertEqual("file_list_cap", coverage["reason"])
 
+    def test_a_commit_without_a_message_is_not_read(self) -> None:
+        """CodeAnt on #413: a commit message that is not a string was read as
+        an empty one, so M12 reported COMPLETE without reading it. It now fails
+        the comparison read, which the files share, so the run fails. An empty
+        string is still a message."""
+        unread = _snapshot(
+            _replies(**{COMPARE: _comparison([{"sha": HEAD, "commit": {}}], FILES)})
+        )
+        self.assertNotEqual("COMPLETE", unread["coverage"]["commits"]["status"])
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(unread)
+        empty = _snapshot(
+            _replies(**{COMPARE: _comparison([_commit(HEAD, "")], FILES)})
+        )
+        self.assertEqual("COMPLETE", empty["coverage"]["commits"]["status"])
+
     def test_a_long_commit_message_is_bounded_and_marked(self) -> None:
         message = "x" * 70_000
         snapshot = _snapshot(
@@ -979,15 +995,35 @@ class EvidenceDocumentTests(unittest.TestCase):
         self.assertIn("M14", _failed(evidence))
 
     def test_a_decision_must_name_an_existing_decision(self) -> None:
-        """Codex, cubic and CodeAnt on #413: any four digits counted as a
-        Decision, so "wait until 2026" satisfied M14."""
+        """Codex, cubic and CodeAnt on #413: prose such as "wait until 2026" must
+        not satisfy M14. Under the strict grammar (#407, 6088050686) prose fails the
+        run, and an id counts only when the protected target has its record."""
         line = "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)"
+        for value in (
+            "wait until 2026",
+            "see https://github.com/ktogias/gnostoa/issues/0112",
+            "Decision 0016 and 0112",
+            # A Decision id is four digits.
+            "112",
+            "01120",
+            "0112x",
+            "0112 and 0113",
+            "0112,, 0113",
+        ):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                    line, f"- Decision: {value}"
+                )
+                _evidence(_snapshot(replies))
         for value, expected in (
-            ("wait until 2026", []),
-            ("see https://github.com/ktogias/gnostoa/issues/0112", []),
             ("9999", []),
             ("0112", ["0112"]),
-            ("Decision 0016 and 0112", ["0016", "0112"]),
+            ("0016, 0112", ["0016", "0112"]),
+            ("0112, 0113", ["0112", "0113"]),
             ("[0112](knowledge/decisions/0112-admit-merges.md)", ["0112"]),
         ):
             with self.subTest(value=value):
@@ -1159,22 +1195,56 @@ class EvidenceDocumentTests(unittest.TestCase):
         self.assertEqual("normative", _evidence(_snapshot(replies))["change_class"])
 
     def test_a_work_item_is_a_visible_issue_number(self) -> None:
-        """The owner's #402 decision (#407, 6086766086): a Work Item is a visible
-        `#N` in ASCII digits. An issue URL is not read, which ends its grammar's
-        variants: another repository (Codex), a lookalike host (cubic), a
-        suffix after the number (Codex) and non-ASCII digits (CodeAnt)."""
-        cases = {
-            "#407, #15": ["#407", "#15"],
-            "https://github.com/ktogias/gnostoa/issues/407": [],
-            "https://github.com/unrelated/project/issues/999999": [],
-            "https://g\u0131thub.com/ktogias/gnostoa/issues/999": [],
-            "https://github.com/ktogias/gnostoa/issues/407/not-an-issue": [],
-            "https://github.com/ktogias/gnostoa/issues/407#issuecomment-1": [],
-            "#407 https://github.com/ktogias/gnostoa-x/issues/9": ["#407"],
-            "other/project#999": [],
-            "#\u0661": [],
-        }
-        for text, expected in cases.items():
+        """The owner's #402 decisions (#407, 6086766086 and 6088050686): a Work Item
+        value is only `#N` entries in ASCII digits, separated by commas or
+        spaces. Anything else fails the run: an issue URL, another repository, a
+        lookalike host, a suffix, non-ASCII digits, an invisible character or
+        prose."""
+        refused = (
+            "https://github.com/ktogias/gnostoa/issues/407",
+            "https://github.com/unrelated/project/issues/999999",
+            "https://g\u0131thub.com/ktogias/gnostoa/issues/999",
+            "#407 https://github.com/ktogias/gnostoa-x/issues/9",
+            "other/project#999",
+            "#\u0661",
+            # Codex on #413: a zero-width space GitHub does not show.
+            "#40\u200b7",
+            "#407 (MA0)",
+            "see #407",
+            "#407,",
+            # The separators are ASCII commas and spaces.
+            "#407\u2003#15",
+            # The owner-requested analysis's table (#407, 6088035894): each
+            # fails by not being in the grammar, with no special case.
+            "#40\u200d7",
+            "#40\ufeff7",
+            "#40\u00a07",
+            "#40\u202e7",
+            # Only ASCII spaces pad a value; the parser itself trims a line's
+            # end, so these sit where it does not.
+            "\u00a0#407",
+            "`#407\u00a0`",
+            "#407junk",
+            "#407 extra",
+            "#407, garbage",
+            "#407,, #15",
+        )
+        for text in refused:
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                _evidence(_snapshot(replies))
+        for text, expected in (
+            ("#407, #15", ["#407", "#15"]),
+            ("#407 #15", ["#407", "#15"]),
+            ("#407,#15", ["#407", "#15"]),
+            ("#407, #407", ["#407"]),
+            ("#407 , #15", ["#407", "#15"]),
+            ("[#407](https://github.com/ktogias/gnostoa/issues/407)", ["#407"]),
+        ):
             with self.subTest(text=text):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
@@ -1197,7 +1267,7 @@ class EvidenceDocumentTests(unittest.TestCase):
                     "[the issue](https://github.com/ktogias/gnostoa/issues/407)",
                 ),
                 "work_items",
-                [],
+                None,
             ),
             "a Work Item in inline code": (
                 ("#407, #15", "`#407`"),
@@ -1212,7 +1282,7 @@ class EvidenceDocumentTests(unittest.TestCase):
             "a Decision named only by its target": (
                 ("[0112]", "[the verdict's record]"),
                 "decisions",
-                [],
+                None,
             ),
             "a Decision showing its id": ((BODY, BODY), "decisions", ["0112"]),
         }
@@ -1220,7 +1290,13 @@ class EvidenceDocumentTests(unittest.TestCase):
             with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(old, new)
-                self.assertEqual(expected, _evidence(_snapshot(replies))["links"][key])
+                if expected is None:
+                    # Text that is not the grammar fails the run (#407, 6088050686).
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        _evidence(_snapshot(replies))
+                else:
+                    links = _evidence(_snapshot(replies))["links"]
+                    self.assertEqual(expected, links[key])
 
     def test_a_heading_is_compared_by_its_visible_text(self) -> None:
         """cubic on #413: inline HTML in the heading is not part of its text."""
@@ -1326,10 +1402,11 @@ class EvidenceDocumentTests(unittest.TestCase):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
                 _evidence(_snapshot(replies))
-        # Inline code is code, not raw HTML, even when it shows a tag.
+        # Inline code is code, not raw HTML, even when it shows a tag, so an
+        # item showing one is read (a field value must still be its grammar).
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            field, "- Work Item: #407 `<wbr>`, #15"
+            field, f"{field}\n- Note: `<wbr>` marks a break"
         )
         links = _evidence(_snapshot(replies))["links"]
         self.assertEqual(["#407", "#15"], links["work_items"])

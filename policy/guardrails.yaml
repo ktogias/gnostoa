@@ -775,6 +775,7 @@ guardrails:
       - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
     tests:
       - tests/test_github_rest.py
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_commit_without_a_message_is_not_read
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_long_commit_message_is_bounded_and_marked
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comparison_s_total_is_a_count
       - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_comparison_s_file_cap_is_partial

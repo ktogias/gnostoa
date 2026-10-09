@@ -221,9 +221,11 @@ provider-neutral public change-governance contract of
     around it joins. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
-    #402 (#407, 6085478125). A Work Item is a visible `#N` in ASCII digits, as
-    the template writes it. An issue URL is not read, as the owner chose over
-    growing a URL grammar (#407, 6086766086). A visible `#N` whose link points
+    #402 (#407, 6085478125). A Work Item value is only `#N` entries in ASCII
+    digits, and a Decision value only four-digit ids, each separated by commas
+    or spaces. Any other value, such as an issue URL, an invisible character or
+    prose, fails the run, as the owner chose over reading identifiers out of
+    free text (#407, 6086766086 and 6088050686). A visible `#N` whose link points
     elsewhere is still read as `#N`. Two 1b.3b acceptance cases must be closed
     before 1b.4 activates the gate: whether each Work Item exists, as an issue
     rather than a pull request (#407, 6085101448 and 6085110011), and, proposed
@@ -239,8 +241,9 @@ provider-neutral public change-governance contract of
     also reads GraphQL's `closingIssuesReferences`, through the same pager and in
     each readback pass. Each listed issue is found, and M12's coverage is
     `COMPLETE` only when that read and the commit list are complete, the title
-    was read, and no commit message is truncated (#407, 6086122133). Whether the relation can change after the verdict, with the
-    head unchanged, is 1b.4's and 1b.5's concern (#407, 6086106156).
+    was read, and every commit message was read whole (#407, 6086122133).
+    Whether the relation can change after the verdict, with the head unchanged,
+    is 1b.4's and 1b.5's concern (#407, 6086106156).
   - The protected target is the repository's default branch, which the change
     policy declares protected.
   - Until 1b.3b and 1b.3c, the receipts are empty and the suppressions and

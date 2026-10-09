@@ -1007,7 +1007,11 @@ def _merge_evidence_subject(value: Any) -> dict[str, Any]:
 def _normalize_commit(value: Any) -> dict[str, Any]:
     item = _mapping(value, "commit")
     commit = _mapping(item.get("commit"), "commit.commit")
-    message, truncated = _bounded_body(commit.get("message"))
+    raw_message = commit.get("message")
+    if not isinstance(raw_message, str):
+        # Unread, not empty: Git's empty message is "" (CodeAnt on #413).
+        raise ProviderReadError("commit.commit.message must be a string")
+    message, truncated = _bounded_body(raw_message)
     return {
         "sha": _sha(item.get("sha"), "commit.sha"),
         "message": message,
