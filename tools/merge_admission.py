@@ -7,7 +7,8 @@ criterion that failed. An unknown or missing input fails closed. The evidence pa
 (M2-M8) is the completeness reducer's verdict, computed here from the same
 receipts ("one reducer", Decision 0112). The owner's native approval of the exact
 head is the only per-merge human act (Decision 0112, item 3): justified
-suppressions and trust-root changes are listed for it, not attested separately.
+suppressions and trust-root changes are listed for it, not attested separately,
+and so are the analyzer findings that deny it (M17).
 An emergency is never this verdict's `ALLOW`, since break glass bypasses the
 protected branch's rules (Decision 0110).
 """
@@ -51,6 +52,7 @@ _EVIDENCE_KEYS = frozenset(
         "closing_references",
         "suppressions",
         "trust_root_changes",
+        "analyzer_findings",
         "receipts",
     }
 )
@@ -71,6 +73,8 @@ _WORK_ITEM_RULES = frozenset({"optional", "required-follow-up", "required"})
 _COVERAGE_KEYS = frozenset({"coverage"})
 _SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
+_FINDING_KEYS = frozenset({"item", "id", "message"})
+_FINDING_OPTIONAL_KEYS = frozenset({"rule", "severity", "category", "path", "state"})
 
 
 def _texts(value: object, label: str) -> list[str]:
@@ -304,6 +308,36 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
     return _criterion("M15", reasons), paths
 
 
+def _analyzer_findings(
+    evidence: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """M17: no unresolved analyzer finding. Every finding listed counts, a
+    suppressed one included, with no waiver, and only a complete read of them can
+    pass (the owner's rule, #407 6096770145 and 6101607240)."""
+
+    record = _coverage(
+        evidence["analyzer_findings"], "analyzer_findings", frozenset({"findings"})
+    )
+    value = record["findings"]
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_findings findings must be a list")
+    findings = []
+    for index, item in enumerate(value):
+        label = f"analyzer finding {index}"
+        finding = require_mapping(item, label)
+        require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
+        findings.append(
+            {key: require_text(finding[key], f"{label} {key}") for key in finding}
+        )
+    reasons = []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    if findings:
+        plural = "" if len(findings) == 1 else "s"
+        reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
+    return _criterion("M17", reasons), findings
+
+
 def _class_requirements(
     change_policy: Mapping[str, Any], change_class: str
 ) -> tuple[str, Mapping[str, Any]]:
@@ -440,6 +474,7 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
+    analyzer_criterion, analyzer_findings = _analyzer_findings(document)
     criteria = [
         _lifecycle(document),
         complete,
@@ -456,6 +491,7 @@ def evaluate(
             {"declarer": declarer, "author": author, "required_approvers": approvers},
             _class_requirements(change_policy, change_class),
         ),
+        analyzer_criterion,
     ]
     allowed = all(c["status"] == "PASS" for c in criteria)
     return {
@@ -468,6 +504,7 @@ def evaluate(
         "for_approval": {
             "suppressions": justified,
             "trust_root_changes": trust_roots,
+            "analyzer_findings": analyzer_findings,
         },
     }
 

@@ -42,18 +42,34 @@ def read_json_input(label: str, error: type[ValueError]) -> object:
     except (OSError, ValueError) as exc:
         # A closed stream raises ValueError; neither may exit as a verdict does.
         raise error(f"cannot read the input: {exc}") from exc
+    return _decode(raw, label, error, "input")
+
+
+def read_json_file(path: Path, label: str, error: type[ValueError]) -> object:
+    """Read one bounded, strictly decoded JSON document from `path`, under the
+    same rules as standard input (#407, slice 1b.3b-2)."""
+
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_INPUT_BYTES + 1)
+    except OSError as exc:
+        raise error(f"cannot read the {label}: {exc}") from exc
+    return _decode(raw, label, error, f"the {label}")
+
+
+def _decode(raw: bytes, label: str, error: type[ValueError], name: str) -> object:
     if len(raw) > MAX_INPUT_BYTES:
-        raise error(f"input is larger than the {MAX_INPUT_BYTES}-byte bound")
+        raise error(f"{name} is larger than the {MAX_INPUT_BYTES}-byte bound")
     try:
         value = strict_json_loads(raw.decode("utf-8"), label=label)
     except ValueError as exc:
         # UnicodeDecodeError and json's errors are ValueErrors.
-        raise error(f"input is not valid JSON: {exc}") from exc
+        raise error(f"{name} is not valid JSON: {exc}") from exc
     try:
         assert_document_depth(value, label)
     except ValueError as exc:
         # Valid JSON past an operational bound (cubic on #410).
-        raise error(f"input is out of bounds: {exc}") from exc
+        raise error(f"{name} is out of bounds: {exc}") from exc
     return value
 
 

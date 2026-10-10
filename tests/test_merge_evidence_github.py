@@ -27,6 +27,7 @@ from test_review_reconcile_l1 import (
 )
 
 from tools import (
+    analyzer_readback,
     assurance_completeness,
     merge_admission,
     merge_evidence_github,
@@ -241,6 +242,7 @@ def _evidence(
     snapshot: dict[str, Any] | None = None,
     *,
     codeowners: str = "* @ktogias\n",
+    analyzer: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return merge_evidence_github.evidence_from_snapshot(
         _snapshot() if snapshot is None else snapshot,
@@ -249,6 +251,84 @@ def _evidence(
         codeowners=merge_evidence_github.parse_codeowners(codeowners),
         decisions=merge_evidence_github.load_decisions(ROOT),
         required_checks=merge_evidence_github.parse_required_checks(REQUIRED_CHECKS),
+        analyzer_readback=analyzer,
+    )
+
+
+def _readback(
+    provider: str,
+    scope: str,
+    *findings: dict[str, Any],
+    status: str = "COMPLETE",
+    head: str = HEAD,
+    repository: str = "ktogias/gnostoa",
+    pull: int = 300,
+) -> dict[str, Any]:
+    complete = status == "COMPLETE"
+    record: dict[str, Any] = {"status": status, "pages": 1, "count": len(findings)}
+    if not complete:
+        record["reason"] = "AUTH_UNAVAILABLE"
+    return analyzer_readback.build_readback(
+        provider=provider,
+        adapter=f"{provider}-fake/v1",
+        repository=repository,
+        pull_number=pull,
+        requested_head=head,
+        observed_head=head if complete else None,
+        analysis_id=None,
+        scope=scope,
+        completeness="FULL_RUN" if complete else "AUTH_UNAVAILABLE",
+        native_mode="FULL_RUN",
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="SUCCESS" if complete else "UNKNOWN",
+        coverage_record=record,
+        findings=findings,
+    )
+
+
+def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """The authenticated readback's bundle for the snapshot's pull request; by
+    default its three readbacks are complete and find nothing."""
+
+    bundle: dict[str, Any] = {
+        "schema": analyzer_readback.BUNDLE_SCHEMA,
+        "repository": "ktogias/gnostoa",
+        "pull_number": 300,
+        "requested_head": HEAD,
+        "observed_head": HEAD,
+        "observed_at": "2026-09-19T16:40:50Z",
+        "subject_binding": "BOUND",
+        "github_projection": {"statuses": 0, "check_runs": 5, "review_comments": 0},
+        "readbacks": list(readbacks)
+        or [
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+        ],
+    }
+    bundle.update(changes)
+    return bundle
+
+
+ANALYZER_ITEMS = ("deepsource-diff", "deepsource-full", "codacy")
+ANALYZERS = (("deepsource", "DIFF"), ("deepsource", "FULL"), ("codacy", "DIFF"))
+
+
+def _bundle_for(**subject: Any) -> dict[str, Any]:
+    """A bound, complete bundle for another subject than the snapshot's."""
+
+    head = subject.get("head", HEAD)
+    repository = subject.get("repository", "ktogias/gnostoa")
+    pull = subject.get("pull", 300)
+    return _bundle(
+        *[
+            _readback(p, s, head=head, repository=repository, pull=pull)
+            for p, s in ANALYZERS
+        ],
+        requested_head=head,
+        observed_head=head,
+        repository=repository,
+        pull_number=pull,
     )
 
 
@@ -737,9 +817,13 @@ class CodeOwnersTests(unittest.TestCase):
 
 class EvidenceDocumentTests(unittest.TestCase):
     def test_a_converged_change_fails_only_on_evidence_not_yet_produced(self) -> None:
-        """Receipts are 1b.3b's and 1b.3c's; so are suppressions and trust roots."""
+        """Receipts are 1b.3b's and 1b.3c's; so are suppressions and trust roots.
+        Without the analyzer readback its findings are unavailable too (M17)."""
         evidence = _evidence()
-        self.assertEqual({"M2-M8", "M13", "M15"}, set(_failed(evidence)))
+        self.assertEqual({"M2-M8", "M13", "M15", "M17"}, set(_failed(evidence)))
+        self.assertEqual(
+            {"M2-M8", "M13", "M15"}, set(_failed(_evidence(analyzer=_bundle())))
+        )
         self.assertEqual(
             {
                 "repository": "https://github.com/ktogias/gnostoa",
@@ -1806,11 +1890,11 @@ def _project(directory: Path, *, authorities: bool = True) -> Path:
     return project
 
 
-def _run(project: Path, text: str) -> tuple[int, str, str]:
+def _run(project: Path, text: str, *options: str) -> tuple[int, str, str]:
     stdin = io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8")
     out, err = io.StringIO(), io.StringIO()
     with patch("sys.stdin", stdin), redirect_stdout(out), redirect_stderr(err):
-        code = merge_evidence_github.main(["--project-root", str(project)])
+        code = merge_evidence_github.main(["--project-root", str(project), *options])
     return code, out.getvalue(), err.getvalue()
 
 
@@ -2232,3 +2316,191 @@ class GuardrailRegistrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FINDING = {
+    "id": "issue-1",
+    "message": "Reimport 'x'",
+    "rule": "PYL-W0404",
+    "severity": "MAJOR",
+    "path": "tests/test_x.py",
+    "state": "open",
+}
+
+
+class AnalyzerReceiptTests(unittest.TestCase):
+    """1b.3b-2, admitted by the owner (#407, 6101607240): the authenticated
+    analyzer readback gives the analyzer items their receipts, whatever its
+    findings, and its findings stay explicit in the evidence for M17."""
+
+    def _statuses(self, bundle: dict[str, Any] | None) -> dict[str, str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {
+            item: s for (r, item), s in statuses.items() if r == "analyzer-readback"
+        }
+
+    def test_a_bound_complete_bundle_gives_each_item_a_complete_receipt(self) -> None:
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(_bundle())
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "findings": []},
+            _evidence(analyzer=_bundle())["analyzer_findings"],
+        )
+
+    def test_findings_leave_the_receipt_complete_and_stay_explicit(self) -> None:
+        suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
+        bundle = _bundle(
+            _readback("deepsource", "DIFF", suppressed),
+            _readback("deepsource", "FULL", FINDING),
+            _readback("codacy", "DIFF"),
+        )
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(bundle)
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            {
+                "coverage": "COMPLETE",
+                "findings": [
+                    {"item": "deepsource-diff", **suppressed},
+                    {"item": "deepsource-full", **FINDING},
+                ],
+            },
+            evidence["analyzer_findings"],
+        )
+        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+    def test_a_bundle_not_bound_to_the_subject_gives_incomplete_receipts(self) -> None:
+        incomplete = _bundle(
+            subject_binding="INCOMPLETE", reason="GITHUB_SUBJECT_MISMATCH", readbacks=[]
+        )
+        del incomplete["github_projection"]
+        for name, bundle in (
+            ("an incomplete binding", incomplete),
+            ("another head", _bundle_for(head=PREVIOUS)),
+            ("another pull request", _bundle_for(pull=301)),
+            ("another repository", _bundle_for(repository="ktogias/other")),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    dict.fromkeys(ANALYZER_ITEMS, "INCOMPLETE"), self._statuses(bundle)
+                )
+                self.assertEqual(
+                    {"coverage": "INCOMPLETE", "findings": []},
+                    _evidence(analyzer=bundle)["analyzer_findings"],
+                )
+
+    def test_a_readback_s_own_status_is_its_receipt_s(self) -> None:
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF", status="UNAVAILABLE"),
+        )
+        self.assertEqual(
+            {
+                "deepsource-diff": "COMPLETE",
+                "deepsource-full": "COMPLETE",
+                "codacy": "UNAVAILABLE",
+            },
+            self._statuses(bundle),
+        )
+        self.assertEqual(
+            "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
+        )
+
+    def test_a_missing_readback_gives_its_item_no_receipt(self) -> None:
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"), _readback("deepsource", "FULL")
+        )
+        self.assertEqual(
+            {"deepsource-diff": "COMPLETE", "deepsource-full": "COMPLETE"},
+            self._statuses(bundle),
+        )
+        self.assertEqual(
+            "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
+        )
+
+    def test_an_unknown_repeated_or_invalid_readback_fails_the_run(self) -> None:
+        for name, bundle in (
+            (
+                "an unknown analyzer",
+                _bundle(_readback("deepsource", "DIFF"), _readback("semgrep", "DIFF")),
+            ),
+            (
+                "a repeated item",
+                _bundle(
+                    _readback("deepsource", "FULL"), _readback("deepsource", "FULL")
+                ),
+            ),
+            ("an invalid bundle", {**_bundle(), "extra": 1}),
+            (
+                "a readback time that is not one",
+                _bundle(
+                    {**_readback("deepsource", "DIFF"), "observed_at": "yesterday"},
+                ),
+            ),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                _evidence(analyzer=bundle)
+
+    def test_without_a_bundle_the_findings_are_unavailable(self) -> None:
+        self.assertEqual({}, self._statuses(None))
+        self.assertEqual(
+            {"coverage": "UNAVAILABLE", "findings": []},
+            _evidence()["analyzer_findings"],
+        )
+
+    def test_the_items_are_the_declaration_s(self) -> None:
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        [requirement] = [
+            r for r in declaration["requirements"] if r["id"] == "analyzer-readback"
+        ]
+        self.assertEqual(list(ANALYZER_ITEMS), list(requirement["coverage"]))
+
+    def test_the_command_reads_the_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            path = Path(directory) / "bundle.json"
+            path.write_text(json.dumps(_bundle()), encoding="utf-8")
+            code, out, err = _run(
+                project, json.dumps(_snapshot()), "--analyzer-readback", str(path)
+            )
+            self.assertEqual(0, code, err)
+            statuses = _receipt_statuses(json.loads(out))
+            self.assertEqual(
+                dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
+                {i: s for (r, i), s in statuses.items() if r == "analyzer-readback"},
+            )
+            for text in ("not json", json.dumps({**_bundle(), "extra": 1})):
+                with self.subTest(text=text[:20]):
+                    path.write_text(text, encoding="utf-8")
+                    self.assertEqual(
+                        2,
+                        _run(
+                            project,
+                            json.dumps(_snapshot()),
+                            "--analyzer-readback",
+                            str(path),
+                        )[0],
+                    )
+            missing = Path(directory) / "missing.json"
+            self.assertEqual(
+                2,
+                _run(
+                    project,
+                    json.dumps(_snapshot()),
+                    "--analyzer-readback",
+                    str(missing),
+                )[0],
+            )
+            path.write_text(json.dumps(_bundle()), encoding="utf-8")
+            with patch("tools.verdict_cli.MAX_INPUT_BYTES", 64):
+                code, _, err = _run(project, "{}", "--analyzer-readback", str(path))
+            self.assertEqual(2, code)
+            self.assertIn("the analyzer readback is larger than the 64-byte bound", err)

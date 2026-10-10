@@ -96,7 +96,8 @@ provider-neutral public change-governance contract of
      - reviewer convergence: item 4's subset is criteria of the verdict, and the
        rest is in the agent's convergence report;
      - justified suppressions, which the verdict lists;
-     - changes to the gate's trust roots, which the verdict lists.
+     - changes to the gate's trust roots, which the verdict lists;
+     - the analyzer findings, which the verdict lists and which deny it (M17).
    - Channel C, the environment attestation of MA0 design decision 2, is not used
      for merges. **There is no evidence waiver**: when required evidence is
      unavailable, the merge waits, or goes through break glass with its mandatory
@@ -127,7 +128,7 @@ provider-neutral public change-governance contract of
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
-  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 admitted (#407, 6096770145); the others each need admission |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 admitted (#407, 6101607240); the others each need admission |
   | 1b.3c | SonarCloud's readback (#359) | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
@@ -141,7 +142,7 @@ provider-neutral public change-governance contract of
   adapter (1b.3) produces. It names the change's subject and lifecycle, its class
   and links, the declared candidate, the declarer, the author and the required approvers, the
   reviews, the threads, the closing references, the new suppressions, the
-  trust-root changes, and the receipts for the reducer. Every list the adapter
+  trust-root changes, the analyzer findings, and the receipts for the reducer. Every list the adapter
   reads from the provider carries its coverage, so "not read" cannot pass as
   "none": the suppressions and trust-root changes, like the threads and the
   closing references, deny unless their coverage is `COMPLETE`, and M15 is a
@@ -284,7 +285,24 @@ provider-neutral public change-governance contract of
     equal to the declaration's items and to R-main's recorded checks. A snapshot
     whose provider is not `github` fails the run (the owner's review 5478389359
     on #413).
-  - Until 1b.3b-2 and 1b.3c, the analyzer readback's and SonarCloud's items stay
+  - The analyzer items have receipts (1b.3b-2), from the authenticated
+    readback's bundle (Decisions 0091 and 0107), read back through the readback
+    module's own contract: a recorded readback is valid only if `build_readback`
+    rebuilds it exactly. A bundle bound to the exact repository, pull request and
+    head gives each item the receipt of its readback's own coverage, whatever its
+    findings; readbacks map to items by provider and scope (DeepSource diff and
+    full, Codacy). A bundle that is not bound to the subject gives every item
+    `INCOMPLETE`, a missing readback gives its item no receipt (`MISSING`), and an
+    unknown or repeated readback fails the run. Without a bundle the items stay
+    `MISSING`. Authenticating the bundle file is 1b.4's publisher's.
+  - **M17: no unresolved analyzer finding** (the owner's selection, #407,
+    6101607240). The evidence lists the findings, each with its item, and their
+    coverage: `COMPLETE` only when all three readbacks are present and complete.
+    M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
+    listed finding counts, a suppressed one included, with no waiver; whether a
+    justified suppression can discharge one is 1b.3b-4's (M13). The verdict lists
+    the findings for the approval.
+  - Until 1b.3c, SonarCloud's items stay
     `MISSING`, and until 1b.3b-4 the suppressions and trust-root changes are
     `UNAVAILABLE`, so the verdict denies rather than passing them vacuously.
     The analyzer-findings rule for 1b.3b-2 is the owner's (#407, 6096770145):

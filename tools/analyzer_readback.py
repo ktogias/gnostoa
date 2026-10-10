@@ -6,6 +6,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 SCHEMA = "gnostoa-analyzer-readback/v1"
+# The bundle the authenticated readback workflow records (ci/analyzer_readback.py).
+BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
 COVERAGE_STATUSES = frozenset(
     {"COMPLETE", "INCOMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
@@ -334,6 +336,134 @@ def build_readback(
             raise AnalyzerReadbackError("native provenance must be an object")
         document["native"] = dict(native)
     return document
+
+
+_READBACK_KEYS = frozenset(
+    {
+        "schema",
+        "provider",
+        "adapter",
+        "repository",
+        "pull_number",
+        "requested_head",
+        "scope",
+        "completeness",
+        "native_mode",
+        "observed_at",
+        "run_state",
+        "coverage",
+        "findings",
+    }
+)
+_READBACK_OPTIONAL_KEYS = frozenset({"observed_head", "analysis_id", "native"})
+_BUNDLE_KEYS = frozenset(
+    {
+        "schema",
+        "repository",
+        "pull_number",
+        "requested_head",
+        "observed_head",
+        "observed_at",
+        "subject_binding",
+        "readbacks",
+    }
+)
+_BINDING_KEYS = {
+    "BOUND": _BUNDLE_KEYS | {"github_projection"},
+    "INCOMPLETE": _BUNDLE_KEYS | {"reason"},
+}
+_PROJECTION_KEYS = frozenset({"statuses", "check_runs", "review_comments"})
+
+
+def _mapping(value: object, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AnalyzerReadbackError(f"{label} must be an object")
+    return value
+
+
+def parse_readback(value: object) -> dict[str, Any]:
+    """A recorded readback, accepted only when `build_readback` rebuilds it
+    exactly from its own fields: one contract for writing and reading it
+    (#407, slice 1b.3b-2)."""
+
+    readback = _mapping(value, "readback")
+    keys = set(readback)
+    if not _READBACK_KEYS <= keys or keys - _READBACK_KEYS - _READBACK_OPTIONAL_KEYS:
+        raise AnalyzerReadbackError("readback has missing or unknown fields")
+    if readback["schema"] != SCHEMA:
+        raise AnalyzerReadbackError(f"readback schema must be {SCHEMA!r}")
+    findings = readback["findings"]
+    if not isinstance(findings, list):
+        raise AnalyzerReadbackError("readback findings must be an array")
+    rebuilt = build_readback(
+        provider=readback["provider"],
+        adapter=readback["adapter"],
+        repository=readback["repository"],
+        pull_number=readback["pull_number"],
+        requested_head=readback["requested_head"],
+        observed_head=readback.get("observed_head"),
+        analysis_id=readback.get("analysis_id"),
+        scope=readback["scope"],
+        completeness=readback["completeness"],
+        native_mode=readback["native_mode"],
+        observed_at=readback["observed_at"],
+        run_state=readback["run_state"],
+        coverage_record=_mapping(readback["coverage"], "readback coverage"),
+        findings=findings,
+        native=readback.get("native"),
+    )
+    if canonical_json(rebuilt) != canonical_json(readback):
+        raise AnalyzerReadbackError("readback is not what its contract builds")
+    return rebuilt
+
+
+def parse_bundle(value: object) -> dict[str, Any]:
+    """A recorded readback bundle. A `BOUND` one observed its requested head and
+    holds only readbacks of its own subject; an `INCOMPLETE` one says why and
+    holds none (#407, slice 1b.3b-2)."""
+
+    bundle = _mapping(value, "bundle")
+    binding = bundle.get("subject_binding")
+    if binding not in _BINDING_KEYS:
+        raise AnalyzerReadbackError("bundle subject binding is unsupported")
+    if set(bundle) != _BINDING_KEYS[binding]:
+        raise AnalyzerReadbackError("bundle has missing or unknown fields")
+    if bundle["schema"] != BUNDLE_SCHEMA:
+        raise AnalyzerReadbackError(f"bundle schema must be {BUNDLE_SCHEMA!r}")
+    subject = (
+        normalize_repository(bundle["repository"]),
+        _positive_int(bundle["pull_number"], "bundle pull number"),
+        _sha(bundle["requested_head"], "bundle requested head"),
+    )
+    observed = _sha(bundle["observed_head"], "bundle observed head")
+    _required_text(bundle["observed_at"], "bundle observed at")
+    if not isinstance(bundle["readbacks"], list):
+        raise AnalyzerReadbackError("bundle readbacks must be an array")
+    readbacks = [parse_readback(item) for item in bundle["readbacks"]]
+    if binding == "BOUND":
+        if observed != subject[2]:
+            raise AnalyzerReadbackError(
+                "a bound bundle must observe its requested head"
+            )
+        projection = _mapping(bundle["github_projection"], "bundle projection")
+        if set(projection) != _PROJECTION_KEYS:
+            raise AnalyzerReadbackError(
+                "bundle projection has missing or unknown fields"
+            )
+        for key in sorted(projection):
+            _nonnegative_int(projection[key], f"bundle projection {key}")
+        for readback in readbacks:
+            if (
+                readback["repository"],
+                readback["pull_number"],
+                readback["requested_head"],
+            ) != subject:
+                raise AnalyzerReadbackError("a readback is not the bundle's subject")
+    else:
+        _required_text(bundle["reason"], "bundle reason")
+        if readbacks:
+            raise AnalyzerReadbackError("an incomplete bundle holds no readbacks")
+    return {**bundle, "readbacks": readbacks}
 
 
 def canonical_json(value: object) -> str:
