@@ -266,10 +266,14 @@ def _closing_references(evidence: Mapping[str, Any]) -> dict[str, Any]:
 def _suppressions(
     evidence: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    value = evidence["suppressions"]
+    # A coverage, so "not read" cannot pass as "none found" (#407, slice 1b.3a).
+    record = _coverage(evidence["suppressions"], "suppressions", frozenset({"found"}))
+    value = record["found"]
     if not isinstance(value, list):
-        raise AssuranceCompletenessError("suppressions must be a list")
+        raise AssuranceCompletenessError("suppressions found must be a list")
     justified, reasons = [], []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"suppression coverage is {record['coverage']}")
     for index, item in enumerate(value):
         label = f"suppression {index}"
         suppression = require_mapping(item, label)
@@ -284,6 +288,20 @@ def _suppressions(
         else:
             reasons.append(f"{entry['marker']} in {entry['path']} has no justification")
     return _criterion("M13", reasons), justified
+
+
+def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """M15: the changed trust roots are listed for the approval, which needs a
+    complete read of them (#407, slice 1b.3a)."""
+
+    record = _coverage(
+        evidence["trust_root_changes"], "trust_root_changes", frozenset({"paths"})
+    )
+    paths = _texts(record["paths"], "trust_root_changes paths")
+    reasons = []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"trust-root coverage is {record['coverage']}")
+    return _criterion("M15", reasons), paths
 
 
 def _class_requirements(
@@ -407,7 +425,6 @@ def evaluate(
         allow_empty=True,
     )
     reviews = _reviews(document["reviews"])
-    trust_roots = _texts(document["trust_root_changes"], "trust_root_changes")
 
     evidence_verdict = completeness.evaluate(
         declaration,
@@ -422,6 +439,7 @@ def evaluate(
         else [f"required evidence is {evidence_verdict['status']}"],
     )
     suppressions, justified = _suppressions(document)
+    trust_root_criterion, trust_roots = _trust_roots(document)
     criteria = [
         _lifecycle(document),
         complete,
@@ -431,6 +449,7 @@ def evaluate(
         _closing_references(document),
         suppressions,
         _class_links(document, change_class, change_policy),
+        trust_root_criterion,
         _approval(
             reviews,
             head,

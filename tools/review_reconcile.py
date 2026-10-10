@@ -591,16 +591,31 @@ def _observations(
     return observations
 
 
+def validate_snapshot(
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
+    """Validate an L1 provider snapshot: its subject, its per-source coverage, the
+    retained payloads against that coverage, and its temporal integrity.
+
+    Returns the R2A subject, the provider subject and the coverage. Shared by R2A's
+    input and the merge-evidence adapter (#407, slice 1b.3a), so both read a
+    snapshot under one set of checks.
+    """
+
+    subject, provider_subject = _subject(snapshot)
+    coverage = _coverage(snapshot)
+    _validate_source_payloads(snapshot, coverage)
+    _validate_temporal_integrity(snapshot)
+    return subject, provider_subject, coverage
+
+
 def build_review_input(
     snapshot: dict[str, Any],
     protected_bundle: dict[str, Any],
 ) -> dict[str, Any]:
     """Translate normalized provider state into the existing R2A input contract."""
 
-    subject, provider_subject = _subject(snapshot)
-    coverage = _coverage(snapshot)
-    _validate_source_payloads(snapshot, coverage)
-    _validate_temporal_integrity(snapshot)
+    subject, provider_subject, coverage = validate_snapshot(snapshot)
     bundle = _mapping(protected_bundle, "protected_bundle")
     authority = _mapping(bundle.get("authority"), "protected_bundle.authority")
     judge = _mapping(bundle.get("acquired_judge"), "protected_bundle.acquired_judge")

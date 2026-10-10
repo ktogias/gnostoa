@@ -1,0 +1,13 @@
+# Who may declare a merge candidate, and who the human approvers are (MA0 Phase 1b,
+# slice 1b.3a, #407). `knowledge merge-evidence` reads this file from the protected
+# target, never from the candidate. A required approver is a code owner of a changed
+# file who is on this roster: a provider account's type cannot tell a person from a
+# machine user (owner decision 2 on #407).
+schema_version: "1.0"
+id: gnostoa.merge-authorities
+version: 0.1.0
+# The identity whose unedited "Exact review candidate: <sha>" comment seals a head.
+declarer: gnostoa-agent[bot]
+# People; never an App or a machine user.
+human_approvers:
+  - ktogias

@@ -726,6 +726,7 @@ guardrails:
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m11_a_dismissed_request_for_changes_no_longer_counts
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m12_a_closing_reference_denies
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m13_an_unjustified_suppression_denies_and_justified_ones_are_listed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m13_and_m15_deny_unless_their_evidence_was_read_completely
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m14_the_class_needs_its_work_item_and_decision
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m15_trust_root_changes_are_listed_for_the_approval
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m16_the_latest_review_of_any_state_must_approve_the_head
@@ -755,6 +756,96 @@ guardrails:
       - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inheritance_chain_past_the_bound_is_refused
       - tests/test_merge_admission.py::PolicyLoadingTests.test_the_inheritance_bound_is_exact
       - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_schema_is_refused
+
+  - id: github-merge-evidence
+    title: A GitHub pull request's merge evidence comes from L1's snapshot and the protected target's declarations, and an incomplete read never passes as complete
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
+    implementation:
+      - tools/merge_evidence_github.py
+      - tools/cli.py
+      - ci/review_github_current_state.py
+      - tools/github_rest.py
+      - tools/review_reconcile.py
+      - tools/merge_admission.py
+      - policy/merge-authorities.yaml
+      - .github/CODEOWNERS
+      - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+    tests:
+      - tests/test_github_rest.py
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_commit_without_a_message_is_not_read
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_long_commit_message_is_bounded_and_marked
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comparison_s_total_is_a_count
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_comparison_s_file_cap_is_partial
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_merge_evidence_adds_the_pull_fields_and_two_sources
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_default_snapshot_is_unchanged_and_reads_nothing_new
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comparison_short_of_its_total_commits_is_partial
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_lists_are_the_exact_comparison_s
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_issues_the_merge_would_close_are_read
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_each_comment_carries_its_edit_state
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_comment_without_its_edit_state_makes_the_conversation_partial
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_head_that_moves_between_reads_is_refused
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_a_description_edited_during_collection_is_paired_with_later_reads
+      - tests/test_merge_evidence_github.py::L1MergeEvidenceSnapshotTests.test_the_reconciler_s_snapshot_validation_accepts_the_extension
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_a_file_over_github_s_limit_is_refused
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_comments_blank_lines_and_ownerless_rules
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_patterns_follow_github_s_documented_forms
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_an_inline_comment_ends_a_rule_s_owners
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_double_asterisks_are_special_only_as_a_segment
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_wildcards_only_in_github_s_documented_forms
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_malformed_segments_are_refused
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_syntax_github_does_not_support_is_refused
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_last_matching_rule_wins
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_protected_target_s_file_is_found_in_github_s_order
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_candidate_s_own_codeowners_change_does_not_choose_its_approvers
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_converged_change_fails_only_on_evidence_not_yet_produced
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_deleted_reviewer_keeps_a_per_review_identity
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_snapshot_without_the_merge_evidence_fields_is_refused
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_unsealed_head_denies
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_change_control_comes_from_the_template_fields
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_closing_reference_coverage_follows_its_sources
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_closing_references_are_found_on_every_surface
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_decision_must_name_an_existing_decision
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_protected_target_s_decisions_are_its_decision_records
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_protected_target_without_decision_records_fails_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_decision_record_outside_the_protected_target_does_not_count
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_example_in_a_code_block_is_not_change_control
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_every_markdown_code_form_hides_its_fields
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_unclosed_comment_hides_the_rest_of_the_description
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_html_and_code_spans_follow_commonmark
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_section_is_the_top_level_heading_and_its_own_items
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_value_is_its_visible_text
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_raw_html_in_a_field_fails_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_item_s_field_is_its_first_paragraph
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_section_holds_only_the_template_s_fields
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_two_change_control_sections_are_ambiguous
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_logins_compare_without_case
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_only_ascii_letters_fold_in_logins
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_heading_is_compared_by_its_visible_text
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_work_item_is_a_visible_issue_number
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_raw_html_that_can_hold_content_fails_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_failed_roster_names_the_first_path_in_order
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_rename_without_its_previous_path_fails_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_truncated_description_cannot_vouch_for_its_change_control
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_incomplete_conversation_or_files_fail_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_l1_s_semantic_partial_reasons_keep_every_review
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_lifecycle_reflects_draft_target_and_merge
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_only_an_unedited_seal_by_the_declarer_counts
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_reviews_are_raw_and_their_partial_reads_fail_the_run
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_required_approvers_come_from_the_protected_codeowners_and_roster
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_threads_map_their_count_and_coverage
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_issue_the_merge_would_close_denies
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_link_added_during_collection_is_not_missed
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_missing_title_is_not_complete_coverage
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_words_that_are_not_closing_keywords_are_not_references
+      - tests/test_merge_evidence_github.py::CommandTests.test_a_failed_run_exits_two
+      - tests/test_merge_evidence_github.py::CommandTests.test_the_command_writes_the_evidence_document
+      - tests/test_merge_evidence_github.py::CommandTests.test_the_knowledge_cli_routes_merge_evidence
+      - tests/test_merge_evidence_github.py::AuthoritiesTests.test_gnostoa_s_authorities_and_codeowners
+      - tests/test_merge_evidence_github.py::AuthoritiesTests.test_the_declaration_has_a_closed_contract
+      - tests/test_merge_evidence_github.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe

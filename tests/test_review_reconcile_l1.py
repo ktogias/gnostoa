@@ -190,8 +190,19 @@ class _PagedFake:
             raise RuntimeError(f"unexpected URL: {url}")
         return self.replies[url]
 
-    def graphql(self, _query: str, variables: dict[str, Any]) -> Any:
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         cursor = variables.get("cursor")
+        # The merge-evidence connections are served only from an explicit reply
+        # for their cursor (#413 rounds 5 and 10).
+        for marker, name in (
+            ("lastEditedAt", "comments"),
+            ("closingIssuesReferences", "closingIssuesReferences"),
+        ):
+            if marker in query:
+                payload, _ = self.get(f"graphql:{name}:{cursor or 'first'}")
+                return payload
+        if "reviewThreads" not in query:
+            raise RuntimeError("unexpected GraphQL query")
         # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         first_url = next(
             (
@@ -385,6 +396,17 @@ def _complete_replies_without_review_comments(
     replies[f"{root}/pulls/300/comments?per_page=100"] = ([], {})
     replies.pop("https://api.github.com/page2/review-comments", None)
     return replies
+
+
+def paged_fake_fixture(replies: dict[str, tuple[Any, dict[str, str]]]) -> Any:
+    """Public test-only access to the fake provider, which refuses any URL it was
+    not given (#407, slice 1b.3a)."""
+    return _PagedFake(replies)
+
+
+def complete_replies_fixture(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
+    """Public test-only access to the complete provider replies for PR 300."""
+    return _complete_replies(root)
 
 
 class UsefulL1RedContractTests(unittest.TestCase):

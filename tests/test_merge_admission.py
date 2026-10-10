@@ -117,8 +117,8 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         ],
         "threads": {"coverage": "COMPLETE", "unresolved": 0},
         "closing_references": {"coverage": "COMPLETE", "found": []},
-        "suppressions": [],
-        "trust_root_changes": [],
+        "suppressions": {"coverage": "COMPLETE", "found": []},
+        "trust_root_changes": {"coverage": "COMPLETE", "paths": []},
         "receipts": [_receipt(exact, ["fast", "smoke"])],
     }
 
@@ -329,12 +329,33 @@ class MergeAdmissionTests(unittest.TestCase):
         justified = {"path": "tests/x.py", "marker": "nosec B603", "justified": True}
         unjustified = {"path": "tools/y.py", "marker": "noqa", "justified": False}
         evidence = _evidence()
-        evidence["suppressions"] = [justified]
+        evidence["suppressions"]["found"] = [justified]
         verdict = _verdict(evidence)
         self.assertEqual("ALLOW", verdict["status"])
         self.assertEqual([justified], verdict["for_approval"]["suppressions"])
-        evidence["suppressions"].append(unjustified)
+        evidence["suppressions"]["found"].append(unjustified)
         self.assertDenied(evidence, "M13")
+
+    def test_m13_and_m15_deny_unless_their_evidence_was_read_completely(
+        self,
+    ) -> None:
+        """#407 slice 1b.3a: a bare list could not say "not read", so an adapter
+        that has not read the diff yet passed M13 and M15 vacuously."""
+        for field, criterion in (
+            ("suppressions", "M13"),
+            ("trust_root_changes", "M15"),
+        ):
+            for coverage in (
+                "UNAVAILABLE",
+                "PARTIAL",
+                "ERROR",
+                "RATE_LIMITED",
+                "SKIPPED",
+            ):
+                with self.subTest(field=field, coverage=coverage):
+                    evidence = _evidence()
+                    evidence[field]["coverage"] = coverage
+                    self.assertDenied(evidence, criterion)
 
     def test_m14_the_class_needs_its_work_item_and_decision(self) -> None:
         for field in ("work_items", "decisions"):
@@ -349,13 +370,14 @@ class MergeAdmissionTests(unittest.TestCase):
 
     def test_m15_trust_root_changes_are_listed_for_the_approval(self) -> None:
         evidence = _evidence()
-        evidence["trust_root_changes"] = [".github/workflows/verification.yml"]
+        evidence["trust_root_changes"]["paths"] = [".github/workflows/verification.yml"]
         verdict = _verdict(evidence)
         self.assertEqual("ALLOW", verdict["status"])
         self.assertEqual(
             [".github/workflows/verification.yml"],
             verdict["for_approval"]["trust_root_changes"],
         )
+        self.assertIn("M15", [c["id"] for c in verdict["criteria"]])
 
     def test_m16_the_latest_review_of_any_state_must_approve_the_head(self) -> None:
         """Runbook step 8: a comment after the approval is the latest review."""

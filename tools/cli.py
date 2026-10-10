@@ -14,6 +14,7 @@ from . import (
     check_guardrails,
     check_runtime_lock,
     merge_admission,
+    merge_evidence_github,
     review_check,
     self_check,
     task_envelope,
@@ -32,6 +33,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "merge-admission": (
         "admit or deny one merge from normalized evidence",
         merge_admission.main,
+    ),
+    "merge-evidence": (
+        "write the merge-admission evidence for one GitHub pull request",
+        merge_evidence_github.main,
     ),
     "validate": ("validate an OKF bundle", validate_bundle.main),
     "context-pack": ("build a bounded orientation pack", build_context_pack.main),
