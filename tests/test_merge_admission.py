@@ -399,7 +399,14 @@ class MergeAdmissionTests(unittest.TestCase):
                 self.assertEqual(findings, verdict["for_approval"]["analyzer_findings"])
 
     def test_m17_denies_unless_the_findings_were_read_completely(self) -> None:
-        for coverage in ("UNAVAILABLE", "INCOMPLETE", "PARTIAL", "ERROR", "SKIPPED"):
+        for coverage in (
+            "UNAVAILABLE",
+            "INCOMPLETE",
+            "PARTIAL",
+            "RATE_LIMITED",
+            "ERROR",
+            "SKIPPED",
+        ):
             with self.subTest(coverage=coverage):
                 evidence = _evidence()
                 evidence["analyzer_findings"]["coverage"] = coverage

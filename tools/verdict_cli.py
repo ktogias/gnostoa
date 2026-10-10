@@ -45,12 +45,16 @@ def read_json_input(label: str, error: type[ValueError]) -> object:
     return _decode(raw, label, error, "input")
 
 
-def read_json_file(path: Path, label: str, error: type[ValueError]) -> object:
-    """Read one bounded, strictly decoded JSON document from `path`, under the
-    same rules as standard input (#407, slice 1b.3b-2)."""
+def read_json_file(
+    path: Path, label: str, error: type[ValueError], *, project_root: Path
+) -> object:
+    """Read one bounded, strictly decoded JSON document from `path`, confined to
+    `project_root` as every path a command reads, under the same rules as
+    standard input (#407, slice 1b.3b-2)."""
 
+    resolved = confine(path, project_root, label=label, error=error)
     try:
-        with path.open("rb") as stream:
+        with resolved.open("rb") as stream:
             raw = stream.read(MAX_INPUT_BYTES + 1)
     except OSError as exc:
         raise error(f"cannot read the {label}: {exc}") from exc

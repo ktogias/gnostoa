@@ -986,7 +986,8 @@ def _analyzer_evidence(
         return [], {"coverage": "UNAVAILABLE", "findings": []}
     try:
         bundle = parse_bundle(value)
-    except AnalyzerReadbackError as exc:
+        parse_rfc3339(bundle["observed_at"])
+    except (AnalyzerReadbackError, ValueError) as exc:
         raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
     if not _bound_to(bundle, subject):
         provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
@@ -1074,8 +1075,9 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "the authenticated analyzer readback's bundle for this pull request "
-            "(without one, its items stay MISSING and its findings UNAVAILABLE)"
+            "the authenticated analyzer readback's bundle for this pull request, "
+            "inside the project root (without one, its items stay MISSING and "
+            "its findings UNAVAILABLE)"
         ),
     )
     parser.add_argument(
@@ -1105,7 +1107,10 @@ def main(argv: list[str] | None = None) -> int:
             None
             if args.analyzer_readback is None
             else read_json_file(
-                args.analyzer_readback, _ANALYZER_LABEL, MergeEvidenceError
+                inside(args.analyzer_readback),
+                _ANALYZER_LABEL,
+                MergeEvidenceError,
+                project_root=root,
             )
         )
         return evidence_from_snapshot(

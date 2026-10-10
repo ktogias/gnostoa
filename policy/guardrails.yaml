@@ -877,6 +877,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_without_a_bundle_the_findings_are_unavailable
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_items_are_the_declaration_s
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_command_reads_the_bundle
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_bundle_is_read_only_inside_the_project_root
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe

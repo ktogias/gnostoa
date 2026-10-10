@@ -294,7 +294,8 @@ provider-neutral public change-governance contract of
     full, Codacy). A bundle that is not bound to the subject gives every item
     `INCOMPLETE`, a missing readback gives its item no receipt (`MISSING`), and an
     unknown or repeated readback fails the run. Without a bundle the items stay
-    `MISSING`. Authenticating the bundle file is 1b.4's publisher's.
+    `MISSING`. The bundle file is read inside the project root, as every path
+    the command reads, and authenticating it is 1b.4's publisher's.
   - **M17: no unresolved analyzer finding** (the owner's selection, #407,
     6101607240). The evidence lists the findings, each with its item, and their
     coverage: `COMPLETE` only when all three readbacks are present and complete.

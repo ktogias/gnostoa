@@ -395,6 +395,10 @@ def parse_readback(value: object) -> dict[str, Any]:
     findings = readback["findings"]
     if not isinstance(findings, list):
         raise AnalyzerReadbackError("readback findings must be an array")
+    for finding in findings:
+        _mapping(finding, "readback finding")
+    if not isinstance(readback["scope"], str):
+        raise AnalyzerReadbackError("readback scope must be text")
     rebuilt = build_readback(
         provider=readback["provider"],
         adapter=readback["adapter"],
@@ -424,7 +428,7 @@ def parse_bundle(value: object) -> dict[str, Any]:
 
     bundle = _mapping(value, "bundle")
     binding = bundle.get("subject_binding")
-    if binding not in _BINDING_KEYS:
+    if not isinstance(binding, str) or binding not in _BINDING_KEYS:
         raise AnalyzerReadbackError("bundle subject binding is unsupported")
     if set(bundle) != _BINDING_KEYS[binding]:
         raise AnalyzerReadbackError("bundle has missing or unknown fields")

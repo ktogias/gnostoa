@@ -2314,10 +2314,6 @@ class GuardrailRegistrationTests(unittest.TestCase):
         self.assertIn("tools/cli.py", entry["implementation"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 FINDING = {
     "id": "issue-1",
     "message": "Reimport 'x'",
@@ -2333,7 +2329,8 @@ class AnalyzerReceiptTests(unittest.TestCase):
     analyzer readback gives the analyzer items their receipts, whatever its
     findings, and its findings stay explicit in the evidence for M17."""
 
-    def _statuses(self, bundle: dict[str, Any] | None) -> dict[str, str]:
+    @staticmethod
+    def _statuses(bundle: dict[str, Any] | None) -> dict[str, str]:
         statuses = _receipt_statuses(_evidence(analyzer=bundle))
         return {
             item: s for (r, item), s in statuses.items() if r == "analyzer-readback"
@@ -2440,6 +2437,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
                     {**_readback("deepsource", "DIFF"), "observed_at": "yesterday"},
                 ),
             ),
+            ("a bundle time that is not one", _bundle(observed_at="yesterday")),
         ):
             with (
                 self.subTest(name),
@@ -2466,10 +2464,10 @@ class AnalyzerReceiptTests(unittest.TestCase):
     def test_the_command_reads_the_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = _project(Path(directory))
-            path = Path(directory) / "bundle.json"
+            path = project / "bundle.json"
             path.write_text(json.dumps(_bundle()), encoding="utf-8")
             code, out, err = _run(
-                project, json.dumps(_snapshot()), "--analyzer-readback", str(path)
+                project, json.dumps(_snapshot()), "--analyzer-readback", "bundle.json"
             )
             self.assertEqual(0, code, err)
             statuses = _receipt_statuses(json.loads(out))
@@ -2489,7 +2487,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
                             str(path),
                         )[0],
                     )
-            missing = Path(directory) / "missing.json"
+            missing = project / "missing.json"
             self.assertEqual(
                 2,
                 _run(
@@ -2504,3 +2502,31 @@ class AnalyzerReceiptTests(unittest.TestCase):
                 code, _, err = _run(project, "{}", "--analyzer-readback", str(path))
             self.assertEqual(2, code)
             self.assertIn("the analyzer readback is larger than the 64-byte bound", err)
+
+    def test_the_bundle_is_read_only_inside_the_project_root(self) -> None:
+        """Claude and cubic on #417: as every path the command reads
+        (verdict_cli), the bundle is resolved against the project root, links
+        included, and refused outside it."""
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            outside = Path(directory) / "bundle.json"
+            outside.write_text(json.dumps(_bundle()), encoding="utf-8")
+            (project / "link.json").symlink_to(outside)
+            for name, argument in (
+                ("an absolute path outside", str(outside)),
+                ("a relative path out of the root", "../bundle.json"),
+                ("a link out of the root", "link.json"),
+            ):
+                with self.subTest(name):
+                    code, _, err = _run(
+                        project,
+                        json.dumps(_snapshot()),
+                        "--analyzer-readback",
+                        argument,
+                    )
+                    self.assertEqual(2, code, err)
+                    self.assertIn("analyzer readback", err)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2217,10 +2217,6 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("CODACY_API_TOKEN", json.dumps(document))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _recorded(
     provider: str = "deepsource",
     scope: str = "FULL",
@@ -2312,6 +2308,8 @@ class RecordedReadbackTests(unittest.TestCase):
             ),
             ("an ambiguous complete read", changed(completeness="AMBIGUOUS")),
             ("findings that are not a list", changed(findings={})),
+            ("a finding that is not an object", changed(findings=["finding"])),
+            ("a scope that is not text", changed(scope=["FULL"])),
             (
                 "a coverage field the contract drops",
                 changed(coverage={**complete["coverage"], "x": 1}),
@@ -2371,6 +2369,7 @@ class RecordedReadbackTests(unittest.TestCase):
             ("an unknown field", changed(extra=1)),
             ("another schema", changed(schema="gnostoa-analyzer-readback-bundle/v0")),
             ("an unknown binding", changed(subject_binding="BOUNDISH")),
+            ("a binding that is not text", changed(subject_binding=["BOUND"])),
             ("bound without its projection", without),
             ("bound with a reason", changed(reason="x")),
             ("bound to another observed head", changed(observed_head=OTHER_HEAD)),
@@ -2425,3 +2424,7 @@ class RecordedReadbackTests(unittest.TestCase):
                 self.assertRaises(analyzer_readback.AnalyzerReadbackError),
             ):
                 analyzer_readback.parse_bundle(bundle)
+
+
+if __name__ == "__main__":
+    unittest.main()
