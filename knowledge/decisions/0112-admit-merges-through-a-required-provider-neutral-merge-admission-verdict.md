@@ -199,9 +199,12 @@ provider-neutral public change-governance contract of
     roster (owner decision 2 on #407). A rule whose owners include no rostered
     person fails the run. The CODEOWNERS reader follows GitHub's documented
     rules, inline comments and ownerless rules included, and refuses the syntax
-    GitHub skips. As in gitignore, `**` is special only as a whole segment. A
-    pattern with an empty segment, such as `//sensitive`, or a `.` or `..`
-    segment fails the run, since git matches nothing for it (#407, 6092909419).
+    GitHub skips. A pattern with an empty segment, such as `//sensitive`, or a
+    `.` or `..` segment fails the run, since git matches nothing for it (#407,
+    6092909419). Wildcards are read only in GitHub's documented forms: `*`
+    alone or as the last segment, which is not recursive, `*.ext` as the only
+    segment, and `**` as a leading or middle segment. Any other wildcard, such
+    as `docs/guides*`, fails the run (#407, 6095614968).
   - The class, Work Item and Decision come from the change-request template's
     `## Change control` fields (owner decision 3), read as CommonMark ([Decision
     0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The

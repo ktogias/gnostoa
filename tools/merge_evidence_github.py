@@ -55,6 +55,8 @@ CODEOWNERS_LOCATIONS = (
     Path("docs") / "CODEOWNERS",
 )
 CODEOWNERS_LIMIT = 3 * 1024 * 1024
+# `*.ext`: GitHub's documented extension pattern.
+_EXTENSION = re.compile(r"\*\.[^*?/]+")
 _OWNER = re.compile(r"@[A-Za-z0-9-]+(?:/[A-Za-z0-9_.-]+)?|[^@\s]+@[^@\s]+")
 # GitHub's login syntax: ASCII letters, digits and hyphens, and an App's `[bot]`.
 _LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
@@ -215,6 +217,26 @@ def _glob(text: str) -> str:
     return pattern
 
 
+def _documented_wildcards(segments: Sequence[str]) -> bool:
+    """Whether every wildcard is in one of GitHub's documented forms: `*` alone
+    or as the last segment, `*.ext` as the only segment, and `**` as a leading
+    or middle segment. `docs/guides*` gave a nested file to its owner, which
+    GitHub does not document (Codex on #413; the owner's choice, #407 6095614968)."""
+
+    last = len(segments) - 1
+    for position, segment in enumerate(segments):
+        if not any(c in segment for c in "*?"):
+            continue
+        if segment == "**" and position < last:
+            continue
+        if segment == "*" and position == last:
+            continue
+        if last == 0 and _EXTENSION.fullmatch(segment):
+            continue
+        return False
+    return True
+
+
 def _rule(pattern: str) -> re.Pattern[str]:
     """One CODEOWNERS pattern, as GitHub documents it: gitignore's rules, without
     `!`, `[ ]` and `\\` escapes, which are refused rather than skipped."""
@@ -229,6 +251,10 @@ def _rule(pattern: str) -> re.Pattern[str]:
     if any(segment in ("", ".", "..") for segment in body.split("/")):
         raise MergeEvidenceError(
             f"CODEOWNERS pattern {pattern!r} has an empty or dot segment"
+        )
+    if not _documented_wildcards(body.split("/")):
+        raise MergeEvidenceError(
+            f"CODEOWNERS pattern {pattern!r} uses a wildcard GitHub does not document"
         )
     # A slash at the start or in the middle anchors the pattern at the root.
     anchored = pattern.startswith("/") or "/" in body

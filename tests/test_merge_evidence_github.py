@@ -545,20 +545,56 @@ class CodeOwnersTests(unittest.TestCase):
                 self.assertEqual(owners, _owners(text, path))
 
     def test_double_asterisks_are_special_only_as_a_segment(self) -> None:
-        """Codex on #413: gitignore's `**` matches across `/` only as a leading
-        `**/`, a middle `/**/` or a trailing `/**`; elsewhere it is `*`."""
-        text = "* @root\nfoo**bar @x\nup**/down @y\na/**/b @m\nabc/** @t\n"
+        """Codex on #413: `**` matches across `/` only as a leading or middle
+        `**/` segment, gitignore's directories."""
+        text = "* @root\na/**/b @m\n**/logs @l\n"
         cases = {
-            "foo/x/bar": ["@root"],
-            "fooXYbar": ["@x"],
-            "up/x/down": ["@root"],
-            "upX/down": ["@y"],
             "a/b": ["@m"],
             "a/x/y/b": ["@m"],
-            "abc/x/y": ["@t"],
+            "logs/x": ["@l"],
+            "x/y/logs/z": ["@l"],
+            "a/x": ["@root"],
         }
         for path, owners in cases.items():
             with self.subTest(path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_wildcards_only_in_github_s_documented_forms(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6095614968): GitHub documents
+        `*`, `*.ext`, a final `/*` and `**/`; `docs/guides*` gave a nested file
+        to its owner, which GitHub does not document. Any other wildcard fails
+        the run."""
+        refused = (
+            "* @alice\ndocs/guides* @bob\n",
+            "a*b/c @x\n",
+            "docs/*.md @x\n",
+            "?.js @x\n",
+            "*.j? @x\n",
+            "foo**bar @x\n",
+            "up**/down @x\n",
+            "abc/** @x\n",
+            "docs/**/*.md @x\n",
+            # `*` is documented only as the last segment.
+            "src/*/x @x\n",
+            "*/docs @x\n",
+        )
+        for text in refused:
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(text)
+        accepted = {
+            ("* @a\n", "x/y"): ["@a"],
+            ("*.js @a\n", "web/app.js"): ["@a"],
+            ("/*.js @a\n", "app.js"): ["@a"],
+            ("docs/* @a\n", "docs/x"): ["@a"],
+            ("docs/* @a\n", "docs/x/y"): None,
+            ("**/logs @a\n", "a/logs/x"): ["@a"],
+            ("a/**/b @a\n", "a/x/b"): ["@a"],
+        }
+        for (text, path), owners in accepted.items():
+            with self.subTest(text=text, path=path):
                 self.assertEqual(owners, _owners(text, path))
 
     def test_comments_blank_lines_and_ownerless_rules(self) -> None:

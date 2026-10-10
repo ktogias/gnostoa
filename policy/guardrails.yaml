@@ -794,6 +794,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_patterns_follow_github_s_documented_forms
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_an_inline_comment_ends_a_rule_s_owners
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_double_asterisks_are_special_only_as_a_segment
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_wildcards_only_in_github_s_documented_forms
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_malformed_segments_are_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_syntax_github_does_not_support_is_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_last_matching_rule_wins
