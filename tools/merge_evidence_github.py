@@ -73,7 +73,11 @@ _CLOSING = re.compile(
 # The description is read as CommonMark (Decision 0113): code blocks, HTML blocks
 # and comments are their own tokens, never list items, so none can be a field.
 _MARKDOWN = MarkdownIt("commonmark")
-_FIELD = re.compile(r"(Class|Work Item|Decision):[ \t]*(.*)", re.DOTALL)
+# The template's four fields; the section holds nothing else (cubic on #413; the
+# owner's choice, #407 6092909419). Accountable owner is not read.
+_FIELD = re.compile(
+    r"(Class|Work Item|Decision|Accountable owner):[ \t]*(.*)", re.DOTALL
+)
 # The elements HTML's tree construction closes at once, so they contain nothing
 # (cubic on #413).
 _VOID_ELEMENTS = frozenset(
@@ -215,9 +219,14 @@ def _rule(pattern: str) -> re.Pattern[str]:
     if pattern.startswith("!") or any(c in pattern for c in "[]\\"):
         raise MergeEvidenceError(f"CODEOWNERS pattern {pattern!r} is not supported")
     directory = pattern.endswith("/")
-    body = pattern.strip("/")
-    if not body:
-        raise MergeEvidenceError(f"CODEOWNERS pattern {pattern!r} names no path")
+    body = pattern.removeprefix("/").removesuffix("/")
+    # git matches nothing for an empty or dot segment, and stripping every
+    # boundary slash read `//sensitive` as `/sensitive` (Codex on #413; the
+    # owner's choice, #407 6092909419).
+    if any(segment in ("", ".", "..") for segment in body.split("/")):
+        raise MergeEvidenceError(
+            f"CODEOWNERS pattern {pattern!r} has an empty or dot segment"
+        )
     # A slash at the start or in the middle anchors the pattern at the root.
     anchored = pattern.startswith("/") or "/" in body
     prefix = "" if anchored else "(?:.*/)?"
@@ -502,21 +511,22 @@ def _section_end(tokens: Sequence[Token], start: int) -> int:
 
 
 def _section_items(tokens: Sequence[Token], start: int, end: int) -> Iterator[Token]:
-    """Each top-level list item's field. The field is the inline token of the
-    item's first block when that is a paragraph: a continuation paragraph is not
-    a field, as the owner chose (Codex on #413; #407, 6085825905)."""
+    """Each top-level list item's field: the inline token of its first block. A
+    continuation paragraph is not a field (Codex on #413; #407, 6085825905), and
+    an item whose first block is not a paragraph has none, so it fails the run
+    in a closed section (#407, 6092909419)."""
 
     in_list = False
     for index in range(start + 3, end):
         token = tokens[index]
         if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
             in_list = token.type == "bullet_list_open"
-        elif (
-            in_list
-            and token.type == "list_item_open"
-            and token.level == 1
-            and tokens[index + 1].type == "paragraph_open"
-        ):
+        elif in_list and token.type == "list_item_open" and token.level == 1:
+            if tokens[index + 1].type != "paragraph_open":
+                raise MergeEvidenceError(
+                    "a Change control item does not open with one of the "
+                    "template's fields"
+                )
             yield tokens[index + 2]
 
 
@@ -548,7 +558,9 @@ def _change_control_fields(body: str) -> dict[str, str]:
             raise MergeEvidenceError("a Change control item holds raw HTML")
         match = _FIELD.fullmatch(_inline_value(token).strip(" \t"))
         if match is None:
-            continue
+            raise MergeEvidenceError(
+                "a Change control item is not one of the template's fields"
+            )
         if match.group(1) in fields:
             raise MergeEvidenceError(
                 f"the Change control section repeats {match.group(1)}"

@@ -576,6 +576,39 @@ class CodeOwnersTests(unittest.TestCase):
         # Only a word that starts with `#` opens a comment.
         self.assertEqual(["a#b@example.com"], _owners("* a#b@example.com\n", "x"))
 
+    def test_malformed_segments_are_refused(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6092909419): git
+        matches nothing for an empty or dot segment, but `//sensitive` was
+        read as `/sensitive` and could replace an earlier rule's owners."""
+        refused = (
+            "/sensitive @alice\n//sensitive @bob\n",
+            "//sensitive @alice\n",
+            "docs//x @alice\n",
+            "sensitive// @alice\n",
+            "docs/./x @alice\n",
+            "./docs @alice\n",
+            "a/../docs/x @alice\n",
+            "docs/. @alice\n",
+            ".. @alice\n",
+        )
+        for text in refused:
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(text)
+        accepted = {
+            ("/sensitive @alice\n", "sensitive/x"): ["@alice"],
+            ("docs/ @alice\n", "docs/x"): ["@alice"],
+            ("**/logs @alice\n", "a/logs/x"): ["@alice"],
+            ("*.js @alice\n", "web/app.js"): ["@alice"],
+            (".github/ @alice\n", ".github/CODEOWNERS"): ["@alice"],
+            ("/.gitignore @alice\n", ".gitignore"): ["@alice"],
+        }
+        for (text, path), owners in accepted.items():
+            with self.subTest(text=text):
+                self.assertEqual(owners, _owners(text, path))
+
     def test_syntax_github_does_not_support_is_refused(self) -> None:
         for line in ("!/keep @alice", "/file[0-9].txt @alice", "\\#literal @alice"):
             with (
@@ -1406,7 +1439,7 @@ class EvidenceDocumentTests(unittest.TestCase):
         # item showing one is read (a field value must still be its grammar).
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            field, f"{field}\n- Note: `<wbr>` marks a break"
+            "- Accountable owner: @ktogias", "- Accountable owner: @ktogias `<wbr>`"
         )
         links = _evidence(_snapshot(replies))["links"]
         self.assertEqual(["#407", "#15"], links["work_items"])
@@ -1426,7 +1459,6 @@ class EvidenceDocumentTests(unittest.TestCase):
                 f"{field}\n  Work Item: #999\n",
                 ["#407", "#15"],
             ),
-            "a Notes continuation": ("- Notes\n\n  Work Item: #407, #15\n", []),
         }
         for name, (text, expected) in cases.items():
             with self.subTest(name):
@@ -1435,6 +1467,49 @@ class EvidenceDocumentTests(unittest.TestCase):
                 evidence = _evidence(_snapshot(replies))
                 self.assertEqual(expected, evidence["links"]["work_items"])
                 self.assertEqual(not expected, "M14" in _failed(evidence))
+        # A `- Notes` item, whose continuation holds the Work Item, is not one
+        # of the template's fields, so the run fails (#407, 6092909419).
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            field, "- Notes\n\n  Work Item: #407, #15\n"
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(_snapshot(replies))
+
+    def test_the_section_holds_only_the_template_s_fields(self) -> None:
+        """cubic on #413, and the owner's choice (#407, 6092909419): every
+        top-level item begins with exactly one of the template's four labels,
+        each once, so a near-match label cannot escape the duplicate check."""
+        field = "- Work Item: #407, #15"
+        refused = {
+            "a near-match label": f"{field}\n- Work Item\u00a0: #999",
+            "a lowercase label": f"{field}\n- work item: #999",
+            "another item": f"{field}\n- Notes",
+            "an unknown label": f"{field}\n- Context: the verdict's inputs",
+            # Duplicates fail even when their values agree (#407, 6092907589).
+            "a repeated Work Item": f"{field}\n{field}",
+            "an item opening with code": f"{field}\n-     Work Item: #999",
+            "a repeated owner": f"{field}\n- Accountable owner: @someone",
+        }
+        for name, text in refused.items():
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
+                _evidence(_snapshot(replies))
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, "- Work Item:")
+        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        # Prose in the section is not an item, so the fields are still read.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Accountable owner: @ktogias",
+            "- Accountable owner: @ktogias\n\nThe owner approves natively.",
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
 
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()

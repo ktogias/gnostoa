@@ -794,6 +794,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_patterns_follow_github_s_documented_forms
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_an_inline_comment_ends_a_rule_s_owners
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_double_asterisks_are_special_only_as_a_segment
+      - tests/test_merge_evidence_github.py::CodeOwnersTests.test_malformed_segments_are_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_syntax_github_does_not_support_is_refused
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_last_matching_rule_wins
       - tests/test_merge_evidence_github.py::CodeOwnersTests.test_the_protected_target_s_file_is_found_in_github_s_order
@@ -817,6 +818,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_value_is_its_visible_text
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_raw_html_in_a_field_fails_the_run
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_an_item_s_field_is_its_first_paragraph
+      - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_the_section_holds_only_the_template_s_fields
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_two_change_control_sections_are_ambiguous
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_logins_compare_without_case
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_only_ascii_letters_fold_in_logins
