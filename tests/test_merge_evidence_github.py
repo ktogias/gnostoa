@@ -1488,6 +1488,10 @@ class EvidenceDocumentTests(unittest.TestCase):
             "an unknown label": f"{field}\n- Context: the verdict's inputs",
             # Duplicates fail even when their values agree (#407, 6092907589).
             "a repeated Work Item": f"{field}\n{field}",
+            # cubic and Codex on #413: an ordered list's items are top-level
+            # items of the section too.
+            "an ordered list's conflicting class": f"{field}\n\n1. Class: critical",
+            "an ordered list's other item": f"{field}\n\n1. Notes",
             "an item opening with code": f"{field}\n-     Work Item: #999",
             "a repeated owner": f"{field}\n- Accountable owner: @someone",
         }
@@ -1502,6 +1506,14 @@ class EvidenceDocumentTests(unittest.TestCase):
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, "- Work Item:")
         self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        # A nested ordered list is not a top-level item, so it is allowed.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Accountable owner: @ktogias",
+            "- Accountable owner: @ktogias\n\n  1. approves natively",
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
         # Prose in the section is not an item, so the fields are still read.
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(

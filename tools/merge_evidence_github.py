@@ -519,6 +519,10 @@ def _section_items(tokens: Sequence[Token], start: int, end: int) -> Iterator[To
     in_list = False
     for index in range(start + 3, end):
         token = tokens[index]
+        if token.type == "ordered_list_open" and token.level == 0:
+            # Its items are top-level items too, and the template's fields are
+            # bullet items (cubic and Codex on #413; #407, 6092909419).
+            raise MergeEvidenceError("the Change control section holds an ordered list")
         if token.type in ("bullet_list_open", "bullet_list_close") and token.level == 0:
             in_list = token.type == "bullet_list_open"
         elif in_list and token.type == "list_item_open" and token.level == 1:

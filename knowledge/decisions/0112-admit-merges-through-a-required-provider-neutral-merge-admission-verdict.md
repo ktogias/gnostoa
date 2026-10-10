@@ -209,8 +209,9 @@ provider-neutral public change-governance contract of
     so code, HTML blocks and comments are never fields. The section is closed:
     every top-level item must open with a paragraph that begins with exactly
     one of the template's four labels, `Class:`, `Work Item:`, `Decision:` and
-    `Accountable owner:`, each once, and any other item fails the run (#407,
-    6092909419). An item's field is its first paragraph; a continuation
+    `Accountable owner:`, each at most once, and any other item, a top-level
+    ordered list included, fails the run (#407, 6092909419). The closed set
+    makes no field required: which are is the change class's policy. An item's field is its first paragraph; a continuation
     paragraph is not read (#407, 6085825905). The section's heading is
     compared by its visible text. GitHub may render Markdown inside a raw HTML
     element, such as a collapsed `<details>`, and CommonMark does not track HTML
