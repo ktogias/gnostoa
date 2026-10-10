@@ -291,8 +291,8 @@ def _item_status(
     runs: Sequence[tuple[str, str | None]],
 ) -> tuple[str, str | None]:
     """The latest state decides, unless several runs share the key and any of
-    them did not succeed: then PARTIAL (the owner's #402 choice, #407,
-    6097259307)."""
+    them did not succeed: then PARTIAL. This is the owner's choice under #402's
+    stop rule, recorded on #407 (6097259307, 6097251980)."""
 
     if len(runs) > 1 and any(run != ("completed", "success") for run in runs):
         return "PARTIAL", None
