@@ -758,6 +758,9 @@ guardrails:
       - tests/test_merge_admission.py::PolicyLoadingTests.test_an_inheritance_chain_past_the_bound_is_refused
       - tests/test_merge_admission.py::PolicyLoadingTests.test_the_inheritance_bound_is_exact
       - tests/test_merge_admission.py::PolicyLoadingTests.test_a_policy_outside_the_schema_is_refused
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_an_unresolved_analyzer_finding_denies_and_is_listed
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_denies_unless_the_findings_were_read_completely
+      - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_the_findings_have_a_closed_contract
 
   - id: github-merge-evidence
     title: A GitHub pull request's merge evidence comes from L1's snapshot and the protected target's declarations, and an incomplete read never passes as complete
@@ -865,6 +868,16 @@ guardrails:
       - tests/test_merge_evidence_github.py::AuthoritiesTests.test_gnostoa_s_authorities_and_codeowners
       - tests/test_merge_evidence_github.py::AuthoritiesTests.test_the_declaration_has_a_closed_contract
       - tests/test_merge_evidence_github.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_bound_complete_bundle_gives_each_item_a_complete_receipt
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_findings_leave_the_receipt_complete_and_stay_explicit
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_bundle_not_bound_to_the_subject_gives_incomplete_receipts
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_readback_s_own_status_is_its_receipt_s
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_missing_readback_gives_its_item_no_receipt
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_unknown_repeated_or_invalid_readback_fails_the_run
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_without_a_bundle_the_findings_are_unavailable
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_items_are_the_declaration_s
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_command_reads_the_bundle
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_the_bundle_is_read_only_inside_the_project_root
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
