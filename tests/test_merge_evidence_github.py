@@ -25,7 +25,12 @@ from test_review_reconcile_l1 import (
     paged_fake_fixture,
 )
 
-from tools import assurance_completeness, merge_admission, merge_evidence_github
+from tools import (
+    assurance_completeness,
+    merge_admission,
+    merge_evidence_github,
+    review_reconcile,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://api.github.com/repos/ktogias/gnostoa"
@@ -2129,6 +2134,35 @@ class CheckReceiptTests(unittest.TestCase):
         self.assertEqual(
             "INCOMPLETE", _receipt_statuses(evidence)[("verification-checks", "fast")]
         )
+
+    def test_a_malformed_check_is_an_invalid_snapshot(self) -> None:
+        """The owner's selection for gr-415-check-error-contract (#15, 6100292562):
+        the normalizer's error from a malformed check becomes the adapter's
+        invalid-snapshot error, keeping its cause."""
+
+        def without_key(check: dict[str, Any]) -> None:
+            del check["key"]
+
+        def conclusion_not_text(check: dict[str, Any]) -> None:
+            check["conclusion"] = 1
+
+        for name, change, reason in (
+            ("no key", without_key, "check.key"),
+            ("a conclusion that is not text", conclusion_not_text, "check.conclusion"),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                change(fast)
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    f"^the snapshot is invalid: {reason}",
+                ) as raised:
+                    _evidence(snapshot)
+                self.assertIsInstance(
+                    raised.exception.__cause__,
+                    review_reconcile.ReconciliationInputError,
+                )
 
     def test_only_a_github_snapshot_gives_evidence(self) -> None:
         """The owner's review 5478389359 on #413: a snapshot from another provider,

@@ -322,8 +322,13 @@ def _check_receipts(
     so a later success cannot hide another current run (Codex on #415)."""
 
     checks, coverage = _source(snapshot, "checks")
-    latest = latest_checks(checks, subject["head_commit"])
-    runs = check_runs_by_key(checks, subject["head_commit"])
+    # The reconciler normalizes each check; a malformed one is an invalid snapshot
+    # (#15, 6100292562).
+    try:
+        latest = latest_checks(checks, subject["head_commit"])
+        runs = check_runs_by_key(checks, subject["head_commit"])
+    except ReconciliationInputError as exc:
+        raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():

@@ -858,6 +858,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::CheckReceiptTests.test_an_unread_commit_status_read_withholds_the_check_receipts
       - tests/test_merge_evidence_github.py::CheckReceiptTests.test_several_runs_of_one_check_count_only_if_all_succeeded
       - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_check_without_a_conclusion_key_reads_as_null
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_malformed_check_is_an_invalid_snapshot
       - tests/test_merge_evidence_github.py::CheckReceiptTests.test_only_a_github_snapshot_gives_evidence
       - tests/test_merge_evidence_github.py::CommandTests.test_the_command_writes_the_evidence_document
       - tests/test_merge_evidence_github.py::CommandTests.test_the_knowledge_cli_routes_merge_evidence
