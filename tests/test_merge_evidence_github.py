@@ -557,8 +557,6 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(after["reviews"], snapshot["reviews"])
 
     def test_the_reconciler_s_snapshot_validation_accepts_the_extension(self) -> None:
-        from tools import review_reconcile
-
         subject, _, coverage = review_reconcile.validate_snapshot(_snapshot())
         self.assertEqual(HEAD, subject["head_commit"])
         self.assertEqual("COMPLETE", coverage["reviews"]["status"])
