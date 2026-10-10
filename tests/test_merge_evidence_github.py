@@ -2005,6 +2005,42 @@ class CheckReceiptTests(unittest.TestCase):
             ):
                 merge_evidence_github.parse_required_checks(document)
 
+    def test_two_items_may_not_name_one_check(self) -> None:
+        """The owner's selection for gr-415-shared-check-key (#15, 6099845892):
+        each (requirement, coverage item) names its own `{app_id, name}`, within
+        and across requirements, so one run cannot satisfy two declared checks."""
+
+        fast = {"app_id": ACTIONS, "name": "fast"}
+
+        def requirements(**change: Any) -> dict[str, Any]:
+            return {**copy.deepcopy(REQUIRED_CHECKS), "requirements": change}
+
+        for name, document in (
+            ("within a requirement", requirements(checks={"a": fast, "b": fast})),
+            ("across requirements", requirements(one={"a": fast}, two={"b": fast})),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "github-check-run:15368:fast",
+                ),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+        for name, document in (
+            ("Gnostoa's manifest", copy.deepcopy(REQUIRED_CHECKS)),
+            (
+                "the same name from another app",
+                requirements(one={"a": fast}, two={"b": {**fast, "app_id": CODEQL}}),
+            ),
+            (
+                "another name from the same app",
+                requirements(checks={"a": fast, "b": {**fast, "name": "smoke"}}),
+            ),
+        ):
+            with self.subTest(name):
+                merge_evidence_github.parse_required_checks(document)
+
     def test_an_unread_commit_status_read_withholds_the_check_receipts(
         self,
     ) -> None:

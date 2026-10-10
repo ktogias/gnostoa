@@ -260,7 +260,12 @@ provider-neutral public change-governance contract of
     it, by app id and name: R-main's four checks from GitHub Actions, and
     GitHub Advanced Security's `CodeQL`, whose conclusion applies the
     code-scanning ruleset's threshold. A check of the same name from another
-    app does not count. The latest run on the exact head gives the receipt;
+    app does not count. No two (requirement, coverage item) pairs, within or
+    across requirements, may name the same app id and name: such a manifest is
+    refused, so one run cannot satisfy two declared checks (owner selection for
+    `gr-415-shared-check-key`, #15, 6099845892). The rule is this manifest's
+    only; a receipt in the provider-neutral contract may still cover several
+    items. The latest run on the exact head gives the receipt;
     when several runs carry an item's key, as when two check suites post the
     same name, the item is `COMPLETE` only if every one succeeded, and
     `PARTIAL` if any did not, so a later success cannot hide another current run

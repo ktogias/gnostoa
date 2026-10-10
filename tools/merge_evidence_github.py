@@ -217,7 +217,9 @@ def _is_directories_segment(text: str, index: int) -> bool:
 def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
     """The manifest naming, for each declared requirement's coverage item, the
     GitHub check run that gives it: requirement, then item, then the L1 check key
-    `github-check-run:<app_id>:<name>` (#407, slice 1b.3b-1)."""
+    `github-check-run:<app_id>:<name>` (#407, slice 1b.3b-1). No two items, within
+    or across requirements, name one check, so one run cannot satisfy two
+    declared checks (#15, 6099845892)."""
 
     try:
         record = require_mapping(document, _REQUIRED_CHECKS_LABEL)
@@ -230,6 +232,7 @@ def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
         if not requirements:
             raise MergeEvidenceError("required checks names no requirement")
         manifest: dict[str, dict[str, str]] = {}
+        named: dict[str, str] = {}
         for requirement, raw_items in requirements.items():
             label = f"required checks {requirement!r}"
             require_identifier(requirement, "required checks requirement")
@@ -242,6 +245,13 @@ def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
                 )
                 for item, check in items.items()
             }
+            for item, key in manifest[requirement].items():
+                pair = f"{requirement}.{item}"
+                if key in named:
+                    raise MergeEvidenceError(
+                        f"required checks {named[key]} and {pair} both name {key}"
+                    )
+                named[key] = pair
         return manifest
     except AssuranceCompletenessError as exc:
         raise MergeEvidenceError(str(exc)) from exc
