@@ -44,6 +44,7 @@ from .verdict_cli import confine, read_json_input, run
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
 _INPUT_LABEL = "merge-evidence input"
+_AUTHORITIES_LABEL = "merge authorities"
 _AUTHORITY_KEYS = frozenset(
     {"schema_version", "id", "version", "declarer", "human_approvers"}
 )
@@ -107,8 +108,10 @@ _VOID_ELEMENTS = frozenset(
 # Anything else, such as an invisible character, a URL or prose, fails the run:
 # the owner chose a strict grammar over reading identifiers out of free text
 # (#407, 6086766086, 6088050686 and 6088035894).
-_WORK_ITEM_VALUE = re.compile(r"#[0-9]+(?:(?: +| *, *)#[0-9]+)*")
-_DECISION_VALUE = re.compile(r"[0-9]{4}(?:(?: +| *, *)[0-9]{4})*")
+# `re.ASCII`, so `\d` is `[0-9]` and a Unicode digit is not one (CodeAnt on #413).
+_WORK_ITEM_VALUE = re.compile(r"#\d+(?:(?: +| *, *)#\d+)*", re.ASCII)
+_DECISION_VALUE = re.compile(r"\d{4}(?:(?: +| *, *)\d{4})*", re.ASCII)
+_NUMBER = re.compile(r"\d+", re.ASCII)
 _DECISION_RECORD = re.compile(r"(\d{4})-[a-z0-9-]+\.md")
 DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
@@ -154,8 +157,8 @@ def parse_authorities(document: object) -> dict[str, Any]:
     """The merge authorities: the seal's declarer and the human approvers' roster."""
 
     try:
-        record = require_mapping(document, "merge authorities")
-        require_closed_keys(record, "merge authorities", _AUTHORITY_KEYS)
+        record = require_mapping(document, _AUTHORITIES_LABEL)
+        require_closed_keys(record, _AUTHORITIES_LABEL, _AUTHORITY_KEYS)
         if record["schema_version"] != "1.0":
             raise MergeEvidenceError("merge authorities schema_version must be 1.0")
         require_text(record["id"], "merge authorities id")
@@ -176,7 +179,7 @@ def parse_authorities(document: object) -> dict[str, Any]:
 
 def load_authorities(path: Path, *, project_root: Path) -> dict[str, Any]:
     resolved = confine(
-        path, project_root, label="merge authorities", error=MergeEvidenceError
+        path, project_root, label=_AUTHORITIES_LABEL, error=MergeEvidenceError
     )
     try:
         document = load_policy_yaml(resolved, label="Merge authorities")
@@ -583,7 +586,7 @@ def _listed(
     value = fields.get(name, "").strip(" ")
     if value and grammar.fullmatch(value) is None:
         raise MergeEvidenceError(f"the {name} field is not a list the template allows")
-    return _unique(re.findall(r"[0-9]+", value))
+    return _unique(_NUMBER.findall(value))
 
 
 def _change_control(

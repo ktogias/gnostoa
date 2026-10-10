@@ -1014,8 +1014,9 @@ class EvidenceDocumentTests(unittest.TestCase):
             with self.subTest(body=body[:40]):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = body
+                snapshot = _snapshot(replies)
                 with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-                    _evidence(_snapshot(replies))
+                    _evidence(snapshot)
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
             "- Work Item: #407, #15", "- Work Item:"
@@ -1042,16 +1043,17 @@ class EvidenceDocumentTests(unittest.TestCase):
             "0112x",
             "0112 and 0113",
             "0112,, 0113",
+            # A Decision id is ASCII digits.
+            "\u0660\u0661\u0661\u0662",
         ):
-            with (
-                self.subTest(value=value),
-                self.assertRaises(merge_evidence_github.MergeEvidenceError),
-            ):
+            with self.subTest(value=value):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
                     line, f"- Decision: {value}"
                 )
-                _evidence(_snapshot(replies))
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
         for value, expected in (
             ("9999", []),
             ("0112", ["0112"]),
@@ -1122,8 +1124,9 @@ class EvidenceDocumentTests(unittest.TestCase):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = body
                 if body is example:
+                    snapshot = _snapshot(replies)
                     with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-                        _evidence(_snapshot(replies))
+                        _evidence(snapshot)
                 else:
                     links = _evidence(_snapshot(replies))["links"]
                     self.assertEqual([], links["work_items"])
@@ -1162,8 +1165,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = "<!--\n" + BODY
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
 
     def test_html_and_code_spans_follow_commonmark(self) -> None:
         """Codex, cubic, CodeAnt and Claude on #413: a raw HTML block is code; a
@@ -1176,8 +1180,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         # A raw `<pre>` in the section can hold content, so the run fails (the
         # owner's choice, #407 6086999580).
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
         # A fence that opens before a comment closes at its own marker, so what
         # follows renders as a visible item (Decision 0113): here a second Work
         # Item, which is ambiguous.
@@ -1185,8 +1190,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         replies[f"{API}/pulls/300"][0]["body"] = (
             stripped + "\n```\n<!--\n```\n- Work Item: #999\n-->\n"
         )
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = (
             "Write `<!--` to open a comment.\n\n" + BODY
@@ -1263,13 +1269,12 @@ class EvidenceDocumentTests(unittest.TestCase):
             "#407,, #15",
         )
         for text in refused:
-            with (
-                self.subTest(text=text),
-                self.assertRaises(merge_evidence_github.MergeEvidenceError),
-            ):
+            with self.subTest(text=text):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
-                _evidence(_snapshot(replies))
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
         for text, expected in (
             ("#407, #15", ["#407", "#15"]),
             ("#407 #15", ["#407", "#15"]),
@@ -1325,8 +1330,9 @@ class EvidenceDocumentTests(unittest.TestCase):
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(old, new)
                 if expected is None:
                     # Text that is not the grammar fails the run (#407, 6088050686).
+                    snapshot = _snapshot(replies)
                     with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-                        _evidence(_snapshot(replies))
+                        _evidence(snapshot)
                 else:
                     links = _evidence(_snapshot(replies))["links"]
                     self.assertEqual(expected, links[key])
@@ -1386,8 +1392,9 @@ class EvidenceDocumentTests(unittest.TestCase):
             with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = body
+                snapshot = _snapshot(replies)
                 with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-                    _evidence(_snapshot(replies))
+                    _evidence(snapshot)
         accepted = {
             "void elements before": BODY.replace(
                 heading, f"Line<br>\n\n<img src=x>\n\n<param name=x>\n\n{heading}"
@@ -1428,13 +1435,12 @@ class EvidenceDocumentTests(unittest.TestCase):
             "an item that is not a field": f"{field}\n- Note: see below<br>",
         }
         for name, text in refused.items():
-            with (
-                self.subTest(name),
-                self.assertRaises(merge_evidence_github.MergeEvidenceError),
-            ):
+            with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
-                _evidence(_snapshot(replies))
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
         # Inline code is code, not raw HTML, even when it shows a tag, so an
         # item showing one is read (a field value must still be its grammar).
         replies = _replies()
@@ -1473,8 +1479,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
             field, "- Notes\n\n  Work Item: #407, #15\n"
         )
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
 
     def test_the_section_holds_only_the_template_s_fields(self) -> None:
         """cubic on #413, and the owner's choice (#407, 6092909419): every
@@ -1496,13 +1503,12 @@ class EvidenceDocumentTests(unittest.TestCase):
             "a repeated owner": f"{field}\n- Accountable owner: @someone",
         }
         for name, text in refused.items():
-            with (
-                self.subTest(name),
-                self.assertRaises(merge_evidence_github.MergeEvidenceError),
-            ):
+            with self.subTest(name):
                 replies = _replies()
                 replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
-                _evidence(_snapshot(replies))
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, "- Work Item:")
         self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
@@ -1526,8 +1532,9 @@ class EvidenceDocumentTests(unittest.TestCase):
     def test_two_change_control_sections_are_ambiguous(self) -> None:
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY + "\n" + BODY
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
 
     def test_logins_compare_without_case(self) -> None:
         """CodeAnt on #413: GitHub logins are case-insensitive."""
@@ -1588,8 +1595,9 @@ class EvidenceDocumentTests(unittest.TestCase):
                 )
             }
         )
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
         replies = _replies(
             **{
                 COMPARE: _comparison(
@@ -1609,8 +1617,9 @@ class EvidenceDocumentTests(unittest.TestCase):
         )["authorities"]["required_approvers"]
         self.assertEqual(["ktogias"], approvers)
         # The old location's owners count too: one off the roster fails the run.
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies), codeowners="* @ktogias\n/docs/ @stranger\n")
+            _evidence(snapshot, codeowners="* @ktogias\n/docs/ @stranger\n")
 
     def test_a_failed_roster_names_the_first_path_in_order(self) -> None:
         """Claude on #413: a rename's two paths are visited in sorted order, so
@@ -1632,17 +1641,19 @@ class EvidenceDocumentTests(unittest.TestCase):
                         )
                     }
                 )
+                snapshot = _snapshot(replies)
                 with self.assertRaisesRegex(
                     merge_evidence_github.MergeEvidenceError, f"of {old} is"
                 ):
-                    _evidence(_snapshot(replies), codeowners="* @stranger\n")
+                    _evidence(snapshot, codeowners="* @stranger\n")
 
     def test_a_truncated_description_cannot_vouch_for_its_change_control(self) -> None:
         """CodeAnt on #413: a cut body may have lost part of its section."""
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY + "x" * 70_000
+        snapshot = _snapshot(replies)
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            _evidence(_snapshot(replies))
+            _evidence(snapshot)
 
     def test_incomplete_conversation_or_files_fail_the_run(self) -> None:
         for source in ("conversation", "files", "subject"):
