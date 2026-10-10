@@ -83,13 +83,14 @@ def _check_run(
     conclusion: str | None = "success",
     status: str = "completed",
     completed_at: str | None = "2026-09-19T16:40:30Z",
+    started_at: str = "2026-09-19T16:40:20Z",
 ) -> dict[str, Any]:
     return {
         "id": identifier,
         "name": name,
         "app": {"id": app_id},
         "head_sha": HEAD,
-        "started_at": "2026-09-19T16:40:20Z",
+        "started_at": started_at,
         "completed_at": completed_at,
         "status": status,
         "conclusion": conclusion,
@@ -2004,16 +2005,83 @@ class CheckReceiptTests(unittest.TestCase):
             ):
                 merge_evidence_github.parse_required_checks(document)
 
-    def test_an_unread_commit_status_does_not_taint_the_check_receipts(
+    def test_an_unread_commit_status_read_withholds_the_check_receipts(
         self,
     ) -> None:
-        """CodeAnt on #415: the receipts come from check runs alone, so they follow
-        the check-run read's coverage, not the combined one."""
+        """The receipts follow L1's combined checks coverage, commit statuses
+        included: an incomplete source can only deny, and narrowing it would be a
+        coverage-boundary decision (#407, 6097059408; the owner-requested analysis
+        6096945431 on #415)."""
         statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
         evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
-        expected = {("verification-checks", n): "COMPLETE" for n in REQUIRED}
-        expected[("codeql", "codeql")] = "COMPLETE"
-        self.assertEqual(expected, _receipt_statuses(evidence))
+        statuses_by_item = _receipt_statuses(evidence)
+        self.assertEqual(5, len(statuses_by_item))
+        self.assertTrue(
+            all(s != "COMPLETE" for s in statuses_by_item.values()), statuses_by_item
+        )
+
+    def test_several_runs_of_one_check_count_only_if_all_succeeded(self) -> None:
+        """Codex on #415: GitHub lists every run with the same app and name from
+        different check suites, so a later success must not hide another current
+        failing or pending run. CodeAnt's overlap, an older run completing after a
+        newer one started, is the same case."""
+        cases = {
+            "a failure and a later success": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    conclusion="failure",
+                    completed_at="2026-09-19T16:40:25Z",
+                ),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "PARTIAL",
+            ),
+            "an older success completing after a newer pending run started": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    started_at="2026-09-19T16:40:00Z",
+                    completed_at="2026-09-19T16:40:40Z",
+                ),
+                _check_run(
+                    61,
+                    "fast",
+                    ACTIONS,
+                    conclusion=None,
+                    status="in_progress",
+                    completed_at=None,
+                    started_at="2026-09-19T16:40:30Z",
+                ),
+                "PARTIAL",
+            ),
+            "two successes": (
+                _check_run(41, "fast", ACTIONS, completed_at="2026-09-19T16:40:25Z"),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "COMPLETE",
+            ),
+            # A run on another commit is not this head's evidence.
+            "a failure on another head": (
+                {
+                    **_check_run(41, "fast", ACTIONS, conclusion="failure"),
+                    "head_sha": PREVIOUS,
+                },
+                _check_run(61, "fast", ACTIONS),
+                "COMPLETE",
+            ),
+        }
+        for name, (first, second, status) in cases.items():
+            with self.subTest(name):
+                runs = [run for run in _green_checks() if run["name"] != "fast"]
+                evidence = _command_evidence(
+                    _replies(
+                        **{CHECK_RUNS: ({"check_runs": [*runs, first, second]}, {})}
+                    )
+                )
+                self.assertEqual(
+                    status, _receipt_statuses(evidence)[("verification-checks", "fast")]
+                )
 
     def test_only_a_github_snapshot_gives_evidence(self) -> None:
         """The owner's review 5478389359 on #413: a snapshot from another provider,

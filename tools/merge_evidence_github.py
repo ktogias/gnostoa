@@ -291,13 +291,20 @@ def _check_receipts(
     required_checks: Mapping[str, Mapping[str, str]],
 ) -> list[dict[str, Any]]:
     """One receipt per manifest item with a check run on the exact head. An item
-    with none gets no receipt, so the reducer makes it MISSING. A check-run read
-    that is not COMPLETE gives every item its status; the commit statuses, which no
-    receipt uses, do not count (CodeAnt on #415)."""
+    with none gets no receipt, so the reducer makes it MISSING. A checks read that
+    is not COMPLETE, commit statuses included, gives every item its status: it can
+    only deny (#407, 6097059408). With several runs of one key, as when two check
+    suites post the same name, the item is COMPLETE only if every run succeeded,
+    so a later success cannot hide another current run (Codex on #415)."""
 
-    checks, _ = _source(snapshot, "checks")
-    coverage = snapshot["coverage"]["checks"].get("check_runs_status")
+    checks, coverage = _source(snapshot, "checks")
     latest = latest_checks(checks, subject["head_commit"])
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    for check in checks:
+        if check["head_commit"] == subject["head_commit"]:
+            runs.setdefault(check["key"], []).append(
+                (check["status"], check["conclusion"])
+            )
     unread = coverage if coverage in RECEIPT_STATUSES else "ERROR"
     receipts = []
     for requirement, items in required_checks.items():
@@ -307,6 +314,10 @@ def _check_receipts(
                 observed_at = snapshot["observed_at"]
             elif key in latest:
                 status, conclusion = _check_status(latest[key]["states"])
+                if len(runs[key]) > 1 and any(
+                    run != ("completed", "success") for run in runs[key]
+                ):
+                    status, conclusion = "PARTIAL", None
                 observed_at = latest[key]["observed_at"]
             else:
                 continue

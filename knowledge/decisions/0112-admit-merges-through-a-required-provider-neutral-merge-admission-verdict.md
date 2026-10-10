@@ -260,12 +260,16 @@ provider-neutral public change-governance contract of
     it, by app id and name: R-main's four checks from GitHub Actions, and
     GitHub Advanced Security's `CodeQL`, whose conclusion applies the
     code-scanning ruleset's threshold. A check of the same name from another
-    app does not count. The latest run on the exact head gives the receipt.
+    app does not count. The latest run on the exact head gives the receipt;
+    when several runs carry an item's key, as when two check suites post the
+    same name, the item is `COMPLETE` only if every one succeeded, so a later
+    success cannot hide another current run (#407, 6097059408).
     `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
     that did not run is not evidence (I10). Pending or any other conclusion is
     `INCOMPLETE`, and an ambiguous latest state is `PARTIAL`. An item with no
     run has no receipt, so the reducer makes it `MISSING`, and a checks read
-    that is not `COMPLETE` gives every item its status. Tests keep the manifest
+    that is not `COMPLETE`, commit statuses included, gives every item its
+    status, since an incomplete source can only deny. Tests keep the manifest
     equal to the declaration's items and to R-main's recorded checks. A snapshot
     whose provider is not `github` fails the run (the owner's review 5478389359
     on #413).

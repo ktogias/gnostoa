@@ -155,10 +155,6 @@ record. It was observed on #413's `3fe8e95` and #415's `381e8a6` on 2026-10-10:
     "app_id": 57789,
     "app_slug": "github-advanced-security",
     "name": "CodeQL",
-    "observed_on": [
-      "3fe8e958c51db3da74d3b3df6c6b739ef8ff4002",
-      "381e8a64df21a2918e79fdd8f61efc33222876ec"
-    ],
     "observed_at": "2026-10-10"
   }
 }
