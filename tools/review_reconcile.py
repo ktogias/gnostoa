@@ -728,6 +728,24 @@ def latest_checks(
 _latest_checks = latest_checks
 
 
+def check_runs_by_key(
+    raw_checks: Sequence[object],
+    target_head: str,
+) -> dict[str, list[tuple[str, str | None]]]:
+    """Every `(status, conclusion)` observed on the target head, by check key, as
+    the normalizer reads it. The merge-evidence adapter uses it to see each run
+    that shares a key (#407, slice 1b.3b-1)."""
+
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    for raw_check in raw_checks:
+        check = _normalize_check(raw_check)
+        if check["head_commit"] == target_head:
+            runs.setdefault(check["key"], []).append(
+                (check["status"], check["conclusion"])
+            )
+    return runs
+
+
 def _classify_latest_check(
     key: str,
     item: dict[str, Any],

@@ -262,9 +262,15 @@ provider-neutral public change-governance contract of
     code-scanning ruleset's threshold. A check of the same name from another
     app does not count. The latest run on the exact head gives the receipt;
     when several runs carry an item's key, as when two check suites post the
-    same name, the item is `COMPLETE` only if every one succeeded, so a later
-    success cannot hide another current run (#407, 6097059408).
-    `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
+    same name, the item is `COMPLETE` only if every one succeeded, and
+    `PARTIAL` if any did not, so a later success cannot hide another current run
+    (#407, 6097059408). The owner accepted the possible cost: if the provider
+    lists a failed attempt beside its successful re-run, the item denies until
+    a new commit (#407, 6097259307 and 6097251980). Whether it does is not yet
+    shown. Recovery by re-run within one check suite, with distinct suites
+    still unable to mask a failure, is a successor acceptance case before 1b.4
+    activates MA0; any L1 extension it needs is admitted separately. For a
+    single run, `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
     that did not run is not evidence (I10). Pending or any other conclusion is
     `INCOMPLETE`, and an ambiguous latest state is `PARTIAL`. An item with no
     run has no receipt, so the reducer makes it `MISSING`, and a checks read

@@ -45,6 +45,7 @@ from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
 from .review_reconcile import (
     ReconciliationInputError,
+    check_runs_by_key,
     latest_checks,
     validate_snapshot,
 )
@@ -285,6 +286,19 @@ def _check_status(states: set[tuple[str, str, str | None]]) -> tuple[str, str | 
     return "INCOMPLETE", conclusion
 
 
+def _item_status(
+    states: set[tuple[str, str, str | None]],
+    runs: Sequence[tuple[str, str | None]],
+) -> tuple[str, str | None]:
+    """The latest state decides, unless several runs share the key and any of
+    them did not succeed: then PARTIAL (the owner's #402 choice, #407,
+    6097259307)."""
+
+    if len(runs) > 1 and any(run != ("completed", "success") for run in runs):
+        return "PARTIAL", None
+    return _check_status(states)
+
+
 def _check_receipts(
     snapshot: Mapping[str, Any],
     subject: Mapping[str, Any],
@@ -299,25 +313,15 @@ def _check_receipts(
 
     checks, coverage = _source(snapshot, "checks")
     latest = latest_checks(checks, subject["head_commit"])
-    runs: dict[str, list[tuple[str, str | None]]] = {}
-    for check in checks:
-        if check["head_commit"] == subject["head_commit"]:
-            runs.setdefault(check["key"], []).append(
-                (check["status"], check["conclusion"])
-            )
-    unread = coverage if coverage in RECEIPT_STATUSES else "ERROR"
+    runs = check_runs_by_key(checks, subject["head_commit"])
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():
             if coverage != "COMPLETE":
-                status, conclusion = unread, None
-                observed_at = snapshot["observed_at"]
+                status = coverage if coverage in RECEIPT_STATUSES else "ERROR"
+                conclusion, observed_at = None, snapshot["observed_at"]
             elif key in latest:
-                status, conclusion = _check_status(latest[key]["states"])
-                if len(runs[key]) > 1 and any(
-                    run != ("completed", "success") for run in runs[key]
-                ):
-                    status, conclusion = "PARTIAL", None
+                status, conclusion = _item_status(latest[key]["states"], runs[key])
                 observed_at = latest[key]["observed_at"]
             else:
                 continue

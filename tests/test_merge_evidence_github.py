@@ -2083,6 +2083,17 @@ class CheckReceiptTests(unittest.TestCase):
                     status, _receipt_statuses(evidence)[("verification-checks", "fast")]
                 )
 
+    def test_a_check_without_a_conclusion_key_reads_as_null(self) -> None:
+        """Claude on #415: a check that omits `conclusion`, which the reconciler's
+        normalizer reads as null, gives an INCOMPLETE receipt, not a crash."""
+        snapshot = _snapshot()
+        [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+        del fast["conclusion"]
+        evidence = _evidence(snapshot)
+        self.assertEqual(
+            "INCOMPLETE", _receipt_statuses(evidence)[("verification-checks", "fast")]
+        )
+
     def test_only_a_github_snapshot_gives_evidence(self) -> None:
         """The owner's review 5478389359 on #413: a snapshot from another provider,
         otherwise well-formed, fails the run."""
