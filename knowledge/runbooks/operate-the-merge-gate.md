@@ -143,6 +143,27 @@ The other rulesets:
 | `Only admins write tags` (24640985) | every tag | the admin role | creation, update, deletion, non-fast-forward |
 | `Require CodeQL on main` (23699912) | `~DEFAULT_BRANCH` | none | code scanning: CodeQL, errors and high-or-higher security alerts |
 
+**The code-scanning check.** GitHub Advanced Security posts a `CodeQL` check run on
+each pull-request head, and its conclusion applies the ruleset's alert threshold.
+The merge-evidence adapter's `codeql` receipt reads it
+(`policy/merge-required-checks.yaml`), and a test keeps that manifest equal to this
+record. It was observed on #413's `3fe8e95` and #415's `381e8a6` on 2026-10-10:
+
+```json
+{
+  "code_scanning_check": {
+    "app_id": 57789,
+    "app_slug": "github-advanced-security",
+    "name": "CodeQL",
+    "observed_on": [
+      "3fe8e958c51db3da74d3b3df6c6b739ef8ff4002",
+      "381e8a64df21a2918e79fdd8f61efc33222876ec"
+    ],
+    "observed_at": "2026-10-10"
+  }
+}
+```
+
 **Who can read what.** The App reads each ruleset and its rules, but GitHub omits
 `bypass_actors` from its read, as it does for anyone without Administration access.
 The bypass lists above were read back with an admin-capable credential on

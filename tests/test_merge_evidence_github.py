@@ -1907,7 +1907,7 @@ class CheckReceiptTests(unittest.TestCase):
         for name, (change, status) in cases.items():
             with self.subTest(name):
                 runs = _green_checks()
-                runs[1] = _check_run(41, "fast", ACTIONS, **change)
+                runs[1].update(change)
                 evidence = _command_evidence(
                     _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
                 )
@@ -2003,6 +2003,17 @@ class CheckReceiptTests(unittest.TestCase):
                 self.assertRaises(merge_evidence_github.MergeEvidenceError),
             ):
                 merge_evidence_github.parse_required_checks(document)
+
+    def test_an_unread_commit_status_does_not_taint_the_check_receipts(
+        self,
+    ) -> None:
+        """CodeAnt on #415: the receipts come from check runs alone, so they follow
+        the check-run read's coverage, not the combined one."""
+        statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
+        evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
+        expected = {("verification-checks", n): "COMPLETE" for n in REQUIRED}
+        expected[("codeql", "codeql")] = "COMPLETE"
+        self.assertEqual(expected, _receipt_statuses(evidence))
 
     def test_only_a_github_snapshot_gives_evidence(self) -> None:
         """The owner's review 5478389359 on #413: a snapshot from another provider,

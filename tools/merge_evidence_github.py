@@ -291,10 +291,12 @@ def _check_receipts(
     required_checks: Mapping[str, Mapping[str, str]],
 ) -> list[dict[str, Any]]:
     """One receipt per manifest item with a check run on the exact head. An item
-    with none gets no receipt, so the reducer makes it MISSING. A checks read that
-    is not COMPLETE gives every item its status."""
+    with none gets no receipt, so the reducer makes it MISSING. A check-run read
+    that is not COMPLETE gives every item its status; the commit statuses, which no
+    receipt uses, do not count (CodeAnt on #415)."""
 
-    checks, coverage = _source(snapshot, "checks")
+    checks, _ = _source(snapshot, "checks")
+    coverage = snapshot["coverage"]["checks"].get("check_runs_status")
     latest = latest_checks(checks, subject["head_commit"])
     unread = coverage if coverage in RECEIPT_STATUSES else "ERROR"
     receipts = []
