@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -25,7 +26,12 @@ from test_review_reconcile_l1 import (
     paged_fake_fixture,
 )
 
-from tools import assurance_completeness, merge_admission, merge_evidence_github
+from tools import (
+    assurance_completeness,
+    merge_admission,
+    merge_evidence_github,
+    review_reconcile,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://api.github.com/repos/ktogias/gnostoa"
@@ -54,6 +60,52 @@ The verdict reads normalized evidence.
 
 def _commit(sha: str, message: str) -> dict[str, Any]:
     return {"sha": sha, "commit": {"message": message}}
+
+
+# The check runs that give the declaration's check items (#407, 1b.3b-1): GitHub
+# Actions' required checks and GitHub Advanced Security's CodeQL.
+ACTIONS = 15368
+CODEQL = 57789
+REQUIRED = ("policy", "fast", "regression", "smoke")
+REQUIRED_CHECKS = {
+    "schema_version": "1.0",
+    "id": "example.merge-required-checks",
+    "version": "0.1.0",
+    "requirements": {
+        "verification-checks": {
+            name: {"app_id": ACTIONS, "name": name} for name in REQUIRED
+        },
+        "codeql": {"codeql": {"app_id": CODEQL, "name": "CodeQL"}},
+    },
+}
+CHECK_RUNS = f"{API}/commits/{HEAD}/check-runs?per_page=100"
+
+
+def _check_run(
+    identifier: int,
+    name: str,
+    app_id: int,
+    *,
+    conclusion: str | None = "success",
+    status: str = "completed",
+    completed_at: str | None = "2026-09-19T16:40:30Z",
+    started_at: str = "2026-09-19T16:40:20Z",
+) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "name": name,
+        "app": {"id": app_id},
+        "head_sha": HEAD,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "status": status,
+        "conclusion": conclusion,
+    }
+
+
+def _green_checks() -> list[dict[str, Any]]:
+    runs = [_check_run(40 + i, name, ACTIONS) for i, name in enumerate(REQUIRED)]
+    return [*runs, _check_run(50, "CodeQL", CODEQL)]
 
 
 FILES = [
@@ -145,6 +197,8 @@ def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
         [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], FILES
     )
     replies[EDITS] = _edits((1, None))
+    replies[CHECK_RUNS] = ({"check_runs": _green_checks()}, {})
+    replies.pop("https://api.github.com/page2/check-runs", None)
     replies[CLOSING] = _closing()
     for key, value in changes.items():
         replies[key] = value
@@ -194,6 +248,7 @@ def _evidence(
         change_policy=_policy(),
         codeowners=merge_evidence_github.parse_codeowners(codeowners),
         decisions=merge_evidence_github.load_decisions(ROOT),
+        required_checks=merge_evidence_github.parse_required_checks(REQUIRED_CHECKS),
     )
 
 
@@ -502,8 +557,6 @@ class L1MergeEvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(after["reviews"], snapshot["reviews"])
 
     def test_the_reconciler_s_snapshot_validation_accepts_the_extension(self) -> None:
-        from tools import review_reconcile
-
         subject, _, coverage = review_reconcile.validate_snapshot(_snapshot())
         self.assertEqual(HEAD, subject["head_commit"])
         self.assertEqual("COMPLETE", coverage["reviews"]["status"])
@@ -725,7 +778,12 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         self.assertEqual("UNAVAILABLE", evidence["suppressions"]["coverage"])
         self.assertEqual("UNAVAILABLE", evidence["trust_root_changes"]["coverage"])
-        self.assertEqual([], evidence["receipts"])
+        # The check items have receipts (1b.3b-1); M2-M8 still denies on the
+        # analyzer readback and SonarCloud.
+        self.assertEqual(
+            {("verification-checks", n) for n in REQUIRED} | {("codeql", "codeql")},
+            set(_receipt_statuses(evidence)),
+        )
 
     def test_an_unsealed_head_denies(self) -> None:
         """#338: the head was never declared."""
@@ -1586,6 +1644,9 @@ class EvidenceDocumentTests(unittest.TestCase):
             change_policy=_policy(),
             codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
             decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.parse_required_checks(
+                REQUIRED_CHECKS
+            ),
         )
         self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
 
@@ -1726,6 +1787,9 @@ def _project(directory: Path, *, authorities: bool = True) -> Path:
         ROOT / "knowledge" / "decisions", project / "knowledge" / "decisions"
     )
     (project / ".github" / "CODEOWNERS").write_text("* @ktogias\n", encoding="utf-8")
+    (project / "policy" / "merge-required-checks.yaml").write_text(
+        yaml.safe_dump(REQUIRED_CHECKS), encoding="utf-8"
+    )
     if authorities:
         (project / "policy" / "merge-authorities.yaml").write_text(
             yaml.safe_dump(
@@ -1771,6 +1835,343 @@ class CommandTests(unittest.TestCase):
         from tools import cli
 
         self.assertIs(merge_evidence_github.main, cli.COMMANDS["merge-evidence"][1])
+
+
+def _command_evidence(replies: dict[str, tuple[Any, dict[str, str]]]) -> dict[str, Any]:
+    """The evidence document `knowledge merge-evidence` writes for a snapshot of
+    these replies, read with the protected target's manifest."""
+
+    with tempfile.TemporaryDirectory() as directory:
+        code, out, err = _run(_project(Path(directory)), json.dumps(_snapshot(replies)))
+    if code != 0:
+        raise AssertionError(f"merge-evidence failed: {err}")
+    document: dict[str, Any] = json.loads(out)
+    return document
+
+
+def _receipt_statuses(evidence: dict[str, Any]) -> dict[tuple[str, str], str]:
+    return {
+        (r["requirement"], item): r["status"]
+        for r in evidence["receipts"]
+        for item in r["coverage"]
+    }
+
+
+class CheckReceiptTests(unittest.TestCase):
+    """1b.3b-1 (#407, 6096776222): the declaration's check items get receipts from
+    the head's check runs, as the manifest names them."""
+
+    def test_each_observed_check_gives_a_receipt_for_its_item(self) -> None:
+        evidence = _command_evidence(_replies())
+        expected = {("verification-checks", n): "COMPLETE" for n in REQUIRED}
+        expected[("codeql", "codeql")] = "COMPLETE"
+        self.assertEqual(expected, _receipt_statuses(evidence))
+        for receipt in evidence["receipts"]:
+            with self.subTest(receipt=receipt["coverage"]):
+                self.assertEqual("gnostoa-evidence-receipt/v1", receipt["schema"])
+                self.assertEqual(evidence["subject"], receipt["subject"])
+                self.assertEqual(1, len(receipt["coverage"]))
+                self.assertEqual("success", receipt["provenance"]["conclusion"])
+
+    def test_the_check_requirements_complete_and_the_others_stay_missing(
+        self,
+    ) -> None:
+        evidence = _command_evidence(_replies())
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        verdict = merge_admission.evaluate(
+            evidence, declaration=declaration, change_policy=_policy()
+        )
+        statuses = {
+            r["id"]: r["status"] for r in verdict["completeness"]["requirements"]
+        }
+        self.assertEqual("COMPLETE", statuses["verification-checks"])
+        self.assertEqual("COMPLETE", statuses["codeql"])
+        self.assertEqual("MISSING", statuses["analyzer-readback"])
+        self.assertEqual("MISSING", statuses["sonarcloud"])
+        self.assertIn("M2-M8", _failed(evidence))
+
+    def test_a_check_s_state_decides_its_receipt(self) -> None:
+        """I10: a green check that did not run is not evidence."""
+        cases: dict[str, tuple[dict[str, Any], str]] = {
+            "skipped": ({"conclusion": "skipped"}, "SKIPPED"),
+            "neutral": ({"conclusion": "neutral"}, "SKIPPED"),
+            "failed": ({"conclusion": "failure"}, "INCOMPLETE"),
+            "cancelled": ({"conclusion": "cancelled"}, "INCOMPLETE"),
+            "pending": (
+                {"conclusion": None, "status": "in_progress", "completed_at": None},
+                "INCOMPLETE",
+            ),
+            # A run that has not completed is not evidence, whatever it claims.
+            "not completed but claiming success": (
+                {"status": "in_progress", "completed_at": None},
+                "INCOMPLETE",
+            ),
+        }
+        for name, (change, status) in cases.items():
+            with self.subTest(name):
+                runs = _green_checks()
+                runs[1].update(change)
+                evidence = _command_evidence(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertEqual(
+                    status, _receipt_statuses(evidence)[("verification-checks", "fast")]
+                )
+                self.assertIn("M2-M8", _failed(evidence))
+
+    def test_a_check_that_is_absent_or_from_another_app_gives_no_receipt(
+        self,
+    ) -> None:
+        for name, runs in (
+            ("absent", _green_checks()[1:]),
+            ("another app", [_check_run(40, "policy", 1001), *_green_checks()[1:]]),
+        ):
+            with self.subTest(name):
+                evidence = _command_evidence(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertNotIn(
+                    ("verification-checks", "policy"), _receipt_statuses(evidence)
+                )
+
+    def test_an_ambiguous_latest_run_is_partial(self) -> None:
+        runs = [
+            *_green_checks(),
+            _check_run(60, "smoke", ACTIONS, conclusion="failure"),
+        ]
+        evidence = _command_evidence(
+            _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+        )
+        self.assertEqual(
+            "PARTIAL", _receipt_statuses(evidence)[("verification-checks", "smoke")]
+        )
+
+    def test_an_incomplete_checks_read_marks_every_item(self) -> None:
+        replies = _replies(
+            **{
+                CHECK_RUNS: (
+                    {"check_runs": _green_checks()},
+                    {"link": '<https://api.github.com/page9/check-runs>; rel="next"'},
+                ),
+                "https://api.github.com/page9/check-runs": ({"message": "x"}, {}),
+            }
+        )
+        statuses = _receipt_statuses(_command_evidence(replies))
+        self.assertEqual(5, len(statuses))
+        self.assertTrue(all(s != "COMPLETE" for s in statuses.values()), statuses)
+
+    def test_gnostoa_s_manifest_names_each_declared_check_item(self) -> None:
+        """The manifest's items are exactly the declaration's, for each
+        requirement it names."""
+        manifest = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
+        self.assertEqual({"verification-checks", "codeql"}, set(manifest))
+        for requirement, items in manifest.items():
+            with self.subTest(requirement=requirement):
+                self.assertCountEqual(coverage[requirement], list(items))
+
+    def test_the_manifest_has_a_closed_contract(self) -> None:
+        def changed(**change: Any) -> dict[str, Any]:
+            return {**copy.deepcopy(REQUIRED_CHECKS), **change}
+
+        policy = {"app_id": ACTIONS, "name": "policy"}
+        for name, document in (
+            ("unknown key", changed(extra=1)),
+            ("schema version", changed(schema_version="2.0")),
+            ("no requirement", changed(requirements={})),
+            ("no item", changed(requirements={"codeql": {}})),
+            ("bad requirement", changed(requirements={"Codeql": {"x": policy}})),
+            ("bad item", changed(requirements={"codeql": {"Code QL": policy}})),
+            (
+                "unknown check key",
+                changed(requirements={"codeql": {"x": {**policy, "slug": "y"}}}),
+            ),
+            (
+                "app id",
+                changed(requirements={"codeql": {"x": {**policy, "app_id": 0}}}),
+            ),
+            (
+                "app id as text",
+                changed(requirements={"codeql": {"x": {**policy, "app_id": "15368"}}}),
+            ),
+            ("name", changed(requirements={"codeql": {"x": {**policy, "name": ""}}})),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_two_items_may_not_name_one_check(self) -> None:
+        """The owner's selection for gr-415-shared-check-key (#15, 6099845892):
+        each (requirement, coverage item) names its own `{app_id, name}`, within
+        and across requirements, so one run cannot satisfy two declared checks."""
+
+        fast = {"app_id": ACTIONS, "name": "fast"}
+
+        def requirements(**change: Any) -> dict[str, Any]:
+            return {**copy.deepcopy(REQUIRED_CHECKS), "requirements": change}
+
+        for name, document in (
+            ("within a requirement", requirements(checks={"a": fast, "b": fast})),
+            ("across requirements", requirements(one={"a": fast}, two={"b": fast})),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "github-check-run:15368:fast",
+                ),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+        for name, document in (
+            ("Gnostoa's manifest", copy.deepcopy(REQUIRED_CHECKS)),
+            (
+                "the same name from another app",
+                requirements(one={"a": fast}, two={"b": {**fast, "app_id": CODEQL}}),
+            ),
+            (
+                "another name from the same app",
+                requirements(checks={"a": fast, "b": {**fast, "name": "smoke"}}),
+            ),
+        ):
+            with self.subTest(name):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_an_unread_commit_status_read_withholds_the_check_receipts(
+        self,
+    ) -> None:
+        """The receipts follow L1's combined checks coverage, commit statuses
+        included: an incomplete source can only deny, and narrowing it would be a
+        coverage-boundary decision (#407, 6097059408; the owner-requested analysis
+        6096945431 on #415)."""
+        statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
+        evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
+        statuses_by_item = _receipt_statuses(evidence)
+        self.assertEqual(5, len(statuses_by_item))
+        self.assertTrue(
+            all(s != "COMPLETE" for s in statuses_by_item.values()), statuses_by_item
+        )
+
+    def test_several_runs_of_one_check_count_only_if_all_succeeded(self) -> None:
+        """Codex on #415: GitHub lists every run with the same app and name from
+        different check suites, so a later success must not hide another current
+        failing or pending run. CodeAnt's overlap, an older run completing after a
+        newer one started, is the same case."""
+        cases = {
+            "a failure and a later success": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    conclusion="failure",
+                    completed_at="2026-09-19T16:40:25Z",
+                ),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "PARTIAL",
+            ),
+            "an older success completing after a newer pending run started": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    started_at="2026-09-19T16:40:00Z",
+                    completed_at="2026-09-19T16:40:40Z",
+                ),
+                _check_run(
+                    61,
+                    "fast",
+                    ACTIONS,
+                    conclusion=None,
+                    status="in_progress",
+                    completed_at=None,
+                    started_at="2026-09-19T16:40:30Z",
+                ),
+                "PARTIAL",
+            ),
+            "two successes": (
+                _check_run(41, "fast", ACTIONS, completed_at="2026-09-19T16:40:25Z"),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "COMPLETE",
+            ),
+            # A run on another commit is not this head's evidence.
+            "a failure on another head": (
+                {
+                    **_check_run(41, "fast", ACTIONS, conclusion="failure"),
+                    "head_sha": PREVIOUS,
+                },
+                _check_run(61, "fast", ACTIONS),
+                "COMPLETE",
+            ),
+        }
+        for name, (first, second, status) in cases.items():
+            with self.subTest(name):
+                runs = [run for run in _green_checks() if run["name"] != "fast"]
+                evidence = _command_evidence(
+                    _replies(
+                        **{CHECK_RUNS: ({"check_runs": [*runs, first, second]}, {})}
+                    )
+                )
+                self.assertEqual(
+                    status, _receipt_statuses(evidence)[("verification-checks", "fast")]
+                )
+
+    def test_a_check_without_a_conclusion_key_reads_as_null(self) -> None:
+        """Claude on #415: a check that omits `conclusion`, which the reconciler's
+        normalizer reads as null, gives an INCOMPLETE receipt, not a crash."""
+        snapshot = _snapshot()
+        [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+        del fast["conclusion"]
+        evidence = _evidence(snapshot)
+        self.assertEqual(
+            "INCOMPLETE", _receipt_statuses(evidence)[("verification-checks", "fast")]
+        )
+
+    def test_a_malformed_check_is_an_invalid_snapshot(self) -> None:
+        """The owner's selection for gr-415-check-error-contract (#15, 6100292562):
+        the normalizer's error from a malformed check becomes the adapter's
+        invalid-snapshot error, keeping its cause."""
+
+        def without_key(check: dict[str, Any]) -> None:
+            del check["key"]
+
+        def conclusion_not_text(check: dict[str, Any]) -> None:
+            check["conclusion"] = 1
+
+        for name, change, reason in (
+            ("no key", without_key, "check.key"),
+            ("a conclusion that is not text", conclusion_not_text, "check.conclusion"),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                change(fast)
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    f"^the snapshot is invalid: {re.escape(reason)}",
+                ) as raised:
+                    _evidence(snapshot)
+                self.assertIsInstance(
+                    raised.exception.__cause__,
+                    review_reconcile.ReconciliationInputError,
+                )
+
+    def test_only_a_github_snapshot_gives_evidence(self) -> None:
+        """The owner's review 5478389359 on #413: a snapshot from another provider,
+        otherwise well-formed, fails the run."""
+        snapshot = _snapshot()
+        snapshot["provider"]["id"] = "gitlab"
+        with tempfile.TemporaryDirectory() as directory:
+            code, _, err = _run(_project(Path(directory)), json.dumps(snapshot))
+        self.assertEqual(2, code)
+        self.assertIn("github", err)
 
 
 class AuthoritiesTests(unittest.TestCase):

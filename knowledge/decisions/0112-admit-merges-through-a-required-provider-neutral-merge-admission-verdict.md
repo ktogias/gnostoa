@@ -127,7 +127,7 @@ provider-neutral public change-governance contract of
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
-  | 1b.3b | the changed content (suppressions, trust roots) and the receipts | not yet admitted |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 admitted (#407, 6096770145); the others each need admission |
   | 1b.3c | SonarCloud's readback (#359) | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
@@ -254,9 +254,43 @@ provider-neutral public change-governance contract of
     is 1b.4's and 1b.5's concern (#407, 6086106156).
   - The protected target is the repository's default branch, which the change
     policy declares protected.
-  - Until 1b.3b and 1b.3c, the receipts are empty and the suppressions and
-    trust-root changes are `UNAVAILABLE`, so the verdict denies rather than
-    passing them vacuously.
+  - The check items have receipts (1b.3b-1). `policy/merge-required-checks.yaml`,
+    read from the protected target, names for each of the declaration's
+    `verification-checks` and `codeql` items the GitHub check run that gives
+    it, by app id and name: R-main's four checks from GitHub Actions, and
+    GitHub Advanced Security's `CodeQL`, whose conclusion applies the
+    code-scanning ruleset's threshold. A check of the same name from another
+    app does not count. No two (requirement, coverage item) pairs, within or
+    across requirements, may name the same app id and name: such a manifest is
+    refused, so one run cannot satisfy two declared checks (owner selection for
+    `gr-415-shared-check-key`, #15, 6099845892). The rule is this manifest's
+    only; a receipt in the provider-neutral contract may still cover several
+    items. The latest run on the exact head gives the receipt;
+    when several runs carry an item's key, as when two check suites post the
+    same name, the item is `COMPLETE` only if every one succeeded, and
+    `PARTIAL` if any did not, so a later success cannot hide another current run
+    (#407, 6097059408). The owner accepted the possible cost: if the provider
+    lists a failed attempt beside its successful re-run, the item denies until
+    a new commit (#407, 6097259307 and 6097251980). Whether it does is not yet
+    shown. Recovery by re-run within one check suite, with distinct suites
+    still unable to mask a failure, is a successor acceptance case before 1b.4
+    activates MA0; any L1 extension it needs is admitted separately. For a
+    single run, `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
+    that did not run is not evidence (I10). Pending or any other conclusion is
+    `INCOMPLETE`, and an ambiguous latest state is `PARTIAL`. An item with no
+    run has no receipt, so the reducer makes it `MISSING`, and a checks read
+    that is not `COMPLETE`, commit statuses included, gives every item its
+    status, since an incomplete source can only deny. Tests keep the manifest
+    equal to the declaration's items and to R-main's recorded checks. A snapshot
+    whose provider is not `github` fails the run (the owner's review 5478389359
+    on #413).
+  - Until 1b.3b-2 and 1b.3c, the analyzer readback's and SonarCloud's items stay
+    `MISSING`, and until 1b.3b-4 the suppressions and trust-root changes are
+    `UNAVAILABLE`, so the verdict denies rather than passing them vacuously.
+    The analyzer-findings rule for 1b.3b-2 is the owner's (#407, 6096770145):
+    a bound, complete readback gives a complete coverage receipt whatever its
+    findings, the findings stay explicit in the evidence, and the verdict
+    denies while any unresolved finding remains, with no waiver.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The

@@ -119,6 +119,57 @@ class MergeGateRecordTests(unittest.TestCase):
             [str(check["context"]) for check in required], checks["coverage"]
         )
 
+    def test_the_required_check_manifest_names_the_checks_r_main_requires(
+        self,
+    ) -> None:
+        """The merge-evidence adapter's manifest gives each verification item the
+        check R-main requires under that context, so its receipts cover what the
+        ruleset enforces (#407, slice 1b.3b-1). Item by item, so two swapped checks
+        fail (cubic on #415)."""
+        from tools.merge_evidence_github import load_required_checks
+
+        manifest = load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        required = cast(
+            list[dict[str, object]],
+            self._rules()["required_status_checks"]["required_status_checks"],
+        )
+        self.assertEqual(
+            {
+                str(check["context"]): (
+                    f"github-check-run:{check['integration_id']}:{check['context']}"
+                )
+                for check in required
+            },
+            manifest["verification-checks"],
+        )
+
+    def test_the_codeql_item_names_the_recorded_code_scanning_check(self) -> None:
+        """The manifest's `codeql` item is the code-scanning check the runbook
+        records as observed on pull-request heads, so its app id has a recorded
+        source as R-main's does (Claude on #415)."""
+        from tools.merge_evidence_github import load_required_checks
+
+        text = RUNBOOK.read_text(encoding="utf-8")
+        records = [
+            cast(dict[str, object], json.loads(block))
+            for block in re.findall(r"```json\n(\{.*?\})\n```", text, re.S)
+        ]
+        observed = [
+            r["code_scanning_check"] for r in records if "code_scanning_check" in r
+        ]
+        if len(observed) != 1:
+            self.fail("the runbook records the code-scanning check once")
+        check = cast(dict[str, object], observed[0])
+        manifest = load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        self.assertEqual(
+            {"codeql": f"github-check-run:{check['app_id']}:{check['name']}"},
+            manifest["codeql"],
+        )
+
     def test_the_change_control_policy_requires_what_r_main_enforces(self) -> None:
         """Gnostoa's change-control policy requires, for every class that merges
         through R-main, the approval R-main enforces, read through this module's one

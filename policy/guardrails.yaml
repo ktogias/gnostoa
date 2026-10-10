@@ -428,6 +428,8 @@ guardrails:
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_decision_and_runbook_link_each_other_and_are_indexed
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_change_control_policy_requires_what_r_main_enforces
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_check_manifest_names_the_checks_r_main_requires
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_codeql_item_names_the_recorded_code_scanning_check
 
   - id: verification-first-change-evidence
     title: Expected behavior and proportionate evidence precede integration
@@ -765,6 +767,7 @@ guardrails:
     guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
     implementation:
       - tools/merge_evidence_github.py
+      - policy/merge-required-checks.yaml
       - tools/cli.py
       - ci/review_github_current_state.py
       - tools/github_rest.py
@@ -841,6 +844,22 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_missing_title_is_not_complete_coverage
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_words_that_are_not_closing_keywords_are_not_references
       - tests/test_merge_evidence_github.py::CommandTests.test_a_failed_run_exits_two
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_each_observed_check_gives_a_receipt_for_its_item
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_the_check_requirements_complete_and_the_others_stay_missing
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_check_s_state_decides_its_receipt
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_check_that_is_absent_or_from_another_app_gives_no_receipt
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_an_ambiguous_latest_run_is_partial
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_an_incomplete_checks_read_marks_every_item
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_check_manifest_names_the_checks_r_main_requires
+      - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_codeql_item_names_the_recorded_code_scanning_check
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_gnostoa_s_manifest_names_each_declared_check_item
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_the_manifest_has_a_closed_contract
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_two_items_may_not_name_one_check
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_an_unread_commit_status_read_withholds_the_check_receipts
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_several_runs_of_one_check_count_only_if_all_succeeded
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_check_without_a_conclusion_key_reads_as_null
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_a_malformed_check_is_an_invalid_snapshot
+      - tests/test_merge_evidence_github.py::CheckReceiptTests.test_only_a_github_snapshot_gives_evidence
       - tests/test_merge_evidence_github.py::CommandTests.test_the_command_writes_the_evidence_document
       - tests/test_merge_evidence_github.py::CommandTests.test_the_knowledge_cli_routes_merge_evidence
       - tests/test_merge_evidence_github.py::AuthoritiesTests.test_gnostoa_s_authorities_and_codeowners

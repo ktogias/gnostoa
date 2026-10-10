@@ -1,0 +1,23 @@
+# The GitHub check runs that give the required-evidence declaration's check items
+# (#407, slice 1b.3b-1; Decision 0112).
+#
+# `knowledge merge-evidence` reads this from the protected target. For each item it
+# reads the check runs with that app id and name on the exact head. A single run
+# gives the status: success is COMPLETE; skipped or neutral is SKIPPED, since a
+# check that did not run is not evidence; anything else is INCOMPLETE. Several runs
+# are COMPLETE only if every one succeeded, and PARTIAL otherwise. A check of the
+# same name from another app does not count. The verification checks are R-main's required status checks, and
+# a test keeps them equal to the ruleset recorded in operate-the-merge-gate.md.
+schema_version: "1.0"
+id: gnostoa.merge-required-checks
+version: "0.1.0"
+requirements:
+  verification-checks:
+    policy: {app_id: 15368, name: policy}
+    fast: {app_id: 15368, name: fast}
+    regression: {app_id: 15368, name: regression}
+    smoke: {app_id: 15368, name: smoke}
+  codeql:
+    # GitHub Advanced Security's code-scanning result, which applies the
+    # "Require CodeQL on main" ruleset's alert threshold.
+    codeql: {app_id: 57789, name: CodeQL}

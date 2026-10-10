@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from .review_model import canonical_json, parse_rfc3339
@@ -709,14 +710,40 @@ def _record_latest_check(
         previous["states"].add(state)
 
 
-def _latest_checks(
-    raw_checks: list[object],
+def latest_checks(
+    raw_checks: Sequence[object],
     target_head: str,
 ) -> dict[str, dict[str, Any]]:
+    """Each check key's latest state on the target head: `observed_at` and the
+    set of `(name, status, conclusion)` states observed at that moment, more than
+    one when the latest is ambiguous. The merge-evidence adapter reads it too
+    (#407, slice 1b.3b-1)."""
+
     latest: dict[str, dict[str, Any]] = {}
     for raw_check in raw_checks:
         _record_latest_check(latest, _normalize_check(raw_check), target_head)
     return latest
+
+
+_latest_checks = latest_checks
+
+
+def check_runs_by_key(
+    raw_checks: Sequence[object],
+    target_head: str,
+) -> dict[str, list[tuple[str, str | None]]]:
+    """Every `(status, conclusion)` observed on the target head, by check key, as
+    the normalizer reads it. The merge-evidence adapter uses it to see each run
+    that shares a key (#407, slice 1b.3b-1)."""
+
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    for raw_check in raw_checks:
+        check = _normalize_check(raw_check)
+        if check["head_commit"] == target_head:
+            runs.setdefault(check["key"], []).append(
+                (check["status"], check["conclusion"])
+            )
+    return runs
 
 
 def _classify_latest_check(
