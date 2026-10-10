@@ -9,9 +9,11 @@ CODEOWNERS apply. A value is never inferred. Where the evidence contract has a
 coverage field, it carries the read's real status; where it has none, an incomplete
 read fails the run.
 
-Until slices 1b.3b and 1b.3c, the receipts are empty and the suppressions and
-trust-root changes are `UNAVAILABLE`, so the verdict denies on M2-M8, M13 and M15
-rather than passing them vacuously.
+The receipts cover the check items the protected target's required-check manifest
+names (slice 1b.3b-1). Until the analyzer readback's (1b.3b-2) and SonarCloud's
+(1b.3c) receipts exist, and while the suppressions and trust-root changes are
+`UNAVAILABLE` (1b.3b-4), the verdict denies on M2-M8, M13 and M15 rather than
+passing them vacuously.
 """
 
 from __future__ import annotations
@@ -28,8 +30,11 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from .assurance_completeness import (
+    RECEIPT_SCHEMA,
+    RECEIPT_STATUSES,
     AssuranceCompletenessError,
     require_closed_keys,
+    require_identifier,
     require_mapping,
     require_text,
     require_unique_texts,
@@ -38,10 +43,19 @@ from .knowledge_common import KnowledgeFormatError
 from .merge_admission import load_policy
 from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
-from .review_reconcile import ReconciliationInputError, validate_snapshot
+from .review_reconcile import (
+    ReconciliationInputError,
+    latest_checks,
+    validate_snapshot,
+)
 from .verdict_cli import confine, read_json_input, run
 
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
+DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
+_REQUIRED_CHECKS_LABEL = "required checks"
+_REQUIRED_CHECK_KEYS = frozenset({"schema_version", "id", "version", "requirements"})
+_CHECK_KEYS = frozenset({"app_id", "name"})
+_CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
 _INPUT_LABEL = "merge-evidence input"
 _AUTHORITIES_LABEL = "merge authorities"
@@ -197,6 +211,116 @@ def _is_directories_segment(text: str, index: int) -> bool:
     already matches everything inside."""
 
     return text.startswith("**/", index) and text[index - 1 : index] in ("", "/")
+
+
+def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
+    """The manifest naming, for each declared requirement's coverage item, the
+    GitHub check run that gives it: requirement, then item, then the L1 check key
+    `github-check-run:<app_id>:<name>` (#407, slice 1b.3b-1)."""
+
+    try:
+        record = require_mapping(document, _REQUIRED_CHECKS_LABEL)
+        require_closed_keys(record, _REQUIRED_CHECKS_LABEL, _REQUIRED_CHECK_KEYS)
+        if record["schema_version"] != "1.0":
+            raise MergeEvidenceError("required checks schema_version must be 1.0")
+        require_text(record["id"], "required checks id")
+        require_text(record["version"], "required checks version")
+        requirements = require_mapping(record["requirements"], "required checks")
+        if not requirements:
+            raise MergeEvidenceError("required checks names no requirement")
+        manifest: dict[str, dict[str, str]] = {}
+        for requirement, raw_items in requirements.items():
+            label = f"required checks {requirement!r}"
+            require_identifier(requirement, "required checks requirement")
+            items = require_mapping(raw_items, label)
+            if not items:
+                raise MergeEvidenceError(f"{label} names no item")
+            manifest[requirement] = {
+                require_identifier(item, f"{label} item"): _check_key(
+                    check, f"{label} item {item!r}"
+                )
+                for item, check in items.items()
+            }
+        return manifest
+    except AssuranceCompletenessError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+
+
+def _check_key(value: object, label: str) -> str:
+    check = require_mapping(value, label)
+    require_closed_keys(check, label, _CHECK_KEYS)
+    app_id = check["app_id"]
+    if type(app_id) is not int or app_id <= 0:
+        raise MergeEvidenceError(f"{label} app_id must be a positive integer")
+    return f"github-check-run:{app_id}:{require_text(check['name'], f'{label} name')}"
+
+
+def load_required_checks(
+    path: Path, *, project_root: Path
+) -> dict[str, dict[str, str]]:
+    resolved = confine(
+        path, project_root, label=_REQUIRED_CHECKS_LABEL, error=MergeEvidenceError
+    )
+    try:
+        document = load_policy_yaml(resolved, label="Required checks")
+    except KnowledgeFormatError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+    return parse_required_checks(document)
+
+
+def _check_status(states: set[tuple[str, str, str | None]]) -> tuple[str, str | None]:
+    """A check's receipt status from its latest states. Only a run that completed
+    successfully is COMPLETE; a skipped or neutral one did not run, so it is not
+    evidence (I10)."""
+
+    if len(states) != 1:
+        return "PARTIAL", None
+    ((_, status, conclusion),) = states
+    if status != "completed":
+        return "INCOMPLETE", conclusion
+    if conclusion == "success":
+        return "COMPLETE", conclusion
+    if conclusion in ("skipped", "neutral"):
+        return "SKIPPED", conclusion
+    return "INCOMPLETE", conclusion
+
+
+def _check_receipts(
+    snapshot: Mapping[str, Any],
+    subject: Mapping[str, Any],
+    required_checks: Mapping[str, Mapping[str, str]],
+) -> list[dict[str, Any]]:
+    """One receipt per manifest item with a check run on the exact head. An item
+    with none gets no receipt, so the reducer makes it MISSING. A checks read that
+    is not COMPLETE gives every item its status."""
+
+    checks, coverage = _source(snapshot, "checks")
+    latest = latest_checks(checks, subject["head_commit"])
+    unread = coverage if coverage in RECEIPT_STATUSES else "ERROR"
+    receipts = []
+    for requirement, items in required_checks.items():
+        for item, key in items.items():
+            if coverage != "COMPLETE":
+                status, conclusion = unread, None
+                observed_at = snapshot["observed_at"]
+            elif key in latest:
+                status, conclusion = _check_status(latest[key]["states"])
+                observed_at = latest[key]["observed_at"]
+            else:
+                continue
+            receipts.append(
+                {
+                    "schema": RECEIPT_SCHEMA,
+                    "requirement": requirement,
+                    "subject": subject_of(subject),
+                    "producer": _CHECK_PRODUCER,
+                    "observed_at": observed_at,
+                    "status": status,
+                    "coverage": [item],
+                    "provenance": {"check": key, "conclusion": conclusion},
+                }
+            )
+    return receipts
 
 
 def _glob(text: str) -> str:
@@ -688,6 +812,7 @@ def evidence_from_snapshot(
     change_policy: Mapping[str, Any],
     codeowners: CodeOwners,
     decisions: frozenset[str],
+    required_checks: Mapping[str, Mapping[str, str]],
 ) -> dict[str, Any]:
     """The evidence document for the pull request the snapshot observed."""
 
@@ -696,6 +821,10 @@ def evidence_from_snapshot(
         subject, _, coverage = validate_snapshot(dict(document))
     except ReconciliationInputError as exc:
         raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    # GitHub evidence only from a GitHub snapshot (the owner's review 5478389359
+    # on #413).
+    if document["provider"]["id"] != "github":
+        raise MergeEvidenceError("the snapshot's provider is not github")
     if coverage["subject"]["status"] != "COMPLETE":
         raise MergeEvidenceError("the subject source is not COMPLETE")
     provider = document["subject"]
@@ -750,7 +879,9 @@ def evidence_from_snapshot(
         # Produced by slice 1b.3b; until then they cannot be read.
         "suppressions": {"coverage": "UNAVAILABLE", "found": []},
         "trust_root_changes": {"coverage": "UNAVAILABLE", "paths": []},
-        "receipts": [],
+        # The check items' receipts (1b.3b-1); the analyzer readback's come with
+        # 1b.3b-2 and SonarCloud's with 1b.3c.
+        "receipts": _check_receipts(document, subject, required_checks),
     }
 
 
@@ -785,6 +916,12 @@ def _parser() -> argparse.ArgumentParser:
         help=f"the merge authorities (default: {DEFAULT_AUTHORITIES})",
     )
     parser.add_argument(
+        "--required-checks",
+        type=Path,
+        default=DEFAULT_REQUIRED_CHECKS,
+        help=f"the required-check manifest (default: {DEFAULT_REQUIRED_CHECKS})",
+    )
+    parser.add_argument(
         "--change-policy",
         type=Path,
         default=DEFAULT_CHANGE_POLICY,
@@ -804,12 +941,16 @@ def main(argv: list[str] | None = None) -> int:
         authorities = load_authorities(inside(args.authorities), project_root=root)
         policy = load_policy(inside(args.change_policy), project_root=root)
         codeowners = load_codeowners(root)
+        required_checks = load_required_checks(
+            inside(args.required_checks), project_root=root
+        )
         return evidence_from_snapshot(
             read_json_input(_INPUT_LABEL, MergeEvidenceError),
             authorities=authorities,
             change_policy=policy,
             codeowners=codeowners,
             decisions=load_decisions(root),
+            required_checks=required_checks,
         )
 
     return run(

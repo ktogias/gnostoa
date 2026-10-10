@@ -119,6 +119,29 @@ class MergeGateRecordTests(unittest.TestCase):
             [str(check["context"]) for check in required], checks["coverage"]
         )
 
+    def test_the_required_check_manifest_names_the_checks_r_main_requires(
+        self,
+    ) -> None:
+        """The merge-evidence adapter's manifest names the same (context, app)
+        pairs R-main requires, so its receipts cover what the ruleset enforces
+        (#407, slice 1b.3b-1)."""
+        from tools.merge_evidence_github import load_required_checks
+
+        manifest = load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        required = cast(
+            list[dict[str, object]],
+            self._rules()["required_status_checks"]["required_status_checks"],
+        )
+        self.assertCountEqual(
+            [
+                f"github-check-run:{check['integration_id']}:{check['context']}"
+                for check in required
+            ],
+            list(manifest["verification-checks"].values()),
+        )
+
     def test_the_change_control_policy_requires_what_r_main_enforces(self) -> None:
         """Gnostoa's change-control policy requires, for every class that merges
         through R-main, the approval R-main enforces, read through this module's one

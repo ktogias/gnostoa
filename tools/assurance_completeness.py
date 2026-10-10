@@ -109,13 +109,19 @@ def require_text(value: object, label: str) -> str:
     return value
 
 
-def _identifier(value: object, label: str) -> str:
+def require_identifier(value: object, label: str) -> str:
+    """A requirement or coverage-item identifier: lowercase letters, digits and
+    hyphens. The merge-evidence adapter's manifest uses it too (#407, 1b.3b-1)."""
+
     text = require_text(value, label)
     if _IDENTIFIER.fullmatch(text) is None:
         raise AssuranceCompletenessError(
             f"{label} must be lowercase letters, digits and hyphens"
         )
     return text
+
+
+_identifier = require_identifier
 
 
 def require_unique_texts(
