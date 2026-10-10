@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -2156,7 +2157,7 @@ class CheckReceiptTests(unittest.TestCase):
                 change(fast)
                 with self.assertRaisesRegex(
                     merge_evidence_github.MergeEvidenceError,
-                    f"^the snapshot is invalid: {reason}",
+                    f"^the snapshot is invalid: {re.escape(reason)}",
                 ) as raised:
                     _evidence(snapshot)
                 self.assertIsInstance(
