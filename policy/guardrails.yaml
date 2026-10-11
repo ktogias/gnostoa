@@ -875,6 +875,24 @@ guardrails:
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_readback_s_own_status_is_its_receipt_s
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_item_needs_its_own_kind_of_read
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_finding_keeps_its_normalized_disposition_fields
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_each_listed_work_item_is_read_once_per_pass
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_an_absent_work_item_and_a_pull_request_are_observed_as_such
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_an_unreadable_work_item_leaves_the_source_incomplete
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_an_answer_for_another_resource_is_observed_as_it_is
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_a_malformed_answer_leaves_the_source_incomplete
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_the_reads_are_bounded
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_a_work_item_that_changes_during_collection_is_not_certified
+      - tests/test_merge_evidence_work_items.py::WorkItemCollectionTests.test_an_unreadable_description_reads_no_work_item
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_proven_work_items_are_linked
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_a_listed_work_item_must_be_an_issue_of_the_subject
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_an_incomplete_work_item_read_fails_the_run
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_an_incomplete_source_fails_even_when_its_items_match
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_observations_must_be_the_listed_work_items
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_work_item_link_must_point_to_its_issue
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_matching_work_item_link_counts
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_decision_link_must_point_to_its_record
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_matching_decision_link_counts
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_label_without_an_identifier_lists_nothing
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_missing_readback_gives_its_item_no_receipt
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_unknown_repeated_or_invalid_readback_fails_the_run
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_without_a_bundle_the_findings_are_unavailable

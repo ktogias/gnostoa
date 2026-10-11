@@ -54,7 +54,7 @@ The verdict reads normalized evidence.
 
 - Class: `normative`
 - Work Item: #407, #15
-- Decision: [0112](knowledge/decisions/0112-admit-merges.md)
+- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)
 - Accountable owner: @ktogias
 """
 
@@ -163,6 +163,24 @@ def _edits(*comments: tuple[int, str | None]) -> tuple[dict[str, Any], dict[str,
     return {"data": {"repository": {"pullRequest": {"comments": page}}}}, {}
 
 
+def _issue(
+    number: int, *, repository: str = "ktogias/gnostoa", pull: bool = False
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """GitHub's REST answer for one issue, or for a pull request read as one."""
+
+    payload: dict[str, Any] = {
+        "number": number,
+        "repository_url": f"https://api.github.com/repos/{repository}",
+        "title": f"Work Item {number}",
+        "state": "open",
+    }
+    if pull:
+        payload["pull_request"] = {
+            "url": f"https://api.github.com/repos/{repository}/pulls/{number}"
+        }
+    return payload, {}
+
+
 def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
     """PR 300 in the shape of a converged change, with the merge-evidence reads."""
 
@@ -201,6 +219,9 @@ def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
     replies[CHECK_RUNS] = ({"check_runs": _green_checks()}, {})
     replies.pop("https://api.github.com/page2/check-runs", None)
     replies[CLOSING] = _closing()
+    # BODY's Work Items (1b.3b-3).
+    replies[f"{API}/issues/407"] = _issue(407)
+    replies[f"{API}/issues/15"] = _issue(15)
     for key, value in changes.items():
         replies[key] = value
     return replies
@@ -1205,7 +1226,7 @@ class EvidenceDocumentTests(unittest.TestCase):
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
             "- Work Item: #407, #15", "- Work Item:"
         ).replace(
-            "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)",
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
             "- Decision:",
         )
         evidence = _evidence(_snapshot(replies))
@@ -1216,7 +1237,7 @@ class EvidenceDocumentTests(unittest.TestCase):
         """Codex, cubic and CodeAnt on #413: prose such as "wait until 2026" must
         not satisfy M14. Under the strict grammar (#407, 6088050686) prose fails the
         run, and an id counts only when the protected target has its record."""
-        line = "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)"
+        line = "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)"
         for value in (
             "wait until 2026",
             "see https://github.com/ktogias/gnostoa/issues/0112",
@@ -1243,7 +1264,10 @@ class EvidenceDocumentTests(unittest.TestCase):
             ("0112", ["0112"]),
             ("0016, 0112", ["0016", "0112"]),
             ("0112, 0113", ["0112", "0113"]),
-            ("[0112](knowledge/decisions/0112-admit-merges.md)", ["0112"]),
+            (
+                "[0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
+                ["0112"],
+            ),
         ):
             with self.subTest(value=value):
                 replies = _replies()
@@ -1284,8 +1308,10 @@ class EvidenceDocumentTests(unittest.TestCase):
             records.mkdir(parents=True)
             (records / "0001-real.md").write_text("x", encoding="utf-8")
             (records / "9998-linked.md").symlink_to(outside / "9999-fake.md")
+            # Each id with its record names, which a Decision link must name.
             self.assertEqual(
-                frozenset({"0001"}), merge_evidence_github.load_decisions(project)
+                {"0001": frozenset({"0001-real.md"})},
+                merge_evidence_github.load_decisions(project),
             )
             linked = base / "linked"
             (linked / "knowledge").mkdir(parents=True)
@@ -1386,7 +1412,7 @@ class EvidenceDocumentTests(unittest.TestCase):
         )
         replies = _replies()
         replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-            "- Decision: [0112](knowledge/decisions/0112-admit-merges.md)",
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
             "- Decision: 0112 <!-- 0016 -->",
         )
         self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
