@@ -297,12 +297,14 @@ provider-neutral public change-governance contract of
     another kind gives `INCOMPLETE` (Decision 0091). A bundle that is not bound to
     the subject gives every item `INCOMPLETE`, and a missing readback gives its
     item no receipt (`MISSING`). Whatever the binding, an unknown or repeated
-    readback, or an observation time that is not one, fails the run. Without a
-    bundle the items stay `MISSING`. The bundle file is read inside the project root, as every path
-    the command reads, and authenticating it is 1b.4's publisher's.
-  - **M17: no unresolved analyzer finding** (the owner's selection, #407,
-    6101607240). The evidence lists the findings, each with its item, and their
-    coverage: `COMPLETE` only when all three readbacks are present and complete.
+    readback, or a bundle or readback observation time that is not an RFC 3339
+    time, fails the run. Without a bundle the items stay `MISSING`. The bundle
+    file is read inside the project root, as every path the command reads, and
+    authenticating it is 1b.4's publisher's.
+  - **M17: no unresolved analyzer finding** (the owner's findings rule, #407
+    6096770145, and selection, 6101607240). The evidence lists the findings, each
+    with its item, and their coverage: `COMPLETE` only when all three readbacks
+    are present and complete.
     M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
     listed finding counts, a suppressed one included, with no waiver; whether a
     justified suppression can discharge one is 1b.3b-4's (M13). The verdict lists
@@ -310,10 +312,6 @@ provider-neutral public change-governance contract of
   - Until 1b.3c, SonarCloud's items stay
     `MISSING`, and until 1b.3b-4 the suppressions and trust-root changes are
     `UNAVAILABLE`, so the verdict denies rather than passing them vacuously.
-    The analyzer-findings rule for 1b.3b-2 is the owner's (#407, 6096770145):
-    a bound, complete readback gives a complete coverage receipt whatever its
-    findings, the findings stay explicit in the evidence, and the verdict
-    denies while any unresolved finding remains, with no waiver.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
