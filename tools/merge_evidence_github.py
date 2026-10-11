@@ -952,10 +952,6 @@ def _analyzer_receipt(
     observed_at: str,
     provenance: Mapping[str, Any],
 ) -> dict[str, Any]:
-    try:
-        parse_rfc3339(observed_at)
-    except ValueError as exc:
-        raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
     return {
         "schema": RECEIPT_SCHEMA,
         "requirement": _ANALYZER_REQUIREMENT,
@@ -995,7 +991,7 @@ def _analyzer_evidence(
         return [], {"coverage": "UNAVAILABLE", "findings": []}
     try:
         bundle = parse_bundle(value)
-        parse_rfc3339(bundle["observed_at"])
+        _check_times(bundle)
     except ValueError as exc:
         # AnalyzerReadbackError is a ValueError, as parse_rfc3339's errors are.
         raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
@@ -1033,6 +1029,15 @@ def _analyzer_evidence(
         "coverage": "COMPLETE" if complete else "INCOMPLETE",
         "findings": findings,
     }
+
+
+def _check_times(bundle: Mapping[str, Any]) -> None:
+    """The bundle's and each readback's observation time, before the binding, so a
+    bundle for another subject is refused as a bound one is (Claude on #417)."""
+
+    parse_rfc3339(bundle["observed_at"])
+    for readback in bundle["readbacks"]:
+        parse_rfc3339(readback["observed_at"])
 
 
 def _readbacks_by_item(

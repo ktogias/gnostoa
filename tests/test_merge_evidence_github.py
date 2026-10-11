@@ -2520,6 +2520,17 @@ class AnalyzerReceiptTests(unittest.TestCase):
                 ),
             ),
             ("a bundle time that is not one", _bundle(observed_at="yesterday")),
+            (
+                "a readback time that is not one, for another head",
+                _bundle(
+                    {
+                        **_readback("deepsource", "DIFF", head=PREVIOUS),
+                        "observed_at": "yesterday",
+                    },
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
         ):
             with (
                 self.subTest(name),
