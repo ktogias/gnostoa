@@ -1039,6 +1039,69 @@ def _diff_local_from_github(
     )
 
 
+# The validator's messages a full read's normalization failure may name in its
+# readback (#309, slice A1). Each is fixed text, or a code-composed label and fixed
+# text; nothing else passes, so provider content never reaches the readback.
+NORMALIZATION_RULES = frozenset(
+    {
+        "AMBIGUOUS requires INCOMPLETE coverage",
+        "AUTH_UNAVAILABLE requires UNAVAILABLE coverage",
+        "FULL_RUN requires COMPLETE coverage",
+        "INCOMPLETE coverage requires AMBIGUOUS completeness",
+        "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage",
+        "complete coverage cannot carry a failure reason",
+        "complete coverage count disagrees with provider total",
+        "complete coverage count must match retained finding population",
+        "complete coverage must retain at least one page",
+        "complete readback must bind the requested exact head",
+        "completeness state is unsupported",
+        "coverage count is smaller than retained finding population",
+        "coverage status is unsupported",
+        "finding native provenance must be an object",
+        "finding population exceeds bounded capacity",
+        "finding provenance items must be objects",
+        "finding provenance must be an array",
+        "finding range ends before it starts",
+        "finding range has unknown fields",
+        "finding range must be an object",
+        "finding tool identity has unknown fields",
+        "finding tool identity must be an object",
+        "native provenance must be an object",
+        "non-complete coverage requires a reason",
+        "readback scope is unsupported",
+        "repository must use owner/name form",
+        "repository name contains an unsafe path segment",
+        "repository owner contains an unsafe path segment",
+    }
+)
+NORMALIZATION_LABELLED_RULES = (
+    " must be a non-empty string",
+    " must be a non-negative integer",
+    " must be a positive integer",
+    " must be an exact 40-character SHA",
+)
+_LABELLED_RULE = re.compile(
+    "[a-z][a-z_ ]{0,60}(?:"
+    + "|".join(re.escape(suffix) for suffix in NORMALIZATION_LABELLED_RULES)
+    + ")"
+)
+# The one message that interpolates a provider value: only its fixed text is kept.
+_CONFLICTING_IDENTITY = re.compile(
+    r"provider-native finding identity .+ is conflicting"
+)
+_CONFLICTING_IDENTITY_RULE = "a provider-native finding identity is conflicting"
+_UNCLASSIFIED_RULE = "unclassified normalization failure"
+
+
+def _normalization_rule(error: AnalyzerReadbackError) -> str:
+    message = str(error)
+    if message in NORMALIZATION_RULES or _LABELLED_RULE.fullmatch(message):
+        return message
+    if _CONFLICTING_IDENTITY.fullmatch(message):
+        return _CONFLICTING_IDENTITY_RULE
+    return _UNCLASSIFIED_RULE
+
+
 def read_full_run(
     client: GraphQLReader,
     *,
@@ -1059,7 +1122,7 @@ def read_full_run(
             run_uid=run_uid,
             observed_at=observed_at,
         )
-    except AnalyzerReadbackError:
+    except AnalyzerReadbackError as exc:
         observed = observed_at or _now()
         return build_readback(
             provider="deepsource",
@@ -1081,6 +1144,7 @@ def read_full_run(
                 reason="NORMALIZATION_ERROR",
             ),
             findings=[],
+            native={"normalization_error": _normalization_rule(exc)},
         )
 
 
