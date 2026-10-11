@@ -10,12 +10,14 @@ that could not prove it, or a link to anything else, fails the run.
 from __future__ import annotations
 
 import copy
-import os
-import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
+import importlib.abc
+import importlib.machinery
+import importlib.util
 import sys
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+from unittest.mock import patch
 
 from test_merge_evidence_github import (
     API,
@@ -29,6 +31,7 @@ from test_merge_evidence_github import (
 )
 from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
+import tools
 from tools import merge_evidence_github
 
 ISSUE_407 = f"{API}/issues/407"
@@ -357,6 +360,13 @@ class ReferenceIntegrityTests(unittest.TestCase):
             # Codex on #422: the text after the link continues its number.
             ("a link covering part of a number", f"[#4]({ISSUES}/4)07"),
             ("a link covering more of it", f"[#40]({ISSUES}/40)7"),
+            # cubic and Codex on #422: a zero-width link does not separate them.
+            ("an empty link between", f"[#4]({ISSUES}/4)[](https://example.com)07"),
+            ("a comment between", f"[#4]({ISSUES}/4)<!-- c -->07"),
+            ("inline code after", f"[#4]({ISSUES}/4)`07`"),
+            # CodeAnt on #422: a label holding only part of the identifier.
+            ("a link on the hash alone", f"[#]({ISSUES}/999)407"),
+            ("a zero-width link touching it", f"[]({ISSUES}/999)#407"),
         ):
             with self.subTest(name):
                 self._assert_refused(_body(work_item=f"- Work Item: {line}, #15\n"))
@@ -431,34 +441,48 @@ class ReferenceIntegrityTests(unittest.TestCase):
         self._assert_refused(_body(work_item=f"- Work Item: [see]({ISSUES}/407)\n"))
 
 
+class _NoMarkdownParser(importlib.abc.MetaPathFinder):
+    """The workflow's publish job, which has no runtime lock: `markdown_it`
+    cannot be imported."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: object = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        if fullname == "markdown_it" or fullname.startswith("markdown_it."):
+            raise ModuleNotFoundError(f"No module named {fullname!r}")
+        return None
+
+
 class StartupTests(unittest.TestCase):
     def test_loading_l1_does_not_load_the_merge_evidence_adapter(self) -> None:
         """Codex on #422: the workflow's publish job runs L1's script with no
         runtime lock installed, so loading it must not import the adapter or its
         Markdown parser; only merge-evidence collection does."""
 
-        script = (
-            "import importlib.util, sys\n"
-            "spec = importlib.util.spec_from_file_location('l1', sys.argv[1])\n"
-            "module = importlib.util.module_from_spec(spec)\n"
-            "spec.loader.exec_module(module)\n"
-            "names = ('markdown_it', 'tools.merge_evidence_github')\n"
-            "print(sorted(n for n in names if n in sys.modules))\n"
-        )
-        result = subprocess.run(  # nosec B603 -- the interpreter and argv are literal
-            [
-                sys.executable,
-                "-c",
-                script,
-                str(ROOT / "ci" / "review_github_current_state.py"),
-            ],
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-            env={**os.environ, "PYTHONPATH": str(ROOT)},
-            check=True,
-        )
-        self.assertEqual("[]", result.stdout.strip())
+        loaded = ("markdown_it", "tools.merge_evidence_github")
+        with (
+            patch.dict(sys.modules),
+            # `from tools import merge_evidence_github` would otherwise find the
+            # package attribute this module's own import left.
+            patch.dict(tools.__dict__),
+            patch.object(sys, "meta_path", [_NoMarkdownParser(), *sys.meta_path]),
+        ):
+            for name in list(sys.modules):
+                if name.startswith(loaded):
+                    del sys.modules[name]
+            tools.__dict__.pop("merge_evidence_github", None)
+            spec = importlib.util.spec_from_file_location(
+                "gnostoa_l1_publish_mode",
+                ROOT / "ci" / "review_github_current_state.py",
+            )
+            if spec is None or spec.loader is None:
+                raise AssertionError("L1's script cannot be loaded")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.assertEqual([], [n for n in sys.modules if n.startswith(loaded)])
 
 
 class GuardrailRegistrationTests(unittest.TestCase):

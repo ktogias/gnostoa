@@ -253,9 +253,13 @@ provider-neutral public change-governance contract of
     a Decision to `knowledge/decisions/` followed by one of its protected
     records' names. Any other target, such as another repository or number, a
     pull request, a relative, `blob/` or `http:` URL, a fragment or a query,
-    fails the run, as do a link label holding several identifiers and a link
-    the visible text right after continues with a digit: a link labelled `#4`
-    followed by `07` shows `#407`. Nothing a link points to is fetched. A label with no identifier still lists nothing,
+    fails the run, as does a link label holding several identifiers. A link
+    touches an identifier when its label holds a `#` or a digit, or one comes
+    right before or after it in the item's visible text. Such a link must be
+    exactly one whole identifier as a reader sees it, so a link labelled `#4`
+    or `#` that shows as part of `#407` fails the run, whatever lies between
+    them. A link that touches no identifier lists nothing, as before. Nothing a
+    link points to is fetched. A label with no identifier still lists nothing,
     since identifiers come only from visible text and inline code. An image in a
     Change control item fails the run, since its alt text is a label the visible
     value does not show. A new link form goes to #402.

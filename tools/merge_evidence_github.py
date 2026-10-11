@@ -677,36 +677,47 @@ def _inline_value(token: Token) -> str:
 
 class _Link(NamedTuple):
     """A link of a Change control item: its visible label, read as `_inline_value`
-    reads the item, its target, and whether the visible text right after it
-    continues with a digit, so that the label is only part of a number."""
+    reads the item, and its target. In the item's visible text, the label
+    `touches` an identifier when it holds an identifier character or one comes
+    right before or after it, and it is `whole` when neither neighbour is one."""
 
     label: str
     target: str
-    continued: bool
+    touches: bool
+    whole: bool
+
+
+# What continues an identifier in visible text: `#407` is one token, not `#4`
+# and `07`.
+_IDENTIFIER_CHARACTERS = frozenset("#0123456789")
 
 
 def _links(token: Token) -> tuple[_Link, ...]:
-    """Each link of an item. The target is only checked against the label's
+    """Each link of an item, with its label's place in the item's visible text,
+    the string `_inline_value` builds. A zero-width link, a comment or a code span
+    therefore cannot separate a label from the digits a reader sees next to it
+    (cubic and Codex on #422). The target is only checked against the label's
     identifier, never read for one (1b.3b-3, #407 6085544477)."""
 
-    links: list[_Link] = []
-    label: list[str] | None = None
+    visible = ""
+    spans: list[tuple[int, int, str]] = []
+    start: int | None = None
     target = ""
-    after_link = False
     for child in token.children or []:
-        part = _visible(child)
-        if after_link and label is None and part:
-            # Only the first visible text right after the link (Codex on #422).
-            if _NUMBER.match(part):
-                links[-1] = links[-1]._replace(continued=True)
-            after_link = False
         if child.type == "link_open":
-            label, target = [], str(child.attrGet("href") or "")
-        elif child.type == "link_close" and label is not None:
-            links.append(_Link("".join(label), target, False))
-            label, after_link = None, True
-        elif label is not None and part:
-            label.append(part)
+            start, target = len(visible), str(child.attrGet("href") or "")
+        elif child.type == "link_close" and start is not None:
+            spans.append((start, len(visible), target))
+            start = None
+        elif part := _visible(child):
+            visible += part
+    links: list[_Link] = []
+    for begin, end, target in spans:
+        neighbours = (visible[begin - 1 : begin], visible[end : end + 1])
+        bordered = any(n and n in _IDENTIFIER_CHARACTERS for n in neighbours)
+        label = visible[begin:end]
+        touches = bordered or any(c in _IDENTIFIER_CHARACTERS for c in label)
+        links.append(_Link(label, target, touches, not bordered))
     return tuple(links)
 
 
@@ -886,13 +897,15 @@ def _linked_identifiers(
 
     found: list[tuple[str, str]] = []
     for link in field.links if field else ():
-        if _NUMBER.search(link.label) is None:
+        # A link that touches no identifier lists none (#407 6085478125); one that
+        # does must be exactly one whole identifier (CodeAnt and cubic on #422).
+        if not link.touches:
             continue
         match = label.fullmatch(link.label.strip(" "))
         if match is None:
             raise MergeEvidenceError(f"a {name} link must carry one identifier")
-        if link.continued:
-            # `[#4](…/issues/4)07` shows `#407` (Codex on #422).
+        if not link.whole:
+            # `[#4](…/issues/4)07` shows `#407` (Codex and cubic on #422).
             raise MergeEvidenceError(f"a {name} link must cover its whole identifier")
         found.append((match.group(1), link.target))
     return found
