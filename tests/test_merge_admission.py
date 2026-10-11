@@ -385,10 +385,26 @@ class MergeAdmissionTests(unittest.TestCase):
         finding is unresolved, a suppressed one included, with no waiver."""
         finding = {"item": "deepsource-full", "id": "issue-1", "message": "Reimport"}
         suppressed = {**finding, "id": "issue-2", "state": "suppressed"}
+        # The owner's re-admission (#417 6107601240): the readback's normalized
+        # disposition fields are listed as they are.
+        rich = {
+            **finding,
+            "id": "issue-3",
+            "category": "antipattern",
+            "tool": {"id": "python", "name": "Python"},
+            "range": {
+                "start_line": 3,
+                "start_column": 1,
+                "end_line": 3,
+                "end_column": 9,
+            },
+            "native_ref": "https://app.deepsource.com/gh/ktogias/gnostoa/run/x",
+        }
         for findings, reason in (
             ([finding], "1 unresolved analyzer finding"),
             ([finding, suppressed], "2 unresolved analyzer findings"),
             ([suppressed], "1 unresolved analyzer finding"),
+            ([rich], "1 unresolved analyzer finding"),
         ):
             with self.subTest(reason=reason, ids=[f["id"] for f in findings]):
                 evidence = _evidence()
@@ -436,6 +452,24 @@ class MergeAdmissionTests(unittest.TestCase):
             (
                 "a finding with an empty field",
                 {"coverage": "COMPLETE", "findings": [{**finding, "rule": ""}]},
+            ),
+            *(
+                (name, {"coverage": "COMPLETE", "findings": [{**finding, **change}]})
+                for name, change in (
+                    ("a tool that is not an object", {"tool": "python"}),
+                    ("a tool with an unknown field", {"tool": {"id": "py", "x": "y"}}),
+                    ("a range that is not one-based", {"range": {"start_line": 0}}),
+                    (
+                        "a range that ends before it starts",
+                        {"range": {"start_line": 5, "end_line": 3}},
+                    ),
+                    ("an empty range", {"range": {}}),
+                    ("an empty native reference", {"native_ref": ""}),
+                    ("a field that is null", {"tool": None}),
+                    ("the finding's provenance", {"provenance": [{"surface": "x"}]}),
+                    ("the finding's native metadata", {"native": {}}),
+                    ("an item that is not text", {"item": 1}),
+                )
             ),
         ):
             with self.subTest(name):

@@ -2374,6 +2374,43 @@ class AnalyzerReceiptTests(unittest.TestCase):
         )
         self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
 
+    def test_a_finding_keeps_its_normalized_disposition_fields(self) -> None:
+        """The owner's re-admission (#417 6107601240): a finding keeps the tool,
+        range and native reference the readback normalized, and its category; its
+        provenance and native metadata stay in the bundle."""
+        rich = {
+            **FINDING,
+            "id": "issue-2",
+            "category": "antipattern",
+            "native_ref": "https://app.deepsource.com/gh/ktogias/gnostoa/run/x",
+            "tool": {"id": "python", "name": "Python"},
+            "range": {
+                "start_line": 3,
+                "start_column": 1,
+                "end_line": 3,
+                "end_column": 9,
+            },
+        }
+        raw = {
+            **rich,
+            "provenance": [{"surface": "check-run", "reference": "123"}],
+            "native": {"shortcode": "PYL-W0404"},
+        }
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL", raw, FINDING),
+            _readback("codacy", "DIFF"),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            [
+                {"item": "deepsource-full", **FINDING},
+                {"item": "deepsource-full", **rich},
+            ],
+            evidence["analyzer_findings"]["findings"],
+        )
+        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+
     def test_a_bundle_not_bound_to_the_subject_gives_incomplete_receipts(self) -> None:
         incomplete = _bundle(
             subject_binding="INCOMPLETE", reason="GITHUB_SUBJECT_MISMATCH", readbacks=[]

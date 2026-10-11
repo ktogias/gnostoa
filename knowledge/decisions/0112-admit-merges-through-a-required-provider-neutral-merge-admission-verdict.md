@@ -303,8 +303,12 @@ provider-neutral public change-governance contract of
     authenticating it is 1b.4's publisher's.
   - **M17: no unresolved analyzer finding** (the owner's findings rule, #407
     6096770145, and selection, 6101607240). The evidence lists the findings, each
-    with its item, and their coverage: `COMPLETE` only when all three readbacks
-    are present and complete.
+    with its item and in the readback's normalized form: its id and message, and
+    when supplied its rule, severity, category, path, state, tool, range and
+    native reference (the owner's re-admission, #417 6107601240). Their
+    provenance and native metadata stay in the bundle, traceable by item and id.
+    It also lists their coverage: `COMPLETE` only when all three readbacks are
+    present and complete.
     M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
     listed finding counts, a suppressed one included, with no waiver; whether a
     justified suppression can discharge one is 1b.3b-4's (M13). The verdict lists

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import assurance_completeness as completeness
+from .analyzer_readback import AnalyzerReadbackError, normalize_finding
 from .assurance_completeness import (
     AssuranceCompletenessError,
     parse_change_class,
@@ -74,7 +75,9 @@ _COVERAGE_KEYS = frozenset({"coverage"})
 _SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
 _FINDING_KEYS = frozenset({"item", "id", "message"})
-_FINDING_OPTIONAL_KEYS = frozenset({"rule", "severity", "category", "path", "state"})
+_FINDING_OPTIONAL_KEYS = frozenset(
+    {"rule", "severity", "category", "path", "state", "native_ref", "tool", "range"}
+)
 
 
 def _texts(value: object, label: str) -> list[str]:
@@ -310,7 +313,7 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
 
 def _analyzer_findings(
     evidence: Mapping[str, Any],
-) -> tuple[dict[str, Any], list[dict[str, str]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
     pass (the owner's rule, #407 6096770145 and 6101607240)."""
@@ -326,9 +329,7 @@ def _analyzer_findings(
         label = f"analyzer finding {index}"
         finding = require_mapping(item, label)
         require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
-        findings.append(
-            {key: require_text(finding[key], f"{label} {key}") for key in finding}
-        )
+        findings.append(_listed_finding(finding, label))
     reasons = []
     if record["coverage"] != "COMPLETE":
         reasons.append(f"analyzer finding coverage is {record['coverage']}")
@@ -336,6 +337,24 @@ def _analyzer_findings(
         plural = "" if len(findings) == 1 else "s"
         reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
     return _criterion("M17", reasons), findings
+
+
+def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
+    """A listed finding, with its item, in the readback's own normalized form: it
+    is rebuilt through the readback module's normalizer and must come back
+    unchanged, so there is no second schema (#417 6107601240)."""
+
+    item = require_text(finding["item"], f"{label} item")
+    fields = {key: value for key, value in finding.items() if key != "item"}
+    try:
+        normalized = normalize_finding(fields)
+    except AnalyzerReadbackError as exc:
+        raise AssuranceCompletenessError(f"{label} is invalid: {exc}") from exc
+    if normalized != fields:
+        raise AssuranceCompletenessError(
+            f"{label} is not in the readback's normalized form"
+        )
+    return {"item": item, **normalized}
 
 
 def _class_requirements(

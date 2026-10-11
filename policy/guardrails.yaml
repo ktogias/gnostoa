@@ -874,6 +874,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_bundle_binds_only_a_pull_request
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_readback_s_own_status_is_its_receipt_s
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_item_needs_its_own_kind_of_read
+      - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_finding_keeps_its_normalized_disposition_fields
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_missing_readback_gives_its_item_no_receipt
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_unknown_repeated_or_invalid_readback_fails_the_run
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_without_a_bundle_the_findings_are_unavailable

@@ -75,7 +75,18 @@ _ANALYZER_COMPLETENESS = {
 }
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"
-_FINDING_FIELDS = ("rule", "severity", "category", "path", "state")
+# As the readback normalized them; its provenance and native metadata stay in the
+# bundle (the owner's re-admission, #417 6107601240).
+_FINDING_FIELDS = (
+    "rule",
+    "severity",
+    "category",
+    "path",
+    "state",
+    "native_ref",
+    "tool",
+    "range",
+)
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
 _INPUT_LABEL = "merge-evidence input"
 _AUTHORITIES_LABEL = "merge authorities"
