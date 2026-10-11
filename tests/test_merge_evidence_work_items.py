@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import unittest
+from collections.abc import Mapping
 from typing import Any
 
 from test_merge_evidence_github import (
@@ -20,6 +21,7 @@ from test_merge_evidence_github import (
     _failed,
     _issue,
     _replies,
+    unregistered_tests,
 )
 from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
@@ -37,7 +39,8 @@ DECISION_LINE = f"- Decision: [0112]({RECORD})\n"
 
 
 def _body(*, work_item: str = WORK_ITEM_LINE, decision: str = DECISION_LINE) -> str:
-    assert WORK_ITEM_LINE in BODY and DECISION_LINE in BODY
+    if WORK_ITEM_LINE not in BODY or DECISION_LINE not in BODY:
+        raise AssertionError("BODY no longer holds the lines these tests replace")
     return BODY.replace(WORK_ITEM_LINE, work_item).replace(DECISION_LINE, decision)
 
 
@@ -52,7 +55,7 @@ def _with_body(
 
 def _collect(
     replies: dict[str, tuple[Any, dict[str, str]]],
-    refusals: dict[str, int | None] | None = None,
+    refusals: Mapping[str, int | None] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """L1's merge-evidence snapshot from the fake provider, with some URLs refused
     with the given HTTP status, and every URL the collector read. The refusal is
@@ -204,6 +207,25 @@ class WorkItemCollectionTests(unittest.TestCase):
         self.assertEqual("UNSTABLE_READBACK", snapshot["collection"]["status"])
         self.assertEqual("PARTIAL", snapshot["coverage"]["work_items"]["status"])
 
+    def test_a_truncated_description_reads_no_work_item(self) -> None:
+        """The adapter fails a cut description's run anyway (Claude on #422)."""
+
+        body = _body() + "x" * 70_000
+        snapshot, calls = _collect(_with_body(_replies(), body))
+        self.assertTrue(snapshot["subject"]["body_truncated"])
+        self.assertEqual([], snapshot["work_items"])
+        self.assertEqual("ERROR", snapshot["coverage"]["work_items"]["status"])
+        self.assertNotIn(ISSUE_407, calls)
+
+    def test_an_overlong_number_leaves_the_source_incomplete(self) -> None:
+        """cubic and CodeAnt on #422: beyond the canonical form, a number is not
+        read, and conversion never fails outside the collector's error path."""
+
+        body = _body(work_item="- Work Item: #" + "9" * 5000 + "\n")
+        snapshot, calls = _collect(_with_body(_replies(), body))
+        self.assertEqual("ERROR", snapshot["coverage"]["work_items"]["status"])
+        self.assertFalse(any("/issues/9" in call for call in calls))
+
     def test_an_unreadable_description_reads_no_work_item(self) -> None:
         replies = _with_body(_replies(), "## Change control\n\n- Work Item: see #407\n")
         snapshot, calls = _collect(replies)
@@ -219,7 +241,7 @@ class WorkItemEvidenceTests(unittest.TestCase):
     def _refused_run(
         self,
         replies: dict[str, tuple[Any, dict[str, str]]],
-        refusals: dict[str, int | None] | None = None,
+        refusals: Mapping[str, int | None] | None = None,
         reason: str = "",
     ) -> None:
         snapshot, _ = _collect(replies, refusals)
@@ -303,7 +325,8 @@ class ReferenceIntegrityTests(unittest.TestCase):
     or record; any other target fails the run, and a label with no identifier
     lists nothing (#407 6085544477, 6085507735)."""
 
-    def _links(self, body: str) -> dict[str, Any]:
+    @staticmethod
+    def _links(body: str) -> dict[str, Any]:
         snapshot, _ = _collect(_with_body(_replies(), body))
         links: dict[str, Any] = _evidence(snapshot)["links"]
         return links
@@ -365,6 +388,30 @@ class ReferenceIntegrityTests(unittest.TestCase):
                 links = self._links(_body(decision=f"- Decision: {line}\n"))
                 self.assertEqual(["0112"], links["decisions"])
 
+    def test_a_work_item_number_is_canonical(self) -> None:
+        """cubic and CodeAnt on #422: `#0407` would be read as issue 407 and
+        spend the bound twice with `#407`, so only the canonical form is a Work
+        Item: no leading zero, at most ten digits."""
+
+        for line in ("#0407, #15", "#407, #015", "#0", "#12345678901"):
+            with self.subTest(line):
+                self._assert_refused(_body(work_item=f"- Work Item: {line}\n"))
+        self.assertEqual(
+            ["#407", "#15"],
+            self._links(_body(work_item="- Work Item: #407, #15\n"))["work_items"],
+        )
+
+    def test_an_image_in_an_item_fails_the_run(self) -> None:
+        """Codex on #422: an image's alt text is a label the visible value does
+        not show, so it could hide an identifier from the link check."""
+
+        for line in (
+            f"#407 [![#15](i.png)]({ISSUES}/999), #15",
+            "#407, #15 ![#9](i.png)",
+        ):
+            with self.subTest(line):
+                self._assert_refused(_body(work_item=f"- Work Item: {line}\n"))
+
     def test_a_label_without_an_identifier_lists_nothing(self) -> None:
         """#413's rule, kept: a link's target is never a source of identifiers."""
 
@@ -375,6 +422,16 @@ class ReferenceIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(["#407", "#15"], links["work_items"])
         self._assert_refused(_body(work_item=f"- Work Item: [see]({ISSUES}/407)\n"))
+
+
+class GuardrailRegistrationTests(unittest.TestCase):
+    def test_every_test_in_this_module_is_registered_in_its_guardrail(self) -> None:
+        """Claude on #422: the sibling module's check covers only itself."""
+
+        self.assertEqual(
+            set(),
+            unregistered_tests(globals(), "tests/test_merge_evidence_work_items.py"),
+        )
 
 
 if __name__ == "__main__":

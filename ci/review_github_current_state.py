@@ -1133,16 +1133,20 @@ def _work_item(payload: Any) -> dict[str, Any]:
 
 
 def _work_items(
-    client: JsonReader, root: str, repository: str, body: str
+    client: JsonReader, root: str, repository: str, subject: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Each Work Item the description's Change control section lists, read as an
     issue (#407, slice 1b.3b-3), with the adapter's own reading of the section.
     At most `_MAX_WORK_ITEMS` distinct numbers are read, once each per pass. A 404
     is an absent Work Item; any other failure leaves the source incomplete, so it
-    cannot prove one."""
+    cannot prove one. A truncated description reads none: the adapter fails that
+    run anyway (Claude on #422)."""
 
+    if subject["body_truncated"]:
+        error = "the description is truncated"
+        return [], {"status": "ERROR", "pages": 0, "count": 0, "error": error}
     try:
-        numbers = merge_evidence_github.work_item_numbers(body)
+        numbers = merge_evidence_github.work_item_numbers(subject["body"])
     except merge_evidence_github.MergeEvidenceError as exc:
         return [], {"status": "ERROR", "pages": 0, "count": 0, "error": str(exc)}
     items: list[dict[str, Any]] = []
@@ -1258,7 +1262,7 @@ def _collect_merge_evidence_once(
         )
     )
     snapshot["work_items"], snapshot["coverage"]["work_items"] = _work_items(
-        client, root, repository, snapshot["subject"]["body"]
+        client, root, repository, snapshot["subject"]
     )
     return snapshot
 

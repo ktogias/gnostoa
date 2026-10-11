@@ -156,14 +156,19 @@ _VOID_ELEMENTS = frozenset(
 # the owner chose a strict grammar over reading identifiers out of free text
 # (#407, 6086766086, 6088050686 and 6088035894).
 # `re.ASCII`, so `\d` is `[0-9]` and a Unicode digit is not one (CodeAnt on #413).
-_WORK_ITEM_VALUE = re.compile(r"#\d+(?:(?: +| *, *)#\d+)*", re.ASCII)
+# A Work Item number is canonical: no leading zero, at most ten digits, so no two
+# spellings name one issue (cubic and CodeAnt on #422).
+_WORK_ITEM_NUMBER = r"#[1-9]\d{0,9}"
+_WORK_ITEM_VALUE = re.compile(
+    rf"{_WORK_ITEM_NUMBER}(?:(?: +| *, *){_WORK_ITEM_NUMBER})*", re.ASCII
+)
 _DECISION_VALUE = re.compile(r"\d{4}(?:(?: +| *, *)\d{4})*", re.ASCII)
 _NUMBER = re.compile(r"\d+", re.ASCII)
 _DECISION_RECORD = re.compile(r"(\d{4})-[a-z0-9-]+\.md")
 DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 # A link's label that carries one identifier, as the field's grammar writes it
 # (1b.3b-3, #407 6108453639).
-_WORK_ITEM_LABEL = re.compile(r"#(\d+)", re.ASCII)
+_WORK_ITEM_LABEL = re.compile(r"#([1-9]\d{0,9})", re.ASCII)
 _DECISION_LABEL = re.compile(r"(\d{4})", re.ASCII)
 _GITHUB = "https://github.com/"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
@@ -815,6 +820,10 @@ def _change_control_fields(body: str) -> dict[str, _Field]:
             # 6087507517 and 6087484196). A comment renders as nothing, so the
             # text around it joins.
             raise MergeEvidenceError("a Change control item holds raw HTML")
+        if any(child.type == "image" for child in token.children or []):
+            # An image's alt text is a label the visible value does not show, so
+            # it could hide an identifier from the link check (Codex on #422).
+            raise MergeEvidenceError("a Change control item holds an image")
         match = _FIELD.fullmatch(_inline_value(token).strip(" \t"))
         if match is None:
             raise MergeEvidenceError(
@@ -859,7 +868,7 @@ def _linked_identifiers(
 
     found: list[tuple[str, str]] = []
     for text, target in field.links if field else ():
-        if not any(character.isdigit() for character in text):
+        if _NUMBER.search(text) is None:
             continue
         match = label.fullmatch(text.strip(" "))
         if match is None:

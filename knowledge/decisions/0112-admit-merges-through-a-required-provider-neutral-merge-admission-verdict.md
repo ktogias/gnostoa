@@ -230,9 +230,10 @@ provider-neutral public change-governance contract of
     around it joins. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
-    #402 (#407, 6085478125). A Work Item value is only `#N` entries in ASCII
-    digits, and a Decision value only four-digit ids, each separated by commas
-    or spaces. Any other value, such as an issue URL, an invisible character or
+    #402 (#407, 6085478125). A Work Item value is only `#N` entries in canonical
+    form, ASCII digits with no leading zero and at most ten of them, so no two
+    spellings name one issue (1b.3b-3). A Decision value is only four-digit ids.
+    Each is separated by commas or spaces. Any other value, such as an issue URL, an invisible character or
     prose, fails the run, as the owner chose over reading identifiers out of
     free text (#407, 6086766086 and 6088050686). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
@@ -254,8 +255,9 @@ provider-neutral public change-governance contract of
     pull request, a relative, `blob/` or `http:` URL, a fragment or a query,
     fails the run, as does a link label holding several identifiers. Nothing a
     link points to is fetched. A label with no identifier still lists nothing,
-    since identifiers come only from visible text and inline code. A new link
-    form goes to #402.
+    since identifiers come only from visible text and inline code. An image in a
+    Change control item fails the run, since its alt text is a label the visible
+    value does not show. A new link form goes to #402.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The
     asymmetry with the class and links is deliberate. Reading a hidden field

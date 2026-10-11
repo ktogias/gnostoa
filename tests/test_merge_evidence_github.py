@@ -14,6 +14,7 @@ import re
 import shutil
 import tempfile
 import unittest
+from collections.abc import Mapping
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -2325,25 +2326,37 @@ class AuthoritiesTests(unittest.TestCase):
                 self.assertEqual(["@ktogias"], owners.owners(path))
 
 
+def _merge_evidence_guardrail() -> dict[str, Any]:
+    manifest = yaml.safe_load(
+        (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+    )
+    (entry,) = [g for g in manifest["guardrails"] if g["id"] == "github-merge-evidence"]
+    return dict(entry)
+
+
+def unregistered_tests(namespace: Mapping[str, Any], path: str) -> set[str]:
+    """The tests a module defines that the github-merge-evidence guardrail does
+    not list, for each module whose tests it lists."""
+
+    prefix = f"{path}::"
+    entry = _merge_evidence_guardrail()
+    registered = {t[len(prefix) :] for t in entry["tests"] if t.startswith(prefix)}
+    defined = {
+        f"{name}.{method}"
+        for name, case in namespace.items()
+        if isinstance(case, type) and issubclass(case, unittest.TestCase)
+        for method in unittest.defaultTestLoader.getTestCaseNames(case)
+    }
+    return defined - registered
+
+
 class GuardrailRegistrationTests(unittest.TestCase):
     def test_every_test_in_this_module_is_registered_in_its_guardrail(self) -> None:
-        manifest = yaml.safe_load(
-            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        self.assertEqual(
+            set(), unregistered_tests(globals(), "tests/test_merge_evidence_github.py")
         )
-        (entry,) = [
-            g for g in manifest["guardrails"] if g["id"] == "github-merge-evidence"
-        ]
-        prefix = "tests/test_merge_evidence_github.py::"
-        registered = {t[len(prefix) :] for t in entry["tests"] if t.startswith(prefix)}
-        defined = {
-            f"{name}.{method}"
-            for name, case in globals().items()
-            if isinstance(case, type) and issubclass(case, unittest.TestCase)
-            for method in unittest.defaultTestLoader.getTestCaseNames(case)
-        }
-        self.assertEqual(set(), defined - registered)
         # The command's route is part of the entry point (cubic on #413).
-        self.assertIn("tools/cli.py", entry["implementation"])
+        self.assertIn("tools/cli.py", _merge_evidence_guardrail()["implementation"])
 
 
 FINDING = {
