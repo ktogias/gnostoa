@@ -10,10 +10,10 @@ coverage field, it carries the read's real status; where it has none, an incompl
 read fails the run.
 
 The receipts cover the check items the protected target's required-check manifest
-names (slice 1b.3b-1). Until the analyzer readback's (1b.3b-2) and SonarCloud's
-(1b.3c) receipts exist, and while the suppressions and trust-root changes are
-`UNAVAILABLE` (1b.3b-4), the verdict denies on M2-M8, M13 and M15 rather than
-passing them vacuously.
+names (slice 1b.3b-1) and the analyzer-readback items, from the authenticated
+readback's bundle (slice 1b.3b-2). Until SonarCloud's (1b.3c) receipts exist, and
+while the suppressions and trust-root changes are `UNAVAILABLE` (1b.3b-4), the
+verdict denies on M2-M8, M13 and M15 rather than passing them vacuously.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from typing import Any
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from .analyzer_readback import parse_bundle
 from .assurance_completeness import (
     RECEIPT_SCHEMA,
     RECEIPT_STATUSES,
@@ -49,7 +50,7 @@ from .review_reconcile import (
     latest_checks,
     validate_snapshot,
 )
-from .verdict_cli import confine, read_json_input, run
+from .verdict_cli import confine, read_json_file, read_json_input, run
 
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
 DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
@@ -57,6 +58,35 @@ _REQUIRED_CHECKS_LABEL = "required checks"
 _REQUIRED_CHECK_KEYS = frozenset({"schema_version", "id", "version", "requirements"})
 _CHECK_KEYS = frozenset({"app_id", "name"})
 _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
+# The authenticated readback's readbacks, by (provider, scope), and the
+# declaration's items they give (1b.3b-2; #407, 6101607240).
+_ANALYZER_REQUIREMENT = "analyzer-readback"
+_ANALYZER_ITEMS = {
+    ("deepsource", "DIFF"): "deepsource-diff",
+    ("deepsource", "FULL"): "deepsource-full",
+    ("codacy", "DIFF"): "codacy",
+}
+# The kind of read each item stands for, as the producer marks a complete one; a
+# complete read of another kind does not give it (Decision 0091; Codex on #417).
+_ANALYZER_COMPLETENESS = {
+    "deepsource-diff": "DIFF_LOCAL",
+    "deepsource-full": "FULL_RUN",
+    "codacy": "FULL_RUN",
+}
+_ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
+_ANALYZER_LABEL = "analyzer readback"
+# As the readback normalized them; its provenance and native metadata stay in the
+# bundle (the owner's re-admission, #417 6107601240).
+_FINDING_FIELDS = (
+    "rule",
+    "severity",
+    "category",
+    "path",
+    "state",
+    "native_ref",
+    "tool",
+    "range",
+)
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
 _INPUT_LABEL = "merge-evidence input"
 _AUTHORITIES_LABEL = "merge authorities"
@@ -845,8 +875,10 @@ def evidence_from_snapshot(
     codeowners: CodeOwners,
     decisions: frozenset[str],
     required_checks: Mapping[str, Mapping[str, str]],
+    analyzer_readback: object = None,
 ) -> dict[str, Any]:
-    """The evidence document for the pull request the snapshot observed."""
+    """The evidence document for the pull request the snapshot observed, with the
+    authenticated analyzer readback's bundle when one is given."""
 
     document = require_mapping(snapshot, "snapshot")
     try:
@@ -882,6 +914,9 @@ def evidence_from_snapshot(
         raise MergeEvidenceError("the pull request's description is truncated")
     change_class, links = _change_control(provider["body"], decisions)
     state = "merged" if provider["merged"] else provider["state"]
+    analyzer_receipts, analyzer_findings = _analyzer_evidence(
+        analyzer_readback, subject
+    )
     return {
         "subject": subject_of(subject),
         "lifecycle": {
@@ -911,10 +946,144 @@ def evidence_from_snapshot(
         # Produced by slice 1b.3b; until then they cannot be read.
         "suppressions": {"coverage": "UNAVAILABLE", "found": []},
         "trust_root_changes": {"coverage": "UNAVAILABLE", "paths": []},
-        # The check items' receipts (1b.3b-1); the analyzer readback's come with
-        # 1b.3b-2 and SonarCloud's with 1b.3c.
-        "receipts": _check_receipts(document, subject, required_checks),
+        "analyzer_findings": analyzer_findings,
+        # The check items' receipts (1b.3b-1) and the analyzer items' (1b.3b-2);
+        # SonarCloud's come with 1b.3c.
+        "receipts": [
+            *_check_receipts(document, subject, required_checks),
+            *analyzer_receipts,
+        ],
     }
+
+
+def _analyzer_receipt(
+    subject: Mapping[str, Any],
+    item: str,
+    status: str,
+    observed_at: str,
+    provenance: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "requirement": _ANALYZER_REQUIREMENT,
+        "subject": subject_of(subject),
+        "producer": _ANALYZER_PRODUCER,
+        "observed_at": observed_at,
+        "status": status,
+        "coverage": [item],
+        "provenance": dict(provenance),
+    }
+
+
+def _bound_to(bundle: Mapping[str, Any], subject: Mapping[str, Any]) -> bool:
+    return bool(
+        bundle["subject_binding"] == "BOUND"
+        and subject["repository"] == f"https://github.com/{bundle['repository']}"
+        # The pull number names a pull request (cubic on #417).
+        and subject["change_request"]["kind"] == "github-pull-request"
+        and subject["change_request"]["id"] == str(bundle["pull_number"])
+        and subject["head_commit"] == bundle["requested_head"]
+    )
+
+
+def _analyzer_evidence(
+    value: object, subject: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The analyzer items' receipts and the findings, from the authenticated
+    readback's bundle (1b.3b-2; the owner's rule, #407 6096770145).
+
+    A bundle bound to the exact subject gives each item the receipt of its
+    readback's own coverage, whatever its findings: they stay explicit, every one
+    unresolved, for M17. A bundle that is not gives every item `INCOMPLETE`; a
+    readback that is missing gives its item none, so the reducer reports it
+    `MISSING`. Without a bundle the findings are `UNAVAILABLE`."""
+
+    if value is None:
+        return [], {"coverage": "UNAVAILABLE", "findings": []}
+    try:
+        bundle = parse_bundle(value)
+        _check_times(bundle)
+    except ValueError as exc:
+        # AnalyzerReadbackError is a ValueError, as parse_rfc3339's errors are.
+        raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
+    # Before the binding, so a bundle for another subject is still refused when its
+    # readbacks break the contract (Codex on #417).
+    readbacks = _readbacks_by_item(bundle["readbacks"])
+    if not _bound_to(bundle, subject):
+        provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
+        receipts = [
+            _analyzer_receipt(
+                subject, item, "INCOMPLETE", bundle["observed_at"], provenance
+            )
+            for item in _ANALYZER_ITEMS.values()
+        ]
+        return receipts, {"coverage": "INCOMPLETE", "findings": []}
+    receipts, findings = [], []
+    for item, readback in readbacks.items():
+        receipts.append(
+            _analyzer_receipt(
+                subject,
+                item,
+                _analyzer_item_status(item, readback),
+                readback["observed_at"],
+                {"completeness": readback["completeness"], "bound": True},
+            )
+        )
+        for finding in readback["findings"]:
+            entry = {"item": item, "id": finding["id"], "message": finding["message"]}
+            entry.update({k: finding[k] for k in _FINDING_FIELDS if k in finding})
+            findings.append(entry)
+    complete = len(readbacks) == len(_ANALYZER_ITEMS) and all(
+        r["status"] == "COMPLETE" for r in receipts
+    )
+    return receipts, {
+        "coverage": "COMPLETE" if complete else "INCOMPLETE",
+        "findings": findings,
+    }
+
+
+def _check_times(bundle: Mapping[str, Any]) -> None:
+    """The bundle's and each readback's observation time, before the binding, so a
+    bundle for another subject is refused as a bound one is (Claude on #417)."""
+
+    parse_rfc3339(bundle["observed_at"])
+    for readback in bundle["readbacks"]:
+        parse_rfc3339(readback["observed_at"])
+
+
+def _readbacks_by_item(
+    readbacks: Sequence[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """A bound bundle's readbacks by the item each stands for. An unknown or a
+    repeated readback fails the run."""
+
+    by_item: dict[str, dict[str, Any]] = {}
+    for readback in readbacks:
+        pair = (readback["provider"], readback["scope"])
+        if pair not in _ANALYZER_ITEMS:
+            raise MergeEvidenceError(
+                f"the {_ANALYZER_LABEL} has an unknown readback {pair}"
+            )
+        if _ANALYZER_ITEMS[pair] in by_item:
+            raise MergeEvidenceError(
+                f"the {_ANALYZER_LABEL} repeats the readback {pair}"
+            )
+        by_item[_ANALYZER_ITEMS[pair]] = readback
+    return by_item
+
+
+def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:
+    """The readback's coverage, as the receipt of the item it stands for. A
+    complete read of another kind does not give it (Decision 0091; Codex on
+    #417)."""
+
+    status: str = readback["coverage"]["status"]
+    if (
+        status == "COMPLETE"
+        and readback["completeness"] != _ANALYZER_COMPLETENESS[item]
+    ):
+        return "INCOMPLETE"
+    return status
 
 
 def subject_of(subject: Mapping[str, Any]) -> dict[str, Any]:
@@ -954,6 +1123,16 @@ def _parser() -> argparse.ArgumentParser:
         help=f"the required-check manifest (default: {DEFAULT_REQUIRED_CHECKS})",
     )
     parser.add_argument(
+        "--analyzer-readback",
+        type=Path,
+        default=None,
+        help=(
+            "the authenticated analyzer readback's bundle for this pull request, "
+            "inside the project root (without one, its items stay MISSING and "
+            "its findings UNAVAILABLE)"
+        ),
+    )
+    parser.add_argument(
         "--change-policy",
         type=Path,
         default=DEFAULT_CHANGE_POLICY,
@@ -976,6 +1155,19 @@ def main(argv: list[str] | None = None) -> int:
         required_checks = load_required_checks(
             inside(args.required_checks), project_root=root
         )
+        bundle = None
+        if args.analyzer_readback is not None:
+            bundle = read_json_file(
+                inside(args.analyzer_readback),
+                _ANALYZER_LABEL,
+                MergeEvidenceError,
+                project_root=root,
+            )
+            if bundle is None:
+                # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
+                raise MergeEvidenceError(
+                    f"the {_ANALYZER_LABEL} is invalid: bundle must be an object"
+                )
         return evidence_from_snapshot(
             read_json_input(_INPUT_LABEL, MergeEvidenceError),
             authorities=authorities,
@@ -983,6 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
             codeowners=codeowners,
             decisions=load_decisions(root),
             required_checks=required_checks,
+            analyzer_readback=bundle,
         )
 
     return run(

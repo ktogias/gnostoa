@@ -119,6 +119,7 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         "closing_references": {"coverage": "COMPLETE", "found": []},
         "suppressions": {"coverage": "COMPLETE", "found": []},
         "trust_root_changes": {"coverage": "COMPLETE", "paths": []},
+        "analyzer_findings": {"coverage": "COMPLETE", "findings": []},
         "receipts": [_receipt(exact, ["fast", "smoke"])],
     }
 
@@ -378,6 +379,109 @@ class MergeAdmissionTests(unittest.TestCase):
             verdict["for_approval"]["trust_root_changes"],
         )
         self.assertIn("M15", [c["id"] for c in verdict["criteria"]])
+
+    def test_m17_an_unresolved_analyzer_finding_denies_and_is_listed(self) -> None:
+        """The owner's rule (#407, 6096770145 and 6101607240): every listed
+        finding is unresolved, a suppressed one included, with no waiver."""
+        finding = {"item": "deepsource-full", "id": "issue-1", "message": "Reimport"}
+        suppressed = {**finding, "id": "issue-2", "state": "suppressed"}
+        # The owner's re-admission (#417 6107601240): the readback's normalized
+        # disposition fields are listed as they are.
+        rich = {
+            **finding,
+            "id": "issue-3",
+            "category": "antipattern",
+            "tool": {"id": "python", "name": "Python"},
+            "range": {
+                "start_line": 3,
+                "start_column": 1,
+                "end_line": 3,
+                "end_column": 9,
+            },
+            "native_ref": "https://app.deepsource.com/gh/ktogias/gnostoa/run/x",
+        }
+        for findings, reason in (
+            ([finding], "1 unresolved analyzer finding"),
+            ([finding, suppressed], "2 unresolved analyzer findings"),
+            ([suppressed], "1 unresolved analyzer finding"),
+            ([rich], "1 unresolved analyzer finding"),
+        ):
+            with self.subTest(reason=reason, ids=[f["id"] for f in findings]):
+                evidence = _evidence()
+                evidence["analyzer_findings"]["findings"] = copy.deepcopy(findings)
+                verdict = _verdict(evidence)
+                self.assertEqual("DENY", verdict["status"])
+                self.assertEqual({"M17": [reason]}, _failed(verdict))
+                self.assertEqual(findings, verdict["for_approval"]["analyzer_findings"])
+
+    def test_m17_denies_unless_the_findings_were_read_completely(self) -> None:
+        for coverage in (
+            "UNAVAILABLE",
+            "INCOMPLETE",
+            "PARTIAL",
+            "RATE_LIMITED",
+            "ERROR",
+            "SKIPPED",
+        ):
+            with self.subTest(coverage=coverage):
+                evidence = _evidence()
+                evidence["analyzer_findings"]["coverage"] = coverage
+                self.assertEqual(
+                    {"M17": [f"analyzer finding coverage is {coverage}"]},
+                    _failed(_verdict(evidence)),
+                )
+
+    def test_m17_the_findings_have_a_closed_contract(self) -> None:
+        finding = {"item": "codacy", "id": "issue-1", "message": "x"}
+        for name, value in (
+            ("no record", None),
+            ("an unknown coverage", {"coverage": "DONE", "findings": []}),
+            ("an unknown field", {"coverage": "COMPLETE", "findings": [], "x": 1}),
+            ("findings that are not a list", {"coverage": "COMPLETE", "findings": {}}),
+            (
+                "a finding with an unknown field",
+                {"coverage": "COMPLETE", "findings": [{**finding, "x": "y"}]},
+            ),
+            (
+                "a finding without an id",
+                {
+                    "coverage": "COMPLETE",
+                    "findings": [{"item": "codacy", "message": "x"}],
+                },
+            ),
+            (
+                "a finding with an empty field",
+                {"coverage": "COMPLETE", "findings": [{**finding, "rule": ""}]},
+            ),
+            *(
+                (name, {"coverage": "COMPLETE", "findings": [{**finding, **change}]})
+                for name, change in (
+                    ("a tool that is not an object", {"tool": "python"}),
+                    ("a tool with an unknown field", {"tool": {"id": "py", "x": "y"}}),
+                    ("a range that is not one-based", {"range": {"start_line": 0}}),
+                    (
+                        "a range that ends before it starts",
+                        {"range": {"start_line": 5, "end_line": 3}},
+                    ),
+                    ("an empty range", {"range": {}}),
+                    ("an empty native reference", {"native_ref": ""}),
+                    ("a field that is null", {"tool": None}),
+                    ("the finding's provenance", {"provenance": [{"surface": "x"}]}),
+                    ("the finding's native metadata", {"native": {}}),
+                    ("an item that is not text", {"item": 1}),
+                )
+            ),
+        ):
+            with self.subTest(name):
+                evidence = _evidence()
+                if value is None:
+                    del evidence["analyzer_findings"]
+                else:
+                    evidence["analyzer_findings"] = value
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _verdict(evidence)
 
     def test_m16_the_latest_review_of_any_state_must_approve_the_head(self) -> None:
         """Runbook step 8: a comment after the approval is the latest review."""
