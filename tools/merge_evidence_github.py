@@ -10,10 +10,10 @@ coverage field, it carries the read's real status; where it has none, an incompl
 read fails the run.
 
 The receipts cover the check items the protected target's required-check manifest
-names (slice 1b.3b-1). Until the analyzer readback's (1b.3b-2) and SonarCloud's
-(1b.3c) receipts exist, and while the suppressions and trust-root changes are
-`UNAVAILABLE` (1b.3b-4), the verdict denies on M2-M8, M13 and M15 rather than
-passing them vacuously.
+names (slice 1b.3b-1) and the analyzer-readback items, from the authenticated
+readback's bundle (slice 1b.3b-2). Until SonarCloud's (1b.3c) receipts exist, and
+while the suppressions and trust-root changes are `UNAVAILABLE` (1b.3b-4), the
+verdict denies on M2-M8, M13 and M15 rather than passing them vacuously.
 """
 
 from __future__ import annotations
@@ -1006,31 +1006,14 @@ def _analyzer_evidence(
             for item in _ANALYZER_ITEMS.values()
         ]
         return receipts, {"coverage": "INCOMPLETE", "findings": []}
-    readbacks: dict[str, dict[str, Any]] = {}
-    for readback in bundle["readbacks"]:
-        pair = (readback["provider"], readback["scope"])
-        if pair not in _ANALYZER_ITEMS:
-            raise MergeEvidenceError(
-                f"the {_ANALYZER_LABEL} has an unknown readback {pair}"
-            )
-        if _ANALYZER_ITEMS[pair] in readbacks:
-            raise MergeEvidenceError(
-                f"the {_ANALYZER_LABEL} repeats the readback {pair}"
-            )
-        readbacks[_ANALYZER_ITEMS[pair]] = readback
+    readbacks = _readbacks_by_item(bundle["readbacks"])
     receipts, findings = [], []
     for item, readback in readbacks.items():
-        status = readback["coverage"]["status"]
-        if (
-            status == "COMPLETE"
-            and readback["completeness"] != _ANALYZER_COMPLETENESS[item]
-        ):
-            status = "INCOMPLETE"
         receipts.append(
             _analyzer_receipt(
                 subject,
                 item,
-                status,
+                _analyzer_item_status(item, readback),
                 readback["observed_at"],
                 {"completeness": readback["completeness"], "bound": True},
             )
@@ -1046,6 +1029,41 @@ def _analyzer_evidence(
         "coverage": "COMPLETE" if complete else "INCOMPLETE",
         "findings": findings,
     }
+
+
+def _readbacks_by_item(
+    readbacks: Sequence[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """A bound bundle's readbacks by the item each stands for. An unknown or a
+    repeated readback fails the run."""
+
+    by_item: dict[str, dict[str, Any]] = {}
+    for readback in readbacks:
+        pair = (readback["provider"], readback["scope"])
+        if pair not in _ANALYZER_ITEMS:
+            raise MergeEvidenceError(
+                f"the {_ANALYZER_LABEL} has an unknown readback {pair}"
+            )
+        if _ANALYZER_ITEMS[pair] in by_item:
+            raise MergeEvidenceError(
+                f"the {_ANALYZER_LABEL} repeats the readback {pair}"
+            )
+        by_item[_ANALYZER_ITEMS[pair]] = readback
+    return by_item
+
+
+def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:
+    """The readback's coverage, as the receipt of the item it stands for. A
+    complete read of another kind does not give it (Decision 0091; Codex on
+    #417)."""
+
+    status = readback["coverage"]["status"]
+    if (
+        status == "COMPLETE"
+        and readback["completeness"] != _ANALYZER_COMPLETENESS[item]
+    ):
+        return "INCOMPLETE"
+    return status
 
 
 def subject_of(subject: Mapping[str, Any]) -> dict[str, Any]:
