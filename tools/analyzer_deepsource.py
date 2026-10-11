@@ -386,11 +386,21 @@ def _issue_finding(
     end_column = issue.get("endColumn")
     finding["range"] = {
         "start_line": begin_line,
-        "start_column": begin_column,
+        "start_column": _model_column(begin_column),
         "end_line": end_line,
-        "end_column": end_column,
+        "end_column": _model_column(end_column),
     }
     return finding
+
+
+def _model_column(value: object) -> object:
+    """DeepSource counts columns from 0 and the readback's model from 1 (#309,
+    6103702467). Only a non-negative integer is converted; any other value reaches
+    the model unchanged, so its own validation still refuses it."""
+
+    if type(value) is int and value >= 0:
+        return value + 1
+    return value
 
 
 class _Pages:
