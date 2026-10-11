@@ -247,8 +247,11 @@ provider-neutral public change-governance contract of
     and any other failure, the bound included, leaves the `work_items` source
     incomplete. The run fails, naming the Work Item, unless that source is
     `COMPLETE` and every listed Work Item was observed as such an issue, so none
-    is silently left out. Each observation must be in L1's closed shape, with
-    an integer number, a known kind and a text repository. An issue need not be open.
+    is silently left out. Each observation must be in L1's closed shape:
+    exactly `number`, `kind` and `repository`. The `kind` is `issue`,
+    `pull_request` or `absent`, and the `repository` is text. The `number` is an
+    integer, positive for an issue or a pull request, and for an absent Work
+    Item the listed number, which may be 0. An issue need not be open.
   - Reference integrity (#407, 6085507735): a Work Item or Decision a link
     carries must be linked to its own issue or record. A Work Item `#N` must link
     to `https://github.com/<owner>/<name>/issues/N` of the subject repository, and

@@ -1024,20 +1024,22 @@ _OBSERVATION_KINDS = frozenset({"issue", "pull_request", "absent"})
 def _observation(item: object) -> tuple[int, str, str]:
     """One Work Item observation, in L1's closed shape. `validate_snapshot` does
     not normalize this merge-evidence source, so `407.0` or `True` must not pass
-    for a number (Codex on #422)."""
+    for a number (Codex on #422). The shape is checked with the same helpers as
+    every closed evidence object (Claude on #422)."""
 
-    if not isinstance(item, Mapping) or set(item) != _OBSERVATION_KEYS:
-        raise MergeEvidenceError(
-            "a Work Item observation has missing or unknown fields"
-        )
-    number, kind, repository = item["number"], item["kind"], item["repository"]
-    if (
-        type(number) is not int
-        or number < 0
-        or kind not in _OBSERVATION_KINDS
-        or not isinstance(repository, str)
-    ):
-        raise MergeEvidenceError("a Work Item observation is malformed")
+    label = "work_items observation"
+    observation = require_mapping(item, label)
+    require_closed_keys(observation, label, _OBSERVATION_KEYS)
+    kind = require_text(observation["kind"], f"{label} kind")
+    if kind not in _OBSERVATION_KINDS:
+        raise MergeEvidenceError(f"{label} has the unknown kind {kind!r}")
+    repository = require_text(observation["repository"], f"{label} repository")
+    number = observation["number"]
+    # As L1 writes them: a provider's answer has a positive number, and an absent
+    # Work Item carries the listed one, so only it may be 0 (Codex on #422).
+    lowest = 0 if kind == "absent" else 1
+    if type(number) is not int or number < lowest:
+        raise MergeEvidenceError(f"{label} has a number that is not one L1 records")
     return number, kind, repository
 
 

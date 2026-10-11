@@ -32,7 +32,7 @@ from test_merge_evidence_github import (
 from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
 import tools
-from tools import merge_evidence_github
+from tools import assurance_completeness, merge_evidence_github
 
 ISSUE_407 = f"{API}/issues/407"
 ISSUE_15 = f"{API}/issues/15"
@@ -41,6 +41,11 @@ RECORD = (
     "0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md"
 )
 ISSUES = "https://github.com/ktogias/gnostoa/issues"
+# What `knowledge merge-evidence` reports as an input error.
+INPUT_ERRORS = (
+    merge_evidence_github.MergeEvidenceError,
+    assurance_completeness.AssuranceCompletenessError,
+)
 WORK_ITEM_LINE = "- Work Item: #407, #15\n"
 DECISION_LINE = f"- Decision: [0112]({RECORD})\n"
 
@@ -341,11 +346,25 @@ class WorkItemEvidenceTests(unittest.TestCase):
             ("an extra field", {**proven, "state": "open"}),
             ("a missing field", {"number": 407, "kind": "issue"}),
             ("not an object", [407, "issue"]),
+            ("a kind that is not text", {**proven, "kind": ["issue"]}),
         ):
             with self.subTest(name):
                 changed = copy.deepcopy(snapshot)
                 changed["work_items"][0] = first
-                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                with self.assertRaises(INPUT_ERRORS):
+                    _evidence(changed)
+        # Codex and cubic on #422: `True` for a listed #1, and a zero-numbered
+        # issue for a listed #0, as L1 never observes them.
+        for listed, number in (("#1", True), ("#0", 0)):
+            with self.subTest(listed):
+                body = _body(work_item=f"- Work Item: {listed}\n")
+                replies = _with_body(_replies(), body)
+                replies[f"{API}/issues/{int(listed[1:])}"] = _issue(1)
+                snapshot, _ = _collect(replies)
+                changed = copy.deepcopy(snapshot)
+                changed["work_items"] = [{**proven, "number": number}]
+                changed["coverage"]["work_items"]["count"] = 1
+                with self.assertRaises(INPUT_ERRORS):
                     _evidence(changed)
 
 
