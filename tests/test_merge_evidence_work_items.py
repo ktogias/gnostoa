@@ -326,6 +326,28 @@ class WorkItemEvidenceTests(unittest.TestCase):
                 with self.assertRaises(merge_evidence_github.MergeEvidenceError):
                     _evidence(changed)
 
+    def test_an_observation_has_a_closed_typed_shape(self) -> None:
+        """Codex on #422: `validate_snapshot` does not normalize this source, so
+        `407.0` or `True` must not compare equal to a listed number."""
+
+        snapshot, _ = _collect(_replies())
+        proven = {"number": 407, "repository": "ktogias/gnostoa", "kind": "issue"}
+        for name, first in (
+            ("a float number", {**proven, "number": 407.0}),
+            ("a text number", {**proven, "number": "407"}),
+            ("a negative number", {**proven, "number": -407}),
+            ("an unknown kind", {**proven, "kind": "Issue"}),
+            ("a repository that is not text", {**proven, "repository": 7}),
+            ("an extra field", {**proven, "state": "open"}),
+            ("a missing field", {"number": 407, "kind": "issue"}),
+            ("not an object", [407, "issue"]),
+        ):
+            with self.subTest(name):
+                changed = copy.deepcopy(snapshot)
+                changed["work_items"][0] = first
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(changed)
+
 
 class ReferenceIntegrityTests(unittest.TestCase):
     """A listed Work Item or Decision carried by a link is linked to its own issue

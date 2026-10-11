@@ -1001,21 +1001,44 @@ def _proven_work_items(
     6108453639). An incomplete read, a missing or extra observation, or any other
     answer fails the run and names the Work Item, so none is silently dropped."""
 
-    observed = _complete(snapshot, "work_items")
+    observed = [_observation(item) for item in _complete(snapshot, "work_items")]
     listed = [int(item.removeprefix("#")) for item in work_items]
-    if [item.get("number") for item in observed] != listed:
+    if [number for number, _, _ in observed] != listed:
         raise MergeEvidenceError(
             "the observed Work Items are not the ones the description lists"
         )
     name = repository.removeprefix(_GITHUB)
-    for number, item in zip(listed, observed, strict=True):
-        kind = item.get("kind")
+    for number, kind, observed_repository in observed:
         if kind == "absent":
             raise MergeEvidenceError(f"Work Item #{number} does not exist in {name}")
         if kind == "pull_request":
             raise MergeEvidenceError(f"Work Item #{number} is a pull request")
-        if kind != "issue" or item.get("repository") != name:
+        if observed_repository != name:
             raise MergeEvidenceError(f"Work Item #{number} is not an issue of {name}")
+
+
+_OBSERVATION_KEYS = frozenset({"number", "repository", "kind"})
+_OBSERVATION_KINDS = frozenset({"issue", "pull_request", "absent"})
+
+
+def _observation(item: object) -> tuple[int, str, str]:
+    """One Work Item observation, in L1's closed shape. `validate_snapshot` does
+    not normalize this merge-evidence source, so `407.0` or `True` must not pass
+    for a number (Codex on #422)."""
+
+    if not isinstance(item, Mapping) or set(item) != _OBSERVATION_KEYS:
+        raise MergeEvidenceError(
+            "a Work Item observation has missing or unknown fields"
+        )
+    number, kind, repository = item["number"], item["kind"], item["repository"]
+    if (
+        type(number) is not int
+        or number < 0
+        or kind not in _OBSERVATION_KINDS
+        or not isinstance(repository, str)
+    ):
+        raise MergeEvidenceError("a Work Item observation is malformed")
+    return number, kind, repository
 
 
 def _source(snapshot: Mapping[str, Any], name: str) -> tuple[list[dict[str, Any]], str]:

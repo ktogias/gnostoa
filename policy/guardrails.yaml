@@ -890,6 +890,7 @@ guardrails:
       - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_an_incomplete_work_item_read_fails_the_run
       - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_an_incomplete_source_fails_even_when_its_items_match
       - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_observations_must_be_the_listed_work_items
+      - tests/test_merge_evidence_work_items.py::WorkItemEvidenceTests.test_an_observation_has_a_closed_typed_shape
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_work_item_link_must_point_to_its_issue
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_matching_work_item_link_counts
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_decision_link_must_point_to_its_record
