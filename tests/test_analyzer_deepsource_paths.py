@@ -181,9 +181,8 @@ class FullReadReturnPathTests(unittest.TestCase):
         for name, (responses, expected) in cases.items():
             with self.subTest(name):
                 document = _read(responses)
-                self.assertEqual(
-                    expected, (document.get("analysis_id"), document["run_state"])
-                )
+                actual = (document.get("analysis_id"), document["run_state"])
+                self.assertEqual(expected, actual)
 
     def test_a_check_still_running_reports_the_states(self) -> None:
         document = _read({("run", None): run_page(checks=[check(status="PENDING")])})
@@ -421,13 +420,14 @@ class DiffLocalPathTests(unittest.TestCase):
                 for f in document["findings"]
             ],
         )
+        actual = (
+            document["completeness"],
+            document["coverage"]["status"],
+            document["coverage"]["reason"],
+        )
         self.assertEqual(
             ("DIFF_LOCAL", "PARTIAL", "CARRIED_FORWARD_COMMENTS_EXCLUDED"),
-            (
-                document["completeness"],
-                document["coverage"]["status"],
-                document["coverage"]["reason"],
-            ),
+            actual,
         )
         self.assertEqual(1, document["native"]["carried_forward_comments_excluded"])
 
@@ -473,17 +473,14 @@ class DiffLocalPathTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 document = _diff(statuses, [])
-                self.assertEqual(
-                    expected,
-                    (
-                        document["run_state"],
-                        document["coverage"]["status"],
-                        document["coverage"].get("reason"),
-                    ),
+                actual = (
+                    document["run_state"],
+                    document["coverage"]["status"],
+                    document["coverage"].get("reason"),
                 )
-                self.assertEqual(
-                    RUN_UID if statuses else None, document.get("analysis_id")
-                )
+                self.assertEqual(expected, actual)
+                expected_id = RUN_UID if statuses else None
+                self.assertEqual(expected_id, document.get("analysis_id"))
 
 
 if __name__ == "__main__":
