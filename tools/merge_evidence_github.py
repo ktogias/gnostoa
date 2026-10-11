@@ -1144,16 +1144,19 @@ def main(argv: list[str] | None = None) -> int:
         required_checks = load_required_checks(
             inside(args.required_checks), project_root=root
         )
-        bundle = (
-            None
-            if args.analyzer_readback is None
-            else read_json_file(
+        bundle = None
+        if args.analyzer_readback is not None:
+            bundle = read_json_file(
                 inside(args.analyzer_readback),
                 _ANALYZER_LABEL,
                 MergeEvidenceError,
                 project_root=root,
             )
-        )
+            if bundle is None:
+                # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
+                raise MergeEvidenceError(
+                    f"the {_ANALYZER_LABEL} is invalid: bundle must be an object"
+                )
         return evidence_from_snapshot(
             read_json_input(_INPUT_LABEL, MergeEvidenceError),
             authorities=authorities,

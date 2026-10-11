@@ -2568,7 +2568,8 @@ class AnalyzerReceiptTests(unittest.TestCase):
                 dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
                 {i: s for (r, i), s in statuses.items() if r == "analyzer-readback"},
             )
-            for text in ("not json", json.dumps({**_bundle(), "extra": 1})):
+            # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
+            for text in ("not json", json.dumps({**_bundle(), "extra": 1}), "null"):
                 with self.subTest(text=text[:20]):
                     path.write_text(text, encoding="utf-8")
                     self.assertEqual(
