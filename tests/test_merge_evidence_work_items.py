@@ -445,8 +445,8 @@ class _NoMarkdownParser(importlib.abc.MetaPathFinder):
     """The workflow's publish job, which has no runtime lock: `markdown_it`
     cannot be imported."""
 
+    @staticmethod
     def find_spec(
-        self,
         fullname: str,
         path: Sequence[str] | None,
         target: object = None,
