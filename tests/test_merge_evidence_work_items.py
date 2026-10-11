@@ -425,6 +425,20 @@ class ReferenceIntegrityTests(unittest.TestCase):
                 passes = snapshot["collection"]["passes"]
                 self.assertEqual(passes, calls.count(ISSUE_407))
 
+    def test_a_work_item_number_has_no_digit_ceiling(self) -> None:
+        """cubic on #422: round 7 removed round 1's ten-digit cap, so an
+        eleven-digit Work Item is read and observed like any other."""
+
+        replies = _with_body(
+            _replies(), _body(work_item="- Work Item: #12345678901, #15\n")
+        )
+        replies[f"{API}/issues/12345678901"] = _issue(12345678901)
+        snapshot, calls = _collect(replies)
+        self.assertEqual(
+            ["#12345678901", "#15"], _evidence(snapshot)["links"]["work_items"]
+        )
+        self.assertIn(f"{API}/issues/12345678901", calls)
+
     def test_padding_and_empty_links_list_nothing_more(self) -> None:
         """The PAO advisory on #422: an empty label lists nothing wherever it sits
         (#407 6085478125), and a padded label's identifier is its trimmed text."""

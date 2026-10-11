@@ -896,12 +896,15 @@ def _work_item_values(fields: Mapping[str, _Field]) -> list[int]:
     to convert fails the run here, inside every caller's error path."""
 
     values: list[int] = []
+    seen: set[int] = set()
     for spelling in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE):
         try:
             value = int(spelling)
         except ValueError as exc:
             raise MergeEvidenceError("a Work Item number is too long to read") from exc
-        if value not in values:
+        # A set, so the cost is linear in the field (cubic on #422).
+        if value not in seen:
+            seen.add(value)
             values.append(value)
     return values
 
