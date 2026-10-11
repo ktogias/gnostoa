@@ -3,8 +3,9 @@
 DeepSource reports issue columns from 0 and lines from 1 (#309, 6103702467), so
 a finding on a top-level `def` sits at column 0, which the readback's model
 refuses: every full read carrying one failed with NORMALIZATION_ERROR. The
-conversion adds one to a column only when it is a non-negative integer; any
-other value reaches the model unchanged and stays refused.
+conversion adds one to a column only when it is a non-negative integer. Any
+other value reaches the model unchanged: an absent column stays absent, and
+every other value is still refused.
 """
 
 from __future__ import annotations

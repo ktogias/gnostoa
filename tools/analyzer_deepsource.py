@@ -396,7 +396,8 @@ def _issue_finding(
 def _model_column(value: object) -> object:
     """DeepSource counts columns from 0 and the readback's model from 1 (#309,
     6103702467). Only a non-negative integer is converted; any other value reaches
-    the model unchanged, so its own validation still refuses it."""
+    the model unchanged. An absent (`None`) column stays absent, and the model's own
+    validation refuses every other value."""
 
     if type(value) is int and value >= 0:
         return value + 1
