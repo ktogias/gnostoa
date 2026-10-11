@@ -2494,6 +2494,24 @@ class AnalyzerReceiptTests(unittest.TestCase):
                     _readback("deepsource", "FULL"), _readback("deepsource", "FULL")
                 ),
             ),
+            (
+                "an unknown analyzer, for another head",
+                _bundle(
+                    _readback("deepsource", "DIFF", head=PREVIOUS),
+                    _readback("semgrep", "DIFF", head=PREVIOUS),
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
+            (
+                "a repeated item, for another head",
+                _bundle(
+                    _readback("deepsource", "FULL", head=PREVIOUS),
+                    _readback("deepsource", "FULL", head=PREVIOUS),
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
             ("an invalid bundle", {**_bundle(), "extra": 1}),
             (
                 "a readback time that is not one",

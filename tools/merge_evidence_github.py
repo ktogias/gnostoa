@@ -999,6 +999,9 @@ def _analyzer_evidence(
     except ValueError as exc:
         # AnalyzerReadbackError is a ValueError, as parse_rfc3339's errors are.
         raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
+    # Before the binding, so a bundle for another subject is still refused when its
+    # readbacks break the contract (Codex on #417).
+    readbacks = _readbacks_by_item(bundle["readbacks"])
     if not _bound_to(bundle, subject):
         provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
         receipts = [
@@ -1008,7 +1011,6 @@ def _analyzer_evidence(
             for item in _ANALYZER_ITEMS.values()
         ]
         return receipts, {"coverage": "INCOMPLETE", "findings": []}
-    readbacks = _readbacks_by_item(bundle["readbacks"])
     receipts, findings = [], []
     for item, readback in readbacks.items():
         receipts.append(
