@@ -2394,6 +2394,24 @@ class AnalyzerReceiptTests(unittest.TestCase):
                     _evidence(analyzer=bundle)["analyzer_findings"],
                 )
 
+    def test_a_bundle_binds_only_a_pull_request(self) -> None:
+        """cubic on #417: the bundle's pull number names a pull request, so a change
+        request of another kind with the same id is not its subject."""
+        snapshot = _snapshot()
+        snapshot["subject"]["change_request"]["kind"] = "gitlab-merge-request"
+        evidence = _evidence(snapshot, analyzer=_bundle())
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "INCOMPLETE"),
+            {
+                item: status
+                for (record, item), status in _receipt_statuses(evidence).items()
+                if record == "analyzer-readback"
+            },
+        )
+        self.assertEqual(
+            {"coverage": "INCOMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+
     def test_a_readback_s_own_status_is_its_receipt_s(self) -> None:
         bundle = _bundle(
             _readback("deepsource", "DIFF"),

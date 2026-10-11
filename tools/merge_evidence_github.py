@@ -972,6 +972,8 @@ def _bound_to(bundle: Mapping[str, Any], subject: Mapping[str, Any]) -> bool:
     return bool(
         bundle["subject_binding"] == "BOUND"
         and subject["repository"] == f"https://github.com/{bundle['repository']}"
+        # The pull number names a pull request (cubic on #417).
+        and subject["change_request"]["kind"] == "github-pull-request"
         and subject["change_request"]["id"] == str(bundle["pull_number"])
         and subject["head_commit"] == bundle["requested_head"]
     )
@@ -1057,7 +1059,7 @@ def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:
     complete read of another kind does not give it (Decision 0091; Codex on
     #417)."""
 
-    status = readback["coverage"]["status"]
+    status: str = readback["coverage"]["status"]
     if (
         status == "COMPLETE"
         and readback["completeness"] != _ANALYZER_COMPLETENESS[item]
