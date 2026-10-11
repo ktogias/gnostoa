@@ -10,6 +10,9 @@ that could not prove it, or a link to anything else, fails the run.
 from __future__ import annotations
 
 import copy
+import os
+import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
+import sys
 import unittest
 from collections.abc import Mapping
 from typing import Any
@@ -17,6 +20,7 @@ from typing import Any
 from test_merge_evidence_github import (
     API,
     BODY,
+    ROOT,
     _evidence,
     _failed,
     _issue,
@@ -350,6 +354,9 @@ class ReferenceIntegrityTests(unittest.TestCase):
             ("another host", "[#407](https://example.com/ktogias/gnostoa/issues/407)"),
             ("plain HTTP", "[#407](http://github.com/ktogias/gnostoa/issues/407)"),
             ("several identifiers", f"[#407, #15]({ISSUES}/407)"),
+            # Codex on #422: the text after the link continues its number.
+            ("a link covering part of a number", f"[#4]({ISSUES}/4)07"),
+            ("a link covering more of it", f"[#40]({ISSUES}/40)7"),
         ):
             with self.subTest(name):
                 self._assert_refused(_body(work_item=f"- Work Item: {line}, #15\n"))
@@ -422,6 +429,36 @@ class ReferenceIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(["#407", "#15"], links["work_items"])
         self._assert_refused(_body(work_item=f"- Work Item: [see]({ISSUES}/407)\n"))
+
+
+class StartupTests(unittest.TestCase):
+    def test_loading_l1_does_not_load_the_merge_evidence_adapter(self) -> None:
+        """Codex on #422: the workflow's publish job runs L1's script with no
+        runtime lock installed, so loading it must not import the adapter or its
+        Markdown parser; only merge-evidence collection does."""
+
+        script = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('l1', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "names = ('markdown_it', 'tools.merge_evidence_github')\n"
+            "print(sorted(n for n in names if n in sys.modules))\n"
+        )
+        result = subprocess.run(  # nosec B603 -- the interpreter and argv are literal
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(ROOT / "ci" / "review_github_current_state.py"),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT)},
+            check=True,
+        )
+        self.assertEqual("[]", result.stdout.strip())
 
 
 class GuardrailRegistrationTests(unittest.TestCase):

@@ -172,6 +172,7 @@ DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 _WORK_ITEM_LABEL = re.compile(rf"#({_WORK_ITEM_DIGITS})", re.ASCII)
 _DECISION_LABEL = re.compile(r"(\d{4})", re.ASCII)
 _GITHUB = "https://github.com/"
+_WORK_ITEM_FIELD = "Work Item"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
 _REVIEW_SEMANTIC_REASONS = frozenset(
     {
@@ -674,21 +675,37 @@ def _inline_value(token: Token) -> str:
     return "".join(part for child in token.children or [] if (part := _visible(child)))
 
 
-def _links(token: Token) -> tuple[tuple[str, str], ...]:
-    """Each link of an item: its visible label, read as `_inline_value` reads the
-    item, and its target. The target is only checked against the label's
+class _Link(NamedTuple):
+    """A link of a Change control item: its visible label, read as `_inline_value`
+    reads the item, its target, and whether the visible text right after it
+    continues with a digit, so that the label is only part of a number."""
+
+    label: str
+    target: str
+    continued: bool
+
+
+def _links(token: Token) -> tuple[_Link, ...]:
+    """Each link of an item. The target is only checked against the label's
     identifier, never read for one (1b.3b-3, #407 6085544477)."""
 
-    links: list[tuple[str, str]] = []
+    links: list[_Link] = []
     label: list[str] | None = None
     target = ""
+    after_link = False
     for child in token.children or []:
+        part = _visible(child)
+        if after_link and label is None and part:
+            # Only the first visible text right after the link (Codex on #422).
+            if _NUMBER.match(part):
+                links[-1] = links[-1]._replace(continued=True)
+            after_link = False
         if child.type == "link_open":
             label, target = [], str(child.attrGet("href") or "")
         elif child.type == "link_close" and label is not None:
-            links.append(("".join(label), target))
-            label = None
-        elif label is not None and (part := _visible(child)):
+            links.append(_Link("".join(label), target, False))
+            label, after_link = None, True
+        elif label is not None and part:
             label.append(part)
     return tuple(links)
 
@@ -697,7 +714,7 @@ class _Field(NamedTuple):
     """A Change control field's visible value, and the links its item holds."""
 
     value: str
-    links: tuple[tuple[str, str], ...]
+    links: tuple[_Link, ...]
 
 
 class _ContainerTags(HTMLParser):
@@ -857,7 +874,7 @@ def work_item_numbers(body: str) -> list[int]:
     field and grammar. A section this adapter would refuse fails here too."""
 
     fields = _change_control_fields(body)
-    return [int(n) for n in _listed(fields, "Work Item", _WORK_ITEM_VALUE)]
+    return [int(n) for n in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE)]
 
 
 def _linked_identifiers(
@@ -868,13 +885,16 @@ def _linked_identifiers(
     identifiers included, fails the run."""
 
     found: list[tuple[str, str]] = []
-    for text, target in field.links if field else ():
-        if _NUMBER.search(text) is None:
+    for link in field.links if field else ():
+        if _NUMBER.search(link.label) is None:
             continue
-        match = label.fullmatch(text.strip(" "))
+        match = label.fullmatch(link.label.strip(" "))
         if match is None:
             raise MergeEvidenceError(f"a {name} link must carry one identifier")
-        found.append((match.group(1), target))
+        if link.continued:
+            # `[#4](…/issues/4)07` shows `#407` (Codex on #422).
+            raise MergeEvidenceError(f"a {name} link must cover its whole identifier")
+        found.append((match.group(1), link.target))
     return found
 
 
@@ -889,7 +909,7 @@ def _check_links(
     Any other target fails the run; nothing is fetched."""
 
     for number, target in _linked_identifiers(
-        fields.get("Work Item"), _WORK_ITEM_LABEL, "Work Item"
+        fields.get(_WORK_ITEM_FIELD), _WORK_ITEM_LABEL, _WORK_ITEM_FIELD
     ):
         if target != f"{repository}/issues/{number}":
             raise MergeEvidenceError(
@@ -917,7 +937,7 @@ def _change_control(
     change_class = fields["Class"].value.strip() if "Class" in fields else ""
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = [f"#{n}" for n in _listed(fields, "Work Item", _WORK_ITEM_VALUE)]
+    work_items = [f"#{n}" for n in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE)]
     linked = _listed(fields, "Decision", _DECISION_VALUE)
     _check_links(fields, repository, decisions)
     return change_class, {

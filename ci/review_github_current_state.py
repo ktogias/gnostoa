@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import github_events, github_rest, merge_evidence_github
+from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
@@ -1145,6 +1145,10 @@ def _work_items(
     if subject["body_truncated"]:
         error = "the description is truncated"
         return [], {"status": "ERROR", "pages": 0, "count": 0, "error": error}
+    # Here, not at the top: the workflow's publish job runs this script with no
+    # runtime lock, and the adapter's Markdown parser is not there (Codex on #422).
+    from tools import merge_evidence_github
+
     try:
         numbers = merge_evidence_github.work_item_numbers(subject["body"])
     except merge_evidence_github.MergeEvidenceError as exc:
