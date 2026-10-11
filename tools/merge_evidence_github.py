@@ -901,7 +901,9 @@ def _linked_identifiers(
         # does must be exactly one whole identifier (CodeAnt and cubic on #422).
         if not link.touches:
             continue
-        match = label.fullmatch(link.label.strip(" "))
+        # Exactly the identifier, unpadded, as the supported forms write it, so
+        # its borders are the label's (Codex on #422).
+        match = label.fullmatch(link.label)
         if match is None:
             raise MergeEvidenceError(f"a {name} link must carry one identifier")
         if not link.whole:

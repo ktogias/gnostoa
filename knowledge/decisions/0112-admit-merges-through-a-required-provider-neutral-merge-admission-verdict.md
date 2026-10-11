@@ -256,7 +256,8 @@ provider-neutral public change-governance contract of
     fails the run, as does a link label holding several identifiers. A link
     touches an identifier when its label holds a `#` or a digit, or one comes
     right before or after it in the item's visible text. Such a link must be
-    exactly one whole identifier as a reader sees it, so a link labelled `#4`
+    exactly one whole identifier as a reader sees it, its label the identifier
+    alone with no padding, so a link labelled `#4`
     or `#` that shows as part of `#407` fails the run, whatever lies between
     them. A link that touches no identifier lists nothing, as before. Nothing a
     link points to is fetched. A label with no identifier still lists nothing,

@@ -367,6 +367,9 @@ class ReferenceIntegrityTests(unittest.TestCase):
             # CodeAnt on #422: a label holding only part of the identifier.
             ("a link on the hash alone", f"[#]({ISSUES}/999)407"),
             ("a zero-width link touching it", f"[]({ISSUES}/999)#407"),
+            # Codex on #422: the label is exactly the identifier, without padding.
+            ("a padded label before a separator", f"[#407 ]({ISSUES}/407)"),
+            ("a padded label before an identifier", f"[#407 ]({ISSUES}/407)#15"),
         ):
             with self.subTest(name):
                 self._assert_refused(_body(work_item=f"- Work Item: {line}, #15\n"))
