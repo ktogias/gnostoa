@@ -158,7 +158,8 @@ _VOID_ELEMENTS = frozenset(
 # `re.ASCII`, so `\d` is `[0-9]` and a Unicode digit is not one (CodeAnt on #413).
 # A Work Item number is canonical: no leading zero, at most ten digits, so no two
 # spellings name one issue (cubic and CodeAnt on #422).
-_WORK_ITEM_NUMBER = r"#[1-9]\d{0,9}"
+_WORK_ITEM_DIGITS = r"[1-9]\d{0,9}"
+_WORK_ITEM_NUMBER = rf"#{_WORK_ITEM_DIGITS}"
 _WORK_ITEM_VALUE = re.compile(
     rf"{_WORK_ITEM_NUMBER}(?:(?: +| *, *){_WORK_ITEM_NUMBER})*", re.ASCII
 )
@@ -168,7 +169,7 @@ _DECISION_RECORD = re.compile(r"(\d{4})-[a-z0-9-]+\.md")
 DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 # A link's label that carries one identifier, as the field's grammar writes it
 # (1b.3b-3, #407 6108453639).
-_WORK_ITEM_LABEL = re.compile(r"#([1-9]\d{0,9})", re.ASCII)
+_WORK_ITEM_LABEL = re.compile(rf"#({_WORK_ITEM_DIGITS})", re.ASCII)
 _DECISION_LABEL = re.compile(r"(\d{4})", re.ASCII)
 _GITHUB = "https://github.com/"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
