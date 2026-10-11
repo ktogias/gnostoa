@@ -232,6 +232,30 @@ def coverage(
     return result
 
 
+def _check_completeness_pairing(completeness: str, coverage_status: str) -> None:
+    """A readback's completeness and its coverage status must agree."""
+
+    if completeness not in COMPLETENESS_STATES:
+        raise AnalyzerReadbackError("completeness state is unsupported")
+    if completeness == "FULL_RUN" and coverage_status != "COMPLETE":
+        raise AnalyzerReadbackError("FULL_RUN requires COMPLETE coverage")
+    if completeness == "AMBIGUOUS" and coverage_status != "INCOMPLETE":
+        raise AnalyzerReadbackError("AMBIGUOUS requires INCOMPLETE coverage")
+    if coverage_status == "INCOMPLETE" and completeness != "AMBIGUOUS":
+        raise AnalyzerReadbackError(
+            "INCOMPLETE coverage requires AMBIGUOUS completeness"
+        )
+    if completeness == "AUTH_UNAVAILABLE" and coverage_status != "UNAVAILABLE":
+        raise AnalyzerReadbackError("AUTH_UNAVAILABLE requires UNAVAILABLE coverage")
+    if (
+        completeness == "READBACK_UNAVAILABLE"
+        and coverage_status not in _READBACK_UNAVAILABLE_COVERAGE
+    ):
+        raise AnalyzerReadbackError(
+            "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage"
+        )
+
+
 def build_readback(
     *,
     provider: str,
@@ -280,29 +304,7 @@ def build_readback(
         ),
     )
     normalized_completeness = _required_text(completeness, "completeness")
-    if normalized_completeness not in COMPLETENESS_STATES:
-        raise AnalyzerReadbackError("completeness state is unsupported")
-    coverage_status = normalized_coverage["status"]
-    if normalized_completeness == "FULL_RUN" and coverage_status != "COMPLETE":
-        raise AnalyzerReadbackError("FULL_RUN requires COMPLETE coverage")
-    if normalized_completeness == "AMBIGUOUS" and coverage_status != "INCOMPLETE":
-        raise AnalyzerReadbackError("AMBIGUOUS requires INCOMPLETE coverage")
-    if coverage_status == "INCOMPLETE" and normalized_completeness != "AMBIGUOUS":
-        raise AnalyzerReadbackError(
-            "INCOMPLETE coverage requires AMBIGUOUS completeness"
-        )
-    if (
-        normalized_completeness == "AUTH_UNAVAILABLE"
-        and coverage_status != "UNAVAILABLE"
-    ):
-        raise AnalyzerReadbackError("AUTH_UNAVAILABLE requires UNAVAILABLE coverage")
-    if (
-        normalized_completeness == "READBACK_UNAVAILABLE"
-        and coverage_status not in _READBACK_UNAVAILABLE_COVERAGE
-    ):
-        raise AnalyzerReadbackError(
-            "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage"
-        )
+    _check_completeness_pairing(normalized_completeness, normalized_coverage["status"])
     requested = _sha(requested_head, "requested head")
     observed = None if observed_head is None else _sha(observed_head, "observed head")
     if normalized_coverage["status"] == "COMPLETE" and observed != requested:
