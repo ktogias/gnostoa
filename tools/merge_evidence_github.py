@@ -644,6 +644,8 @@ _HUNK_HEADER = re.compile(
 )
 _NO_NEWLINE = "\\ No newline at end of file"
 _CONTENT = frozenset(" -+")
+# What each content line takes from a hunk's old and new counts.
+_STEPS = {" ": (1, 1), "-": (1, 0), "+": (0, 1)}
 
 
 def _hunk_header(text: str) -> tuple[int, int, int] | None:
@@ -679,20 +681,22 @@ def _hunk_body(
         if index == len(lines):
             return None
         text = lines[index]
-        kind = text[:1]
-        if text == _NO_NEWLINE and previous in _CONTENT:
-            pass
-        elif kind == " " and old and new:
-            old, new, line = old - 1, new - 1, line + 1
-        elif kind == "-" and old:
-            old -= 1
-        elif kind == "+" and new:
-            added.append((line, text[1:]))
-            new, line = new - 1, line + 1
-        else:
-            return None
-        previous = "\\" if text == _NO_NEWLINE else kind
         index += 1
+        if text == _NO_NEWLINE:
+            # Metadata about the line before it, so only after a content line.
+            if previous not in _CONTENT:
+                return None
+            previous = "\\"
+            continue
+        kind = text[:1]
+        taken = _STEPS.get(kind)
+        if taken is None or old < taken[0] or new < taken[1]:
+            return None
+        old, new = old - taken[0], new - taken[1]
+        if kind == "+":
+            added.append((line, text[1:]))
+        line += taken[1]
+        previous = kind
     return index
 
 

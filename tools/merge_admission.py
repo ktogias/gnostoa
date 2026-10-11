@@ -285,40 +285,45 @@ def _suppressions(
     if record["coverage"] != "COMPLETE":
         reasons.append(f"suppression coverage is {record['coverage']}")
     for index, item in enumerate(value):
-        label = f"suppression {index}"
-        suppression = require_mapping(item, label)
-        require_closed_keys(
-            suppression, label, _SUPPRESSION_KEYS, _SUPPRESSION_OPTIONAL_KEYS
-        )
-        entry = {
-            "path": require_text(suppression["path"], f"{label} path"),
-            "marker": require_text(suppression["marker"], f"{label} marker"),
-            "justified": _flag(suppression["justified"], f"{label} justified"),
-        }
-        location = entry["path"]
-        if "line" in suppression:
-            line = suppression["line"]
-            if type(line) is not int or line <= 0:
-                raise AssuranceCompletenessError(
-                    f"{label} line must be a positive integer"
-                )
-            entry["line"] = line
-            location = f"{location}:{line}"
-        if "reason" in suppression:
-            reason = suppression["reason"]
-            if not isinstance(reason, str):
-                raise AssuranceCompletenessError(f"{label} reason must be a string")
-            # The reason decides the flag: a blank one is no justification.
-            if entry["justified"] != bool(reason.strip()):
-                raise AssuranceCompletenessError(
-                    f"{label} justified does not match its reason"
-                )
-            entry["reason"] = reason
+        entry = _suppression(item, f"suppression {index}")
         if entry["justified"]:
             justified.append(entry)
         else:
+            location = entry["path"]
+            if "line" in entry:
+                location = f"{location}:{entry['line']}"
             reasons.append(f"{entry['marker']} in {location} has no justification")
     return _criterion("M13", reasons), justified
+
+
+def _suppression(item: object, label: str) -> dict[str, Any]:
+    """One listed suppression, with its location and reason when it has them."""
+
+    suppression = require_mapping(item, label)
+    require_closed_keys(
+        suppression, label, _SUPPRESSION_KEYS, _SUPPRESSION_OPTIONAL_KEYS
+    )
+    entry = {
+        "path": require_text(suppression["path"], f"{label} path"),
+        "marker": require_text(suppression["marker"], f"{label} marker"),
+        "justified": _flag(suppression["justified"], f"{label} justified"),
+    }
+    if "line" in suppression:
+        line = suppression["line"]
+        if type(line) is not int or line <= 0:
+            raise AssuranceCompletenessError(f"{label} line must be a positive integer")
+        entry["line"] = line
+    if "reason" in suppression:
+        reason = suppression["reason"]
+        if not isinstance(reason, str):
+            raise AssuranceCompletenessError(f"{label} reason must be a string")
+        # The reason decides the flag: a blank one is no justification.
+        if entry["justified"] != bool(reason.strip()):
+            raise AssuranceCompletenessError(
+                f"{label} justified does not match its reason"
+            )
+        entry["reason"] = reason
+    return entry
 
 
 def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
