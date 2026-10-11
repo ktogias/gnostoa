@@ -894,7 +894,8 @@ guardrails:
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_matching_work_item_link_counts
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_decision_link_must_point_to_its_record
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_matching_decision_link_counts
-      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_work_item_number_is_canonical
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_work_item_is_its_number
+      - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_padding_and_empty_links_list_nothing_more
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_an_image_in_an_item_fails_the_run
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_label_without_an_identifier_lists_nothing
       - tests/test_merge_evidence_work_items.py::StartupTests.test_loading_l1_does_not_load_the_merge_evidence_adapter

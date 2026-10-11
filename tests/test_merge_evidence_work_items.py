@@ -225,8 +225,8 @@ class WorkItemCollectionTests(unittest.TestCase):
         self.assertNotIn(ISSUE_407, calls)
 
     def test_an_overlong_number_leaves_the_source_incomplete(self) -> None:
-        """cubic and CodeAnt on #422: beyond the canonical form, a number is not
-        read, and conversion never fails outside the collector's error path."""
+        """cubic and CodeAnt on #422: a number too long to convert is not read,
+        and conversion never fails outside the collector's error path."""
 
         body = _body(work_item="- Work Item: #" + "9" * 5000 + "\n")
         snapshot, calls = _collect(_with_body(_replies(), body))
@@ -352,6 +352,7 @@ class ReferenceIntegrityTests(unittest.TestCase):
             ("another number", f"[#407]({ISSUES}/408)"),
             ("a pull request", "[#407](https://github.com/ktogias/gnostoa/pull/407)"),
             ("a relative target", "[#407](../issues/407)"),
+            ("a root-relative target", "[#407](/issues/407)"),
             ("a fragment", f"[#407]({ISSUES}/407#top)"),
             ("a query", f"[#407]({ISSUES}/407?x=1)"),
             ("another host", "[#407](https://example.com/ktogias/gnostoa/issues/407)"),
@@ -366,10 +367,7 @@ class ReferenceIntegrityTests(unittest.TestCase):
             ("inline code after", f"[#4]({ISSUES}/4)`07`"),
             # CodeAnt on #422: a label holding only part of the identifier.
             ("a link on the hash alone", f"[#]({ISSUES}/999)407"),
-            ("a zero-width link touching it", f"[]({ISSUES}/999)#407"),
-            # Codex on #422: the label is exactly the identifier, without padding.
-            ("a padded label before a separator", f"[#407 ]({ISSUES}/407)"),
-            ("a padded label before an identifier", f"[#407 ]({ISSUES}/407)#15"),
+            ("a link to the issue's number spelt otherwise", f"[#407]({ISSUES}/408)"),
         ):
             with self.subTest(name):
                 self._assert_refused(_body(work_item=f"- Work Item: {line}, #15\n"))
@@ -408,18 +406,40 @@ class ReferenceIntegrityTests(unittest.TestCase):
                 links = self._links(_body(decision=f"- Decision: {line}\n"))
                 self.assertEqual(["0112"], links["decisions"])
 
-    def test_a_work_item_number_is_canonical(self) -> None:
-        """cubic and CodeAnt on #422: `#0407` would be read as issue 407 and
-        spend the bound twice with `#407`, so only the canonical form is a Work
-        Item: no leading zero, at most ten digits."""
+    def test_a_work_item_is_its_number(self) -> None:
+        """cubic and CodeAnt on #422, as the PAO advisory (6110693561) settled
+        it: the protected base's `#N` spellings stay valid, and a Work Item's
+        identity is its number, so `#0407` is issue 407, read once with `#407`,
+        and linked to issue 407."""
 
-        for line in ("#0407, #15", "#407, #015", "#0", "#12345678901"):
+        for line, expected in (
+            ("#0407, #15", ["#407", "#15"]),
+            ("#407, #0407, #15", ["#407", "#15"]),
+            (f"[#0407]({ISSUES}/407), #15", ["#407", "#15"]),
+            (f"[#407]({ISSUES}/0407), #15", ["#407", "#15"]),
+        ):
             with self.subTest(line):
-                self._assert_refused(_body(work_item=f"- Work Item: {line}\n"))
-        self.assertEqual(
-            ["#407", "#15"],
-            self._links(_body(work_item="- Work Item: #407, #15\n"))["work_items"],
-        )
+                body = _body(work_item=f"- Work Item: {line}\n")
+                snapshot, calls = _collect(_with_body(_replies(), body))
+                self.assertEqual(expected, _evidence(snapshot)["links"]["work_items"])
+                passes = snapshot["collection"]["passes"]
+                self.assertEqual(passes, calls.count(ISSUE_407))
+
+    def test_padding_and_empty_links_list_nothing_more(self) -> None:
+        """The PAO advisory on #422: an empty label lists nothing wherever it sits
+        (#407 6085478125), and a padded label's identifier is its trimmed text."""
+
+        for line, expected in (
+            (f"#407[]({ISSUES}/407), #15", ["#407", "#15"]),
+            (f"[]({ISSUES}/999)#407, #15", ["#407", "#15"]),
+            (f"[#407 ]({ISSUES}/407), #15", ["#407", "#15"]),
+            (f"[#407 ]({ISSUES}/407)#15", ["#407", "#15"]),
+            (f"[ #407]({ISSUES}/407), #15", ["#407", "#15"]),
+            (f"#15[ #407]({ISSUES}/407)", ["#15", "#407"]),
+        ):
+            with self.subTest(line):
+                links = self._links(_body(work_item=f"- Work Item: {line}\n"))
+                self.assertEqual(expected, links["work_items"])
 
     def test_an_image_in_an_item_fails_the_run(self) -> None:
         """Codex on #422: an image's alt text is a label the visible value does

@@ -156,9 +156,7 @@ _VOID_ELEMENTS = frozenset(
 # the owner chose a strict grammar over reading identifiers out of free text
 # (#407, 6086766086, 6088050686 and 6088035894).
 # `re.ASCII`, so `\d` is `[0-9]` and a Unicode digit is not one (CodeAnt on #413).
-# A Work Item number is canonical: no leading zero, at most ten digits, so no two
-# spellings name one issue (cubic and CodeAnt on #422).
-_WORK_ITEM_DIGITS = r"[1-9]\d{0,9}"
+_WORK_ITEM_DIGITS = r"\d+"
 _WORK_ITEM_NUMBER = rf"#{_WORK_ITEM_DIGITS}"
 _WORK_ITEM_VALUE = re.compile(
     rf"{_WORK_ITEM_NUMBER}(?:(?: +| *, *){_WORK_ITEM_NUMBER})*", re.ASCII
@@ -172,6 +170,8 @@ DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
 _WORK_ITEM_LABEL = re.compile(rf"#({_WORK_ITEM_DIGITS})", re.ASCII)
 _DECISION_LABEL = re.compile(r"(\d{4})", re.ASCII)
 _GITHUB = "https://github.com/"
+# The rest of a link to an issue of the subject, after its repository URL.
+_ISSUE_TARGET = re.compile(r"/issues/(\d+)", re.ASCII)
 _WORK_ITEM_FIELD = "Work Item"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
 _REVIEW_SEMANTIC_REASONS = frozenset(
@@ -677,9 +677,10 @@ def _inline_value(token: Token) -> str:
 
 class _Link(NamedTuple):
     """A link of a Change control item: its visible label, read as `_inline_value`
-    reads the item, and its target. In the item's visible text, the label
-    `touches` an identifier when it holds an identifier character or one comes
-    right before or after it, and it is `whole` when neither neighbour is one."""
+    reads the item, and its target. The label `touches` an identifier when it
+    holds an identifier character, and it is `whole` when, in the item's visible
+    text, no identifier character comes right before or after its text trimmed
+    of spaces (the PAO advisory on #422)."""
 
     label: str
     target: str
@@ -713,10 +714,12 @@ def _links(token: Token) -> tuple[_Link, ...]:
             visible += part
     links: list[_Link] = []
     for begin, end, target in spans:
-        neighbours = (visible[begin - 1 : begin], visible[end : end + 1])
-        bordered = any(n and n in _IDENTIFIER_CHARACTERS for n in neighbours)
         label = visible[begin:end]
-        touches = bordered or any(c in _IDENTIFIER_CHARACTERS for c in label)
+        first = begin + len(label) - len(label.lstrip(" "))
+        last = end - (len(label) - len(label.rstrip(" ")))
+        neighbours = (visible[first - 1 : first], visible[last : last + 1])
+        bordered = any(n and n in _IDENTIFIER_CHARACTERS for n in neighbours)
+        touches = any(c in _IDENTIFIER_CHARACTERS for c in label)
         links.append(_Link(label, target, touches, not bordered))
     return tuple(links)
 
@@ -884,8 +887,23 @@ def work_item_numbers(body: str) -> list[int]:
     once each: what L1 reads for this adapter (1b.3b-3), from the same section,
     field and grammar. A section this adapter would refuse fails here too."""
 
-    fields = _change_control_fields(body)
-    return [int(n) for n in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE)]
+    return _work_item_values(_change_control_fields(body))
+
+
+def _work_item_values(fields: Mapping[str, _Field]) -> list[int]:
+    """The listed Work Items' numbers, once each by value: `#0407` is issue 407
+    (cubic and CodeAnt on #422; the PAO advisory, 6110693561). A spelling too long
+    to convert fails the run here, inside every caller's error path."""
+
+    values: list[int] = []
+    for spelling in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE):
+        try:
+            value = int(spelling)
+        except ValueError as exc:
+            raise MergeEvidenceError("a Work Item number is too long to read") from exc
+        if value not in values:
+            values.append(value)
+    return values
 
 
 def _linked_identifiers(
@@ -897,13 +915,12 @@ def _linked_identifiers(
 
     found: list[tuple[str, str]] = []
     for link in field.links if field else ():
-        # A link that touches no identifier lists none (#407 6085478125); one that
-        # does must be exactly one whole identifier (CodeAnt and cubic on #422).
+        # A label with no identifier character lists none, wherever it sits (#407
+        # 6085478125); one with any must be exactly one whole identifier, trimmed
+        # of spaces (CodeAnt, cubic and the PAO advisory on #422).
         if not link.touches:
             continue
-        # Exactly the identifier, unpadded, as the supported forms write it, so
-        # its borders are the label's (Codex on #422).
-        match = label.fullmatch(link.label)
+        match = label.fullmatch(link.label.strip(" "))
         if match is None:
             raise MergeEvidenceError(f"a {name} link must carry one identifier")
         if not link.whole:
@@ -911,6 +928,16 @@ def _linked_identifiers(
             raise MergeEvidenceError(f"a {name} link must cover its whole identifier")
         found.append((match.group(1), link.target))
     return found
+
+
+def _same_number(target: str, label: str) -> bool:
+    """Whether two spellings name one issue number; a spelling too long to
+    convert names none."""
+
+    try:
+        return int(target) == int(label)
+    except ValueError:
+        return False
 
 
 def _check_links(
@@ -926,7 +953,9 @@ def _check_links(
     for number, target in _linked_identifiers(
         fields.get(_WORK_ITEM_FIELD), _WORK_ITEM_LABEL, _WORK_ITEM_FIELD
     ):
-        if target != f"{repository}/issues/{number}":
+        rest = target[len(repository) :] if target.startswith(repository) else ""
+        issue = _ISSUE_TARGET.fullmatch(rest)
+        if issue is None or not _same_number(issue.group(1), number):
             raise MergeEvidenceError(
                 f"the link for Work Item #{number} does not point to its issue"
             )
@@ -952,7 +981,7 @@ def _change_control(
     change_class = fields["Class"].value.strip() if "Class" in fields else ""
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = [f"#{n}" for n in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE)]
+    work_items = [f"#{n}" for n in _work_item_values(fields)]
     linked = _listed(fields, "Decision", _DECISION_VALUE)
     _check_links(fields, repository, decisions)
     return change_class, {

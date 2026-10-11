@@ -230,10 +230,11 @@ provider-neutral public change-governance contract of
     around it joins. A field's value is its visible text and inline code: a link's
     target is never read, so an empty link contributes nothing, and a Decision
     counts only by the id it shows. That is the owner's re-slice decision under
-    #402 (#407, 6085478125). A Work Item value is only `#N` entries in canonical
-    form, ASCII digits with no leading zero and at most ten of them, so no two
-    spellings name one issue (1b.3b-3). A Decision value is only four-digit ids.
-    Each is separated by commas or spaces. Any other value, such as an issue URL, an invisible character or
+    #402 (#407, 6085478125). A Work Item value is only `#N` entries in ASCII
+    digits, and a Decision value only four-digit ids, each separated by commas
+    or spaces. A Work Item's identity is its number, so `#0407` is issue 407 and
+    is read once with `#407` (1b.3b-3), and a number too long to convert fails
+    the run. Any other value, such as an issue URL, an invisible character or
     prose, fails the run, as the owner chose over reading identifiers out of
     free text (#407, 6086766086 and 6088050686). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
@@ -251,17 +252,17 @@ provider-neutral public change-governance contract of
     carries must be linked to its own issue or record. A Work Item `#N` must link
     to `https://github.com/<owner>/<name>/issues/N` of the subject repository, and
     a Decision to `knowledge/decisions/` followed by one of its protected
-    records' names. Any other target, such as another repository or number, a
-    pull request, a relative, `blob/` or `http:` URL, a fragment or a query,
-    fails the run, as does a link label holding several identifiers. A link
-    touches an identifier when its label holds a `#` or a digit, or one comes
-    right before or after it in the item's visible text. Such a link must be
-    exactly one whole identifier as a reader sees it, its label the identifier
-    alone with no padding, so a link labelled `#4`
-    or `#` that shows as part of `#407` fails the run, whatever lies between
-    them. A link that touches no identifier lists nothing, as before. Nothing a
-    link points to is fetched. A label with no identifier still lists nothing,
-    since identifiers come only from visible text and inline code. An image in a
+    records' names; a Work Item's target number is compared by value. Any other
+    target, such as another repository or number, a pull request, a relative,
+    `blob/` or `http:` URL, a fragment or a query, fails the run, as does a link
+    label holding several identifiers. A link whose label holds a `#` or a
+    digit must be exactly one whole identifier as a reader sees it: its label,
+    trimmed of spaces, is that identifier, and in the item's visible text no `#`
+    or digit comes right before or after it. So a link labelled `#4` or `#`
+    that shows as part of `#407` fails the run, whatever lies between them. A
+    label with no `#` or digit, an empty one included, lists nothing wherever it
+    sits, since identifiers come only from visible text and inline code (#407,
+    6085478125). Nothing a link points to is fetched. An image in a
     Change control item fails the run, since its alt text is a label the visible
     value does not show. A new link form goes to #402.
   - Closing references are GitHub's keywords in the title, the body and every
