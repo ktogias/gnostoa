@@ -24,7 +24,7 @@ import string
 from collections.abc import Iterator, Mapping, Sequence
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
@@ -156,11 +156,23 @@ _VOID_ELEMENTS = frozenset(
 # the owner chose a strict grammar over reading identifiers out of free text
 # (#407, 6086766086, 6088050686 and 6088035894).
 # `re.ASCII`, so `\d` is `[0-9]` and a Unicode digit is not one (CodeAnt on #413).
-_WORK_ITEM_VALUE = re.compile(r"#\d+(?:(?: +| *, *)#\d+)*", re.ASCII)
+_WORK_ITEM_DIGITS = r"\d+"
+_WORK_ITEM_NUMBER = rf"#{_WORK_ITEM_DIGITS}"
+_WORK_ITEM_VALUE = re.compile(
+    rf"{_WORK_ITEM_NUMBER}(?:(?: +| *, *){_WORK_ITEM_NUMBER})*", re.ASCII
+)
 _DECISION_VALUE = re.compile(r"\d{4}(?:(?: +| *, *)\d{4})*", re.ASCII)
 _NUMBER = re.compile(r"\d+", re.ASCII)
 _DECISION_RECORD = re.compile(r"(\d{4})-[a-z0-9-]+\.md")
 DECISIONS_DIRECTORY = Path("knowledge") / "decisions"
+# A link's label that carries one identifier, as the field's grammar writes it
+# (1b.3b-3, #407 6108453639).
+_WORK_ITEM_LABEL = re.compile(rf"#({_WORK_ITEM_DIGITS})", re.ASCII)
+_DECISION_LABEL = re.compile(r"(\d{4})", re.ASCII)
+_GITHUB = "https://github.com/"
+# The rest of a link to an issue of the subject, after its repository URL.
+_ISSUE_TARGET = re.compile(r"/issues/(\d+)", re.ASCII)
+_WORK_ITEM_FIELD = "Work Item"
 # L1's reasons for a PARTIAL reviews source that still kept every submitted review.
 _REVIEW_SEMANTIC_REASONS = frozenset(
     {
@@ -617,10 +629,11 @@ def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def load_decisions(project_root: Path) -> frozenset[str]:
-    """The ids of the protected target's Decision records. Each record must lie
-    inside the protected target, and a missing directory fails the run (cubic on
-    #413)."""
+def load_decisions(project_root: Path) -> dict[str, frozenset[str]]:
+    """The protected target's Decision records: each id's record file names. Each
+    record must lie inside the protected target, and a missing directory fails the
+    run (cubic on #413). A link to a Decision must name one of its records
+    (1b.3b-3)."""
 
     root = project_root.resolve()
     candidate = project_root / DECISIONS_DIRECTORY
@@ -631,27 +644,91 @@ def load_decisions(project_root: Path) -> frozenset[str]:
     directory = confine(
         candidate, project_root, label="decision records", error=MergeEvidenceError
     )
-    return frozenset(
-        match.group(1)
-        for entry in directory.iterdir()
-        if (match := _DECISION_RECORD.fullmatch(entry.name))
-        and entry.is_file()
-        and entry.resolve().is_relative_to(root)
-    )
+    records: dict[str, set[str]] = {}
+    for entry in directory.iterdir():
+        if (
+            (match := _DECISION_RECORD.fullmatch(entry.name))
+            and entry.is_file()
+            and entry.resolve().is_relative_to(root)
+        ):
+            records.setdefault(match.group(1), set()).add(entry.name)
+    return {identifier: frozenset(names) for identifier, names in records.items()}
+
+
+def _visible(child: Token) -> str | None:
+    """What one inline token shows: its text and inline code, a line break as a
+    space, and nothing else."""
+
+    if child.type in ("text", "code_inline"):
+        return child.content
+    if child.type in ("softbreak", "hardbreak"):
+        return " "
+    return None
 
 
 def _inline_value(token: Token) -> str:
     """An item's visible value: its text and inline code. A link's target is not
-    visible, so it is never read (Codex on #413; the owner's re-slice decision,
-    #407 6085478125), and inline HTML, comments included, is not part of it."""
+    visible, so it is never read for identifiers (Codex on #413; the owner's
+    re-slice decision, #407 6085478125), and inline HTML, comments included, is
+    not part of it."""
 
-    parts: list[str] = []
+    return "".join(part for child in token.children or [] if (part := _visible(child)))
+
+
+class _Link(NamedTuple):
+    """A link of a Change control item: its visible label, read as `_inline_value`
+    reads the item, and its target. The label `touches` an identifier when it
+    holds an identifier character, and it is `whole` when, in the item's visible
+    text, no identifier character comes right before or after its text trimmed
+    of spaces (the PAO advisory on #422)."""
+
+    label: str
+    target: str
+    touches: bool
+    whole: bool
+
+
+# What continues an identifier in visible text: `#407` is one token, not `#4`
+# and `07`.
+_IDENTIFIER_CHARACTERS = frozenset("#0123456789")
+
+
+def _links(token: Token) -> tuple[_Link, ...]:
+    """Each link of an item, with its label's place in the item's visible text,
+    the string `_inline_value` builds. A zero-width link, a comment or a code span
+    therefore cannot separate a label from the digits a reader sees next to it
+    (cubic and Codex on #422). The target is only checked against the label's
+    identifier, never read for one (1b.3b-3, #407 6085544477)."""
+
+    visible = ""
+    spans: list[tuple[int, int, str]] = []
+    start: int | None = None
+    target = ""
     for child in token.children or []:
-        if child.type in ("text", "code_inline"):
-            parts.append(child.content)
-        elif child.type in ("softbreak", "hardbreak"):
-            parts.append(" ")
-    return "".join(parts)
+        if child.type == "link_open":
+            start, target = len(visible), str(child.attrGet("href") or "")
+        elif child.type == "link_close" and start is not None:
+            spans.append((start, len(visible), target))
+            start = None
+        elif part := _visible(child):
+            visible += part
+    links: list[_Link] = []
+    for begin, end, target in spans:
+        label = visible[begin:end]
+        first = begin + len(label) - len(label.lstrip(" "))
+        last = end - (len(label) - len(label.rstrip(" ")))
+        neighbours = (visible[first - 1 : first], visible[last : last + 1])
+        bordered = any(n and n in _IDENTIFIER_CHARACTERS for n in neighbours)
+        touches = any(c in _IDENTIFIER_CHARACTERS for c in label)
+        links.append(_Link(label, target, touches, not bordered))
+    return tuple(links)
+
+
+class _Field(NamedTuple):
+    """A Change control field's visible value, and the links its item holds."""
+
+    value: str
+    links: tuple[_Link, ...]
 
 
 class _ContainerTags(HTMLParser):
@@ -749,7 +826,7 @@ def _section_items(tokens: Sequence[Token], start: int, end: int) -> Iterator[To
             yield tokens[index + 2]
 
 
-def _change_control_fields(body: str) -> dict[str, str]:
+def _change_control_fields(body: str) -> dict[str, _Field]:
     """The fields of the description's one top-level `## Change control` section:
     the items of its top-level bullet lists, up to the next top-level h1 or h2.
     Raw HTML that can hold content anywhere before the section's end fails the
@@ -763,7 +840,7 @@ def _change_control_fields(body: str) -> dict[str, str]:
             "raw HTML that can hold content precedes the end of the Change "
             "control section"
         )
-    fields: dict[str, str] = {}
+    fields: dict[str, _Field] = {}
     for token in _section_items(tokens, start, end):
         if any(
             child.type == "html_inline" and not child.content.startswith("<!--")
@@ -775,6 +852,10 @@ def _change_control_fields(body: str) -> dict[str, str]:
             # 6087507517 and 6087484196). A comment renders as nothing, so the
             # text around it joins.
             raise MergeEvidenceError("a Change control item holds raw HTML")
+        if any(child.type == "image" for child in token.children or []):
+            # An image's alt text is a label the visible value does not show, so
+            # it could hide an identifier from the link check (Codex on #422).
+            raise MergeEvidenceError("a Change control item holds an image")
         match = _FIELD.fullmatch(_inline_value(token).strip(" \t"))
         if match is None:
             raise MergeEvidenceError(
@@ -784,41 +865,182 @@ def _change_control_fields(body: str) -> dict[str, str]:
             raise MergeEvidenceError(
                 f"the Change control section repeats {match.group(1)}"
             )
-        fields[match.group(1)] = match.group(2)
+        fields[match.group(1)] = _Field(match.group(2), _links(token))
     return fields
 
 
 def _listed(
-    fields: Mapping[str, str], name: str, grammar: re.Pattern[str]
+    fields: Mapping[str, _Field], name: str, grammar: re.Pattern[str]
 ) -> list[str]:
     """The numbers a field lists, in order. An empty field lists nothing; a value
     that is not the field's grammar fails the run."""
 
     # Only ASCII spaces pad a value: a Unicode space is not erased.
-    value = fields.get(name, "").strip(" ")
+    value = fields[name].value.strip(" ") if name in fields else ""
     if value and grammar.fullmatch(value) is None:
         raise MergeEvidenceError(f"the {name} field is not a list the template allows")
     return _unique(_NUMBER.findall(value))
 
 
+def work_item_numbers(body: str) -> list[int]:
+    """The Work Items a description's Change control section lists, in order and
+    once each: what L1 reads for this adapter (1b.3b-3), from the same section,
+    field and grammar. A section this adapter would refuse fails here too."""
+
+    return _work_item_values(_change_control_fields(body))
+
+
+def _work_item_values(fields: Mapping[str, _Field]) -> list[int]:
+    """The listed Work Items' numbers, once each by value: `#0407` is issue 407
+    (cubic and CodeAnt on #422; the PAO advisory, 6110693561). A spelling too long
+    to convert fails the run here, inside every caller's error path."""
+
+    values: list[int] = []
+    seen: set[int] = set()
+    for spelling in _listed(fields, _WORK_ITEM_FIELD, _WORK_ITEM_VALUE):
+        try:
+            value = int(spelling)
+        except ValueError as exc:
+            raise MergeEvidenceError("a Work Item number is too long to read") from exc
+        # A set, so the cost is linear in the field (cubic on #422).
+        if value not in seen:
+            seen.add(value)
+            values.append(value)
+    return values
+
+
+def _linked_identifiers(
+    field: _Field | None, label: re.Pattern[str], name: str
+) -> list[tuple[str, str]]:
+    """Each identifier a field carries by a link, with the link's target. A label
+    with no identifier carries none, and one with any other text, several
+    identifiers included, fails the run."""
+
+    found: list[tuple[str, str]] = []
+    for link in field.links if field else ():
+        # A label with no identifier character lists none, wherever it sits (#407
+        # 6085478125); one with any must be exactly one whole identifier, trimmed
+        # of spaces (CodeAnt, cubic and the PAO advisory on #422).
+        if not link.touches:
+            continue
+        match = label.fullmatch(link.label.strip(" "))
+        if match is None:
+            raise MergeEvidenceError(f"a {name} link must carry one identifier")
+        if not link.whole:
+            # `[#4](…/issues/4)07` shows `#407` (Codex and cubic on #422).
+            raise MergeEvidenceError(f"a {name} link must cover its whole identifier")
+        found.append((match.group(1), link.target))
+    return found
+
+
+def _same_number(target: str, label: str) -> bool:
+    """Whether two spellings name one issue number; a spelling too long to
+    convert names none."""
+
+    try:
+        return int(target) == int(label)
+    except ValueError:
+        return False
+
+
+def _check_links(
+    fields: Mapping[str, _Field],
+    repository: str,
+    decisions: Mapping[str, frozenset[str]],
+) -> None:
+    """A Work Item or Decision a link carries is linked to its own issue or record
+    (1b.3b-3, #407 6108453639): a Work Item to `https://github.com/<subject>/issues/
+    <number>`, a Decision to `knowledge/decisions/<one of its protected records>`.
+    Any other target fails the run; nothing is fetched."""
+
+    for number, target in _linked_identifiers(
+        fields.get(_WORK_ITEM_FIELD), _WORK_ITEM_LABEL, _WORK_ITEM_FIELD
+    ):
+        rest = target[len(repository) :] if target.startswith(repository) else ""
+        issue = _ISSUE_TARGET.fullmatch(rest)
+        if issue is None or not _same_number(issue.group(1), number):
+            raise MergeEvidenceError(
+                f"the link for Work Item #{number} does not point to its issue"
+            )
+    for identifier, target in _linked_identifiers(
+        fields.get("Decision"), _DECISION_LABEL, "Decision"
+    ):
+        records = decisions.get(identifier, frozenset())
+        if target not in {f"{DECISIONS_DIRECTORY.as_posix()}/{r}" for r in records}:
+            raise MergeEvidenceError(
+                f"the link for Decision {identifier} does not point to its record"
+            )
+
+
 def _change_control(
-    body: str, decisions: frozenset[str]
+    body: str, decisions: Mapping[str, frozenset[str]], repository: str
 ) -> tuple[str, dict[str, list[str]]]:
     """The class, Work Items and Decisions from the change-request template's
     `## Change control` section (owner decision 3, #407). Examples in code blocks
-    and comments are not fields, and a Decision counts only when the protected
-    target has its record."""
+    and comments are not fields, a Decision counts only when the protected target
+    has its record, and a linked one only when its link is its own (1b.3b-3)."""
 
     fields = _change_control_fields(body)
-    change_class = fields.get("Class", "").strip()
+    change_class = fields["Class"].value.strip() if "Class" in fields else ""
     if change_class not in CHANGE_CLASSES:
         raise MergeEvidenceError(f"the change class {change_class!r} is not a class")
-    work_items = [f"#{n}" for n in _listed(fields, "Work Item", _WORK_ITEM_VALUE)]
+    work_items = [f"#{n}" for n in _work_item_values(fields)]
     linked = _listed(fields, "Decision", _DECISION_VALUE)
+    _check_links(fields, repository, decisions)
     return change_class, {
         "work_items": work_items,
         "decisions": [d for d in linked if d in decisions],
     }
+
+
+def _proven_work_items(
+    snapshot: Mapping[str, Any], work_items: Sequence[str], repository: str
+) -> None:
+    """Every listed Work Item is an issue, not a pull request, of the subject
+    repository, as L1 observed it in the snapshot's cut (1b.3b-3, #407
+    6108453639). An incomplete read, a missing or extra observation, or any other
+    answer fails the run and names the Work Item, so none is silently dropped."""
+
+    observed = [_observation(item) for item in _complete(snapshot, "work_items")]
+    listed = [int(item.removeprefix("#")) for item in work_items]
+    if [number for number, _, _ in observed] != listed:
+        raise MergeEvidenceError(
+            "the observed Work Items are not the ones the description lists"
+        )
+    name = repository.removeprefix(_GITHUB)
+    for number, kind, observed_repository in observed:
+        if kind == "absent":
+            raise MergeEvidenceError(f"Work Item #{number} does not exist in {name}")
+        if kind == "pull_request":
+            raise MergeEvidenceError(f"Work Item #{number} is a pull request")
+        if observed_repository != name:
+            raise MergeEvidenceError(f"Work Item #{number} is not an issue of {name}")
+
+
+_OBSERVATION_KEYS = frozenset({"number", "repository", "kind"})
+_OBSERVATION_KINDS = frozenset({"issue", "pull_request", "absent"})
+
+
+def _observation(item: object) -> tuple[int, str, str]:
+    """One Work Item observation, in L1's closed shape. `validate_snapshot` does
+    not normalize this merge-evidence source, so `407.0` or `True` must not pass
+    for a number (Codex on #422). The shape is checked with the same helpers as
+    every closed evidence object (Claude on #422)."""
+
+    label = "work_items observation"
+    observation = require_mapping(item, label)
+    require_closed_keys(observation, label, _OBSERVATION_KEYS)
+    kind = require_text(observation["kind"], f"{label} kind")
+    if kind not in _OBSERVATION_KINDS:
+        raise MergeEvidenceError(f"{label} has the unknown kind {kind!r}")
+    repository = require_text(observation["repository"], f"{label} repository")
+    number = observation["number"]
+    # As L1 writes them: a provider's answer has a positive number, and an absent
+    # Work Item carries the listed one, so only it may be 0 (Codex on #422).
+    lowest = 0 if kind == "absent" else 1
+    if type(number) is not int or number < lowest:
+        raise MergeEvidenceError(f"{label} has a number that is not one L1 records")
+    return number, kind, repository
 
 
 def _source(snapshot: Mapping[str, Any], name: str) -> tuple[list[dict[str, Any]], str]:
@@ -873,7 +1095,7 @@ def evidence_from_snapshot(
     authorities: Mapping[str, Any],
     change_policy: Mapping[str, Any],
     codeowners: CodeOwners,
-    decisions: frozenset[str],
+    decisions: Mapping[str, frozenset[str]],
     required_checks: Mapping[str, Mapping[str, str]],
     analyzer_readback: object = None,
 ) -> dict[str, Any]:
@@ -912,7 +1134,11 @@ def evidence_from_snapshot(
     if provider["body_truncated"]:
         # A cut description may have lost part of its section (CodeAnt on #413).
         raise MergeEvidenceError("the pull request's description is truncated")
-    change_class, links = _change_control(provider["body"], decisions)
+    repository = subject["repository"]
+    if not repository.startswith(_GITHUB):
+        raise MergeEvidenceError("the subject repository is not a GitHub repository")
+    change_class, links = _change_control(provider["body"], decisions, repository)
+    _proven_work_items(document, links["work_items"], repository)
     state = "merged" if provider["merged"] else provider["state"]
     analyzer_receipts, analyzer_findings = _analyzer_evidence(
         analyzer_readback, subject

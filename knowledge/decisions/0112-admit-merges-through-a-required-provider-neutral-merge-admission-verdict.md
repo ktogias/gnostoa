@@ -128,7 +128,7 @@ provider-neutral public change-governance contract of
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
-  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 admitted (#407, 6101607240); the others each need admission |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 admitted (#407, 6108453639); 1b.3b-4 needs admission |
   | 1b.3c | SonarCloud's readback (#359) | not yet admitted |
   | 1b.4 | publication and activation | not yet admitted |
   | 1b.5 | the post-merge audit | not yet admitted |
@@ -232,15 +232,43 @@ provider-neutral public change-governance contract of
     counts only by the id it shows. That is the owner's re-slice decision under
     #402 (#407, 6085478125). A Work Item value is only `#N` entries in ASCII
     digits, and a Decision value only four-digit ids, each separated by commas
-    or spaces. Any other value, such as an issue URL, an invisible character or
+    or spaces. A Work Item's identity is its number, so `#0407` is issue 407 and
+    is read once with `#407` (1b.3b-3), and a number too long to convert fails
+    the run. Any other value, such as an issue URL, an invisible character or
     prose, fails the run, as the owner chose over reading identifiers out of
-    free text (#407, 6086766086 and 6088050686). A visible `#N` whose link points
-    elsewhere is still read as `#N`. Two 1b.3b acceptance cases must be closed
-    before 1b.4 activates the gate: whether each Work Item exists, as an issue
-    rather than a pull request (#407, 6085101448 and 6085110011), and, proposed
-    and pending the owner's admission, whether a link's label and target agree,
-    its reference integrity (#407, 6085507735). A Decision counts only when the
+    free text (#407, 6086766086 and 6088050686). A Decision counts only when the
     protected target has its record, and a truncated description fails the run.
+  - Each listed Work Item must exist as an issue, not a pull request, of the
+    subject repository (1b.3b-3, the owner's admission, #407 6108453639; the
+    acceptance cases 6085101448 and 6085110011). L1 reads each listed number as
+    an issue, once per readback pass and at most 20, through the same client and
+    with this adapter's own reading of the section, so a description or an issue
+    that changes between passes is never certified. A 404 is an absent Work Item,
+    and any other failure, the bound included, leaves the `work_items` source
+    incomplete. The run fails, naming the Work Item, unless that source is
+    `COMPLETE` and every listed Work Item was observed as such an issue, so none
+    is silently left out. Each observation must be in L1's closed shape:
+    exactly `number`, `kind` and `repository`. The `kind` is `issue`,
+    `pull_request` or `absent`, and the `repository` is text. The `number` is an
+    integer, positive for an issue or a pull request, and for an absent Work
+    Item the listed number, which may be 0. An issue need not be open.
+  - Reference integrity (#407, 6085507735): a Work Item or Decision a link
+    carries must be linked to its own issue or record. A Work Item `#N` must link
+    to `https://github.com/<owner>/<name>/issues/N` of the subject repository, and
+    a Decision to `knowledge/decisions/` followed by one of its protected
+    records' names; a Work Item's target number is compared by value. Any other
+    target, such as another repository or number, a pull request, a relative,
+    `blob/` or `http:` URL, a fragment or a query, fails the run, as does a link
+    label holding several identifiers. A link whose label holds a `#` or a
+    digit must be exactly one whole identifier as a reader sees it: its label,
+    trimmed of spaces, is that identifier, and in the item's visible text no `#`
+    or digit comes right before or after it. So a link labelled `#4` or `#`
+    that shows as part of `#407` fails the run, whatever lies between them. A
+    label with no `#` or digit, an empty one included, lists nothing wherever it
+    sits, since identifiers come only from visible text and inline code (#407,
+    6085478125). Nothing a link points to is fetched. An image in a
+    Change control item fails the run, since its alt text is a label the visible
+    value does not show. A new link form goes to #402.
   - Closing references are GitHub's keywords in the title, the body and every
     commit message, read in the raw text, code and comments included. The
     asymmetry with the class and links is deliberate. Reading a hidden field

@@ -115,6 +115,8 @@ _COMPARE_FILE_CAP = 300
 _MAX_OPEN_PULLS = 8
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _MAX_COLLECTION_PASSES = 3
+# The distinct Work Items one pass reads (#407, slice 1b.3b-3).
+_MAX_WORK_ITEMS = 20
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -1115,6 +1117,66 @@ def _closing_issues(nodes: list[Any]) -> list[dict[str, Any]]:
     return issues
 
 
+def _work_item(payload: Any) -> dict[str, Any]:
+    """One issue as GitHub's REST API answers it: its number, its repository and
+    whether it is a pull request, which the issues API also answers for."""
+
+    issue = _mapping(payload, "issue")
+    number = _integer(issue.get("number"), "issue.number")
+    url = _text(issue.get("repository_url"), "issue.repository_url")
+    repository = url.removeprefix(f"{_API_ROOT}/repos/")
+    owner, _, name = repository.partition("/")
+    if repository == url or not owner or not name or "/" in name:
+        raise ProviderReadError("issue.repository_url is not an API repository")
+    kind = "pull_request" if "pull_request" in issue else "issue"
+    return {"number": number, "repository": repository, "kind": kind}
+
+
+def _work_items(
+    client: JsonReader, root: str, repository: str, subject: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Each Work Item the description's Change control section lists, read as an
+    issue (#407, slice 1b.3b-3), with the adapter's own reading of the section.
+    At most `_MAX_WORK_ITEMS` distinct numbers are read, once each per pass. A 404
+    is an absent Work Item; any other failure leaves the source incomplete, so it
+    cannot prove one. A truncated description reads none: the adapter fails that
+    run anyway (Claude on #422)."""
+
+    if subject["body_truncated"]:
+        error = "the description is truncated"
+        return [], {"status": "ERROR", "pages": 0, "count": 0, "error": error}
+    # Here, not at the top: the workflow's publish job runs this script with no
+    # runtime lock, and the adapter's Markdown parser is not there (Codex on #422).
+    from tools import merge_evidence_github
+
+    try:
+        numbers = merge_evidence_github.work_item_numbers(subject["body"])
+    except merge_evidence_github.MergeEvidenceError as exc:
+        return [], {"status": "ERROR", "pages": 0, "count": 0, "error": str(exc)}
+    items: list[dict[str, Any]] = []
+    for number in numbers[:_MAX_WORK_ITEMS]:
+        try:
+            payload, _ = client.get(f"{root}/issues/{number}")
+            items.append(_work_item(payload))
+        except ProviderReadError as exc:
+            if exc.status != 404:
+                return items, {
+                    "status": _error_status(exc, len(items)),
+                    "pages": len(items),
+                    "count": len(items),
+                    "error": str(exc),
+                }
+            items.append({"number": number, "repository": repository, "kind": "absent"})
+    coverage: dict[str, Any] = {
+        "status": "COMPLETE",
+        "pages": len(items),
+        "count": len(items),
+    }
+    if len(numbers) > _MAX_WORK_ITEMS:
+        coverage.update(status="PARTIAL", limit="work_item_limit")
+    return items, coverage
+
+
 def _mark_edits(
     client: JsonReader, snapshot: dict[str, Any], repository: str, pull_number: int
 ) -> None:
@@ -1203,6 +1265,9 @@ def _collect_merge_evidence_once(
             _closing_issues,
         )
     )
+    snapshot["work_items"], snapshot["coverage"]["work_items"] = _work_items(
+        client, root, repository, snapshot["subject"]
+    )
     return snapshot
 
 
@@ -1218,8 +1283,9 @@ def collect_snapshot(
 
     With `merge_evidence`, the snapshot also carries what the merge-evidence
     adapter reads: the pull request's draft, merged, target, default branch,
-    author and body, its commits and changed files, and the issues merging it
-    would close, each with its coverage (#407, slice 1b.3a)."""
+    author and body, its commits and changed files, the issues merging it would
+    close (#407, slice 1b.3a), and the Work Items its description lists (slice
+    1b.3b-3), each with its coverage."""
     previous: dict[str, Any] | None = None
     previous_cut: str | None = None
     snapshot: dict[str, Any] = {}
