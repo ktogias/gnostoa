@@ -359,7 +359,13 @@ provider-neutral public change-governance contract of
       reason denies M13. A patch whose hunks do not account exactly for its
       lines and additions, or a truncated one, leaves the suppressions
       `PARTIAL`. So does a file without hunks, unless it is a removal or its head
-      blob is Git's empty blob, since only then can nothing have been added.
+      blob is Git's empty blob, since only then can nothing have been added; and
+      such a file whose patch keeps any head-side line, context included,
+      contradicts itself and is `PARTIAL` too. A comparison yields at most 1,000
+      suppressions and 1 MiB of them as the command writes them, each charged
+      its serialized size. Past either budget the list keeps what it holds and is
+      `PARTIAL`, since a reason is the rest of its line and a line packed with
+      markers grows quadratically (the coordinator's selection on #423).
     - **Trust-root changes (M15).** Each pattern is compiled by the CODEOWNERS
       matcher, which refuses what GitHub does not document. An added, modified,
       removed or renamed file with a name under a pattern is listed under every

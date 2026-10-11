@@ -924,6 +924,10 @@ guardrails:
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_consecutive_added_lines_are_numbered_in_turn
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_one_terminal_newline_ends_the_last_line
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_hunk_header_s_context_is_not_examined
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_the_suppression_list_is_bounded_in_count
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_the_suppression_list_is_bounded_in_bytes_across_files
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_record_is_charged_as_the_command_writes_it
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_records_past_the_budget_are_never_built
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_complete_diff_without_markers_is_complete_and_empty
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_changed_trust_roots_are_reported_with_every_name
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_name_with_a_newline_is_matched_like_any_other

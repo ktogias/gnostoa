@@ -17,6 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 from test_merge_admission import _evidence as _verdict_evidence
@@ -571,6 +572,87 @@ class SuppressionTests(unittest.TestCase):
             {"coverage": "COMPLETE", "found": []},
             _suppressions([_file("tools/x.py", patch=patch)]),
         )
+
+    def test_the_suppression_list_is_bounded_in_count(self) -> None:
+        """Codex on #423 and the coordinator's selection (6114751092): past the
+        occurrence budget the list stops, keeps its prefix, and is PARTIAL."""
+
+        cap = merge_evidence_github._MAX_SUPPRESSIONS
+
+        def lines(count: int) -> dict[str, Any]:
+            body = "\n".join("+a  # noqa -- r" for _ in range(count))
+            return _file("t.py", "added", patch=f"@@ -0,0 +1,{count} @@\n{body}")
+
+        self.assertEqual("COMPLETE", _suppressions([lines(cap)])["coverage"])
+        over = _suppressions([lines(cap + 1)])
+        self.assertEqual("PARTIAL", over["coverage"])
+        self.assertEqual(cap, len(over["found"]))
+        self.assertEqual(_suppressions([lines(cap)])["found"], over["found"])
+
+    def test_the_suppression_list_is_bounded_in_bytes_across_files(self) -> None:
+        """Every record is charged, its path and reason included, and the budget
+        is the comparison's, not a file's or a line's."""
+
+        budget = merge_evidence_github._MAX_SUPPRESSION_BYTES
+        reason = "r" * 60_000
+        files = [
+            _file(
+                f"tools/t{n:02d}.py",
+                "added",
+                patch=f"@@ -0,0 +1 @@\n+a  # noqa --{reason}",
+            )
+            for n in range(40)
+        ]
+        cost = merge_evidence_github._record_bytes(
+            _found("tools/t10.py", 1, "noqa", reason)
+        )
+        fit = budget // cost
+        self.assertLess(fit, len(files))
+        self.assertLess(fit, merge_evidence_github._MAX_SUPPRESSIONS)
+        self.assertEqual("COMPLETE", _suppressions(files[:fit])["coverage"])
+        over = _suppressions(files[: fit + 1])
+        self.assertEqual("PARTIAL", over["coverage"])
+        self.assertEqual(fit, len(over["found"]))
+
+    def test_a_record_is_charged_as_the_command_writes_it(self) -> None:
+        """The cost covers the serializer's escaping of quotes, backslashes and
+        non-ASCII text, at the record's depth in the evidence document."""
+
+        reason = ' quote" slash\\ caf\u00e9 \u20ac \U0001f600'
+        patch = "\n".join(
+            ["@@ -0,0 +1,3 @@"] + [f"+x{n}  # noqa --{reason}" for n in range(3)]
+        )
+        files = [_file("tools/\u00e9t\u00e9.py", "added", patch=patch)]
+        evidence = _evidence(files)
+        found = evidence["suppressions"]["found"]
+        self.assertEqual(3, len(found))
+        empty = copy.deepcopy(evidence)
+        empty["suppressions"]["found"] = []
+        written = len(json.dumps(evidence, indent=2, sort_keys=True).encode("utf-8"))
+        bare = len(json.dumps(empty, indent=2, sort_keys=True).encode("utf-8"))
+        charged = sum(merge_evidence_github._record_bytes(r) for r in found)
+        self.assertGreaterEqual(charged, written - bare)
+        self.assertLessEqual(charged - (written - bare), 16)
+
+    def test_records_past_the_budget_are_never_built(self) -> None:
+        """The walk is lazy: a line packed with markers yields one record at a
+        time, so nothing past the budget is copied."""
+
+        consumed = 0
+        original = merge_evidence_github._occurrences
+
+        def counted(*args: Any) -> Any:
+            nonlocal consumed
+            for record in original(*args):
+                consumed += 1
+                yield record
+
+        line = "+" + "noqa--x " * 8_000
+        files = [_file("t.py", "added", patch=f"@@ -0,0 +1 @@\n{line}")]
+        with patch.object(merge_evidence_github, "_occurrences", counted):
+            record = _suppressions(files)
+        self.assertEqual("PARTIAL", record["coverage"])
+        self.assertLessEqual(consumed, merge_evidence_github._MAX_SUPPRESSIONS + 1)
 
     def test_a_complete_diff_without_markers_is_complete_and_empty(self) -> None:
         patch = "@@ -1 +1 @@\n-a\n+b"

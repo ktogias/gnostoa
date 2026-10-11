@@ -21,6 +21,8 @@ passing it vacuously.
 from __future__ import annotations
 
 import argparse
+import heapq
+import json
 import re
 import string
 from collections.abc import Iterator, Mapping, Sequence
@@ -749,44 +751,73 @@ def _file_additions(item: Mapping[str, Any]) -> list[tuple[int, str]] | None:
     return added
 
 
+# M13's resource budgets per comparison (the coordinator on #423, 6114751092):
+# a reason is the rest of its line, so a line packed with markers grows
+# quadratically. Past either budget the list keeps what it holds and is PARTIAL.
+_MAX_SUPPRESSIONS = 1_000
+_MAX_SUPPRESSION_BYTES = 1_048_576
+# Records sit three levels deep in the evidence document, which the command
+# writes with `indent=2`, so each line of a record carries six more spaces. Each
+# record is also charged six bytes for its separator and a share of the list's
+# own framing: N records take 2(N-1) + 6 bytes of it, never more than 6N.
+_RECORD_INDENT = 6
+_RECORD_FRAMING = 6
+
+
+def _record_bytes(record: Mapping[str, Any]) -> int:
+    """An upper bound on a record's size as the command writes it:
+    `json.dumps(indent=2, sort_keys=True)`, which escapes all but ASCII, at its
+    depth in the document, with its share of the list's separators and framing."""
+
+    rendered = json.dumps(record, indent=2, sort_keys=True)
+    lines = rendered.count("\n") + 1
+    return len(rendered.encode("utf-8")) + _RECORD_INDENT * lines + _RECORD_FRAMING
+
+
+def _hits(text: str, order: int, marker: str) -> Iterator[tuple[int, int, str]]:
+    """Each position of one marker in a line, with the marker's declared order,
+    which breaks a tie between markers at one position."""
+
+    start = text.find(marker)
+    while start != -1:
+        yield start, order, marker
+        start = text.find(marker, start + 1)
+
+
 def _occurrences(
     path: str, line: int, text: str, markers: Sequence[str]
-) -> list[dict[str, Any]]:
-    """Every occurrence of a marker in one added line, in reading order. Its reason
-    is what follows the first `--` after it on the line, kept as written; only
-    whether it is blank is judged (cubic on #423)."""
+) -> Iterator[dict[str, Any]]:
+    """Every occurrence of a marker in one added line, in reading order, one at a
+    time, so nothing past the budget is built. Its reason is what follows the
+    first `--` after it on the line, kept as written; only whether it is blank
+    is judged (cubic on #423)."""
 
-    hits = []
-    for order, marker in enumerate(markers):
-        start = text.find(marker)
-        while start != -1:
-            hits.append((start, order, marker))
-            start = text.find(marker, start + 1)
-    found = []
-    for start, _, marker in sorted(hits):
+    hits = heapq.merge(
+        *(_hits(text, order, marker) for order, marker in enumerate(markers))
+    )
+    for start, _, marker in hits:
         delimiter = text.find("--", start + len(marker))
         reason = "" if delimiter == -1 else text[delimiter + 2 :]
-        found.append(
-            {
-                "path": path,
-                "line": line,
-                "marker": marker,
-                "justified": bool(reason.strip()),
-                "reason": reason,
-            }
-        )
-    return found
+        yield {
+            "path": path,
+            "line": line,
+            "marker": marker,
+            "justified": bool(reason.strip()),
+            "reason": reason,
+        }
 
 
 def _suppressions(
     files: Sequence[Mapping[str, Any]], markers: Sequence[str] | None
 ) -> dict[str, Any]:
     """M13: each declared marker in a line the comparison adds. A file whose added
-    lines it does not show completely leaves the list PARTIAL."""
+    lines it does not show completely leaves the list PARTIAL, and so does
+    reaching either budget, before the record that would pass it."""
 
     if markers is None:
         return {"coverage": "UNAVAILABLE", "found": []}
     found: list[dict[str, Any]] = []
+    size = 0
     complete = True
     for item in files:
         added = _file_additions(item)
@@ -794,7 +825,15 @@ def _suppressions(
             complete = False
             continue
         for line, text in added:
-            found.extend(_occurrences(item["path"], line, text, markers))
+            for record in _occurrences(item["path"], line, text, markers):
+                cost = _record_bytes(record)
+                if (
+                    len(found) == _MAX_SUPPRESSIONS
+                    or size + cost > _MAX_SUPPRESSION_BYTES
+                ):
+                    return {"coverage": "PARTIAL", "found": found}
+                found.append(record)
+                size += cost
     return {"coverage": "COMPLETE" if complete else "PARTIAL", "found": found}
 
 
