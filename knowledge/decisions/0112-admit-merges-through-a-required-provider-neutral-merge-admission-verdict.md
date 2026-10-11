@@ -288,13 +288,17 @@ provider-neutral public change-governance contract of
   - The analyzer items have receipts (1b.3b-2), from the authenticated
     readback's bundle (Decisions 0091 and 0107), read back through the readback
     module's own contract: a recorded readback is valid only if `build_readback`
-    rebuilds it exactly. A bundle bound to the exact repository, pull request and
-    head gives each item the receipt of its readback's own coverage, whatever its
-    findings; readbacks map to items by provider and scope (DeepSource diff and
-    full, Codacy). A bundle that is not bound to the subject gives every item
-    `INCOMPLETE`, a missing readback gives its item no receipt (`MISSING`), and an
-    unknown or repeated readback fails the run. Without a bundle the items stay
-    `MISSING`. The bundle file is read inside the project root, as every path
+    rebuilds it exactly. A bundle bound to the exact repository, pull request (a
+    `github-pull-request` change request) and head gives each item the receipt of
+    its readback's own coverage, whatever its findings; readbacks map to items by
+    provider and scope (DeepSource diff and full, Codacy). Each item stands for one
+    kind of read, as the producer marks a complete one: DeepSource's diff item a
+    `DIFF_LOCAL` read, its full item and Codacy's a `FULL_RUN`. A complete read of
+    another kind gives `INCOMPLETE` (Decision 0091). A bundle that is not bound to
+    the subject gives every item `INCOMPLETE`, and a missing readback gives its
+    item no receipt (`MISSING`). Whatever the binding, an unknown or repeated
+    readback, or an observation time that is not one, fails the run. Without a
+    bundle the items stay `MISSING`. The bundle file is read inside the project root, as every path
     the command reads, and authenticating it is 1b.4's publisher's.
   - **M17: no unresolved analyzer finding** (the owner's selection, #407,
     6101607240). The evidence lists the findings, each with its item, and their
