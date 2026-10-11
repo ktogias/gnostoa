@@ -886,6 +886,7 @@ guardrails:
       - tests/test_analyzer_readback.py
       - tests/test_analyzer_readback_runner.py
       - tests/test_analyzer_deepsource_paths.py
+      - tests/test_analyzer_deepsource_columns.py
       - tests/test_github_rest.py
 
   - id: authoritative-centralized-ci
