@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
-from tools import github_events
+from tools import analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -634,6 +634,9 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):
+    def test_the_bundle_schema_is_the_reader_s(self) -> None:
+        self.assertEqual(analyzer_readback.BUNDLE_SCHEMA, runner.BUNDLE_SCHEMA)
+
     def test_review_comment_pages_fit_bound_and_retain_all_comments(self) -> None:
         endpoint = "https://api.github.com/repos/ktogias/gnostoa/pulls/312/comments"
         total_comments = 234
@@ -821,6 +824,10 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             observed_at=OBSERVED,
         )
         self.assertEqual("BOUND", bundle["subject_binding"])
+        # The merge-evidence reader accepts the producer's own bundle unchanged
+        # (1b.3b-2, #407 6101607240).
+        recorded = json.loads(canonical_json(bundle))
+        self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
         readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
         self.assertEqual(
             RUN_UID,
