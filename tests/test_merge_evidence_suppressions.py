@@ -176,7 +176,7 @@ def _found(path: str, line: int, marker: str, reason: str = "") -> dict[str, Any
         "path": path,
         "line": line,
         "marker": marker,
-        "justified": bool(reason),
+        "justified": bool(reason.strip()),
         "reason": reason,
     }
 
@@ -273,9 +273,8 @@ class DeclarationTests(unittest.TestCase):
         """The CODEOWNERS matcher's own refusals."""
 
         for pattern in ("!/ci/", "/c[i]/", "//ci/", "/docs/guides*"):
-            with self.subTest(pattern):
-                with self.assertRaises(INPUT_ERRORS):
-                    _roots({**ROOTS_DOCUMENT, "patterns": [pattern]})
+            with self.subTest(pattern), self.assertRaises(INPUT_ERRORS):
+                _roots({**ROOTS_DOCUMENT, "patterns": [pattern]})
 
     def test_a_missing_declaration_reads_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -328,7 +327,8 @@ class SuppressionTests(unittest.TestCase):
         self.assertEqual(
             {
                 "coverage": "COMPLETE",
-                "found": [_found("tools/x.py", 11, "noqa", "a long URL")],
+                # Kept as written (cubic on #423): only blankness is judged.
+                "found": [_found("tools/x.py", 11, "noqa", " a long URL  ")],
             },
             _suppressions([_file("tools/x.py", patch=patch)]),
         )
@@ -342,7 +342,7 @@ class SuppressionTests(unittest.TestCase):
             with self.subTest(name):
                 patch = f"@@ -0,0 +1,1 @@\n{text}"
                 self.assertEqual(
-                    [_found("ci/x.py", 1, "# nosec")],
+                    [_found("ci/x.py", 1, "# nosec", "   " if "blank" in name else "")],
                     _suppressions([_file("ci/x.py", "added", patch=patch)])["found"],
                 )
 
@@ -353,10 +353,23 @@ class SuppressionTests(unittest.TestCase):
         self.assertEqual(
             [
                 _found(
-                    "tools/x.py", 1, "# type: ignore", "stub  # noqa  # noqa -- twice"
+                    "tools/x.py", 1, "# type: ignore", " stub  # noqa  # noqa -- twice"
                 ),
-                _found("tools/x.py", 1, "noqa", "twice"),
-                _found("tools/x.py", 1, "noqa", "twice"),
+                _found("tools/x.py", 1, "noqa", " twice"),
+                _found("tools/x.py", 1, "noqa", " twice"),
+            ],
+            _suppressions([_file("tools/x.py", "added", patch=patch)])["found"],
+        )
+
+    def test_each_occurrence_has_its_own_reason(self) -> None:
+        """CodeReviewBot on #423: a repeated marker's reasons are each read from
+        that occurrence's own position (characterization)."""
+
+        patch = "@@ -0,0 +1,1 @@\n+f()  # noqa -- first  # noqa -- second"
+        self.assertEqual(
+            [
+                _found("tools/x.py", 1, "noqa", " first  # noqa -- second"),
+                _found("tools/x.py", 1, "noqa", " second"),
             ],
             _suppressions([_file("tools/x.py", "added", patch=patch)])["found"],
         )
@@ -391,8 +404,8 @@ class SuppressionTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                _found("tools/x.py", 2, "noqa", "one"),
-                _found("tools/x.py", 20, "NOSONAR", "two"),
+                _found("tools/x.py", 2, "noqa", " one"),
+                _found("tools/x.py", 20, "NOSONAR", " two"),
             ],
             _suppressions([_file("tools/x.py", patch=patch)])["found"],
         )
@@ -488,6 +501,27 @@ class SuppressionTests(unittest.TestCase):
                 ),
                 "PARTIAL",
             ),
+            # PAO on #423 (6113955118): a context line keeps head content too.
+            (
+                "an empty blob whose patch keeps a line",
+                _file("tools/x.py", blob=EMPTY_BLOB, patch="@@ -1 +1 @@\n a"),
+                "PARTIAL",
+            ),
+            (
+                "a removal whose patch keeps a line",
+                _file("tools/x.py", "removed", patch="@@ -1 +1 @@\n a"),
+                "PARTIAL",
+            ),
+            (
+                "a delete-only removal",
+                _file("tools/x.py", "removed", patch="@@ -1,2 +0,0 @@\n-a\n-b"),
+                "COMPLETE",
+            ),
+            (
+                "a file emptied",
+                _file("tools/x.py", blob=EMPTY_BLOB, patch="@@ -1 +0,0 @@\n-a"),
+                "COMPLETE",
+            ),
             (
                 "an unknown count",
                 {
@@ -509,11 +543,24 @@ class SuppressionTests(unittest.TestCase):
         patch = "@@ -1 +1,3 @@\n a\n+b  # noqa -- one\n+c  # noqa -- two"
         self.assertEqual(
             [
-                _found("tools/x.py", 2, "noqa", "one"),
-                _found("tools/x.py", 3, "noqa", "two"),
+                _found("tools/x.py", 2, "noqa", " one"),
+                _found("tools/x.py", 3, "noqa", " two"),
             ],
             _suppressions([_file("tools/x.py", patch=patch)])["found"],
         )
+
+    def test_one_terminal_newline_ends_the_last_line(self) -> None:
+        """cubic and CodeAnt on #423: Git ends every line with a newline, so a
+        patch that keeps the last one is the same hunks. A second is a blank
+        line no hunk counts."""
+
+        patch = "@@ -0,0 +1,1 @@\n+a  # noqa -- kept\n"
+        self.assertEqual(
+            {"coverage": "COMPLETE", "found": [_found("t.py", 1, "noqa", " kept")]},
+            _suppressions([_file("t.py", "added", patch=patch)]),
+        )
+        doubled = _file("t.py", "added", patch=patch + "\n")
+        self.assertEqual("PARTIAL", _suppressions([doubled])["coverage"])
 
     def test_a_hunk_header_s_context_is_not_examined(self) -> None:
         """The text after a header's closing `@@` is the hunk's context, not an
@@ -566,6 +613,17 @@ class TrustRootTests(unittest.TestCase):
             ["scratch/out.py", "tools/out.py"],
             _evidence(files, roots=roots)["trust_root_changes"]["paths"],
         )
+
+    def test_a_name_with_a_newline_is_matched_like_any_other(self) -> None:
+        """Codex on #423: Git allows a newline in a file name, and a root's
+        pattern must still match it, for M15 and for the code owners alike."""
+
+        files = [_file("ci/a\nb.py", "added", patch="@@ -0,0 +1 @@\n+a")]
+        self.assertEqual(
+            {"coverage": "COMPLETE", "paths": ["ci/a\nb.py"]}, _trust_roots(files)
+        )
+        owners = merge_evidence_github.parse_codeowners("/ci/ @ktogias\n")
+        self.assertEqual(["@ktogias"], owners.owners("ci/a\nb.py"))
 
     def test_a_declaration_change_is_itself_a_trust_root_change(self) -> None:
         patch = "@@ -1 +1,2 @@\n patterns:\n+  - /scratch/"

@@ -915,15 +915,18 @@ guardrails:
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_marker_in_an_added_line_is_reported_with_its_head_line_and_reason
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_missing_or_blank_reason_is_unjustified
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_every_occurrence_is_reported
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_each_occurrence_has_its_own_reason
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_markers_are_case_sensitive_literals
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_unchanged_and_removed_lines_are_not_examined
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_head_lines_follow_each_hunk
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_an_inconsistent_patch_leaves_suppressions_partial
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_hunkless_file_is_inspectable_only_when_nothing_can_be_added
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_consecutive_added_lines_are_numbered_in_turn
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_one_terminal_newline_ends_the_last_line
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_hunk_header_s_context_is_not_examined
       - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_complete_diff_without_markers_is_complete_and_empty
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_changed_trust_roots_are_reported_with_every_name
+      - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_name_with_a_newline_is_matched_like_any_other
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_declaration_change_is_itself_a_trust_root_change
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_an_unsupported_status_leaves_trust_roots_partial
       - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_complete_change_outside_the_roots_is_complete_and_empty

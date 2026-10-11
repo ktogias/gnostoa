@@ -540,7 +540,8 @@ def _rule(pattern: str) -> re.Pattern[str]:
         suffix = ""
     else:
         suffix = "(?:/.*)?"
-    return re.compile(prefix + _glob(body) + suffix)
+    # A newline is an ordinary character of a Git file name (Codex on #423).
+    return re.compile(prefix + _glob(body) + suffix, re.DOTALL)
 
 
 class CodeOwners:
@@ -645,54 +646,88 @@ _NO_NEWLINE = "\\ No newline at end of file"
 _CONTENT = frozenset(" -+")
 
 
-def _added_lines(patch: str) -> list[tuple[int, str]] | None:
-    """Each line a file's patch adds, with its head-line number, or None unless
-    the patch is exactly a sequence of hunks: every line accounted for by its
-    header's counts, and only the exact no-newline annotation besides."""
+def _hunk_header(text: str) -> tuple[int, int, int] | None:
+    """A hunk header's old count, new count and first head line, or None."""
+
+    header = _HUNK_HEADER.fullmatch(text)
+    if header is None:
+        return None
+    try:
+        old = 1 if header.group(2) is None else int(header.group(2))
+        new = 1 if header.group(4) is None else int(header.group(4))
+        line = int(header.group(3))
+    except ValueError:  # a number too long to convert
+        return None
+    if new and line < 1:
+        return None
+    return old, new, line
+
+
+def _hunk_body(
+    lines: Sequence[str],
+    index: int,
+    counts: tuple[int, int, int],
+    added: list[tuple[int, str]],
+) -> int | None:
+    """Account for one hunk's lines from `index`, exactly as its header counts
+    them, and add each added line to `added` with its head-line number. The
+    index after the hunk, or None when its lines do not fit its counts."""
+
+    old, new, line = counts
+    previous = ""
+    while old or new or (index < len(lines) and lines[index] == _NO_NEWLINE):
+        if index == len(lines):
+            return None
+        text = lines[index]
+        kind = text[:1]
+        if text == _NO_NEWLINE and previous in _CONTENT:
+            pass
+        elif kind == " " and old and new:
+            old, new, line = old - 1, new - 1, line + 1
+        elif kind == "-" and old:
+            old -= 1
+        elif kind == "+" and new:
+            added.append((line, text[1:]))
+            new, line = new - 1, line + 1
+        else:
+            return None
+        previous = "\\" if text == _NO_NEWLINE else kind
+        index += 1
+    return index
+
+
+def _added_lines(patch: str) -> tuple[list[tuple[int, str]], int] | None:
+    """Each line a file's patch adds, with its head-line number, and how many
+    head-side lines its hunks hold, context included; or None unless the patch
+    is exactly a sequence of hunks: every line accounted for by its header's
+    counts, and only the exact no-newline annotation besides."""
 
     lines = patch.split("\n")
+    if len(lines) > 1 and lines[-1] == "":
+        # Git ends every line with a newline, the last one included (cubic and
+        # CodeAnt on #423); a second would be a blank line no hunk counts.
+        lines.pop()
     added: list[tuple[int, str]] = []
-    index = 0
+    head = index = 0
     while index < len(lines):
-        header = _HUNK_HEADER.fullmatch(lines[index])
-        if header is None:
+        counts = _hunk_header(lines[index])
+        if counts is None:
             return None
-        try:
-            old = 1 if header.group(2) is None else int(header.group(2))
-            new = 1 if header.group(4) is None else int(header.group(4))
-            line = int(header.group(3))
-        except ValueError:  # a number too long to convert
+        after = _hunk_body(lines, index + 1, counts, added)
+        if after is None:
             return None
-        if new and line < 1:
-            return None
-        index += 1
-        previous = ""
-        while old or new or (index < len(lines) and lines[index] == _NO_NEWLINE):
-            if index == len(lines):
-                return None
-            text = lines[index]
-            kind = text[:1]
-            if text == _NO_NEWLINE and previous in _CONTENT:
-                pass
-            elif kind == " " and old and new:
-                old, new, line = old - 1, new - 1, line + 1
-            elif kind == "-" and old:
-                old -= 1
-            elif kind == "+" and new:
-                added.append((line, text[1:]))
-                new, line = new - 1, line + 1
-            else:
-                return None
-            previous = "\\" if text == _NO_NEWLINE else kind
-            index += 1
-    return added
+        head += counts[1]
+        index = after
+    return added, head
 
 
 def _file_additions(item: Mapping[str, Any]) -> list[tuple[int, str]] | None:
     """The lines one changed file adds, or None when the comparison does not show
     them completely. A file without hunks adds nothing only when it is a removal
     or its head blob is empty, and nothing contradicts that (A-2, #407
-    6113448747); zero additions alone proves nothing, since a binary has them."""
+    6113448747); zero additions alone proves nothing, since a binary has them.
+    Such a file keeps no head-side line either, a context line included (the PAO
+    on #423, 6113955118)."""
 
     additions = item.get("additions")
     if type(additions) is not int or item.get("patch_truncated") is not False:
@@ -701,8 +736,11 @@ def _file_additions(item: Mapping[str, Any]) -> list[tuple[int, str]] | None:
     patch = item.get("patch")
     if patch is None:
         return [] if empty and additions == 0 else None
-    added = _added_lines(patch)
-    if added is None or len(added) != additions or (empty and added):
+    read = _added_lines(patch)
+    if read is None:
+        return None
+    added, head = read
+    if len(added) != additions or (empty and head):
         return None
     return added
 
@@ -711,7 +749,8 @@ def _occurrences(
     path: str, line: int, text: str, markers: Sequence[str]
 ) -> list[dict[str, Any]]:
     """Every occurrence of a marker in one added line, in reading order. Its reason
-    is what follows the first `--` after it on the line, as written."""
+    is what follows the first `--` after it on the line, kept as written; only
+    whether it is blank is judged (cubic on #423)."""
 
     hits = []
     for order, marker in enumerate(markers):
@@ -722,13 +761,13 @@ def _occurrences(
     found = []
     for start, _, marker in sorted(hits):
         delimiter = text.find("--", start + len(marker))
-        reason = "" if delimiter == -1 else text[delimiter + 2 :].strip()
+        reason = "" if delimiter == -1 else text[delimiter + 2 :]
         found.append(
             {
                 "path": path,
                 "line": line,
                 "marker": marker,
-                "justified": bool(reason),
+                "justified": bool(reason.strip()),
                 "reason": reason,
             }
         )
