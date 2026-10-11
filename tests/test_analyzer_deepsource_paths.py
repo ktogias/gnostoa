@@ -138,9 +138,58 @@ class FullReadReturnPathTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(expected, _outcome(_read(responses)))
 
+    def test_each_outcome_names_its_run(self) -> None:
+        """Claude on #419: the analysis id and run state differ by path; only a
+        run-uid mismatch reports the provider's own uid."""
+        cases: dict[str, tuple[dict[tuple[str, str | None], Any], tuple[Any, ...]]] = {
+            "no run": ({("run", None): {"data": {"run": None}}}, (RUN_UID, "UNKNOWN")),
+            "another run uid": (
+                {("run", None): run_page(uid="1" * 8)},
+                ("1" * 8, "FAILURE"),
+            ),
+            "another repository": (
+                {("run", None): run_page(name="other")},
+                (RUN_UID, "FAILURE"),
+            ),
+            "another head": (
+                {("run", None): run_page(head="b" * 40)},
+                (RUN_UID, "FAILURE"),
+            ),
+            "a run still running": (
+                {("run", None): run_page(status="RUNNING")},
+                (RUN_UID, "RUNNING"),
+            ),
+            "a failure while reading checks": (
+                {
+                    ("run", None): run_page(has_next=True, cursor="c1", total=2),
+                    ("run", "c1"): run_page(head="b" * 40, total=2),
+                },
+                (RUN_UID, "UNKNOWN"),
+            ),
+            "a failure while reading issues": (
+                {
+                    ("run", None): run_page(),
+                    (PYTHON, None): check_page([issue("i-1", 3)], total=2),
+                },
+                (RUN_UID, "FAILURE"),
+            ),
+            "a complete read": (
+                {("run", None): run_page(), (PYTHON, None): check_page([])},
+                (RUN_UID, "FAILURE"),
+            ),
+        }
+        for name, (responses, expected) in cases.items():
+            with self.subTest(name):
+                document = _read(responses)
+                self.assertEqual(
+                    expected, (document.get("analysis_id"), document["run_state"])
+                )
+
     def test_a_check_still_running_reports_the_states(self) -> None:
         document = _read({("run", None): run_page(checks=[check(status="PENDING")])})
-        self.assertEqual({"check_states": {PYTHON: "PENDING"}}, document["native"])
+        self.assertEqual(
+            {"check_states": {"check-python": "PENDING"}}, document["native"]
+        )
 
     def test_a_complete_read_reports_its_counts(self) -> None:
         document = _read(
@@ -431,6 +480,9 @@ class DiffLocalPathTests(unittest.TestCase):
                         document["coverage"]["status"],
                         document["coverage"].get("reason"),
                     ),
+                )
+                self.assertEqual(
+                    RUN_UID if statuses else None, document.get("analysis_id")
                 )
 
 
