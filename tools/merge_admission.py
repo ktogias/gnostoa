@@ -73,6 +73,9 @@ _AMBIGUOUS = "AMBIGUOUS"
 _WORK_ITEM_RULES = frozenset({"optional", "required-follow-up", "required"})
 _COVERAGE_KEYS = frozenset({"coverage"})
 _SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
+# Where the suppression is and its literal same-line reason (#407, slice
+# 1b.3b-4): optional, so an older input stays valid; the adapter gives both.
+_SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
 _FINDING_KEYS = frozenset({"item", "id", "message"})
 _FINDING_OPTIONAL_KEYS = frozenset(
@@ -284,16 +287,37 @@ def _suppressions(
     for index, item in enumerate(value):
         label = f"suppression {index}"
         suppression = require_mapping(item, label)
-        require_closed_keys(suppression, label, _SUPPRESSION_KEYS)
+        require_closed_keys(
+            suppression, label, _SUPPRESSION_KEYS, _SUPPRESSION_OPTIONAL_KEYS
+        )
         entry = {
             "path": require_text(suppression["path"], f"{label} path"),
             "marker": require_text(suppression["marker"], f"{label} marker"),
             "justified": _flag(suppression["justified"], f"{label} justified"),
         }
+        location = entry["path"]
+        if "line" in suppression:
+            line = suppression["line"]
+            if type(line) is not int or line <= 0:
+                raise AssuranceCompletenessError(
+                    f"{label} line must be a positive integer"
+                )
+            entry["line"] = line
+            location = f"{location}:{line}"
+        if "reason" in suppression:
+            reason = suppression["reason"]
+            if not isinstance(reason, str):
+                raise AssuranceCompletenessError(f"{label} reason must be a string")
+            # The reason decides the flag: a blank one is no justification.
+            if entry["justified"] != bool(reason.strip()):
+                raise AssuranceCompletenessError(
+                    f"{label} justified does not match its reason"
+                )
+            entry["reason"] = reason
         if entry["justified"]:
             justified.append(entry)
         else:
-            reasons.append(f"{entry['marker']} in {entry['path']} has no justification")
+            reasons.append(f"{entry['marker']} in {location} has no justification")
     return _criterion("M13", reasons), justified
 
 

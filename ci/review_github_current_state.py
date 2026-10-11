@@ -1022,11 +1022,35 @@ def _normalize_commit(value: Any) -> dict[str, Any]:
 
 
 def _normalize_file(value: Any) -> dict[str, Any]:
+    """One changed file, with what the comparison says about its added content
+    (#407, slice 1b.3b-4). Typed as `agent_review_github` types a comparison
+    entry: an omitted or empty patch is no hunks, a present null is malformed, a
+    count is a non-negative whole number, and only the blob may be null."""
+
     item = _mapping(value, "file")
+    patch, truncated = None, False
+    if "patch" in item:
+        raw = item["patch"]
+        if not isinstance(raw, str):
+            raise ProviderReadError("file.patch must be a string")
+        if raw:
+            patch, truncated = _bounded_body(raw)
+    additions = None
+    if "additions" in item:
+        additions = item["additions"]
+        if type(additions) is not int or additions < 0:
+            raise ProviderReadError("file.additions must be a non-negative integer")
+    blob = item.get("sha")
+    if blob is not None and not isinstance(blob, str):
+        raise ProviderReadError("file.sha must be a string or null")
     return {
         "path": _text(item.get("filename"), "file.filename"),
         "status": _text(item.get("status"), "file.status"),
         "previous_path": _optional_text(item.get("previous_filename")),
+        "additions": additions,
+        "blob": blob,
+        "patch": patch,
+        "patch_truncated": truncated,
     }
 
 

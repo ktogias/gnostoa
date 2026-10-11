@@ -771,6 +771,8 @@ guardrails:
     implementation:
       - tools/merge_evidence_github.py
       - policy/merge-required-checks.yaml
+      - policy/merge-suppression-markers.yaml
+      - policy/merge-trust-roots.yaml
       - tools/cli.py
       - ci/review_github_current_state.py
       - tools/github_rest.py
@@ -902,6 +904,36 @@ guardrails:
       - tests/test_merge_evidence_work_items.py::ReferenceIntegrityTests.test_a_label_without_an_identifier_lists_nothing
       - tests/test_merge_evidence_work_items.py::StartupTests.test_loading_l1_does_not_load_the_merge_evidence_adapter
       - tests/test_merge_evidence_work_items.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
+      - tests/test_merge_evidence_suppressions.py::FileCollectionTests.test_each_changed_file_keeps_its_additions_blob_and_patch
+      - tests/test_merge_evidence_suppressions.py::FileCollectionTests.test_an_omitted_or_empty_patch_is_no_hunks
+      - tests/test_merge_evidence_suppressions.py::FileCollectionTests.test_a_long_patch_is_bounded_and_marked
+      - tests/test_merge_evidence_suppressions.py::FileCollectionTests.test_a_mistyped_field_fails_the_files_source
+      - tests/test_merge_evidence_suppressions.py::DeclarationTests.test_the_declarations_are_closed_and_versioned
+      - tests/test_merge_evidence_suppressions.py::DeclarationTests.test_an_unsupported_trust_root_pattern_fails
+      - tests/test_merge_evidence_suppressions.py::DeclarationTests.test_a_missing_declaration_reads_as_none
+      - tests/test_merge_evidence_suppressions.py::DeclarationTests.test_the_repository_declarations_are_the_admitted_contract
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_marker_in_an_added_line_is_reported_with_its_head_line_and_reason
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_missing_or_blank_reason_is_unjustified
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_every_occurrence_is_reported
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_markers_are_case_sensitive_literals
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_unchanged_and_removed_lines_are_not_examined
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_head_lines_follow_each_hunk
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_an_inconsistent_patch_leaves_suppressions_partial
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_hunkless_file_is_inspectable_only_when_nothing_can_be_added
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_consecutive_added_lines_are_numbered_in_turn
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_hunk_header_s_context_is_not_examined
+      - tests/test_merge_evidence_suppressions.py::SuppressionTests.test_a_complete_diff_without_markers_is_complete_and_empty
+      - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_changed_trust_roots_are_reported_with_every_name
+      - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_declaration_change_is_itself_a_trust_root_change
+      - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_an_unsupported_status_leaves_trust_roots_partial
+      - tests/test_merge_evidence_suppressions.py::TrustRootTests.test_a_complete_change_outside_the_roots_is_complete_and_empty
+      - tests/test_merge_evidence_suppressions.py::ProtectedTargetTests.test_without_the_declarations_both_stay_unavailable
+      - tests/test_merge_evidence_suppressions.py::ProtectedTargetTests.test_the_command_reads_the_declarations_from_the_project_root
+      - tests/test_merge_evidence_suppressions.py::VerdictTests.test_old_suppression_inputs_stay_valid
+      - tests/test_merge_evidence_suppressions.py::VerdictTests.test_line_and_reason_are_carried_and_typed
+      - tests/test_merge_evidence_suppressions.py::VerdictTests.test_an_unjustified_suppression_is_denied_at_its_line
+      - tests/test_merge_evidence_suppressions.py::VerdictTests.test_a_justified_suppression_does_not_discharge_a_finding
+      - tests/test_merge_evidence_suppressions.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_missing_readback_gives_its_item_no_receipt
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_unknown_repeated_or_invalid_readback_fails_the_run
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_without_a_bundle_the_findings_are_unavailable

@@ -11,9 +11,11 @@ read fails the run.
 
 The receipts cover the check items the protected target's required-check manifest
 names (slice 1b.3b-1) and the analyzer-readback items, from the authenticated
-readback's bundle (slice 1b.3b-2). Until SonarCloud's (1b.3c) receipts exist, and
-while the suppressions and trust-root changes are `UNAVAILABLE` (1b.3b-4), the
-verdict denies on M2-M8, M13 and M15 rather than passing them vacuously.
+readback's bundle (slice 1b.3b-2). The suppressions and trust-root changes come
+from the exact comparison, against the protected target's declarations (slice
+1b.3b-4); without a declaration, what it governs is `UNAVAILABLE`. Until
+SonarCloud's (1b.3c) receipts exist, the verdict denies on M2-M8 rather than
+passing it vacuously.
 """
 
 from __future__ import annotations
@@ -54,8 +56,13 @@ from .verdict_cli import confine, read_json_file, read_json_input, run
 
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
 DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
+DEFAULT_SUPPRESSION_MARKERS = Path("policy") / "merge-suppression-markers.yaml"
+DEFAULT_TRUST_ROOTS = Path("policy") / "merge-trust-roots.yaml"
 _REQUIRED_CHECKS_LABEL = "required checks"
-_REQUIRED_CHECK_KEYS = frozenset({"schema_version", "id", "version", "requirements"})
+# The closed, versioned header every merge-evidence declaration shares.
+_DECLARATION_KEYS = frozenset({"schema_version", "id", "version"})
+_MARKERS_LABEL = "suppression markers"
+_ROOTS_LABEL = "trust roots"
 _CHECK_KEYS = frozenset({"app_id", "name"})
 _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
 # The authenticated readback's readbacks, by (provider, scope), and the
@@ -264,12 +271,7 @@ def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
     declared checks (#15, 6099845892)."""
 
     try:
-        record = require_mapping(document, _REQUIRED_CHECKS_LABEL)
-        require_closed_keys(record, _REQUIRED_CHECKS_LABEL, _REQUIRED_CHECK_KEYS)
-        if record["schema_version"] != "1.0":
-            raise MergeEvidenceError("required checks schema_version must be 1.0")
-        require_text(record["id"], "required checks id")
-        require_text(record["version"], "required checks version")
+        record = _declaration(document, _REQUIRED_CHECKS_LABEL, "requirements")
         requirements = require_mapping(record["requirements"], "required checks")
         if not requirements:
             raise MergeEvidenceError("required checks names no requirement")
@@ -299,6 +301,54 @@ def parse_required_checks(document: object) -> dict[str, dict[str, str]]:
         raise MergeEvidenceError(str(exc)) from exc
 
 
+def _declaration(document: object, label: str, field: str) -> Mapping[str, Any]:
+    """A declaration in the convention the required-check manifest set: version
+    1.0 of a closed mapping with its id, its version and one named field."""
+
+    record = require_mapping(document, label)
+    require_closed_keys(record, label, _DECLARATION_KEYS | {field})
+    if record["schema_version"] != "1.0":
+        raise MergeEvidenceError(f"{label} schema_version must be 1.0")
+    require_text(record["id"], f"{label} id")
+    require_text(record["version"], f"{label} version")
+    return record
+
+
+def parse_suppression_markers(document: object) -> tuple[str, ...]:
+    """The literal markers whose occurrence in an added line is a suppression
+    (#407, slice 1b.3b-4): case-sensitive, and matched as written."""
+
+    try:
+        record = _declaration(document, _MARKERS_LABEL, "markers")
+        return tuple(
+            require_unique_texts(record["markers"], f"{_MARKERS_LABEL} markers")
+        )
+    except AssuranceCompletenessError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+
+
+class TrustRoots(NamedTuple):
+    """The protected target's trust-root patterns, in CODEOWNERS syntax."""
+
+    rules: tuple[re.Pattern[str], ...]
+
+    def matches(self, path: str) -> bool:
+        return any(rule.fullmatch(path) for rule in self.rules)
+
+
+def parse_trust_roots(document: object) -> TrustRoots:
+    """The paths whose change is shown for the owner's approval (M15), each
+    pattern compiled by the CODEOWNERS matcher, which refuses what it cannot
+    match as GitHub does (#407, slice 1b.3b-4)."""
+
+    try:
+        record = _declaration(document, _ROOTS_LABEL, "patterns")
+        patterns = require_unique_texts(record["patterns"], f"{_ROOTS_LABEL} patterns")
+    except AssuranceCompletenessError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+    return TrustRoots(tuple(_rule(pattern) for pattern in patterns))
+
+
 def _check_key(value: object, label: str) -> str:
     check = require_mapping(value, label)
     require_closed_keys(check, label, _CHECK_KEYS)
@@ -319,6 +369,32 @@ def load_required_checks(
     except KnowledgeFormatError as exc:
         raise MergeEvidenceError(str(exc)) from exc
     return parse_required_checks(document)
+
+
+def _load_declaration(path: Path, project_root: Path, label: str) -> object | None:
+    """A declaration's document, or None when the protected target has none: then
+    what it governs is UNAVAILABLE, as on the target that introduces it (the
+    bootstrap, #325 6112833932)."""
+
+    resolved = confine(path, project_root, label=label, error=MergeEvidenceError)
+    if not resolved.exists():
+        return None
+    try:
+        return load_policy_yaml(resolved, label=label.capitalize())
+    except KnowledgeFormatError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+
+
+def load_suppression_markers(
+    path: Path, *, project_root: Path
+) -> tuple[str, ...] | None:
+    document = _load_declaration(path, project_root, _MARKERS_LABEL)
+    return None if document is None else parse_suppression_markers(document)
+
+
+def load_trust_roots(path: Path, *, project_root: Path) -> TrustRoots | None:
+    document = _load_declaration(path, project_root, _ROOTS_LABEL)
+    return None if document is None else parse_trust_roots(document)
 
 
 def _check_status(states: set[tuple[str, str, str | None]]) -> tuple[str, str | None]:
@@ -523,6 +599,162 @@ def load_codeowners(project_root: Path) -> CodeOwners:
     return CodeOwners([])
 
 
+def _names(item: Mapping[str, Any]) -> list[str]:
+    """Every name a changed file has, its old one included, in order, so a failed
+    run names the same path each time (Claude on #413)."""
+
+    if item["status"] == "renamed" and not item.get("previous_path"):
+        # The old location would be skipped (CodeAnt on #413).
+        raise MergeEvidenceError(f"the rename to {item['path']} has no previous path")
+    return sorted({item["path"], item.get("previous_path")} - {None})
+
+
+# The file statuses whose names say what changed (#325 6112833932); any other
+# leaves the trust-root changes unproven.
+_TRUST_ROOT_STATUSES = frozenset({"added", "modified", "removed", "renamed"})
+
+
+def _trust_root_changes(
+    files: Sequence[Mapping[str, Any]], roots: TrustRoots | None
+) -> dict[str, Any]:
+    """M15: each changed file with a name under a trust root, under every name it
+    has, so a rename into or out of a root shows both sides."""
+
+    if roots is None:
+        return {"coverage": "UNAVAILABLE", "paths": []}
+    paths: set[str] = set()
+    complete = True
+    for item in files:
+        if item["status"] not in _TRUST_ROOT_STATUSES:
+            complete = False
+            continue
+        names = _names(item)
+        if any(roots.matches(name) for name in names):
+            paths.update(names)
+    return {"coverage": "COMPLETE" if complete else "PARTIAL", "paths": sorted(paths)}
+
+
+# Git's id for an empty blob: a file whose head blob it is holds no line at all.
+_EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"  # pragma: allowlist secret -- Git's empty-blob id
+# A hunk header in Git's range form. What follows the closing `@@` is the hunk's
+# context, accepted and never read (the owner's selection, #407 6113448747).
+_HUNK_HEADER = re.compile(
+    r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?", re.ASCII
+)
+_NO_NEWLINE = "\\ No newline at end of file"
+_CONTENT = frozenset(" -+")
+
+
+def _added_lines(patch: str) -> list[tuple[int, str]] | None:
+    """Each line a file's patch adds, with its head-line number, or None unless
+    the patch is exactly a sequence of hunks: every line accounted for by its
+    header's counts, and only the exact no-newline annotation besides."""
+
+    lines = patch.split("\n")
+    added: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        header = _HUNK_HEADER.fullmatch(lines[index])
+        if header is None:
+            return None
+        try:
+            old = 1 if header.group(2) is None else int(header.group(2))
+            new = 1 if header.group(4) is None else int(header.group(4))
+            line = int(header.group(3))
+        except ValueError:  # a number too long to convert
+            return None
+        if new and line < 1:
+            return None
+        index += 1
+        previous = ""
+        while old or new or (index < len(lines) and lines[index] == _NO_NEWLINE):
+            if index == len(lines):
+                return None
+            text = lines[index]
+            kind = text[:1]
+            if text == _NO_NEWLINE and previous in _CONTENT:
+                pass
+            elif kind == " " and old and new:
+                old, new, line = old - 1, new - 1, line + 1
+            elif kind == "-" and old:
+                old -= 1
+            elif kind == "+" and new:
+                added.append((line, text[1:]))
+                new, line = new - 1, line + 1
+            else:
+                return None
+            previous = "\\" if text == _NO_NEWLINE else kind
+            index += 1
+    return added
+
+
+def _file_additions(item: Mapping[str, Any]) -> list[tuple[int, str]] | None:
+    """The lines one changed file adds, or None when the comparison does not show
+    them completely. A file without hunks adds nothing only when it is a removal
+    or its head blob is empty, and nothing contradicts that (A-2, #407
+    6113448747); zero additions alone proves nothing, since a binary has them."""
+
+    additions = item.get("additions")
+    if type(additions) is not int or item.get("patch_truncated") is not False:
+        return None
+    empty = item["status"] == "removed" or item.get("blob") == _EMPTY_BLOB
+    patch = item.get("patch")
+    if patch is None:
+        return [] if empty and additions == 0 else None
+    added = _added_lines(patch)
+    if added is None or len(added) != additions or (empty and added):
+        return None
+    return added
+
+
+def _occurrences(
+    path: str, line: int, text: str, markers: Sequence[str]
+) -> list[dict[str, Any]]:
+    """Every occurrence of a marker in one added line, in reading order. Its reason
+    is what follows the first `--` after it on the line, as written."""
+
+    hits = []
+    for order, marker in enumerate(markers):
+        start = text.find(marker)
+        while start != -1:
+            hits.append((start, order, marker))
+            start = text.find(marker, start + 1)
+    found = []
+    for start, _, marker in sorted(hits):
+        delimiter = text.find("--", start + len(marker))
+        reason = "" if delimiter == -1 else text[delimiter + 2 :].strip()
+        found.append(
+            {
+                "path": path,
+                "line": line,
+                "marker": marker,
+                "justified": bool(reason),
+                "reason": reason,
+            }
+        )
+    return found
+
+
+def _suppressions(
+    files: Sequence[Mapping[str, Any]], markers: Sequence[str] | None
+) -> dict[str, Any]:
+    """M13: each declared marker in a line the comparison adds. A file whose added
+    lines it does not show completely leaves the list PARTIAL."""
+
+    if markers is None:
+        return {"coverage": "UNAVAILABLE", "found": []}
+    found: list[dict[str, Any]] = []
+    complete = True
+    for item in files:
+        added = _file_additions(item)
+        if added is None:
+            complete = False
+            continue
+        for line, text in added:
+            found.extend(_occurrences(item["path"], line, text, markers))
+    return {"coverage": "COMPLETE" if complete else "PARTIAL", "found": found}
+
+
 def _required_approvers(
     files: Sequence[Mapping[str, Any]], codeowners: CodeOwners, roster: Sequence[str]
 ) -> list[str]:
@@ -532,14 +764,7 @@ def _required_approvers(
 
     required: set[str] = set()
     for item in files:
-        if item["status"] == "renamed" and not item.get("previous_path"):
-            # The old location's owners would be skipped (CodeAnt on #413).
-            raise MergeEvidenceError(
-                f"the rename to {item['path']} has no previous path"
-            )
-        # In order, so a failed run names the same path each time (Claude on
-        # #413).
-        for path in sorted({item["path"], item.get("previous_path")} - {None}):
+        for path in _names(item):
             owners = codeowners.owners(path)
             if not owners:
                 continue
@@ -1098,9 +1323,13 @@ def evidence_from_snapshot(
     decisions: Mapping[str, frozenset[str]],
     required_checks: Mapping[str, Mapping[str, str]],
     analyzer_readback: object = None,
+    suppression_markers: Sequence[str] | None = None,
+    trust_roots: TrustRoots | None = None,
 ) -> dict[str, Any]:
     """The evidence document for the pull request the snapshot observed, with the
-    authenticated analyzer readback's bundle when one is given."""
+    authenticated analyzer readback's bundle when one is given. Without the
+    protected target's suppression markers or trust roots, what each governs is
+    UNAVAILABLE."""
 
     document = require_mapping(snapshot, "snapshot")
     try:
@@ -1169,9 +1398,8 @@ def evidence_from_snapshot(
         "closing_references": _closing_references(
             provider, commits, commit_coverage, _source(document, "closing_issues")
         ),
-        # Produced by slice 1b.3b; until then they cannot be read.
-        "suppressions": {"coverage": "UNAVAILABLE", "found": []},
-        "trust_root_changes": {"coverage": "UNAVAILABLE", "paths": []},
+        "suppressions": _suppressions(files, suppression_markers),
+        "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
         # The check items' receipts (1b.3b-1) and the analyzer items' (1b.3b-2);
         # SonarCloud's come with 1b.3c.
@@ -1349,6 +1577,24 @@ def _parser() -> argparse.ArgumentParser:
         help=f"the required-check manifest (default: {DEFAULT_REQUIRED_CHECKS})",
     )
     parser.add_argument(
+        "--suppression-markers",
+        type=Path,
+        default=DEFAULT_SUPPRESSION_MARKERS,
+        help=(
+            f"the suppression markers (default: {DEFAULT_SUPPRESSION_MARKERS}; "
+            "without them, the suppressions are UNAVAILABLE)"
+        ),
+    )
+    parser.add_argument(
+        "--trust-roots",
+        type=Path,
+        default=DEFAULT_TRUST_ROOTS,
+        help=(
+            f"the trust-root patterns (default: {DEFAULT_TRUST_ROOTS}; without "
+            "them, the trust-root changes are UNAVAILABLE)"
+        ),
+    )
+    parser.add_argument(
         "--analyzer-readback",
         type=Path,
         default=None,
@@ -1402,6 +1648,10 @@ def main(argv: list[str] | None = None) -> int:
             decisions=load_decisions(root),
             required_checks=required_checks,
             analyzer_readback=bundle,
+            suppression_markers=load_suppression_markers(
+                inside(args.suppression_markers), project_root=root
+            ),
+            trust_roots=load_trust_roots(inside(args.trust_roots), project_root=root),
         )
 
     return run(
