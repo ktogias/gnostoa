@@ -657,12 +657,14 @@ def _hunk_header(text: str) -> tuple[int, int, int] | None:
     if header is None:
         return None
     try:
+        first = int(header.group(1))
         old = 1 if header.group(2) is None else int(header.group(2))
         new = 1 if header.group(4) is None else int(header.group(4))
         line = int(header.group(3))
     except ValueError:  # a number too long to convert
         return None
-    if new and line < 1:
+    # A side with lines starts at line 1 or later (CodeAnt on #423).
+    if (old and first < 1) or (new and line < 1):
         return None
     return old, new, line
 
@@ -754,8 +756,8 @@ def _file_additions(item: Mapping[str, Any]) -> list[tuple[int, str]] | None:
 # M13's resource budgets per comparison (the coordinator on #423, 6114751092):
 # a reason is the rest of its line, so a line packed with markers grows
 # quadratically. Past either budget the list keeps what it holds and is PARTIAL.
-_MAX_SUPPRESSIONS = 1_000
-_MAX_SUPPRESSION_BYTES = 1_048_576
+MAX_SUPPRESSIONS = 1_000
+MAX_SUPPRESSION_BYTES = 1_048_576
 # Records sit three levels deep in the evidence document, which the command
 # writes with `indent=2`, so each line of a record carries six more spaces. Each
 # record is also charged six bytes for its separator and a share of the list's
@@ -764,7 +766,7 @@ _RECORD_INDENT = 6
 _RECORD_FRAMING = 6
 
 
-def _record_bytes(record: Mapping[str, Any]) -> int:
+def suppression_record_bytes(record: Mapping[str, Any]) -> int:
     """An upper bound on a record's size as the command writes it:
     `json.dumps(indent=2, sort_keys=True)`, which escapes all but ASCII, at its
     depth in the document, with its share of the list's separators and framing."""
@@ -784,7 +786,7 @@ def _hits(text: str, order: int, marker: str) -> Iterator[tuple[int, int, str]]:
         start = text.find(marker, start + 1)
 
 
-def _occurrences(
+def marker_occurrences(
     path: str, line: int, text: str, markers: Sequence[str]
 ) -> Iterator[dict[str, Any]]:
     """Every occurrence of a marker in one added line, in reading order, one at a
@@ -825,11 +827,11 @@ def _suppressions(
             complete = False
             continue
         for line, text in added:
-            for record in _occurrences(item["path"], line, text, markers):
-                cost = _record_bytes(record)
+            for record in marker_occurrences(item["path"], line, text, markers):
+                cost = suppression_record_bytes(record)
                 if (
-                    len(found) == _MAX_SUPPRESSIONS
-                    or size + cost > _MAX_SUPPRESSION_BYTES
+                    len(found) == MAX_SUPPRESSIONS
+                    or size + cost > MAX_SUPPRESSION_BYTES
                 ):
                     return {"coverage": "PARTIAL", "found": found}
                 found.append(record)

@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest import mock
 
 import yaml
 from test_merge_admission import _evidence as _verdict_evidence
@@ -427,6 +427,11 @@ class SuppressionTests(unittest.TestCase):
                 "a head line before the first",
                 _file("t.py", patch="@@ -0,0 +0,1 @@\n+b"),
             ),
+            # CodeAnt on #423: the old side's start is checked as the new side's is.
+            (
+                "an old line before the first",
+                _file("t.py", patch="@@ -0 +1 @@\n-a\n+b"),
+            ),
             (
                 "a number too long to read",
                 _file("t.py", patch="@@ -1 +" + "9" * 5000 + " @@\n+b"),
@@ -577,7 +582,7 @@ class SuppressionTests(unittest.TestCase):
         """Codex on #423 and the coordinator's selection (6114751092): past the
         occurrence budget the list stops, keeps its prefix, and is PARTIAL."""
 
-        cap = merge_evidence_github._MAX_SUPPRESSIONS
+        cap = merge_evidence_github.MAX_SUPPRESSIONS
 
         def lines(count: int) -> dict[str, Any]:
             body = "\n".join("+a  # noqa -- r" for _ in range(count))
@@ -593,7 +598,7 @@ class SuppressionTests(unittest.TestCase):
         """Every record is charged, its path and reason included, and the budget
         is the comparison's, not a file's or a line's."""
 
-        budget = merge_evidence_github._MAX_SUPPRESSION_BYTES
+        budget = merge_evidence_github.MAX_SUPPRESSION_BYTES
         reason = "r" * 60_000
         files = [
             _file(
@@ -603,16 +608,49 @@ class SuppressionTests(unittest.TestCase):
             )
             for n in range(40)
         ]
-        cost = merge_evidence_github._record_bytes(
+        cost = merge_evidence_github.suppression_record_bytes(
             _found("tools/t10.py", 1, "noqa", reason)
         )
         fit = budget // cost
         self.assertLess(fit, len(files))
-        self.assertLess(fit, merge_evidence_github._MAX_SUPPRESSIONS)
+        self.assertLess(fit, merge_evidence_github.MAX_SUPPRESSIONS)
         self.assertEqual("COMPLETE", _suppressions(files[:fit])["coverage"])
         over = _suppressions(files[: fit + 1])
         self.assertEqual("PARTIAL", over["coverage"])
         self.assertEqual(fit, len(over["found"]))
+
+    def test_the_byte_budget_is_exact(self) -> None:
+        """At exactly the byte budget the list is COMPLETE, and one charged byte
+        more makes it PARTIAL (the PAO on #423, 6115083586; characterization)."""
+
+        budget = merge_evidence_github.MAX_SUPPRESSION_BYTES
+
+        def entry(n: int, size: int) -> tuple[dict[str, Any], int]:
+            path, reason = f"tools/t{n:02d}.py", "r" * size
+            cost = merge_evidence_github.suppression_record_bytes(
+                _found(path, 1, "noqa", reason)
+            )
+            patch = f"@@ -0,0 +1 @@\n+a  # noqa --{reason}"
+            return _file(path, "added", patch=patch), cost
+
+        files: list[dict[str, Any]] = []
+        total = 0
+        while (
+            total + entry(len(files), 60_000)[1] + entry(len(files) + 1, 0)[1] <= budget
+        ):
+            item, cost = entry(len(files), 60_000)
+            files.append(item)
+            total += cost
+        n = len(files)
+        # From a one-character reason, each more character costs one byte; an
+        # empty one is unjustified, and `false` is a byte longer than `true`.
+        last = budget - total - entry(n, 1)[1] + 1
+        exact, cost = entry(n, last)
+        self.assertEqual(budget, total + cost)
+        fits = _suppressions([*files, exact])
+        self.assertEqual(("COMPLETE", n + 1), (fits["coverage"], len(fits["found"])))
+        over = _suppressions([*files, entry(n, last + 1)[0]])
+        self.assertEqual(("PARTIAL", n), (over["coverage"], len(over["found"])))
 
     def test_a_record_is_charged_as_the_command_writes_it(self) -> None:
         """The cost covers the serializer's escaping of quotes, backslashes and
@@ -630,7 +668,7 @@ class SuppressionTests(unittest.TestCase):
         empty["suppressions"]["found"] = []
         written = len(json.dumps(evidence, indent=2, sort_keys=True).encode("utf-8"))
         bare = len(json.dumps(empty, indent=2, sort_keys=True).encode("utf-8"))
-        charged = sum(merge_evidence_github._record_bytes(r) for r in found)
+        charged = sum(merge_evidence_github.suppression_record_bytes(r) for r in found)
         self.assertGreaterEqual(charged, written - bare)
         self.assertLessEqual(charged - (written - bare), 16)
 
@@ -639,7 +677,7 @@ class SuppressionTests(unittest.TestCase):
         time, so nothing past the budget is copied."""
 
         consumed = 0
-        original = merge_evidence_github._occurrences
+        original = merge_evidence_github.marker_occurrences
 
         def counted(*args: Any) -> Any:
             nonlocal consumed
@@ -649,10 +687,13 @@ class SuppressionTests(unittest.TestCase):
 
         line = "+" + "noqa--x " * 8_000
         files = [_file("t.py", "added", patch=f"@@ -0,0 +1 @@\n{line}")]
-        with patch.object(merge_evidence_github, "_occurrences", counted):
+        with mock.patch.object(merge_evidence_github, "marker_occurrences", counted):
             record = _suppressions(files)
         self.assertEqual("PARTIAL", record["coverage"])
-        self.assertLessEqual(consumed, merge_evidence_github._MAX_SUPPRESSIONS + 1)
+        # cubic on #423: the long reasons reach the byte budget well before the
+        # count's, and exactly one record past the kept ones is ever built.
+        self.assertLess(len(record["found"]), merge_evidence_github.MAX_SUPPRESSIONS)
+        self.assertEqual(len(record["found"]) + 1, consumed)
 
     def test_a_complete_diff_without_markers_is_complete_and_empty(self) -> None:
         patch = "@@ -1 +1 @@\n-a\n+b"
