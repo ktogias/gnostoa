@@ -315,11 +315,12 @@ class GuardTests(unittest.TestCase):
     def test_a_record_with_another_or_no_nonce_never_substitutes(self) -> None:
         """An older success, another dispatch's run or a scheduled run carries no
         record of this nonce, and is never accepted, even while it is the latest."""
-        for name, timeline in (
+        cases: tuple[tuple[str, list[dict[str, Any] | None]], ...] = (
             ("an older success", [_check(CHECK - 7, nonce=None)]),
             ("another dispatch's success", [_check(CHECK + 1, nonce=FOREIGN)]),
             ("no run at all", [None]),
-        ):
+        )
+        for name, timeline in cases:
             with self.subTest(name):
                 github = _GitHub()
                 github.timeline = timeline
@@ -535,7 +536,7 @@ class RebuilderTests(unittest.TestCase):
 
     def test_the_re_readers_are_l1_s_own(self) -> None:
         guard = _guard()
-        rebuild, population = guard._rebuilders("x" * 40, REPOSITORY, PULL, ROOT)
+        rebuild, population = guard.rebuilders("x" * 40, REPOSITORY, PULL, ROOT)
         l1 = sys.modules["review_github_current_state"]
         listed = [{"number": PULL, "head_sha": HEAD}, {"number": 1, "head_sha": OTHER}]
         with mock.patch.object(l1, "_open_pulls", return_value=listed) as pulls:
@@ -598,7 +599,7 @@ class CheckoutRevisionTests(unittest.TestCase):
             ) as which,
             mock.patch.object(guard.subprocess, "run", side_effect=run),
         ):
-            self.assertEqual(MAIN, guard.checkout_revision(ROOT))
+            self.assertEqual(MAIN, guard.read_checkout_revision(ROOT))
         which.assert_called_with("git", path=guard.TRUSTED_PATH)
         self.assertEqual({"/usr/bin/git"}, {argv[0] for argv in calls})
 
@@ -626,10 +627,10 @@ class CheckoutRevisionTests(unittest.TestCase):
             (Path(raw) / "tracked.txt").write_text("x", encoding="utf-8")
             run(raw, "add", "tracked.txt")
             run(raw, "commit", "-q", "-m", "x")
-            self.assertRegex(guard.checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
+            self.assertRegex(guard.read_checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
             (Path(raw) / "sitecustomize.py").write_text("", encoding="utf-8")
             with self.assertRaises(guard.Refused):
-                guard.checkout_revision(Path(raw))
+                guard.read_checkout_revision(Path(raw))
 
     def test_an_ignored_file_in_the_checkout_refuses(self) -> None:
         """Codex and CodeAnt on #426: an ignored file, such as a `*.pyc` the
@@ -654,10 +655,54 @@ class CheckoutRevisionTests(unittest.TestCase):
                     check=True,
                     capture_output=True,
                 )
-            self.assertRegex(guard.checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
+            self.assertRegex(guard.read_checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
             (Path(raw) / "sitecustomize.pyc").write_bytes(b"x")
             with self.assertRaises(guard.Refused):
-                guard.checkout_revision(Path(raw))
+                guard.read_checkout_revision(Path(raw))
+
+    def test_git_runs_no_configured_program_and_sees_no_credential(self) -> None:
+        """Codex on #426: a `core.fsmonitor` in the checkout's or the user's Git
+        configuration would run with the guard's credential in reach. The guard's
+        git loads no global or system configuration, disables the monitor and hooks,
+        and is never handed a credential."""
+        guard = _guard()
+        git = shutil.which("git", path=guard.TRUSTED_PATH)
+        if git is None:
+            self.skipTest("git is unavailable")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout, home = root / "checkout", root / "home"
+            checkout.mkdir()
+            home.mkdir()
+            monitor = root / "monitor.sh"
+            marker = root / "monitor-ran"
+            monitor.write_text(
+                f'#!/bin/sh\necho "$GH_TOKEN" >> {marker}\n', encoding="utf-8"
+            )
+            monitor.chmod(0o700)
+            environment = {"PATH": guard.TRUSTED_PATH, "HOME": str(home)}
+            for arguments in (
+                ["init", "-q"],
+                ["commit", "-q", "--allow-empty", "-m", "x"],
+                ["config", "core.fsmonitor", str(monitor)],
+            ):
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
+                    cwd=checkout,
+                    env=environment,
+                    check=True,
+                    capture_output=True,
+                )
+            (home / ".gitconfig").write_text(
+                f"[core]\n\tfsmonitor = {monitor}\n", encoding="utf-8"
+            )
+            with mock.patch.dict(
+                os.environ, {**environment, "GH_TOKEN": "credential-1"}, clear=True
+            ):
+                self.assertRegex(
+                    guard.read_checkout_revision(checkout), r"^[0-9a-f]{40}$"
+                )
+            self.assertFalse(marker.exists())
 
     def test_without_git_on_the_trusted_path_it_refuses(self) -> None:
         guard = _guard()
@@ -665,7 +710,7 @@ class CheckoutRevisionTests(unittest.TestCase):
             mock.patch.object(guard.shutil, "which", return_value=None),
             self.assertRaises(guard.Refused),
         ):
-            guard.checkout_revision(ROOT)
+            guard.read_checkout_revision(ROOT)
 
 
 RUNBOOK = ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
@@ -755,7 +800,8 @@ class GuardLaunchTests(unittest.TestCase):
         )
         return completed.returncode
 
-    def _results(self, root: Path) -> tuple[bool, bool, bool]:
+    @staticmethod
+    def _results(root: Path) -> tuple[bool, bool, bool]:
         home = root / "home"
         return (
             (home / "minted").exists(),
@@ -805,6 +851,22 @@ class GuardLaunchTests(unittest.TestCase):
                 target.write_text(_STARTUP_MODULE, encoding="utf-8")
                 self.assertNotEqual(0, self._run(root, checkout))
                 self.assertEqual((False, False, False), self._results(root))
+
+    def test_the_launch_s_git_read_runs_no_configured_program(self) -> None:
+        """Codex on #426: the read before the mint loads no global or system
+        configuration and disables the checkout's `core.fsmonitor`, so no program
+        the configuration names runs at all."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout = self._checkout(root)
+            marker = root / "monitor-ran"
+            monitor = root / "monitor.sh"
+            monitor.write_text(f"#!/bin/sh\n: > {marker}\n", encoding="utf-8")
+            monitor.chmod(0o700)
+            self._git(checkout, "config", "core.fsmonitor", str(monitor))
+            self.assertEqual(0, self._run(root, checkout))
+            self.assertEqual((True, True, False), self._results(root))
+            self.assertFalse(marker.exists())
 
     def test_the_guard_imports_under_an_isolated_interpreter(self) -> None:
         """Run as `guard_merge` runs it: `python3 -I`, no `PYTHONPATH`. The guard adds
@@ -877,8 +939,8 @@ class GuardCommandTests(unittest.TestCase):
             {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(return_value=proceed),
             _client=mock.Mock(),
-            checkout_revision=mock.Mock(return_value=MAIN),
-            _rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
+            read_checkout_revision=mock.Mock(return_value=MAIN),
+            rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
         )
         self.assertEqual((0, proceed), (code, json.loads(out)))
         code, out = self._main(
@@ -886,8 +948,8 @@ class GuardCommandTests(unittest.TestCase):
             {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(side_effect=_guard().Refused("the check is another App's")),
             _client=mock.Mock(),
-            checkout_revision=mock.Mock(return_value=MAIN),
-            _rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
+            read_checkout_revision=mock.Mock(return_value=MAIN),
+            rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
         )
         self.assertEqual(1, code)
         self.assertEqual("REFUSED", json.loads(out)["result"])

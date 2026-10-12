@@ -878,21 +878,7 @@ class GitHubRestClient:
             raise failure(
                 "GitHub API transport failed", outcome_unknown=write
             ) from error
-        if empty:
-            if raw.strip():
-                raise GitHubWriteError(
-                    "GitHub API answered a body-less write with a body",
-                    outcome_unknown=True,
-                )
-            return None, headers
-        try:
-            return decode_json(raw, url), headers
-        except GitHubReadError as error:
-            if write:
-                # The provider answered, and its answer could not be read: the write may
-                # well have been applied.
-                raise GitHubWriteError(str(error), outcome_unknown=True) from error
-            raise
+        return _decoded(raw, url, write=write, empty=empty), headers
 
     def get(self, url: str) -> tuple[Any, dict[str, str]]:
         """Return one GET's document and headers, in one attempt."""
@@ -935,6 +921,26 @@ class GitHubRestClient:
         """PATCH ``payload`` once and return the provider's document."""
         document, _ = self._request("PATCH", url, payload)
         return document
+
+
+def _decoded(raw: bytes, url: str, *, write: bool, empty: bool) -> Any:
+    """An exchange's answer as its caller asked for it: the JSON document, or, for a
+    body-less write, nothing at all (G1 on #426)."""
+    if empty:
+        if raw.strip():
+            raise GitHubWriteError(
+                "GitHub API answered a body-less write with a body",
+                outcome_unknown=True,
+            )
+        return None
+    try:
+        return decode_json(raw, url)
+    except GitHubReadError as error:
+        if write:
+            # The provider answered, and its answer could not be read: the write may
+            # well have been applied.
+            raise GitHubWriteError(str(error), outcome_unknown=True) from error
+        raise
 
 
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')

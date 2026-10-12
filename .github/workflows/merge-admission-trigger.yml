@@ -18,6 +18,10 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_thread:
     types: [resolved, unresolved]
+  # A thread's only comment, deleted, removes the thread, an unresolved one included,
+  # with no thread event (CodeAnt on #426).
+  pull_request_review_comment:
+    types: [created, deleted]
   issue_comment:
     types: [created, edited, deleted]
 

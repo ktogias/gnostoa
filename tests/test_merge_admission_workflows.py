@@ -81,7 +81,8 @@ SUBJECTS_IF = (
     " && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'"
     " && github.event.workflow_run.conclusion == 'success'"
     ' && contains(fromJSON(\'["pull_request","pull_request_review",'
-    '"pull_request_review_thread","issue_comment"]\'), github.event.workflow_run.event))'
+    '"pull_request_review_thread","pull_request_review_comment","issue_comment"]\'),'
+    " github.event.workflow_run.event))"
     " || (github.event.workflow_run.path == '.github/workflows/verification.yml'"
     " && github.event.workflow_run.event == 'pull_request'))))"
 )
@@ -111,9 +112,15 @@ class TriggerWorkflowTests(unittest.TestCase):
                 "pull_request",
                 "pull_request_review",
                 "pull_request_review_thread",
+                "pull_request_review_comment",
                 "issue_comment",
             },
             set(events),
+        )
+        # CodeAnt on #426: deleting a thread's only comment removes the thread, an
+        # unresolved one included, with no resolved or unresolved event.
+        self.assertEqual(
+            {"created", "deleted"}, set(events["pull_request_review_comment"]["types"])
         )
         # cubic on #426: a draft is denied (M1), so turning one back into a draft
         # changes the verdict.
@@ -224,7 +231,7 @@ class AdmissionWorkflowTests(unittest.TestCase):
             {"workflow_run", "schedule", "workflow_dispatch", "repository_dispatch"},
             set(events),
         )
-        # G1 (#426 6132395441): the guarded merge's dispatch, by its one type.
+        # The guarded merge's dispatch is admitted by its one type alone (G1).
         self.assertEqual(
             ["gnostoa-merge-admission"], events["repository_dispatch"]["types"]
         )

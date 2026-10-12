@@ -329,8 +329,9 @@ written here.
   ```
 - `guard_merge` launches the merge-admission guard (step 8, once `merge-admission`
   is required) in the same fresh shell, run from a clean clone of protected `main`.
-  Before any credential exists, it reads the checkout with git, and that read must
-  succeed: an unreadable checkout is not a clean one, and `env -i` drops the caller's
+  Before any credential exists, it reads the checkout with git, loading no global
+  or system configuration and running no monitor or hook the checkout's own
+  configuration names (Codex on #426), and that read must succeed: an unreadable checkout is not a clean one, and `env -i` drops the caller's
   `GIT_*` routing, so git reads this checkout and no other. The read must show
   nothing: no change, no untracked file and no ignored one, such as a
   `sitecustomize.py` or a `*.pyc`. Only then is the token minted. The interpreter
@@ -348,7 +349,9 @@ written here.
       trap "exit 129" HUP
       created=$(mktemp -d) || exit
       trap cleanup EXIT
-      state=$(git status --porcelain --untracked-files=all --ignored) || exit
+      state=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+        status --porcelain --untracked-files=all --ignored) || exit
       test -z "$state" || exit
       GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
         && test -n "$GH_TOKEN" && export GH_TOKEN \
@@ -504,7 +507,7 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
 ### Merge admission (MA0 1b.4): shadow until activation
 
 **What runs.** Decision 0112 item 5's publication, from protected `main` only:
-- `merge-admission-trigger.yml` wakes the relay on a pull request's `opened`, `edited`, `reopened`, `synchronize`, `ready_for_review` and `converted_to_draft`; on a review's `submitted`, `edited` and `dismissed`; on a review thread's `resolved` and `unresolved`; and on the declarer's PR conversation comment `created`, `edited` or `deleted` (F1, #426 6130207025). The comment filter is its author, `policy/merge-authorities.yaml`'s `declarer`, never its body, so removing the seal's prefix or deleting it wakes the relay too. A comment's event is relayed unchanged as an artifact, and the relay derives the pull request from it in protected code (`hint`). It holds no permission, secret or checkout (Decision 0096 rule 2).
+- `merge-admission-trigger.yml` wakes the relay on a pull request's `opened`, `edited`, `reopened`, `synchronize`, `ready_for_review` and `converted_to_draft`; on a review's `submitted`, `edited` and `dismissed`; on a review thread's `resolved` and `unresolved`; on an inline review comment's `created` and `deleted`, since deleting a thread's only comment removes the thread with no thread event; and on the declarer's PR conversation comment `created`, `edited` or `deleted` (F1, #426 6130207025). The comment filter is its author, `policy/merge-authorities.yaml`'s `declarer`, never its body, so removing the seal's prefix or deleting it wakes the relay too. A comment's event is relayed unchanged as an artifact, and the relay derives the pull request from it in protected code (`hint`). It holds no permission, secret or checkout (Decision 0096 rule 2).
 - `merge-admission.yml` runs on the trigger's and verification's completed runs, on an hourly sweep at minute 41, by hand, and on a guarded merge's `repository_dispatch` of type `gnostoa-merge-admission`, whose payload must be exactly a pull request and a 128-bit nonce, or the selection fails:
   1. L1's `--mode subjects` re-reads each hinted pull request's head, and drops a closed one. Without a hint, the sweep takes L1's scheduled batch of the open population.
   2. **Invalidation first** (`invalidate`, in `gnostoa-ma0`). Before anything is acquired again, a success that `gnostoa-ma0`'s latest run on the head stands on is replaced by a pending run of the App. The record of what was observed passes to step 5 inside the same run.

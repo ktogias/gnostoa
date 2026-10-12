@@ -65,6 +65,8 @@ _WORKFLOW = ".github/workflows/merge-admission.yml"
 _DISPATCH_TYPE = "gnostoa-merge-admission"
 _PROTECTED = "main"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
+# Git runs no program a configuration names: no file-system monitor, no hook.
+_NO_PROGRAMS = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 # The executable search path the preparation helper trusts (AGENTS.md).
 TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 _POLICY = github_rest.Policy(
@@ -379,19 +381,27 @@ def _client(token: str) -> Any:
 
 
 def _git(root: Path, *arguments: str) -> str:
-    """Run git, found on the trusted path and run by its absolute name, with no
-    caller Git routing or configuration in its environment."""
+    """Run git, found on the trusted path and run by its absolute name. Its
+    environment is an allowlist, so no credential reaches it under any name, and it
+    loads no global or system configuration. The monitor and hooks a local
+    configuration names are disabled, so git runs no other program (Codex on #426;
+    AGENTS.md's trusted retrieval)."""
 
     executable = shutil.which("git", path=TRUSTED_PATH)
     if executable is None:
         raise Refused("git is unavailable on the trusted path")
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        "PATH": TRUSTED_PATH,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_COUNT": "0",
+        "GIT_NO_REPLACE_OBJECTS": "1",
     }
     try:
         # Audited: no shell, an absolute executable, and fixed arguments only.
         completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-            [executable, *arguments],
+            [executable, *_NO_PROGRAMS, *arguments],
             cwd=root,
             env=environment,
             check=True,
@@ -404,7 +414,7 @@ def _git(root: Path, *arguments: str) -> str:
     return str(completed.stdout)
 
 
-def checkout_revision(root: Path) -> str:
+def read_checkout_revision(root: Path) -> str:
     """The checkout's revision, refused when its files differ from it: a changed
     tracked file, an untracked one, such as a stray decision the rebuild would read,
     or an ignored one, such as a `*.pyc` (CodeAnt and Codex on #426)."""
@@ -415,7 +425,7 @@ def checkout_revision(root: Path) -> str:
     return head
 
 
-def _rebuilders(
+def rebuilders(
     token: str, repository: str, number: int, root: Path
 ) -> tuple[Callable[[], Any], Callable[[], Any]]:
     """The re-reads the workflow's own commands make, in process: L1's snapshot with
@@ -474,16 +484,14 @@ def main(argv: list[str] | None = None) -> int:
     root = Path.cwd()
     try:
         client = _client(token)
-        rebuild, population = _rebuilders(
-            token, args.repository, args.pull_number, root
-        )
+        rebuild, population = rebuilders(token, args.repository, args.pull_number, root)
         result = guard(
             client,
             repository=args.repository,
             pull_number=args.pull_number,
             approved=args.approved,
             app_id=args.app_id,
-            checkout_revision=checkout_revision(root),
+            checkout_revision=read_checkout_revision(root),
             rebuild=rebuild,
             population=population,
         )

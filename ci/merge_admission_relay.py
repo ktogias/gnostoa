@@ -431,6 +431,15 @@ def _close(
     )
 
 
+def _already_latest(latest: Mapping[str, Any] | None, final: Mapping[str, Any]) -> bool:
+    return (
+        latest is not None
+        and latest.get("status") == "completed"
+        and latest.get("conclusion") == final["conclusion"]
+        and latest.get("external_id") == final["external_id"]
+    )
+
+
 def publish(
     client: Any,
     *,
@@ -458,30 +467,28 @@ def publish(
         # An older worker never restores a success over a newer run, nor without the
         # record of what it observed.
         return {"result": "OVERTAKEN"}
+    # A guarded merge's run always leaves the record its nonce is found by, so the
+    # guard refuses at once rather than at its deadline (Octopus on #426).
+    dispatched = correlation.get("nonce") is not None
     if planned["action"] != "PUBLISH":
-        if not _standing_success(latest):
+        standing = _standing_success(latest)
+        if not standing and not dispatched:
             return {"result": planned["action"]}
         identifier = _post(
             client, repository, head, app_id, {"status": "completed", **final}
         )
-        return {"result": "INVALIDATED", "check_run_id": identifier}
-    if (
-        latest is not None
-        and latest.get("status") == "completed"
-        and latest.get("conclusion") == final["conclusion"]
-        and latest.get("external_id") == final["external_id"]
-    ):
+        return {
+            "result": "INVALIDATED" if standing else "RECORDED",
+            "check_run_id": identifier,
+        }
+    if not dispatched and latest is not None and _already_latest(latest, final):
+        expected = {
+            "external_id": final["external_id"],
+            "conclusion": final["conclusion"],
+        }
         return {
             "result": "PUBLISHED",
-            "check_run_id": _verified(
-                latest,
-                head,
-                app_id,
-                {
-                    "external_id": final["external_id"],
-                    "conclusion": final["conclusion"],
-                },
-            ),
+            "check_run_id": _verified(latest, head, app_id, expected),
         }
     identifier = _post(
         client, repository, head, app_id, {"status": "completed", **final}

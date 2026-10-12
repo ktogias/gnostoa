@@ -477,7 +477,10 @@ def _planned(conclusion: str = "success", action: str = "PUBLISH") -> dict[str, 
 
 
 def _publish(
-    provider: _Provider, planned: dict[str, Any], record: dict[str, Any] | None
+    provider: _Provider,
+    planned: dict[str, Any],
+    record: dict[str, Any] | None,
+    correlation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = _relay().publish(
         provider,
@@ -485,9 +488,13 @@ def _publish(
         planned=planned,
         app_id=MA0_APP,
         record=record,
-        correlation=CORRELATION,
+        correlation=CORRELATION if correlation is None else correlation,
     )
     return result
+
+
+# A scheduled or manual run: no guarded merge dispatched it, so it carries no nonce.
+SCHEDULED = {**CORRELATION, "nonce": None}
 
 
 class InvalidationTests(unittest.TestCase):
@@ -651,7 +658,7 @@ class CompletionTests(unittest.TestCase):
     def test_a_superseded_run_over_no_success_writes_nothing(self) -> None:
         provider = _Provider([_run(91, conclusion="failure")])
         record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
-        result = _publish(provider, _planned(action="SUPERSEDED"), record)
+        result = _publish(provider, _planned(action="SUPERSEDED"), record, SCHEDULED)
         self.assertEqual("SUPERSEDED", result["result"])
         self.assertEqual(([], []), (provider.posts, provider.patches))
 
@@ -706,9 +713,61 @@ class CompletionTests(unittest.TestCase):
             [_run(92, conclusion="failure", external_id=planned["external_id"])]
         )
         record = {"result": "NOT_NEEDED", "pending": None, "observed": 92}
-        result = _publish(provider, planned, record)
+        result = _publish(provider, planned, record, SCHEDULED)
         self.assertEqual(("PUBLISHED", 92), (result["result"], result["check_run_id"]))
         self.assertEqual(([], []), (provider.posts, provider.patches))
+
+    def test_a_dispatched_run_always_leaves_its_record(self) -> None:
+        """Octopus on #426: a guarded merge waits for the record carrying its nonce.
+        A dispatched run therefore writes one even where a scheduled run writes
+        nothing (a superseded or incomplete plan with no success standing, or a
+        denial that is already the latest), so the guard refuses at once instead of
+        waiting out its deadline. Never as a success."""
+        relay = _relay()
+        denial = _planned("failure")
+        for name, planned, runs, observed in (
+            (
+                "superseded, nothing standing",
+                _planned(action="SUPERSEDED"),
+                [_run(91, conclusion="failure")],
+                91,
+            ),
+            (
+                "incomplete, nothing standing",
+                relay.plan_incomplete(HEAD, "unread"),
+                [],
+                None,
+            ),
+            (
+                "a denial already latest",
+                denial,
+                [_run(92, conclusion="failure", external_id=denial["external_id"])],
+                92,
+            ),
+        ):
+            with self.subTest(name):
+                provider = _Provider(runs)
+                record = {"result": "NOT_NEEDED", "pending": None, "observed": observed}
+                result = _publish(provider, planned, record)
+                self.assertEqual(1, len(provider.posts), result)
+                _, payload = provider.posts[0]
+                self.assertEqual(
+                    ("completed", "failure"), (payload["status"], payload["conclusion"])
+                )
+                found = _checks().correlation_of({"output": payload["output"]})
+                self.assertEqual(NONCE, (found or {}).get("nonce"))
+        # A scheduled run, with no nonce, still writes nothing in those cases.
+        provider = _Provider([_run(91, conclusion="failure")])
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        result = relay.publish(
+            provider,
+            repository=REPOSITORY,
+            planned=_planned(action="SUPERSEDED"),
+            app_id=MA0_APP,
+            record=record,
+            correlation={**CORRELATION, "nonce": None},
+        )
+        self.assertEqual(("SUPERSEDED", []), (result["result"], provider.posts))
 
     def test_an_unknown_completion_is_read_back_never_rewritten(self) -> None:
         provider = _Provider([_run(90)])
