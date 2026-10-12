@@ -12,17 +12,26 @@ is read, and the binding is read again after the last page:
   read completely, are all finished; the latest has a gate result, starts at
   that analysis date (as it did for all 44 listed pull requests on 2026-10-12),
   and is the same run, unchanged, both times;
-- the project's Compute Engine queue holds no task for this pull request, both
-  times. Its coverage of pull-request tasks is not established, so its absence is
-  never what proves an analysis finished.
+- the project's Compute Engine tasks hold none of this pull request's that is
+  queued, unfinished or failed, both times.
 
-No analysis id attributable to this pull request is established with Browse
-rights, so none is claimed; the inputs that bound the report are kept. Every page is read until the
-count reaches the provider's total, and SonarCloud's own bounds -- 500 issues a
-page, the first 10,000 results of a search -- make a larger inventory `PARTIAL`,
-never `COMPLETE`. Nothing here proves that SonarCloud indexed every issue of the
-report before the pages were read: only that no other analysis of the pull
-request ran or completed meanwhile.
+Whether those sources can show a newer, unfinished analysis of the same head is
+not established. Before SonarCloud submits an analysis there is no task to see
+(#424's took 28 s to submit), and a calibration sampled every 5 s missed its
+3-second processing. So their silence is never what proves an analysis
+finished, and under the current contract (R4) a fully read, bound inventory is
+`PARTIAL`, with `UNFINISHED_ANALYSIS_UNOBSERVABLE`, and never `COMPLETE`.
+
+A task naming the pull request, with an analysis id, can be read in the project's
+`current` task, but its association with the exact head's report is not
+established, so no analysis id is claimed; the inputs that bound the report are
+kept.
+
+Every page is read until the count reaches the provider's total, and
+SonarCloud's own bounds -- 500 issues a page, the first 10,000 results of a
+search -- make a larger inventory `PARTIAL`. Nothing here proves that SonarCloud
+indexed every issue of the report before the pages were read, nor that no other
+computation ran meanwhile: only that the bound descriptors stayed the same.
 
 The transport is the shared GitHub REST client on SonarCloud's origin (Decision
 0100): its origin pin, redirect refusal, bounded exchange and credential
@@ -68,6 +77,14 @@ CHECK_APP_ID = 12526
 CHECK_NAME = "SonarCloud Code Analysis"
 # A finished analysis has a gate result; any other conclusion is no report.
 _PUBLISHED = frozenset({"success", "failure"})
+# R4, the current contract (the PAO's escalation on #424, 6120941468): no source
+# read here is established to show a newer, unfinished analysis of the same head
+# -- SonarCloud posts its check run only once finished, no task exists before an
+# analysis is submitted, and #424's 3-second processing went unobserved by
+# 5-second samples -- so a stable published report's inventory is read in full
+# and is PARTIAL, never COMPLETE. Whether COMPLETE may cover the latest published
+# report instead (R1) is the owner's selection (PAO 6121032452).
+_UNFINISHED_ANALYSIS_OBSERVABLE = False
 
 
 class ProviderReadFailure(RuntimeError):
@@ -434,15 +451,28 @@ def _inventory(
     pages: _Pages,
     reads: int,
 ) -> dict[str, Any]:
-    """The pages' inventory, once its report stayed bound: complete only when its
-    unique issues are exactly the provider's total."""
+    """The pages' inventory, once its report stayed bound: never more than PARTIAL
+    unless its unique issues are exactly the provider's total, and, under the
+    current contract (R4), PARTIAL even then, with every finding kept."""
 
     retained = deduplicate_findings(pages.findings)
     total = pages.total if pages.total is not None else 0
+    native = {
+        "pull_request_id": analysis.pull_request_id,
+        "analysis_date": analysis.date,
+        "check_run": {
+            "id": report.get("id"),
+            "started_at": report.get("started_at"),
+            "conclusion": report.get("conclusion"),
+        },
+    }
     if total > _WINDOW:
         status, reason = "PARTIAL", "PROVIDER_WINDOW_EXCEEDED"
     elif len(retained) != total:
         status, reason = "ERROR", "COUNT_TOTAL_MISMATCH"
+    elif not _UNFINISHED_ANALYSIS_OBSERVABLE:
+        status, reason = "PARTIAL", "UNFINISHED_ANALYSIS_UNOBSERVABLE"
+        native["unfinished_analysis"] = "UNOBSERVABLE"
     else:
         return _document(
             read,
@@ -453,15 +483,7 @@ def _inventory(
             ),
             findings=retained,
             observed_head=analysis.head,
-            native={
-                "pull_request_id": analysis.pull_request_id,
-                "analysis_date": analysis.date,
-                "check_run": {
-                    "id": report.get("id"),
-                    "started_at": report.get("started_at"),
-                    "conclusion": report.get("conclusion"),
-                },
-            },
+            native=native,
         )
     return _document(
         read,
@@ -472,6 +494,7 @@ def _inventory(
         ),
         findings=retained,
         observed_head=analysis.head,
+        native=native if reason == "UNFINISHED_ANALYSIS_UNOBSERVABLE" else None,
     )
 
 
@@ -516,7 +539,11 @@ def _scope(run: Mapping[str, Any], subject: _Subject) -> str | None:
     details = run.get("details_url")
     if not isinstance(details, str):
         return "malformed"
-    parsed = urllib.parse.urlsplit(details)
+    try:
+        parsed = urllib.parse.urlsplit(details)
+    except ValueError:
+        # An unparsable host, such as an unclosed IPv6 bracket (CodeAnt on #424).
+        return "malformed"
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     if (parsed.scheme, parsed.netloc, parsed.path) != (
         "https",
@@ -531,14 +558,11 @@ def _scope(run: Mapping[str, Any], subject: _Subject) -> str | None:
     return "foreign"
 
 
-def _report(
-    check_runs: Sequence[object], subject: _Subject, analysis: _Analysis
-) -> Mapping[str, Any] | str:
-    """The exact head's finished SonarCloud run for this pull request that started
-    at the listed analysis, or the reason there is none. Every one of its runs
-    must be finished, as every current run must pass for a check item; a run whose
-    details are malformed, or a tie on the latest start, leaves the association
-    unknown, and no id decides it (PAO 6119999041 on #407)."""
+def _runs_of(
+    check_runs: Sequence[object], subject: _Subject
+) -> list[Mapping[str, Any]] | str:
+    """This pull request's SonarCloud runs, or why they cannot be told apart: a run
+    whose details are malformed might be this pull request's."""
 
     scoped = [
         (_scope(run, subject), run)
@@ -546,7 +570,21 @@ def _report(
     ]
     if any(scope == "malformed" for scope, _ in scoped):
         return "REPORT_ASSOCIATION_AMBIGUOUS"
-    runs = [run for scope, run in scoped if scope == "ours"]
+    return [run for scope, run in scoped if scope == "ours"]
+
+
+def _report(
+    check_runs: Sequence[object], subject: _Subject, analysis: _Analysis
+) -> Mapping[str, Any] | str:
+    """The exact head's finished SonarCloud run for this pull request that started
+    at the listed analysis, or the reason there is none. Every one of its runs
+    must be finished, as every current run must pass for a check item, and a tie
+    on the latest start leaves the association unknown: no id decides it (PAO
+    6119999041 on #407)."""
+
+    runs = _runs_of(check_runs, subject)
+    if isinstance(runs, str):
+        return runs
     if not runs:
         return "ANALYSIS_NOT_PUBLISHED"
     if any(run.get("status") != "completed" for run in runs):
@@ -563,9 +601,13 @@ def _report(
     return latest[0]
 
 
-def _queued(document: Mapping[str, Any], subject: _Subject) -> bool:
-    """Whether the project's queue holds a task that may be this pull request's:
-    its own, or one that names neither a branch nor a pull request."""
+def _unfinished(document: Mapping[str, Any], subject: _Subject) -> str | None:
+    """Why the project's tasks say this pull request's newest analysis may not be
+    its published report, or None. A queued task may be its own, or name neither a
+    branch nor a pull request. `current` is the project's last task, a pull
+    request's included (#424's own, 2026-10-12), so only one naming this pull
+    request counts: unfinished, or failed or cancelled (CodeReviewBot and CodeAnt
+    on #424)."""
 
     queue = document.get("queue")
     if not isinstance(queue, list):
@@ -576,8 +618,17 @@ def _queued(document: Mapping[str, Any], subject: _Subject) -> bool:
         if (pull is not None and str(pull) == subject.pull) or (
             pull is None and branch is None
         ):
-            return True
-    return False
+            return "ANALYSIS_IN_PROGRESS"
+    current = document.get("current")
+    if current is None:
+        return None
+    task = _mapping(current, "current task")
+    pull = task.get("pullRequest")
+    if pull is None or str(pull) != subject.pull or task.get("status") == "SUCCESS":
+        return None
+    if task.get("status") in {"PENDING", "IN_PROGRESS"}:
+        return "ANALYSIS_IN_PROGRESS"
+    return "ANALYSIS_NOT_PUBLISHED"
 
 
 def _bound(
@@ -605,9 +656,10 @@ def _bound(
     report = _report(check_runs(), subject, before)
     if isinstance(report, str):
         return _ambiguous(read, report, pages=reader.reads, observed_head=before.head)
-    if _queued(reader.get(queue), subject):
+    unfinished = _unfinished(reader.get(queue), subject)
+    if unfinished is not None:
         return _ambiguous(
-            read, "ANALYSIS_IN_PROGRESS", pages=reader.reads, observed_head=before.head
+            read, unfinished, pages=reader.reads, observed_head=before.head
         )
     _read_pages(reader, subject, pages)
     after = _analysis(reader.get(listing), subject)
@@ -630,9 +682,10 @@ def _bound(
             pages=reader.reads,
             observed_head=before.head,
         )
-    if _queued(reader.get(queue), subject):
+    unfinished = _unfinished(reader.get(queue), subject)
+    if unfinished is not None:
         return _ambiguous(
-            read, "ANALYSIS_IN_PROGRESS", pages=reader.reads, observed_head=before.head
+            read, unfinished, pages=reader.reads, observed_head=before.head
         )
     return _inventory(read, before, report, pages, reader.reads)
 
@@ -655,15 +708,18 @@ def read_pull_request(
     read = _Read(repository, pull_number, requested_head, observed_at or _now())
     reader, pages = _Counted(client), _Pages()
     try:
-        return _bound(reader, read, check_runs, pages)
-    except ProviderReadFailure as exc:
-        return _failed(
-            read,
-            exc,
-            pages=reader.reads,
-            findings=pages.findings,
-            observed_head=pages.head,
-        )
+        try:
+            return _bound(reader, read, check_runs, pages)
+        except ProviderReadFailure as exc:
+            # Recording the failure normalizes what was read, which can conflict
+            # too, so it is guarded as the read is (CodeAnt on #424).
+            return _failed(
+                read,
+                exc,
+                pages=reader.reads,
+                findings=pages.findings,
+                observed_head=pages.head,
+            )
     except AnalyzerReadbackError:
         return _document(
             read,

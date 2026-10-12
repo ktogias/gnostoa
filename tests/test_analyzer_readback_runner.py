@@ -28,6 +28,8 @@ WORKFLOW_PATH = ROOT / ".github" / "workflows" / "analyzer-readback.yml"
 HEAD = "a" * 40
 OTHER = "b" * 40
 OBSERVED = "2026-09-23T14:00:00Z"
+# SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
+SONAR_ENV = "SONAR_TOKEN"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
@@ -1263,10 +1265,17 @@ class SonarCloudRunnerTests(unittest.TestCase):
         self.assertEqual(4, len(bundle["readbacks"]))
         readback = bundle["readbacks"][-1]
         self.assertEqual("sonarcloud-web-api/v1", readback["adapter"])
-        self.assertEqual("FULL_RUN", readback["completeness"])
+        # Read in full and bound; PARTIAL under the current contract (R4).
+        self.assertEqual(
+            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
+        )
         self.assertEqual(114609123587, readback["native"]["check_run"]["id"])
         self.assertIn(urls["sonar_checks"], events)
-        sonar = [n for n, url in enumerate(events) if "sonarcloud.io" in url]
+        sonar = [
+            n
+            for n, url in enumerate(events)
+            if urlsplit(url).hostname == "sonarcloud.io"
+        ]
         heads = [n for n, url in enumerate(events) if url == urls["pr"]]
         self.assertEqual(2, len(heads))
         self.assertLess(heads[0], sonar[0])
@@ -1366,7 +1375,7 @@ class SonarCloudRunnerTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.dict(
-                os.environ, {"SONAR_TOKEN": "synthetic-sonar-credential\n"}, clear=True
+                os.environ, {SONAR_ENV: "synthetic-sonar-credential\n"}, clear=True
             ),
             patch.object(
                 runner.GitHubReadClient, "from_environment", return_value=github
@@ -1410,7 +1419,7 @@ class SonarCloudRunnerTests(unittest.TestCase):
         """C1: with `SONAR_TOKEN` the bundle gets SonarCloud's client, and without
         it none; nothing is sent here."""
         for name, environment, expected in (
-            ("a token", {"SONAR_TOKEN": "synthetic-sonar-credential"}, True),
+            ("a token", {SONAR_ENV: "synthetic-sonar-credential"}, True),
             ("no token", {}, False),
         ):
             with (
@@ -1444,7 +1453,7 @@ class SonarCloudRunnerTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.dict(
-                os.environ, {"SONAR_TOKEN": "synthetic-sonar-credential"}, clear=True
+                os.environ, {SONAR_ENV: "synthetic-sonar-credential"}, clear=True
             ),
             patch.object(
                 runner.GitHubReadClient,
@@ -1504,7 +1513,10 @@ class _SequencedGitHub(_GitHubFake):
         self.calls.append(url)
         if not self.sequenced[url]:
             raise AssertionError(f"no remaining fake responses for {url}")
-        return self.sequenced[url].pop(0), {}
+        value = self.sequenced[url].pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return value, {}
 
 
 def _bracketed(*collections: dict[str, Any]) -> tuple[dict[str, Any], _SequencedGitHub]:
@@ -1540,11 +1552,16 @@ class SonarCloudReportBracketTests(unittest.TestCase):
     completely, before the issue pages and again after them, and the published
     report must be the same both times."""
 
-    def test_a_stable_published_report_is_complete(self) -> None:
-        """The positive control: the same finished run both times."""
+    def test_a_stable_report_is_partial_under_the_current_contract(self) -> None:
+        """R4 (PAO 6120941468 on #424): the stable bracket reads the whole
+        inventory, and it is `PARTIAL` while a newer same-head analysis is
+        unobservable."""
         readback, github = _bracketed(_runs(_sonar_run()), _runs(_sonar_run()))
-        self.assertEqual("FULL_RUN", readback["completeness"])
-        self.assertEqual("COMPLETE", readback["coverage"]["status"])
+        self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
+        self.assertEqual("PARTIAL", readback["coverage"]["status"])
+        self.assertEqual(
+            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
+        )
         self.assertEqual(2, github.calls.count(_github_urls()["sonar_checks"]))
 
     def test_a_run_that_starts_between_the_reads_holds_the_inventory(self) -> None:
@@ -1583,7 +1600,67 @@ class SonarCloudReportBracketTests(unittest.TestCase):
         """#394 and #395 share `5ef97e5`: another one's later run is not this one's."""
         other = _sonar_run(run_id=2, pull="311", started="2026-10-12T00:10:00Z")
         readback, _ = _bracketed(_runs(_sonar_run(), other), _runs(_sonar_run(), other))
-        self.assertEqual("COMPLETE", readback["coverage"]["status"])
+        self.assertEqual(
+            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
+        )
+
+    def test_a_github_failure_keeps_its_kind(self) -> None:
+        """Claude on #424: a failed read of the head's SonarCloud runs keeps its
+        kind, as the runner's own client reports it, rather than every failure
+        becoming a provider error."""
+        from tools import github_rest
+
+        for name, cause, status, reason in (
+            (
+                "rate limited",
+                github_rest.GitHubReadError("GitHub API HTTP 429", status=429),
+                "RATE_LIMITED",
+                "RATE_LIMITED",
+            ),
+            (
+                "unavailable",
+                github_rest.GitHubReadError("GitHub API HTTP 502", status=502),
+                "UNAVAILABLE",
+                "READBACK_UNAVAILABLE",
+            ),
+            (
+                "unusable",
+                github_rest.MalformedAnswer("GitHub API returned invalid JSON"),
+                "ERROR",
+                "PROVIDER_ERROR",
+            ),
+        ):
+            with self.subTest(name):
+                failure = runner.RunnerError(str(cause))
+                failure.__cause__ = cause
+                readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
+                self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
+                self.assertEqual(status, readback["coverage"]["status"])
+                self.assertEqual(reason, readback["coverage"]["reason"])
+
+    def test_a_run_total_that_is_no_count_is_never_complete(self) -> None:
+        """F6 (CodeAnt on #424): GitHub's `total_count` must be a count. A list
+        must not escape the readback, and a boolean is not 1."""
+        for name, total in (("a list", [1]), ("a boolean", True), ("text", "1")):
+            with self.subTest(name):
+                runs = {"total_count": total, "check_runs": [_sonar_run()]}
+                readback, _ = _bracketed(runs, runs)
+                self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
+                self.assertNotEqual("COMPLETE", readback["coverage"]["status"])
+                # The failure's own reason: under R4 a stable, read bracket is
+                # PARTIAL too, so "not COMPLETE" alone would not tell them apart.
+                self.assertEqual("PROVIDER_ERROR", readback["coverage"]["reason"])
+
+    def test_an_unparsable_details_url_is_still_a_readback(self) -> None:
+        """F8 (CodeAnt on #424): a run whose details `urlsplit` cannot parse leaves
+        the association unknown; the bundle keeps every readback."""
+        bad = {
+            **_sonar_run(run_id=2),
+            "details_url": "https://[sonarcloud.io/dashboard",
+        }
+        readback, _ = _bracketed(_runs(_sonar_run(), bad), _runs(_sonar_run(), bad))
+        self.assertEqual("AMBIGUOUS", readback["completeness"])
+        self.assertEqual("REPORT_ASSOCIATION_AMBIGUOUS", readback["coverage"]["reason"])
 
     def test_an_incomplete_run_collection_is_never_complete(self) -> None:
         for name, before, after in (
@@ -1594,6 +1671,9 @@ class SonarCloudReportBracketTests(unittest.TestCase):
                 readback, _ = _bracketed(before, after)
                 self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
                 self.assertNotEqual("COMPLETE", readback["coverage"]["status"])
+                # The failure's own reason: under R4 a stable, read bracket is
+                # PARTIAL too, so "not COMPLETE" alone would not tell them apart.
+                self.assertEqual("PROVIDER_ERROR", readback["coverage"]["reason"])
 
 
 def _resolve(environ: dict[str, str]) -> dict[str, str]:

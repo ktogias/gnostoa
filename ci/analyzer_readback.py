@@ -252,10 +252,14 @@ def _sonarcloud_checks(
             "per_page": 100,
         }
     )
-    totals: set[object] = set()
+    totals: set[int] = set()
 
     def runs(payload: object) -> list[Any]:
-        totals.add(_mapping(payload, "GitHub check-runs response").get("total_count"))
+        total = _mapping(payload, "GitHub check-runs response").get("total_count")
+        # A count, never a boolean or a list (CodeAnt on #424).
+        if type(total) is not int or total < 0:
+            raise RunnerError("GitHub's SonarCloud check-run total is malformed")
+        totals.add(total)
         return _check_runs_payload(payload)
 
     collected = _collect_pages(
@@ -278,9 +282,30 @@ def _sonarcloud_check_reader(
         try:
             return _sonarcloud_checks(client, repository, head)
         except RunnerError as exc:
-            raise analyzer_sonarcloud.ProviderReadFailure("ERROR", str(exc)) from exc
+            raise analyzer_sonarcloud.ProviderReadFailure(
+                _failure_kind(exc), str(exc)
+            ) from exc
 
     return read
+
+
+def _failure_kind(error: RunnerError) -> str:
+    """The adapter's kind for a failed GitHub read, from the shared client's cause:
+    a rate limit stays one and an unavailable provider stays unavailable, while an
+    unusable answer, or a collection that does not add up, is an error (Claude on
+    #424)."""
+
+    cause = error.__cause__
+    if not isinstance(cause, github_rest.GitHubError) or isinstance(
+        cause,
+        (
+            github_rest.MalformedAnswer,
+            github_rest.ResponseTooLarge,
+            github_rest.OutsideOrigin,
+        ),
+    ):
+        return "ERROR"
+    return "RATE_LIMIT" if cause.status == 429 else "UNAVAILABLE"
 
 
 def _sonarcloud_readback(

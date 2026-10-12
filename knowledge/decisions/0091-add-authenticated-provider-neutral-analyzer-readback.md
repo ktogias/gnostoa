@@ -132,7 +132,10 @@ inventory to a published report of the exact head through SonarCloud's
 pull-request listing, SonarCloud's own GitHub check run for that pull request, and
 the project's task queue, read before the issue pages and again after them. When
 they cannot prove that binding, the result is `AMBIGUOUS` with `INCOMPLETE`
-coverage. Its transport is the shared GitHub REST client on SonarCloud's origin
+coverage. Because no source it reads is established to show a newer, unfinished
+analysis of the same head, a fully read, bound inventory is
+`PARTIAL` under the current contract, never `COMPLETE`, until the owner selects
+otherwise (#424, 6120941468). Its transport is the shared GitHub REST client on SonarCloud's origin
 (Decision 0100), and its credential is the `analyzer-readback` environment's
 `SONAR_TOKEN`.
 

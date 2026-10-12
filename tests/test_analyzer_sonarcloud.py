@@ -24,6 +24,8 @@ LIST_URL = (
     "https://sonarcloud.io/api/project_pull_requests/list?project=ktogias_gnostoa"
 )
 ISSUES_PATH = "/api/issues/search"
+# SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
+SONAR_ENV = "SONAR_TOKEN"
 QUEUE_URL = "https://sonarcloud.io/api/ce/component?component=ktogias_gnostoa"
 CHECK_ID = 114609123587
 
@@ -233,18 +235,15 @@ class _SonarFake:
         return value
 
 
-def _read(
-    client: _SonarFake,
-    checks: list[dict[str, Any]] | None = None,
-    *later: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """The readback, with the exact head's SonarCloud runs read as ``checks``
-    before the pages and as ``later`` (by default the same) after them."""
+def _read(client: _SonarFake, *collections: list[dict[str, Any]]) -> dict[str, Any]:
+    """The readback, with the exact head's SonarCloud runs read as the first of
+    ``collections`` before the pages and as each later one after them; one
+    collection, or none (a single finished run), is read both times."""
 
-    collections = [[_check()] if checks is None else checks, *later]
+    remaining = list(collections) or [[_check()]]
 
     def check_runs() -> list[dict[str, Any]]:
-        return collections.pop(0) if len(collections) > 1 else collections[0]
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
 
     return analyzer_sonarcloud.read_pull_request(
         client,
@@ -264,6 +263,18 @@ class SonarCloudReadbackTests(unittest.TestCase):
     """MA0 1b.3c (#407 6119460225, lineage 6119607885): SonarCloud's finding
     inventory for one pull request's exact head."""
 
+    def assertBound(self, document: Mapping[str, Any]) -> None:
+        """Every observable fact bound the published report and every page was
+        read. Under the current contract (R4, PAO 6120941468 on #424) that is
+        `PARTIAL`, never `COMPLETE`, while a newer same-head analysis is
+        unobservable."""
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual(
+            "UNFINISHED_ANALYSIS_UNOBSERVABLE", document["coverage"]["reason"]
+        )
+        self.assertEqual(document["coverage"]["total"], document["coverage"]["count"])
+
     def test_an_exact_head_inventory_is_complete(self) -> None:
         """C3, C4, C5, C6: the head bound before and after the pages, every page
         read, and each issue normalized."""
@@ -276,8 +287,8 @@ class SonarCloudReadbackTests(unittest.TestCase):
         self.assertEqual("sonarcloud-web-api/v1", document["adapter"])
         self.assertEqual("DIFF", document["scope"])
         self.assertEqual("PULL_REQUEST", document["native_mode"])
-        self.assertEqual("FULL_RUN", document["completeness"])
-        self.assertEqual("COMPLETE", document["run_state"])
+        self.assertBound(document)
+        self.assertEqual("OBSERVED", document["run_state"])
         self.assertEqual(HEAD, document["observed_head"])
         # No provider-issued analysis or task id is readable with Browse rights,
         # so none is claimed; the inputs that bound the report are kept.
@@ -291,11 +302,18 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     "started_at": "2026-10-11T23:57:56Z",
                     "conclusion": "success",
                 },
+                "unfinished_analysis": "UNOBSERVABLE",
             },
             document["native"],
         )
         self.assertEqual(
-            {"status": "COMPLETE", "pages": 5, "count": 1, "total": 1},
+            {
+                "status": "PARTIAL",
+                "pages": 5,
+                "count": 1,
+                "total": 1,
+                "reason": "UNFINISHED_ANALYSIS_UNOBSERVABLE",
+            },
             document["coverage"],
         )
         self.assertEqual(
@@ -329,6 +347,57 @@ class SonarCloudReadbackTests(unittest.TestCase):
         self.assertEqual({"500"}, {q["ps"] for q in client.queries})
         analyzer_readback.parse_readback(document)
 
+    def test_a_stable_report_is_partial_while_a_newer_analysis_is_unobservable(
+        self,
+    ) -> None:
+        """R4, the current contract (PAO 6120941468 on #424). Every observable fact
+        binds the published report, but nothing readable shows whether a newer
+        analysis of the same head is unfinished: SonarCloud posts its check run
+        only once finished, and its task queue showed none of #424's own analysis.
+        So the inventory is read in full, its findings kept, and it is `PARTIAL`,
+        never `COMPLETE`, until the owner selects otherwise."""
+        client = _SonarFake(
+            [_listing(_entry()), _listing(_entry())],
+            {1: _page(_issues("open", 3), total=3)},
+        )
+        document = _read(client)
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual(
+            {
+                "status": "PARTIAL",
+                "pages": 5,
+                "count": 3,
+                "total": 3,
+                "reason": "UNFINISHED_ANALYSIS_UNOBSERVABLE",
+            },
+            document["coverage"],
+        )
+        self.assertEqual(3, len(document["findings"]))
+        self.assertEqual(HEAD, document["observed_head"])
+        self.assertEqual("UNOBSERVABLE", document["native"]["unfinished_analysis"])
+        self.assertEqual(CHECK_ID, document["native"]["check_run"]["id"])
+
+    def test_an_observable_unfinished_analysis_is_not_that_case(self) -> None:
+        """R4: an unfinished analysis that is observed stays `AMBIGUOUS`, as
+        before; only the unobservable one is the `PARTIAL` above."""
+        for name, queues, checks in (
+            ("a queued task", [_queue(_task(pullRequest="312"))], [_check()]),
+            (
+                "an unfinished run",
+                None,
+                [_check(status="in_progress", conclusion=None)],
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [_listing(_entry()), _listing(_entry())],
+                    {1: _page(_issues("open", 3), total=3)},
+                    queues,
+                )
+                document = _read(client, checks)
+                self.assertEqual("AMBIGUOUS", document["completeness"])
+                self.assertEqual("ANALYSIS_IN_PROGRESS", document["coverage"]["reason"])
+
     def test_a_green_gate_with_findings_lists_every_one(self) -> None:
         """C8, #353: its gate passed with 29 open issues. The inventory lists all
         29; nothing about the gate makes it complete or empty."""
@@ -337,7 +406,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
             {1: _page(_issues("open", 29), total=29)},
         )
         document = _read(client)
-        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertBound(document)
         self.assertEqual(29, document["coverage"]["count"])
         self.assertEqual(29, len(document["findings"]))
         self.assertEqual({"open"}, {f["state"] for f in document["findings"]})
@@ -352,9 +421,9 @@ class SonarCloudReadbackTests(unittest.TestCase):
             },
         )
         document = _read(client)
+        self.assertBound(document)
         self.assertEqual(
-            {"status": "COMPLETE", "pages": 6, "count": 501, "total": 501},
-            document["coverage"],
+            (6, 501), (document["coverage"]["pages"], document["coverage"]["count"])
         )
         self.assertEqual(["1", "2"], [q["p"] for q in client.queries])
 
@@ -571,7 +640,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
             [_listing(_entry()), _listing(_entry())], {1: _page(issues, total=4)}
         )
         document = _read(client)
-        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertBound(document)
         self.assertEqual(
             {
                 "issue-open": "open",
@@ -581,7 +650,8 @@ class SonarCloudReadbackTests(unittest.TestCase):
             },
             {f["id"]: f["state"] for f in document["findings"]},
         )
-        [query] = client.queries
+        self.assertEqual(1, len(client.queries))
+        query = client.queries[0]
         self.assertEqual(
             "OPEN,CONFIRMED,ACCEPTED,FALSE_POSITIVE", query["issueStatuses"]
         )
@@ -707,6 +777,11 @@ class SonarCloudReadbackTests(unittest.TestCase):
             ("no subject", "https://sonarcloud.io/dashboard?id=ktogias_gnostoa"),
             ("not a URL", "pull request 312"),
             ("none", None),
+            # urlsplit raises on it (CodeAnt on #424).
+            (
+                "an unparsable host",
+                "https://[sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=312",
+            ),
         ):
             with self.subTest(name):
                 client = _SonarFake(
@@ -739,9 +814,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     **_check(check_id=2, started="2026-10-12T00:10:00Z"),
                     "details_url": details,
                 }
-                self.assertEqual(
-                    "COMPLETE", _read(client, [_check(), later])["coverage"]["status"]
-                )
+                self.assertBound(_read(client, [_check(), later]))
 
     def test_the_report_must_be_the_same_after_the_pages(self) -> None:
         """C4b, written after the correction: the runner-level RED is
@@ -821,7 +894,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
             [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
         )
         document = _read(client, checks)
-        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertBound(document)
         self.assertEqual(CHECK_ID, document["native"]["check_run"]["id"])
 
     def test_a_gate_failure_is_still_a_published_report(self) -> None:
@@ -831,7 +904,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
             {1: _page(_issues("open", 3), total=3)},
         )
         document = _read(client, [_check(conclusion="failure")])
-        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertBound(document)
         self.assertEqual(3, len(document["findings"]))
 
     def test_an_unfinished_task_for_the_pull_request_is_in_progress(self) -> None:
@@ -865,6 +938,73 @@ class SonarCloudReadbackTests(unittest.TestCase):
                 self.assertEqual([], document["findings"])
                 self.assertEqual(reads_issues, bool(client.queries))
 
+    def test_a_task_of_the_pull_request_in_current_holds_it(self) -> None:
+        """F5 (CodeReviewBot and CodeAnt on #424): `ce/component`'s `current` is the
+        project's last task, a pull request's included (#424's own, 2026-10-12).
+        One of this pull request's that is unfinished or failed means its newest
+        analysis is not the published report, before the pages or after them."""
+        for name, current, reason in (
+            (
+                "running",
+                _task("IN_PROGRESS", pullRequest="312"),
+                "ANALYSIS_IN_PROGRESS",
+            ),
+            ("pending", _task("PENDING", pullRequest="312"), "ANALYSIS_IN_PROGRESS"),
+            ("failed", _task("FAILED", pullRequest="312"), "ANALYSIS_NOT_PUBLISHED"),
+            (
+                "cancelled",
+                _task("CANCELED", pullRequest="312"),
+                "ANALYSIS_NOT_PUBLISHED",
+            ),
+        ):
+            for when, queues in (
+                ("before", [{"queue": [], "current": current}, _queue()]),
+                ("after", [_queue(), {"queue": [], "current": current}]),
+            ):
+                with self.subTest(name=name, when=when):
+                    client = _SonarFake(
+                        [_listing(_entry()), _listing(_entry())],
+                        {1: _page(_issues("open", 2), total=2)},
+                        queues,
+                    )
+                    document = _read(client)
+                    self.assertEqual("AMBIGUOUS", document["completeness"])
+                    self.assertEqual(reason, document["coverage"]["reason"])
+                    self.assertEqual([], document["findings"])
+
+    def test_another_current_task_does_not_hold_the_pull_request(self) -> None:
+        for name, current in (
+            ("main's", {**_task("SUCCESS"), "analysisId": "43392b27"}),
+            (
+                "another pull request's, running",
+                _task("IN_PROGRESS", pullRequest="311"),
+            ),
+            ("this pull request's, finished", _task("SUCCESS", pullRequest="312")),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [_listing(_entry()), _listing(_entry())],
+                    {1: _page([], total=0)},
+                    [{"queue": [], "current": current}] * 2,
+                )
+                self.assertBound(_read(client))
+
+    def test_a_failure_after_conflicting_pages_is_still_a_readback(self) -> None:
+        """F9 (CodeAnt on #424): two pages disagree about one issue, and a later
+        page fails. The readback is still built, and is never complete."""
+        conflicting = {**_issue("dup", 1), "message": "Another message"}
+        client = _SonarFake(
+            [_listing(_entry()), _listing(_entry())],
+            {
+                1: _page([*_issues("first", 499), _issue("dup", 1)], total=1001),
+                2: _page([*_issues("second", 499), conflicting], total=1001, index=2),
+                3: analyzer_sonarcloud.ProviderReadFailure("UNAVAILABLE", "failed"),
+            },
+        )
+        document = _read(client)
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+
     def test_another_branch_s_task_does_not_hold_the_pull_request(self) -> None:
         for name, task in (
             ("another pull request", _task(pullRequest="311")),
@@ -876,7 +1016,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     {1: _page([], total=0)},
                     [_queue(task), _queue(task)],
                 )
-                self.assertEqual("COMPLETE", _read(client)["coverage"]["status"])
+                self.assertBound(_read(client))
 
     def test_a_malformed_queue_is_an_error(self) -> None:
         for name, queue in (
@@ -941,9 +1081,9 @@ class SonarCloudClientTests(unittest.TestCase):
     def test_a_missing_or_malformed_token_sends_nothing(self) -> None:
         for name, environment in (
             ("no token", {}),
-            ("an empty token", {"SONAR_TOKEN": ""}),
-            ("a token with a newline", {"SONAR_TOKEN": "synthetic-sonar\n"}),
-            ("a token with a space", {"SONAR_TOKEN": "synthetic sonar"}),
+            ("an empty token", {SONAR_ENV: ""}),
+            ("a token with a newline", {SONAR_ENV: "synthetic-sonar\n"}),
+            ("a token with a space", {SONAR_ENV: "synthetic sonar"}),
         ):
             with (
                 self.subTest(name),

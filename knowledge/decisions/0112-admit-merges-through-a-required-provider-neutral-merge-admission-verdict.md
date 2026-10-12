@@ -388,13 +388,26 @@ provider-neutral public change-governance contract of
       - the latest SonarCloud check run naming the pull request is finished with a
         gate result, and starts at that analysis date (as it did for all 44 listed
         pull requests on 2026-10-12);
-      - the project's task queue holds no task for the pull request.
-      Otherwise the inventory is `AMBIGUOUS`, never complete. No provider-issued
-      analysis id is readable with Browse rights, so none is claimed. Every page
-      is read until the count reaches SonarCloud's total, and a total past its
-      10,000-result window is `PARTIAL`. What this does not prove is that
-      SonarCloud indexed every issue before the pages were read; only that no
-      other analysis of the pull request ran or completed meanwhile.
+      - the project's tasks hold none of the pull request's that is queued,
+        unfinished or failed.
+      Otherwise the inventory is `AMBIGUOUS`, never complete. A task naming the
+      pull request, with an analysis id, can be read in the project's `current`
+      task, but its association with the exact head's report is not established,
+      so none is claimed. Every page is read until the count reaches SonarCloud's
+      total, and a total past its 10,000-result window is `PARTIAL`. What this
+      does not prove is that SonarCloud indexed every issue before the pages were
+      read, nor that no other computation ran meanwhile; only that the bound
+      descriptors stayed the same.
+    - **Under the current contract (R4) the inventory is never `COMPLETE`.**
+      No source read here is established to show a newer, unfinished analysis of
+      the same head: SonarCloud posts its check run only once finished, no task
+      exists before an analysis is submitted, and the 3-second processing of
+      #424's own went unobserved by 5-second samples. So a fully read,
+      bound inventory is `PARTIAL`, with `UNFINISHED_ANALYSIS_UNOBSERVABLE`, and
+      every finding is kept. Once the check is required, `issue-inventory` denies
+      until the owner selects otherwise; R1, letting `COMPLETE` cover the latest
+      published report, is reserved for that selection (the PAO's escalation on
+      #424, 6120941468).
     - **Every issue that is not `FIXED` is a finding**, with its state: `OPEN`,
       `CONFIRMED`, `ACCEPTED` and `FALSE_POSITIVE`. An acceptance or a
       false-positive marking in SonarCloud is no waiver of M17. A state that was
