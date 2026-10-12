@@ -379,7 +379,14 @@ provider-neutral public change-governance contract of
     6119736075: G1, S1 and H1).
     - **The quality gate** is SonarCloud's own check run on the exact head, from
       the check manifest (app 12526, `SonarCloud Code Analysis`), under the check
-      items' rules. It is never evidence of the inventory.
+      items' rules. It is never evidence of the inventory. A commit carries every
+      analysed pull request's runs, so the item is qualified by its pull request
+      (`pull_request: details_url`, Q-a on #424): only runs whose `details_url`
+      names this project's pull request count, filtered before the reduction; a
+      foreign pull request, project or branch is excluded, a malformed or missing
+      association makes the item `PARTIAL`, and with no own run there is no
+      receipt (`MISSING`), as when L1's latest view hides it. The helper that
+      reads the association, `tools/sonarcloud_scope.py`, is the adapter's too.
     - **The issue inventory** is the authenticated readback's. Its adapter binds
       it to a published report of the exact head before any issue is read, and
       again after the last page:
@@ -445,6 +452,8 @@ provider-neutral public change-governance contract of
   `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).
   Under [Decision 0035](0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md),
   the next OCI candidate's G3 re-binding replays the affected boundary for them.
+- **Slice 1b.3c adds one file to SB2** (25 → 26): `knowledge merge-evidence` now
+  imports the pure SonarCloud association helper, `tools/sonarcloud_scope.py`.
 - **More owner configuration** is needed by 1b.3 and 1b.4: `SONAR_TOKEN`, the
   `gnostoa-ma0` App and its environment, and the requirement in R-main.
 

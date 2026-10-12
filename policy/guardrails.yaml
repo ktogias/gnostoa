@@ -771,6 +771,7 @@ guardrails:
     guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
     implementation:
       - tools/merge_evidence_github.py
+      - tools/sonarcloud_scope.py
       - policy/merge-required-checks.yaml
       - policy/merge-suppression-markers.yaml
       - policy/merge-trust-roots.yaml
@@ -963,6 +964,10 @@ guardrails:
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_another_app_s_check_of_that_name_gives_nothing
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_a_passed_gate_never_gives_the_inventory
       - tests/test_merge_evidence_github.py::CommandTests.test_the_command_refuses_inconsistent_producer_routes
+      - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_a_foreign_pull_request_s_gate_is_not_this_one_s
+      - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_s_receipt_names_its_qualification
+      - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_manifest_qualifies_sonarcloud_s_gate_only
+      - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_qualifies_a_pull_request_only
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
@@ -975,6 +980,7 @@ guardrails:
       - tools/analyzer_deepsource.py
       - tools/analyzer_codacy.py
       - tools/analyzer_sonarcloud.py
+      - tools/sonarcloud_scope.py
       - ci/analyzer_readback.py
       - ci/analyzer_readback_subject.py
       - knowledge/decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md
@@ -985,6 +991,7 @@ guardrails:
       - tests/test_analyzer_readback.py
       - tests/test_analyzer_readback_runner.py
       - tests/test_analyzer_sonarcloud.py
+      - tests/test_sonarcloud_scope.py
       - tests/test_analyzer_deepsource_paths.py
       - tests/test_analyzer_deepsource_columns.py
       - tests/test_analyzer_deepsource_diagnostics.py

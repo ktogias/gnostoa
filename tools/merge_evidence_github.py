@@ -33,6 +33,7 @@ from typing import Any, NamedTuple
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from . import sonarcloud_scope
 from .analyzer_readback import parse_bundle
 from .assurance_completeness import (
     RECEIPT_SCHEMA,
@@ -68,6 +69,11 @@ _DECLARATION_KEYS = frozenset({"schema_version", "id", "version"})
 _MARKERS_LABEL = "suppression markers"
 _ROOTS_LABEL = "trust roots"
 _CHECK_KEYS = frozenset({"app_id", "name"})
+# The one qualification a check item may declare: its runs must name this pull
+# request in their `details_url`. Only SonarCloud's gate has it, and must, since a
+# commit carries every analysed pull request's runs (Q-a, the PAO on #424).
+_PULL_REQUEST = "pull_request"
+_DETAILS_URL = "details_url"
 _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
 # The authenticated readback's readbacks, by (provider, scope), and the declared
 # (requirement, item) each gives (1b.3b-2; #407, 6101607240). SonarCloud's
@@ -356,13 +362,42 @@ def parse_trust_roots(document: object) -> TrustRoots:
     return TrustRoots(tuple(_rule(pattern) for pattern in patterns))
 
 
-def _check_key(value: object, label: str) -> str:
+class CheckKey(str):
+    """A manifest item's L1 check key, carrying the item's declared qualification:
+    `details_url` for a check whose runs must name this pull request, else None.
+    It compares, hashes and serializes as its key."""
+
+    pull_request: str | None
+
+    def __new__(cls, key: str, pull_request: str | None = None) -> CheckKey:
+        value = super().__new__(cls, key)
+        value.pull_request = pull_request
+        return value
+
+
+def _check_key(value: object, label: str) -> CheckKey:
     check = require_mapping(value, label)
-    require_closed_keys(check, label, _CHECK_KEYS)
+    require_closed_keys(check, label, _CHECK_KEYS, frozenset({_PULL_REQUEST}))
     app_id = check["app_id"]
     if type(app_id) is not int or app_id <= 0:
         raise MergeEvidenceError(f"{label} app_id must be a positive integer")
-    return f"github-check-run:{app_id}:{require_text(check['name'], f'{label} name')}"
+    name = require_text(check["name"], f"{label} name")
+    sonarcloud = (app_id, name) == (
+        sonarcloud_scope.CHECK_APP_ID,
+        sonarcloud_scope.CHECK_NAME,
+    )
+    qualification = check.get(_PULL_REQUEST)
+    if _PULL_REQUEST in check and qualification != _DETAILS_URL:
+        raise MergeEvidenceError(f"{label} {_PULL_REQUEST} must be {_DETAILS_URL}")
+    if qualification is not None and not sonarcloud:
+        raise MergeEvidenceError(
+            f"{label} names a check its pull request cannot qualify"
+        )
+    if qualification is None and app_id == sonarcloud_scope.CHECK_APP_ID:
+        raise MergeEvidenceError(
+            f"{label} is SonarCloud's check, which must be qualified by its pull request"
+        )
+    return CheckKey(f"github-check-run:{app_id}:{name}", qualification)
 
 
 def load_required_checks(
@@ -457,14 +492,23 @@ def _check_receipts(
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():
+            qualified = getattr(key, "pull_request", None) == _DETAILS_URL
             if coverage != "COMPLETE":
                 status = coverage if coverage in RECEIPT_STATUSES else "ERROR"
                 conclusion, observed_at = None, snapshot["observed_at"]
+            elif qualified:
+                state = _qualified_state(checks, key, subject, snapshot["observed_at"])
+                if state is None:
+                    continue
+                status, conclusion, observed_at = state
             elif key in latest:
                 status, conclusion = _item_status(latest[key]["states"], runs[key])
                 observed_at = latest[key]["observed_at"]
             else:
                 continue
+            provenance: dict[str, Any] = {"check": key, "conclusion": conclusion}
+            if qualified:
+                provenance[_PULL_REQUEST] = _DETAILS_URL
             receipts.append(
                 {
                     "schema": RECEIPT_SCHEMA,
@@ -474,10 +518,50 @@ def _check_receipts(
                     "observed_at": observed_at,
                     "status": status,
                     "coverage": [item],
-                    "provenance": {"check": key, "conclusion": conclusion},
+                    "provenance": provenance,
                 }
             )
     return receipts
+
+
+def _qualified_state(
+    checks: Sequence[Mapping[str, Any]],
+    key: str,
+    subject: Mapping[str, Any],
+    observed_at: str,
+) -> tuple[str, str | None, str] | None:
+    """A pull-request-qualified item's status, conclusion and observation time
+    from this pull request's own runs, filtered before the existing reduction, or
+    None when it has none (MISSING). A foreign pull request, project or branch is
+    excluded; a run whose association is malformed or missing might be this pull
+    request's, so the item is PARTIAL even beside a qualifying success (Q-a, the
+    PAO on #424)."""
+
+    head = subject["head_commit"]
+    change = subject["change_request"]
+    if change["kind"] != "github-pull-request":
+        return "PARTIAL", None, observed_at
+    project = sonarcloud_scope.project_key(subject["repository"].removeprefix(_GITHUB))
+    own = []
+    for check in checks:
+        if check.get("key") != key or check.get("head_commit") != head:
+            continue
+        scope = sonarcloud_scope.details_scope(
+            check.get("source_url"), project=project, pull=change["id"]
+        )
+        if scope == "malformed":
+            return "PARTIAL", None, observed_at
+        if scope == "ours":
+            own.append(check)
+    if not own:
+        return None
+    try:
+        latest = latest_checks(own, head)[key]
+        runs = check_runs_by_key(own, head)[key]
+    except ReconciliationInputError as exc:
+        raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    status, conclusion = _item_status(latest["states"], runs)
+    return status, conclusion, latest["observed_at"]
 
 
 def _glob(text: str) -> str:

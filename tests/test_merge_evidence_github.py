@@ -69,7 +69,7 @@ def _commit(sha: str, message: str) -> dict[str, Any]:
 ACTIONS = 15368
 CODEQL = 57789
 REQUIRED = ("policy", "fast", "regression", "smoke")
-REQUIRED_CHECKS = {
+REQUIRED_CHECKS: dict[str, Any] = {
     "schema_version": "1.0",
     "id": "example.merge-required-checks",
     "version": "0.1.0",
@@ -81,7 +81,11 @@ REQUIRED_CHECKS = {
         # Each declared item has one producer, so the gate is here and the
         # inventory is the readback's (G1).
         "sonarcloud": {
-            "quality-gate": {"app_id": 12526, "name": "SonarCloud Code Analysis"}
+            "quality-gate": {
+                "app_id": 12526,
+                "name": "SonarCloud Code Analysis",
+                "pull_request": "details_url",
+            }
         },
     },
 }
@@ -1967,7 +1971,7 @@ class CommandTests(unittest.TestCase):
         producer, or no declaration at all, fails the run."""
         overlap = copy.deepcopy(REQUIRED_CHECKS)
         overlap["requirements"]["sonarcloud"]["issue-inventory"] = {
-            "app_id": 12526,
+            "app_id": ACTIONS,
             "name": "SonarCloud Inventory",
         }
         gap = copy.deepcopy(REQUIRED_CHECKS)
@@ -2833,7 +2837,10 @@ class SonarCloudInventoryTests(unittest.TestCase):
         )
         # The gate passed on the exact head, through the protected manifest, beside
         # the inventory (cubic on #424).
-        gate = _check_run(60, "SonarCloud Code Analysis", 12526)
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
         snapshot = _snapshot(
             _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
         )
@@ -2991,24 +2998,22 @@ class SonarCloudGateTests(unittest.TestCase):
     def test_a_passed_gate_gives_the_quality_gate_item(self) -> None:
         self.assertEqual(
             {("sonarcloud", "quality-gate"): "COMPLETE"},
-            self._statuses(_check_run(60, "SonarCloud Code Analysis", SONAR_CHECK)),
+            self._statuses(self._run(60, self._for(300))),
         )
 
     def test_any_other_gate_state_is_not_complete(self) -> None:
-        name = "SonarCloud Code Analysis"
         for case, runs, status in (
             (
                 "a failed gate",
-                [_check_run(60, name, SONAR_CHECK, conclusion="failure")],
+                [self._run(60, self._for(300), conclusion="failure")],
                 "INCOMPLETE",
             ),
             (
                 "an unfinished analysis",
                 [
-                    _check_run(
+                    self._run(
                         60,
-                        name,
-                        SONAR_CHECK,
+                        self._for(300),
                         conclusion=None,
                         status="in_progress",
                         completed_at=None,
@@ -3018,14 +3023,14 @@ class SonarCloudGateTests(unittest.TestCase):
             ),
             (
                 "a skipped check",
-                [_check_run(60, name, SONAR_CHECK, conclusion="skipped")],
+                [self._run(60, self._for(300), conclusion="skipped")],
                 "SKIPPED",
             ),
             (
                 "a passed run beside a failed one",
                 [
-                    _check_run(60, name, SONAR_CHECK),
-                    _check_run(61, name, SONAR_CHECK, conclusion="failure"),
+                    self._run(60, self._for(300)),
+                    self._run(61, self._for(300), conclusion="failure"),
                 ],
                 "PARTIAL",
             ),
@@ -3035,6 +3040,186 @@ class SonarCloudGateTests(unittest.TestCase):
                     {("sonarcloud", "quality-gate"): status}, self._statuses(*runs)
                 )
 
+    @staticmethod
+    def _run(identifier: int, details: object, **change: Any) -> dict[str, Any]:
+        """SonarCloud's run on the head, its `details_url` as given."""
+        return {
+            **_check_run(identifier, "SonarCloud Code Analysis", SONAR_CHECK, **change),
+            "details_url": details,
+        }
+
+    @staticmethod
+    def _for(pull: int, project: str = "ktogias_gnostoa") -> str:
+        return f"https://sonarcloud.io/dashboard?id={project}&pullRequest={pull}"
+
+    def _gate(self, *runs: dict[str, Any]) -> str | None:
+        return self._statuses(*runs).get(("sonarcloud", "quality-gate"))
+
+    def test_a_foreign_pull_request_s_gate_is_not_this_one_s(self) -> None:
+        """Codex on #424; Q-a (PAO 6123049205): a commit carries every pull
+        request's SonarCloud runs (#394, #395 and #396 share one), so the gate's
+        runs are this pull request's only, filtered before they are reduced."""
+        own, foreign = self._for(300), self._for(299)
+        for name, runs, expected in (
+            ("a foreign success alone", [self._run(60, foreign)], None),
+            # L1's `latest` view can hide this PR's run behind another one's: then
+            # there is no receipt, never the foreign result.
+            ("this PR's run hidden by the latest view", [self._run(61, foreign)], None),
+            (
+                "own success beside a foreign failure",
+                [self._run(60, own), self._run(61, foreign, conclusion="failure")],
+                "COMPLETE",
+            ),
+            (
+                "own failure beside a foreign success",
+                [self._run(60, own, conclusion="failure"), self._run(61, foreign)],
+                "INCOMPLETE",
+            ),
+            (
+                "two own runs, one not a success",
+                [self._run(60, own), self._run(61, own, conclusion="failure")],
+                "PARTIAL",
+            ),
+            (
+                "another project's run",
+                [self._run(60, self._for(300, "ktogias_other"))],
+                None,
+            ),
+            (
+                "a branch analysis",
+                [
+                    self._run(
+                        60,
+                        "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&branch=main",
+                    )
+                ],
+                None,
+            ),
+            (
+                "a malformed association beside own success",
+                [
+                    self._run(60, own),
+                    self._run(61, "https://sonarcloud.io/project/overview"),
+                ],
+                "PARTIAL",
+            ),
+            (
+                "no association beside own success",
+                [self._run(60, own), self._run(61, None)],
+                "PARTIAL",
+            ),
+            ("own success alone", [self._run(60, own)], "COMPLETE"),
+        ):
+            with self.subTest(name):
+                self.assertEqual(expected, self._gate(*runs))
+
+    def test_the_gate_qualifies_a_pull_request_only(self) -> None:
+        """Q-a: a pull request's id is what the qualification matches, so a change
+        request of another kind with the same id is not one."""
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        snapshot["subject"]["change_request"]["kind"] = "gitlab-merge-request"
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        self.assertEqual(
+            "PARTIAL", _receipt_statuses(evidence)[("sonarcloud", "quality-gate")]
+        )
+
+    def test_the_gate_s_receipt_names_its_qualification(self) -> None:
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        [receipt] = [
+            r for r in evidence["receipts"] if r["coverage"] == ["quality-gate"]
+        ]
+        self.assertEqual(
+            {
+                "check": "github-check-run:12526:SonarCloud Code Analysis",
+                "conclusion": "success",
+                "pull_request": "details_url",
+            },
+            receipt["provenance"],
+        )
+
+    def test_the_manifest_qualifies_sonarcloud_s_gate_only(self) -> None:
+        """Q-a: one optional key, `pull_request`, with one value, `details_url`;
+        SonarCloud's check must carry it, and no other check may."""
+
+        def manifest(**gate: Any) -> dict[str, Any]:
+            document = copy.deepcopy(REQUIRED_CHECKS)
+            document["requirements"]["sonarcloud"]["quality-gate"] = {
+                "app_id": SONAR_CHECK,
+                "name": "SonarCloud Code Analysis",
+                **gate,
+            }
+            return document
+
+        parsed = merge_evidence_github.parse_required_checks(
+            manifest(pull_request="details_url")
+        )
+        self.assertEqual(
+            "github-check-run:12526:SonarCloud Code Analysis",
+            parsed["sonarcloud"]["quality-gate"],
+        )
+        qualified_codeql = copy.deepcopy(REQUIRED_CHECKS)
+        qualified_codeql["requirements"]["codeql"]["codeql"]["pull_request"] = (
+            "details_url"
+        )
+        for name, document in (
+            ("an unqualified SonarCloud gate", manifest()),
+            ("an unsupported value", manifest(pull_request="url")),
+            ("another key", manifest(pull_request="details_url", branch="main")),
+            ("a qualified CodeQL check", qualified_codeql),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+
     def test_another_app_s_check_of_that_name_gives_nothing(self) -> None:
         self.assertEqual(
             {}, self._statuses(_check_run(60, "SonarCloud Code Analysis", ACTIONS))
@@ -3042,9 +3227,7 @@ class SonarCloudGateTests(unittest.TestCase):
 
     def test_a_passed_gate_never_gives_the_inventory(self) -> None:
         """#353: a passing gate is no evidence that the inventory is empty."""
-        statuses = self._statuses(
-            _check_run(60, "SonarCloud Code Analysis", SONAR_CHECK)
-        )
+        statuses = self._statuses(self._run(60, self._for(300)))
         self.assertNotIn(("sonarcloud", "issue-inventory"), statuses)
 
 

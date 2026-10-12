@@ -50,7 +50,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple, Protocol
 
-from . import github_rest
+from . import github_rest, sonarcloud_scope
 from .analyzer_readback import (
     AnalyzerReadbackError,
     build_readback,
@@ -74,9 +74,9 @@ _ADAPTER = "sonarcloud-web-api/v1"
 _SURFACE = "sonarcloud-web-api"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 # SonarCloud's GitHub check run, whose result is also the quality-gate item's
-# (policy/merge-required-checks.yaml; G1, PAO 6119736075 on #407).
-CHECK_APP_ID = 12526
-CHECK_NAME = "SonarCloud Code Analysis"
+# (policy/merge-required-checks.yaml; G1 and Q-a, #424).
+CHECK_APP_ID = sonarcloud_scope.CHECK_APP_ID
+CHECK_NAME = sonarcloud_scope.CHECK_NAME
 # A finished analysis has a gate result; any other conclusion is no report.
 _PUBLISHED = frozenset({"success", "failure"})
 # Whether a newer, unfinished analysis of the same head can be observed: no source
@@ -217,7 +217,7 @@ def _subject(repository: str, pull_number: int) -> _Subject:
     # SonarCloud's key for an imported GitHub repository; the listing's URL then
     # proves it is this repository's.
     return _Subject(
-        f"{owner}_{name}",
+        sonarcloud_scope.project_key(f"{owner}/{name}"),
         str(pull_number),
         f"https://github.com/{normalized}/pull/{pull_number}",
     )
@@ -540,38 +540,17 @@ def _instant(value: object, label: str) -> datetime:
 
 
 def _scope(run: Mapping[str, Any], subject: _Subject) -> str | None:
-    """Which analysis a SonarCloud check run names: "ours" for this pull request,
-    "foreign" for another pull request, a branch or another project, and
-    "malformed" for details that name no single analysis of a project; None for a
-    run that is not SonarCloud's check. A commit carries the runs of every pull
-    request analysed on it (#394 and #395 share one), so a run is chosen by the
-    analysis its details name."""
+    """Which analysis a SonarCloud check run names (`sonarcloud_scope`), or None
+    for a run that is not SonarCloud's check."""
 
     app = run.get("app")
     if not isinstance(app, Mapping) or app.get("id") != CHECK_APP_ID:
         return None
     if run.get("name") != CHECK_NAME:
         return None
-    details = run.get("details_url")
-    if not isinstance(details, str):
-        return "malformed"
-    try:
-        parsed = urllib.parse.urlsplit(details)
-    except ValueError:
-        # An unparsable host, such as an unclosed IPv6 bracket (CodeAnt on #424).
-        return "malformed"
-    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-    if (parsed.scheme, parsed.netloc, parsed.path) != (
-        "https",
-        "sonarcloud.io",
-        "/dashboard",
-    ) or sorted(query) not in (["id", "pullRequest"], ["branch", "id"]):
-        return "malformed"
-    if any(len(values) != 1 for values in query.values()):
-        return "malformed"
-    if query == {"id": [subject.project], "pullRequest": [subject.pull]}:
-        return "ours"
-    return "foreign"
+    return sonarcloud_scope.details_scope(
+        run.get("details_url"), project=subject.project, pull=subject.pull
+    )
 
 
 def _runs_of(

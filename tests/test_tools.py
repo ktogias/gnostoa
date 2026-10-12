@@ -170,8 +170,9 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     # #408 added the completeness reducer and the vocabulary it imports to SB2
     # (19 -> 21 files); #407's slice 1b.2 adds the merge-admission verdict and
     # the command-line boundary it shares (21 -> 23); slice 1b.3a adds the GitHub
-    # evidence adapter and the snapshot validator it imports (23 -> 25).
-    "smoke": "4c5507de77146aa976056f0814ce80c748d2ebd26024a646a6456fa1b443cc3a",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    # evidence adapter and the snapshot validator it imports (23 -> 25); slice 1b.3c
+    # adds the SonarCloud association helper merge evidence imports (25 -> 26).
+    "smoke": "e8ef872909a2838bead0ebd2b61b82e2dac76b1ee198678c81e533dcc3825c37",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended-route": "27ed1f35eb9984d3ad3e9fdf42873bb8b2c9b8bf86df8743c9ee6c3cb8da7106",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0bd52547e3e739aea968487808e533d5d5355075f8c08c81a9191f2372d4d3f3",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (

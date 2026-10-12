@@ -356,8 +356,11 @@ class SonarCloudReadbackTests(unittest.TestCase):
             [_listing(_entry()), _listing(_entry())],
             {1: _page(_issues("open", 3), total=3)},
         )
-        times = iter(["2026-10-12T10:00:01Z", "2026-10-12T10:00:04Z"])
-        with mock.patch.object(analyzer_sonarcloud, "_now", lambda: next(times)):
+        with mock.patch.object(
+            analyzer_sonarcloud,
+            "_now",
+            side_effect=["2026-10-12T10:00:01Z", "2026-10-12T10:00:04Z"],
+        ):
             document = _read(client)
         self.assertEqual("FULL_RUN", document["completeness"])
         self.assertEqual("COMPLETE", document["run_state"])
