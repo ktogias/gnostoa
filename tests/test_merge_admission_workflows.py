@@ -629,15 +629,18 @@ class L1ModeTests(unittest.TestCase):
         the population refuses a number listed at two heads."""
         module = adapter_fixture()
         listing = f"{API}/pulls?state=open&per_page=100"
-        replies = {listing: ([self._open(1, HEAD), self._open(1, "c" * 40)], {})}
+        replies: dict[str, tuple[Any, dict[str, str]]] = {
+            listing: ([self._open(1, HEAD), self._open(1, "c" * 40)], {})
+        }
         self.assertEqual(
             [1],
             # skipcq: PYL-W0212 -- intentional white-box L1 test
             module._open_pull_numbers(paged_fake_fixture(replies), "ktogias/gnostoa"),
         )
+        fake = paged_fake_fixture(replies)
         with self.assertRaises(module.ProviderReadError):
             # skipcq: PYL-W0212 -- intentional white-box L1 test
-            module._open_pulls(paged_fake_fixture(replies), "ktogias/gnostoa")
+            module._open_pulls(fake, "ktogias/gnostoa")
 
     def test_open_heads_refuses_an_incomplete_or_conflicting_population(self) -> None:
         module = adapter_fixture()

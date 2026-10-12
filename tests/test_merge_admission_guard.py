@@ -16,17 +16,22 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess  # nosec B404 -- the test's own git repository
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from tools import merge_admission_checks
+from tools import github_rest, merge_admission_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD_PATH = ROOT / "ci" / "merge_admission_guard.py"
 REPOSITORY = "ktogias/gnostoa"
+# The guard's credential variable, by name only.
+GUARD_CREDENTIAL = "GH_TOKEN"
 API = f"https://api.github.com/repos/{REPOSITORY}"
 HEAD = "a" * 40
 MAIN = "b" * 40
@@ -300,8 +305,10 @@ class GuardTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 github = _GitHub()
-                correlation = merge_admission_checks.correlation_of(github.check)
-                assert correlation is not None
+                correlation = dict(
+                    merge_admission_checks.correlation_of(github.check) or {}
+                )
+                self.assertTrue(correlation)
                 correlation[field] = value
                 github.check["output"]["text"] = (
                     merge_admission_checks.correlation_text(correlation)
@@ -359,6 +366,41 @@ class GuardTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertRefused(_GitHub(), needle, population=population)
 
+    def test_a_re_read_that_fails_refuses_with_its_reason(self) -> None:
+        """Kilo on #426: a provider or evidence error while re-reading the subject or
+        the population refuses, with its reason, never escapes as a traceback."""
+        guard = _guard()
+
+        def unreadable() -> Any:
+            raise github_rest.GitHubReadError("GitHub API HTTP 502")
+
+        def invalid() -> Any:
+            raise ValueError("the snapshot is invalid")
+
+        for name, options in (
+            ("the subject unreadable", {"rebuild": unreadable}),
+            ("the subject invalid", {"rebuild": invalid}),
+            ("the population unreadable", {"population": unreadable}),
+        ):
+            with self.subTest(name):
+                clock = _Clock()
+                arguments: dict[str, Any] = {
+                    "repository": REPOSITORY,
+                    "pull_number": PULL,
+                    "approved": HEAD,
+                    "app_id": MA0_APP,
+                    "checkout_revision": MAIN,
+                    "rebuild": lambda: copy.deepcopy(EVIDENCE),
+                    "population": lambda: copy.deepcopy(POPULATION),
+                    "sleep": clock.sleep,
+                    "clock": clock,
+                }
+                arguments.update(options)
+                github = _GitHub()
+                with self.assertRaises(guard.Refused) as raised:
+                    guard.guard(github, **arguments)
+                self.assertIn("could not be re-read", str(raised.exception))
+
     def test_a_move_after_the_dispatch_is_refused(self) -> None:
         for name, change in (
             ("main moved", lambda g: setattr(g, "main", OTHER)),
@@ -379,6 +421,70 @@ class GuardTests(unittest.TestCase):
             [url for url, _ in github.posts],
         )
         self.assertFalse(hasattr(github, "put"))
+
+
+class CheckoutRevisionTests(unittest.TestCase):
+    """The checkout's revision is read by git alone, found on a fixed trusted path
+    and run by its absolute name, never by a bare name the caller's PATH resolves
+    (DeepSource and Codacy on #426, the preparation helper's precedent)."""
+
+    def test_git_runs_by_its_absolute_trusted_path(self) -> None:
+        guard = _guard()
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], **options: Any) -> Any:
+            calls.append(list(argv))
+            self.assertNotIn("GIT_DIR", options["env"])
+            out = MAIN + "\n" if "rev-parse" in argv else ""
+            return mock.Mock(stdout=out, returncode=0)
+
+        with (
+            mock.patch.dict(os.environ, {"GIT_DIR": "/elsewhere"}),
+            mock.patch.object(
+                guard.shutil, "which", return_value="/usr/bin/git"
+            ) as which,
+            mock.patch.object(guard.subprocess, "run", side_effect=run),
+        ):
+            self.assertEqual(MAIN, guard._checkout_revision(ROOT))
+        which.assert_called_with("git", path=guard.TRUSTED_PATH)
+        self.assertEqual({"/usr/bin/git"}, {argv[0] for argv in calls})
+
+    def test_an_untracked_file_in_the_checkout_refuses(self) -> None:
+        """CodeAnt on #426: an untracked file is not protected main's either. A
+        stray decision changes what the rebuild reads, so a checkout with one is not
+        the protected revision, however clean its tracked files are."""
+        guard = _guard()
+        git = shutil.which("git", path=guard.TRUSTED_PATH)
+        if git is None:
+            self.skipTest("git is unavailable")
+        environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+        def run(directory: str, *arguments: str) -> None:
+            subprocess.run(  # nosec B603 -- the test's own fixed git arguments
+                [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
+                cwd=directory,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            run(raw, "init", "-q")
+            (Path(raw) / "tracked.txt").write_text("x", encoding="utf-8")
+            run(raw, "add", "tracked.txt")
+            run(raw, "commit", "-q", "-m", "x")
+            self.assertRegex(guard._checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
+            (Path(raw) / "sitecustomize.py").write_text("", encoding="utf-8")
+            with self.assertRaises(guard.Refused):
+                guard._checkout_revision(Path(raw))
+
+    def test_without_git_on_the_trusted_path_it_refuses(self) -> None:
+        guard = _guard()
+        with (
+            mock.patch.object(guard.shutil, "which", return_value=None),
+            self.assertRaises(guard.Refused),
+        ):
+            guard._checkout_revision(ROOT)
 
 
 class GuardCommandTests(unittest.TestCase):
@@ -412,7 +518,7 @@ class GuardCommandTests(unittest.TestCase):
         proceed = {"result": "PROCEED", "workflow_run_id": RUN}
         code, out = self._main(
             list(self.ARGV),
-            {"GH_TOKEN": "x" * 40},
+            {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(return_value=proceed),
             _client=mock.Mock(),
             _checkout_revision=mock.Mock(return_value=MAIN),
@@ -421,7 +527,7 @@ class GuardCommandTests(unittest.TestCase):
         self.assertEqual((0, proceed), (code, json.loads(out)))
         code, out = self._main(
             list(self.ARGV),
-            {"GH_TOKEN": "x" * 40},
+            {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(side_effect=_guard().Refused("the check is another App's")),
             _client=mock.Mock(),
             _checkout_revision=mock.Mock(return_value=MAIN),
@@ -435,7 +541,10 @@ class GuardCommandTests(unittest.TestCase):
         self.assertEqual(
             2,
             self._main(
-                list(self.ARGV), {"GH_TOKEN": ""}, guard=started, _client=mock.Mock()
+                list(self.ARGV),
+                {GUARD_CREDENTIAL: ""},
+                guard=started,
+                _client=mock.Mock(),
             )[0],
         )
         argv = list(self.ARGV)
@@ -443,7 +552,7 @@ class GuardCommandTests(unittest.TestCase):
         self.assertEqual(
             2,
             self._main(
-                argv, {"GH_TOKEN": "x" * 40}, guard=started, _client=mock.Mock()
+                argv, {GUARD_CREDENTIAL: "x" * 40}, guard=started, _client=mock.Mock()
             )[0],
         )
 

@@ -30,7 +30,8 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 -- git alone, by its absolute trusted path, with fixed arguments
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -52,6 +53,8 @@ from tools.merge_admission_checks import (
 _WORKFLOW = ".github/workflows/merge-admission.yml"
 _PROTECTED = "main"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
+# The executable search path the preparation helper trusts (AGENTS.md).
+TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 _POLICY = github_rest.Policy(
     timeout_seconds=30, attempts=3, max_response_bytes=4_194_304
 )
@@ -267,8 +270,13 @@ def guard(
             "protected_revision": revision,
         },
     )
-    _unchanged(rebuild(), recorded, repository, pull_number, approved)
-    _alone(population(), pull_number, approved)
+    try:
+        rebuilt, observed = rebuild(), population()
+    except (github_rest.GitHubError, ValueError) as exc:
+        # An unreadable or invalid re-read refuses with its reason (Kilo on #426).
+        raise Refused(f"the subject could not be re-read: {exc}") from exc
+    _unchanged(rebuilt, recorded, repository, pull_number, approved)
+    _alone(observed, pull_number, approved)
     _pull(client, repository, pull_number, approved)
     if _main(client, repository) != revision:
         raise Refused(f"protected {_PROTECTED} moved during the guard")
@@ -286,38 +294,45 @@ def _client(token: str) -> Any:
     )
 
 
-def _checkout_revision(root: Path) -> str:
-    """The checkout's revision, refused when its tree differs from that revision."""
+def _git(root: Path, *arguments: str) -> str:
+    """Run git, found on the trusted path and run by its absolute name, with no
+    caller Git routing or configuration in its environment."""
 
+    executable = shutil.which("git", path=TRUSTED_PATH)
+    if executable is None:
+        raise Refused("git is unavailable on the trusted path")
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
     }
     try:
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        # Audited: no shell, an absolute executable, and fixed arguments only.
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [executable, *arguments],
             cwd=root,
             env=environment,
             check=True,
             capture_output=True,
             text=True,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=root,
-            env=environment,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
+            shell=False,
+        )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise Refused(f"the checkout's revision could not be read: {exc}") from exc
-    if status:
-        raise Refused("the checkout has changes to tracked files")
+        raise Refused(f"the checkout could not be read: {exc}") from exc
+    return str(completed.stdout)
+
+
+def _checkout_revision(root: Path) -> str:
+    """The checkout's revision, refused when its files differ from it: a changed
+    tracked file, or an untracked one, such as a stray decision the rebuild would
+    read (CodeAnt on #426)."""
+
+    head = _git(root, "rev-parse", "HEAD").strip()
+    if _git(root, "status", "--porcelain", "--untracked-files=all"):
+        raise Refused("the checkout is not exactly its revision")
     return head
 
 
 def _rebuilders(
-    client: Any, repository: str, number: int, root: Path
+    repository: str, number: int, root: Path
 ) -> tuple[Callable[[], Any], Callable[[], Any]]:
     """The re-reads the workflow's own commands make, in process: L1's snapshot with
     merge evidence, the evidence built from it, and L1's open population."""
@@ -375,9 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path.cwd()
     try:
         client = _client(token)
-        rebuild, population = _rebuilders(
-            client, args.repository, args.pull_number, root
-        )
+        rebuild, population = _rebuilders(args.repository, args.pull_number, root)
         result = guard(
             client,
             repository=args.repository,

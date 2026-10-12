@@ -411,10 +411,13 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    **After `merge-admission` is required** (MA0 1b.4 activated), the merge obtains
    an admission of its own first (F1 part 3, #426 6130207025). After the reads above,
    the App runs the guard from a clean checkout of protected `main`, and merges only
-   on its `PROCEED`, at once:
+   on its `PROCEED`, at once. The checkout is checked before the token is minted:
+   with `PYTHONPATH=.`, a stray file such as `sitecustomize.py` would run before the
+   guard does.
    ```sh
-   GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) PYTHONPATH=. \
-     python ci/merge_admission_guard.py \
+   test -z "$(git status --porcelain --untracked-files=all)" \
+     && GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
+     PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python ci/merge_admission_guard.py \
      --repository ktogias/gnostoa --pull-number <N> --approved <approved> \
      --app-id <gnostoa-ma0's App ID>
    ```

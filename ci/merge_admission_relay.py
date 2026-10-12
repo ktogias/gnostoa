@@ -40,7 +40,7 @@ import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any
 
 from tools import github_rest
 from tools.agent_review_admission import Refused, read_payload
@@ -83,10 +83,9 @@ def _bounded(text: str, limit: int) -> str:
     return text[: limit - len(marker)] + marker
 
 
-def _well_formed(verdict: object) -> TypeGuard[Mapping[str, Any]]:
+def _well_formed(verdict: Mapping[str, Any]) -> bool:
     return (
-        isinstance(verdict, Mapping)
-        and verdict.get("schema") == _VERDICT_SCHEMA
+        verdict.get("schema") == _VERDICT_SCHEMA
         and verdict.get("status") in {"ALLOW", "DENY"}
         and isinstance(verdict.get("criteria"), list)
     )
@@ -113,7 +112,7 @@ def _verdict_state(
     """The conclusion, title and summary lines. Only a well-formed ALLOW for this
     exact subject, from a command that exited 0, is ever a success."""
 
-    if not _well_formed(verdict):
+    if not isinstance(verdict, Mapping) or not _well_formed(verdict):
         return (
             "failure",
             "merge-admission: the evaluation produced no verdict",
@@ -554,9 +553,10 @@ def _client(token: str) -> Any:
     )
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+def parser() -> argparse.ArgumentParser:
+    """The commands and their options: none of them takes a path."""
+    commands_parser = argparse.ArgumentParser(description=__doc__)
+    commands = commands_parser.add_subparsers(dest="command", required=True)
     commands.add_parser("hint", help="the pull request a relayed comment names")
     for name in ("invalidate", "publish"):
         command = commands.add_parser(name)
@@ -565,7 +565,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--app-id", type=int)
         if name == "publish":
             command.add_argument("--verdict-exit", type=int, required=True)
-    return parser
+    return commands_parser
 
 
 def _summary(result: Mapping[str, Any]) -> None:
@@ -664,11 +664,14 @@ def _record(root: Path, head: str) -> dict[str, Any] | None:
         record = _document(root / "pending.json", root, "invalidation record")
     except (OSError, ValueError):
         return None
+    if record.get("result") not in {"PENDING", "NOT_NEEDED"}:
+        # A failed or shadow invalidation observed nothing (Octopus on #426).
+        return None
     return record if record.get("head", head) == head else None
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = parser().parse_args(argv)
     token = os.environ.get(_APP_CREDENTIAL_VARIABLE, "")
     try:
         temporary, correlation = _runner()

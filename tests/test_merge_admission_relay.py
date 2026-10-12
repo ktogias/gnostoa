@@ -382,7 +382,7 @@ class _Provider(_FakeClient):
         self.refuse_write = False
         self.reads_as: dict[int, dict[str, Any]] = {}
 
-    def _latest_view(self) -> dict[str, Any]:
+    def latest_view(self) -> dict[str, Any]:
         latest: dict[int, dict[str, Any]] = {}
         for run in self.runs:
             if run["head_sha"] != HEAD or run["name"] != "merge-admission":
@@ -396,7 +396,7 @@ class _Provider(_FakeClient):
     def get(self, url: str) -> tuple[Any, dict[str, str]]:
         self.reads.append(url)
         if url == LATEST:
-            return self._latest_view(), {}
+            return self.latest_view(), {}
         for run in self.runs:
             if url == f"{CHECK_RUNS}/{run['id']}":
                 return {**copy.deepcopy(run), **self.reads_as.get(run["id"], {})}, {}
@@ -514,7 +514,7 @@ class InvalidationTests(unittest.TestCase):
         self.assertEqual(PENDING_ID, payload["external_id"])
         self.assertEqual(HEAD, payload["head_sha"])
         self.assertNotIn("conclusion", payload)
-        latest = provider._latest_view()["check_runs"][-1]
+        latest = provider.latest_view()["check_runs"][-1]
         self.assertEqual(record["pending"], latest["id"])
         self.assertEqual("in_progress", latest["status"])
 
@@ -562,7 +562,7 @@ class InvalidationTests(unittest.TestCase):
         doubled = _Provider()
         doubled.runs = [_run(94), {**_run(95), "app": {"id": MA0_APP}}]
 
-        def listing(url: str) -> tuple[Any, dict[str, str]]:
+        def listing(_url: str) -> tuple[Any, dict[str, str]]:
             return {"total_count": 2, "check_runs": copy.deepcopy(doubled.runs)}, {}
 
         with (
@@ -620,7 +620,7 @@ class CompletionTests(unittest.TestCase):
                 self.assertEqual("COMPLETED", result["result"])
                 ((_, payload),) = provider.patches
                 self.assertEqual("failure", payload["conclusion"])
-                latest = provider._latest_view()["check_runs"][-1]
+                latest = provider.latest_view()["check_runs"][-1]
                 self.assertEqual("failure", latest["conclusion"])
 
     def test_without_a_pending_run_a_superseded_success_is_invalidated(self) -> None:
@@ -634,7 +634,7 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual("completed", payload["status"])
         self.assertEqual("failure", payload["conclusion"])
         self.assertEqual(
-            "failure", provider._latest_view()["check_runs"][-1]["conclusion"]
+            "failure", provider.latest_view()["check_runs"][-1]["conclusion"]
         )
 
     def test_a_superseded_run_over_no_success_writes_nothing(self) -> None:
@@ -652,7 +652,7 @@ class CompletionTests(unittest.TestCase):
         provider.runs.append(_run(700, conclusion="failure"))
         result = _publish(provider, _planned(), record)
         self.assertEqual("OVERTAKEN", result["result"])
-        latest = provider._latest_view()["check_runs"][-1]
+        latest = provider.latest_view()["check_runs"][-1]
         self.assertEqual((700, "failure"), (latest["id"], latest["conclusion"]))
         ((_, closed),) = provider.patches
         self.assertEqual("failure", closed["conclusion"])
@@ -714,11 +714,12 @@ class CompletionTests(unittest.TestCase):
         def wrong(url: str, payload: dict[str, Any]) -> Any:
             return original(url, {**payload, "conclusion": "neutral"})
 
+        planned = _planned()
         with (
             mock.patch.object(provider, "patch", side_effect=wrong),
             self.assertRaises(relay.PublicationError) as raised,
         ):
-            _publish(provider, _planned(), record)
+            _publish(provider, planned, record)
         self.assertEqual("MISMATCH", raised.exception.kind)
 
     def test_a_post_that_reads_back_otherwise_fails_once(self) -> None:
@@ -736,8 +737,9 @@ class CompletionTests(unittest.TestCase):
                 provider = _Provider([_run(91, conclusion="failure")])
                 provider.reads_as[501] = {field: value}
                 record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+                planned = _planned()
                 with self.assertRaises(relay.PublicationError) as raised:
-                    _publish(provider, _planned(), record)
+                    _publish(provider, planned, record)
                 self.assertEqual("MISMATCH", raised.exception.kind)
                 self.assertEqual(1, len(provider.posts))
 
@@ -925,17 +927,41 @@ class CommandTests(unittest.TestCase):
             ["publish", "--evaluated", "/x"],
             ["publish", "--output", "/x"],
         ):
-            with self.subTest(argv=argv), redirect_stderr(io.StringIO()):
-                with self.assertRaises(SystemExit) as raised:
-                    relay._parser().parse_args(argv)
-                self.assertEqual(2, raised.exception.code)
-        parser = relay._parser()
-        commands = [action for action in parser._actions if action.dest == "command"]
-        self.assertEqual(1, len(commands))
-        for name, sub in commands[0].choices.items():
-            for action in sub._actions:
-                with self.subTest(command=name, option=action.dest):
-                    self.assertIsNot(Path, action.type)
+            parsing = relay.parser()
+            with (
+                self.subTest(argv=argv),
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                parsing.parse_args(argv)
+            self.assertEqual(2, raised.exception.code)
+        # Every command, given every option it takes, holds no path in what it parsed.
+        for argv in (
+            ["hint"],
+            [
+                "invalidate",
+                "--repository",
+                REPOSITORY,
+                "--expected-head",
+                HEAD,
+                "--app-id",
+                "1",
+            ],
+            [
+                "publish",
+                "--repository",
+                REPOSITORY,
+                "--expected-head",
+                HEAD,
+                "--app-id",
+                "1",
+                "--verdict-exit",
+                "0",
+            ],
+        ):
+            with self.subTest(argv=argv):
+                parsed = vars(relay.parser().parse_args(argv))
+                self.assertFalse([v for v in parsed.values() if isinstance(v, Path)])
 
     def test_the_runner_s_directory_and_identity_are_required(self) -> None:
         """Without them the command stops before it writes anything anywhere, the
@@ -1209,6 +1235,37 @@ class CommandTests(unittest.TestCase):
                 (_work(directory) / "pending.json").read_text(encoding="utf-8")
             )
             self.assertEqual(("FAILED", None), (record["result"], record["pending"]))
+
+    def test_a_failed_or_shadow_invalidation_is_no_observation(self) -> None:
+        """Octopus on #426: a record that observed nothing, because the invalidation
+        failed or ran without the App, is no observation. With the App's latest view
+        empty, its `observed: null` must not read as "the latest is unchanged"."""
+        relay = _relay()
+        for result in ("FAILED", "SHADOW"):
+            with self.subTest(result), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                argv = [*self._files(directory), "--app-id", str(MA0_APP)]
+                (_work(directory) / "pending.json").write_text(
+                    json.dumps(
+                        {
+                            "result": result,
+                            "pending": None,
+                            "observed": None,
+                            "head": HEAD,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                provider = _Provider()
+                code = self._main(
+                    relay,
+                    argv,
+                    _env(directory, **{MA0_ENV: "x" * 40}),
+                    _client=mock.Mock(return_value=provider),
+                )
+                self.assertEqual(0, code)
+                self.assertEqual("OVERTAKEN", self._result(directory)["result"])
+                self.assertEqual([], provider.posts)
 
     def test_another_head_s_record_is_no_record(self) -> None:
         """A record the invalidation wrote for another head says nothing about what
