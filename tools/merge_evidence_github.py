@@ -34,7 +34,7 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from . import sonarcloud_scope
-from .analyzer_readback import parse_bundle
+from .analyzer_readback import AnalyzerReadbackError, normalize_repository, parse_bundle
 from .assurance_completeness import (
     RECEIPT_SCHEMA,
     RECEIPT_STATUSES,
@@ -489,40 +489,65 @@ def _check_receipts(
         runs = check_runs_by_key(checks, subject["head_commit"])
     except ReconciliationInputError as exc:
         raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    view = _CheckView(checks, coverage, latest, runs, snapshot["observed_at"])
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():
-            qualified = getattr(key, "pull_request", None) == _DETAILS_URL
-            if coverage != "COMPLETE":
-                status = coverage if coverage in RECEIPT_STATUSES else "ERROR"
-                state: tuple[str, str | None, str] | None = (
-                    status,
-                    None,
-                    snapshot["observed_at"],
-                )
-            elif qualified:
-                state = _qualified_state(checks, key, subject, snapshot["observed_at"])
-            else:
-                state = _unqualified_state(key, latest, runs)
-            if state is None:
-                continue
-            status, conclusion, observed_at = state
-            provenance: dict[str, Any] = {"check": key, "conclusion": conclusion}
-            if qualified:
-                provenance[_PULL_REQUEST] = _DETAILS_URL
-            receipts.append(
-                {
-                    "schema": RECEIPT_SCHEMA,
-                    "requirement": requirement,
-                    "subject": subject_of(subject),
-                    "producer": _CHECK_PRODUCER,
-                    "observed_at": observed_at,
-                    "status": status,
-                    "coverage": [item],
-                    "provenance": provenance,
-                }
-            )
+            state = _item_state(view, key, subject)
+            if state is not None:
+                receipts.append(_check_receipt(requirement, item, key, subject, state))
     return receipts
+
+
+class _CheckView(NamedTuple):
+    """The snapshot's checks on the head, as the check producer reads them."""
+
+    checks: Sequence[Mapping[str, Any]]
+    coverage: str
+    latest: Mapping[str, Mapping[str, Any]]
+    runs: Mapping[str, Sequence[tuple[str, str | None]]]
+    observed_at: str
+
+
+def _qualified(key: str) -> bool:
+    return getattr(key, "pull_request", None) == _DETAILS_URL
+
+
+def _item_state(
+    view: _CheckView, key: str, subject: Mapping[str, Any]
+) -> tuple[str, str | None, str] | None:
+    """An item's status, conclusion and observation time, or None when it has no
+    run (MISSING). A checks read that is not COMPLETE gives every item its own."""
+
+    if view.coverage != "COMPLETE":
+        status = view.coverage if view.coverage in RECEIPT_STATUSES else "ERROR"
+        return status, None, view.observed_at
+    if _qualified(key):
+        return _qualified_state(view.checks, key, subject, view.observed_at)
+    return _unqualified_state(key, view.latest, view.runs)
+
+
+def _check_receipt(
+    requirement: str,
+    item: str,
+    key: str,
+    subject: Mapping[str, Any],
+    state: tuple[str, str | None, str],
+) -> dict[str, Any]:
+    status, conclusion, observed_at = state
+    provenance: dict[str, Any] = {"check": key, "conclusion": conclusion}
+    if _qualified(key):
+        provenance[_PULL_REQUEST] = _DETAILS_URL
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "requirement": requirement,
+        "subject": subject_of(subject),
+        "producer": _CHECK_PRODUCER,
+        "observed_at": observed_at,
+        "status": status,
+        "coverage": [item],
+        "provenance": provenance,
+    }
 
 
 def _unqualified_state(
@@ -1385,6 +1410,20 @@ def _check_links(
             )
 
 
+def _github_repository(repository: str) -> None:
+    """The subject repository is a GitHub repository in owner/name form, so every
+    key derived from it names one repository (Kilo on #424)."""
+
+    if repository.startswith(_GITHUB):
+        try:
+            normalize_repository(repository.removeprefix(_GITHUB))
+        except AnalyzerReadbackError:
+            pass
+        else:
+            return
+    raise MergeEvidenceError("the subject repository is not a GitHub repository")
+
+
 def _change_control(
     body: str, decisions: Mapping[str, frozenset[str]], repository: str
 ) -> tuple[str, dict[str, list[str]]]:
@@ -1552,8 +1591,7 @@ def evidence_from_snapshot(
         # A cut description may have lost part of its section (CodeAnt on #413).
         raise MergeEvidenceError("the pull request's description is truncated")
     repository = subject["repository"]
-    if not repository.startswith(_GITHUB):
-        raise MergeEvidenceError("the subject repository is not a GitHub repository")
+    _github_repository(repository)
     change_class, links = _change_control(provider["body"], decisions, repository)
     _proven_work_items(document, links["work_items"], repository)
     state = "merged" if provider["merged"] else provider["state"]

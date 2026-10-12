@@ -860,6 +860,51 @@ class SonarCloudReadbackTests(unittest.TestCase):
                         "REPORT_ASSOCIATION_MISMATCH", document["coverage"]["reason"]
                     )
 
+    def test_fractions_beyond_microseconds_are_exact(self) -> None:
+        """cubic on #424: RFC 3339 puts no bound on a fraction's digits, so a run's
+        start and the analysis date are read and compared at their own precision,
+        never truncated to microseconds. A time that is not one stays an error."""
+        for name, started, analysed, reason in (
+            ("seven digits on the run", "2026-10-11T23:57:56.0000000Z", ANALYSED, None),
+            (
+                "nine digits, the same instant on both",
+                "2026-10-11T23:57:56.123456789Z",
+                "2026-10-11T23:57:56.123456789+0000",
+                None,
+            ),
+            (
+                "nine digits, a nanosecond apart",
+                "2026-10-11T23:57:56.123456790Z",
+                "2026-10-11T23:57:56.123456789+0000",
+                "REPORT_ASSOCIATION_MISMATCH",
+            ),
+            (
+                "a start with no offset",
+                "2026-10-11T23:57:56",
+                ANALYSED,
+                "PROVIDER_ERROR",
+            ),
+            (
+                "an analysis date with no offset",
+                "2026-10-11T23:57:56Z",
+                "2026-10-11T23:57:56",
+                "PROVIDER_ERROR",
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [
+                        _listing(_entry(analysed=analysed)),
+                        _listing(_entry(analysed=analysed)),
+                    ],
+                    {1: _page([], total=0)},
+                )
+                document = _read(client, [_check(started=started)])
+                if reason is None:
+                    self.assertBound(document)
+                else:
+                    self.assertEqual(reason, document["coverage"]["reason"])
+
     def test_a_tie_on_the_latest_start_is_ambiguous(self) -> None:
         """C4b (PAO 6119999041): two runs for the pull request starting at the same
         instant leave the latest publication unknown; neither id decides."""

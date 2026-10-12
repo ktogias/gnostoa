@@ -58,6 +58,7 @@ from .analyzer_readback import (
     deduplicate_findings,
     normalize_repository,
 )
+from .review_model import RFC3339Timestamp, parse_rfc3339
 
 _API_ROOT = "https://sonarcloud.io"
 _TOKEN_ENV = "SONAR_TOKEN"  # nosec B105 -- environment variable name, not a credential
@@ -532,18 +533,18 @@ def _queue_url(subject: _Subject) -> str:
     return f"{_API_ROOT}/api/ce/component?{query}"
 
 
-# An RFC 3339 time may carry fractional seconds (CodeAnt on #424).
-_INSTANT_LAYOUTS = ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z")
+# SonarCloud writes its offset in the basic form, `+0000`; GitHub writes RFC 3339.
+_BASIC_OFFSET = re.compile(r"([+-]\d{2})(\d{2})\Z")
 
 
-def _instant(value: object, label: str) -> datetime:
-    text = _text(value, label)
-    for layout in _INSTANT_LAYOUTS:
-        try:
-            return datetime.strptime(text, layout)
-        except ValueError:
-            continue
-    raise ProviderReadFailure("ERROR", f"SonarCloud {label} is malformed")
+def _instant(value: object, label: str) -> RFC3339Timestamp:
+    """An exact instant, its fraction at any precision (CodeAnt and cubic on
+    #424), read by the review model's RFC 3339 parser."""
+
+    try:
+        return parse_rfc3339(_BASIC_OFFSET.sub(r"\1:\2", _text(value, label)))
+    except ValueError as exc:
+        raise ProviderReadFailure("ERROR", f"SonarCloud {label} is malformed") from exc
 
 
 def _scope(run: Mapping[str, Any], subject: _Subject) -> str | None:

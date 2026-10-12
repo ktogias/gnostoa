@@ -1881,6 +1881,35 @@ class EvidenceDocumentTests(unittest.TestCase):
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
             _evidence(snapshot)
 
+    def test_a_subject_repository_not_in_owner_name_form_is_refused(self) -> None:
+        """Kilo on #424: the subject repository is a GitHub repository in
+        owner/name form, checked where it is read, so a malformed one is a labelled
+        refusal before any producer derives a key from it. The description lists no
+        Work Item, so no Work Item check can refuse it first."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15\n", ""
+        )
+        for repository in (
+            "https://github.com/",
+            "https://github.com/ktogias",
+            "https://github.com/ktogias/",
+            "https://github.com//gnostoa",
+            "https://github.com/ktogias/gnostoa/extra",
+            "https://github.com/ktogias/..",
+            # Not GitHub's, though in owner/name form.
+            "ktogias/gnostoa",
+            "https://gitlab.com/ktogias/gnostoa",
+        ):
+            with self.subTest(repository):
+                snapshot = _snapshot(replies)
+                snapshot["subject"]["repository"] = repository
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "the subject repository is not a GitHub repository",
+                ):
+                    _evidence(snapshot)
+
     def test_incomplete_conversation_or_files_fail_the_run(self) -> None:
         for source in ("conversation", "files", "subject"):
             with self.subTest(source=source):
