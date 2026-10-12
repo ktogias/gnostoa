@@ -1977,6 +1977,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pull-number", type=int, action="append", default=[])
     parser.add_argument("--workflow-run-pulls-json", default="")
+    parser.add_argument("--event", action="store_true")
+    parser.add_argument("--workflow-run-head-sha", default=None)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--run-id", type=int, default=0)
@@ -2068,14 +2070,43 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     return 0
 
 
+def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """An event run's subjects: the event's hints and, for a pull request's event,
+    every open Pull Request at the trigger run's own head, which GitHub leaves out of
+    a fork's run (CodeAnt on #426; github/docs#22501). An event run never falls back
+    to the scheduled sweep."""
+    pulls = [
+        *args.pull_number,
+        *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+    ]
+    head = args.workflow_run_head_sha
+    if head is not None:
+        if _SHA40.fullmatch(head) is None:
+            raise SystemExit("the trigger run's head is not an exact commit")
+        pulls.extend(
+            item["number"]
+            for item in _open_pulls(client, args.repository)
+            if item["head_sha"] == head
+        )
+    selected = list(dict.fromkeys(pulls))
+    if len(selected) > _MAX_OPEN_PULLS:
+        raise SystemExit(
+            "selected Pull Request population exceeds bounded reconciliation capacity"
+        )
+    return selected
+
+
 def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Write the open Pull Requests the merge-admission relay evaluates, each with
     its head as GitHub reports it now (#407, slice 1b.4). An event's numbers are
     hints only: each is re-read, and a closed one is no subject."""
     if args.output is None:
         raise SystemExit("--output is required for subjects")
+    selected = (
+        _event_pulls(args, client) if args.event else _selected_pulls(args, client)
+    )
     subjects = []
-    for number in _selected_pulls(args, client):
+    for number in selected:
         document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
         pull = _normalize_pull(document)
         if pull["number"] != number:

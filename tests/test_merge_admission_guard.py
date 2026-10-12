@@ -11,8 +11,10 @@ what was evaluated. It never merges: step 8's `--match-head-commit` merge follow
 
 from __future__ import annotations
 
+import base64
 import copy
 import functools
+import hashlib
 import importlib.util
 import io
 import json
@@ -23,6 +25,7 @@ import subprocess  # nosec B404 -- the test's own git repository
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -764,8 +767,13 @@ _STUB_GUARD = (
     "pathlib.Path(os.environ['HOME'], 'guard-ran').write_text(\n"
     "    os.environ.get('GH_TOKEN', '') + ' ' + ' '.join(sys.argv[1:])\n"
     ")\n"
+    "try:\n"
+    "    import gnostoa_probe\n"
+    "    installed = gnostoa_probe.VERSION\n"
+    "except ImportError:\n"
+    "    installed = 'none'\n"
     "pathlib.Path(os.environ['HOME'], 'guard-environment').write_text(\n"
-    "    'pinned' if sys.prefix != sys.base_prefix else 'host'\n"
+    "    ('pinned' if sys.prefix != sys.base_prefix else 'host') + ' ' + installed\n"
     ")\n"
     'print(\'{"result": "PROCEED"}\')\n'
 )
@@ -775,10 +783,43 @@ _STARTUP_MODULE = (
     "    os.environ.get('GH_TOKEN', '')\n"
     ")\n"
 )
-# The runtime lock protected main holds: none here, as the offline tests install
+# The runtime lock protected main holds: none here, as most offline tests install
 # nothing; one the installer cannot read, for the failure.
 _LOCK = "--only-binary :all:\n--require-hashes\n"
 _UNREADABLE_LOCK = "--require-hashes\n!!! not a requirement\n"
+
+
+def _probe_lock(root: Path, *, recorded: str | None = None) -> str:
+    """A lock pinning one local wheel by its hash, so the launch's install of exactly
+    what the lock pins is observable offline (CodeAnt on #426). `recorded` writes
+    another hash than the wheel's."""
+    wheel = root / "wheels" / "gnostoa_probe-1.0-py3-none-any.whl"
+    wheel.parent.mkdir(parents=True, exist_ok=True)
+    information = "gnostoa_probe-1.0.dist-info"
+    files = {
+        "gnostoa_probe/__init__.py": "VERSION = '1.0'\n",
+        f"{information}/METADATA": (
+            "Metadata-Version: 2.1\nName: gnostoa-probe\nVersion: 1.0\n"
+        ),
+        f"{information}/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    record = []
+    for name, text in files.items():
+        data = text.encode("utf-8")
+        encoded = base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+        record.append(f"{name},sha256={encoded.rstrip(b'=').decode()},{len(data)}")
+    record.append(f"{information}/RECORD,,")
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+        archive.writestr(f"{information}/RECORD", "\n".join(record) + "\n")
+    digest = recorded or hashlib.sha256(wheel.read_bytes()).hexdigest()
+    return f"{_LOCK}gnostoa-probe @ {wheel.as_uri()} --hash=sha256:{digest}\n"
+
+
 _MINT = "#!/bin/sh\n: > \"$HOME/minted\"\nprintf 'credential-%s' 1\n"
 
 
@@ -899,12 +940,23 @@ class GuardLaunchTests(unittest.TestCase):
         launch's own, never whatever the host interpreter happens to hold."""
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            source = self._source(root)
+            source = self._source(root, lock=_probe_lock(root))
             caller = root / "caller"
             caller.mkdir()
             self.assertEqual(0, self._run(root, caller, source))
             environment = root / "home" / "guard-environment"
-            self.assertEqual("pinned", environment.read_text(encoding="utf-8"))
+            self.assertEqual("pinned 1.0", environment.read_text(encoding="utf-8"))
+
+    def test_a_pin_whose_hash_does_not_match_stops_before_the_credential(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root, lock=_probe_lock(root, recorded="0" * 64))
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertNotEqual(0, self._run(root, caller, source))
+            self.assertEqual((False, False, False), self._results(root))
 
     def test_a_failed_install_stops_before_the_credential(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

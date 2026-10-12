@@ -182,7 +182,15 @@ class TriggerWorkflowTests(unittest.TestCase):
                 self.assertIn(job.get("permissions", {}), ({},))
                 for step in _steps(job):
                     self.assertIn(step.get("uses"), (None, UPLOAD_ACTION))
-                    self.assertNotIn("run", step if step.get("uses") else {})
+                    if step.get("uses"):
+                        self.assertNotIn("run", step)
+                    else:
+                        # CodeAnt on #426: the one shell step computes nothing.
+                        self.assertEqual(_WAKE, str(step.get("run", "")).strip())
+
+
+# The trigger's only shell step: it says what the relay does, and computes nothing.
+_WAKE = 'echo "The protected relay re-reads this pull request from the provider."'
 
 
 class DeliveredCommentHintTests(unittest.TestCase):
@@ -417,6 +425,14 @@ class AdmissionWorkflowTests(unittest.TestCase):
                 'dispatched="$(PYTHONPATH=. python ci/merge_admission_relay.py dispatch-hint)"',
                 'args+=(--pull-number "${dispatched% *}")',
                 'printf \'nonce=%s\\n\' "${dispatched#* }" >> "${GITHUB_OUTPUT}"',
+                # An event run never falls back to the sweep, and a pull request's
+                # event names the open pull requests at its head (CodeAnt on #426).
+                'if [[ "${EVENT_NAME}" == "workflow_run"'
+                ' || "${EVENT_NAME}" == "repository_dispatch" ]]; then',
+                "args+=(--event)",
+                'if [[ "${EVENT_NAME}" == "workflow_run"'
+                ' && "${TRIGGER_EVENT:-}" != "issue_comment" ]]; then',
+                'args+=(--workflow-run-head-sha "${WORKFLOW_RUN_HEAD_SHA}")',
                 'PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"',
             ),
             ("invalidate", "Invalidate a standing success on the exact head"): (
@@ -708,6 +724,100 @@ class L1ModeTests(unittest.TestCase):
                 )
                 self.assertNotEqual(0, code)
                 self.assertFalse(output.exists())
+
+    def _subjects(self, replies: dict[str, Any], *argv: str) -> tuple[int, Any]:
+        module = adapter_fixture()
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "subjects.json"
+            code = self._run(
+                module,
+                replies,
+                "--mode",
+                "subjects",
+                "--repository",
+                "ktogias/gnostoa",
+                *argv,
+                "--output",
+                str(output),
+            )
+            written = (
+                json.loads(output.read_text(encoding="utf-8"))
+                if output.exists()
+                else None
+            )
+        return code, written
+
+    def test_a_fork_s_event_selects_the_open_pull_requests_at_its_head(self) -> None:
+        """CodeAnt on #426: GitHub leaves a fork's pull request out of the trigger
+        run's `pull_requests` (github/docs#22501, expected behavior). An event run's
+        subjects are its hints and every open pull request at the trigger run's own
+        head, whatever the hour: never a sweep batch that may omit it."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        others = [self._open(number, "c" * 40) for number in range(301, 310)]
+        replies[listing] = ([*others, self._open(300, HEAD)], {})
+        code, written = self._subjects(
+            replies,
+            "--event",
+            "--workflow-run-pulls-json",
+            "[]",
+            "--workflow-run-head-sha",
+            HEAD,
+        )
+        self.assertEqual(0, code)
+        self.assertEqual([{"pull_number": 300, "head": HEAD}], written)
+
+    def test_an_event_run_never_falls_back_to_the_sweep(self) -> None:
+        """An event that names no pull request, and no head with one, has no
+        subject; the schedule sweeps."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(300, HEAD)], {})
+        self.assertEqual(
+            (0, []),
+            self._subjects(replies, "--event", "--workflow-run-pulls-json", "[]"),
+        )
+        self.assertEqual(
+            (0, []),
+            self._subjects(
+                replies,
+                "--event",
+                "--workflow-run-pulls-json",
+                "[]",
+                "--workflow-run-head-sha",
+                "c" * 40,
+            ),
+        )
+
+    def test_an_event_s_subjects_stay_within_the_bounded_capacity(self) -> None:
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(n, HEAD) for n in range(300, 309)], {})
+        code, written = self._subjects(
+            replies, "--event", "--workflow-run-head-sha", HEAD
+        )
+        self.assertNotEqual(0, code)
+        self.assertIsNone(written)
+
+    def test_a_malformed_trigger_head_refuses(self) -> None:
+        for head in ("", "C" * 40, "c" * 39, f"{'c' * 40}\n"):
+            with self.subTest(head=head):
+                code, written = self._subjects(
+                    _replies(), "--event", "--workflow-run-head-sha", head
+                )
+                self.assertNotEqual(0, code)
+                self.assertIsNone(written)
+
+    def test_the_selection_passes_the_trigger_run_s_head(self) -> None:
+        (step,) = [
+            step
+            for step in _steps(_load(ADMISSION)["jobs"]["subjects"])
+            if step.get("name") == "Select the subjects"
+        ]
+        self.assertEqual(
+            "${{ github.event.workflow_run.head_sha }}",
+            step["env"]["WORKFLOW_RUN_HEAD_SHA"],
+        )
 
     def test_subjects_from_a_hint_read_each_head_natively(self) -> None:
         module = adapter_fixture()

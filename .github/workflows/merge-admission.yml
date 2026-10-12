@@ -105,12 +105,16 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
       # The event's pull requests reach only L1, through the environment; L1 reads
-      # each one's current head and drops a closed one.
+      # each one's current head and drops a closed one. A fork's run lists none
+      # (github/docs#22501), so a pull request's event also names the trigger run's
+      # head, and L1 adds every open pull request there. An event run never falls
+      # back to the sweep (CodeAnt on #426).
       - name: Select the subjects
         id: subjects
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
           EVENT_NAME: ${{ github.event_name }}
           DISPATCH_PULL: ${{ inputs.pull_number }}
@@ -138,6 +142,12 @@ jobs:
             if [[ -n "${hint}" ]]; then
               args+=(--pull-number "${hint}")
             fi
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_run" || "${EVENT_NAME}" == "repository_dispatch" ]]; then
+            args+=(--event)
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_run" && "${TRIGGER_EVENT:-}" != "issue_comment" ]]; then
+            args+=(--workflow-run-head-sha "${WORKFLOW_RUN_HEAD_SHA}")
           fi
           PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"
           printf 'subjects=%s\n' "$(cat "${RUNNER_TEMP}/gnostoa-merge-admission-subjects.json")" \
