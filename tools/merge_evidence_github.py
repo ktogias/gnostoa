@@ -10,12 +10,12 @@ coverage field, it carries the read's real status; where it has none, an incompl
 read fails the run.
 
 The receipts cover the check items the protected target's required-check manifest
-names (slice 1b.3b-1) and the analyzer-readback items, from the authenticated
-readback's bundle (slice 1b.3b-2). The suppressions and trust-root changes come
+names (slice 1b.3b-1), SonarCloud's quality gate among them, and the readback
+items, from the authenticated readback's bundle (slice 1b.3b-2), SonarCloud's
+issue inventory among them (slice 1b.3c). Each declared item has exactly one of
+the two producers (`producer_routes`). The suppressions and trust-root changes come
 from the exact comparison, against the protected target's declarations (slice
-1b.3b-4); without a declaration, what it governs is `UNAVAILABLE`. Until
-SonarCloud's (1b.3c) receipts exist, the verdict denies on M2-M8 rather than
-passing it vacuously.
+1b.3b-4); without a declaration, what it governs is `UNAVAILABLE`.
 """
 
 from __future__ import annotations
@@ -33,11 +33,13 @@ from typing import Any, NamedTuple
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from .analyzer_readback import parse_bundle
+from . import sonarcloud_scope
+from .analyzer_readback import AnalyzerReadbackError, normalize_repository, parse_bundle
 from .assurance_completeness import (
     RECEIPT_SCHEMA,
     RECEIPT_STATUSES,
     AssuranceCompletenessError,
+    load_declaration,
     require_closed_keys,
     require_identifier,
     require_mapping,
@@ -58,6 +60,7 @@ from .verdict_cli import confine, read_json_file, read_json_input, run
 
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
 DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
+DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 DEFAULT_SUPPRESSION_MARKERS = Path("policy") / "merge-suppression-markers.yaml"
 DEFAULT_TRUST_ROOTS = Path("policy") / "merge-trust-roots.yaml"
 _REQUIRED_CHECKS_LABEL = "required checks"
@@ -66,14 +69,21 @@ _DECLARATION_KEYS = frozenset({"schema_version", "id", "version"})
 _MARKERS_LABEL = "suppression markers"
 _ROOTS_LABEL = "trust roots"
 _CHECK_KEYS = frozenset({"app_id", "name"})
+# The one qualification a check item may declare: its runs must name this pull
+# request in their `details_url`. Only SonarCloud's gate has it, and must, since a
+# commit carries every analysed pull request's runs (Q-a, the PAO on #424).
+_PULL_REQUEST = "pull_request"
+_DETAILS_URL = "details_url"
 _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
-# The authenticated readback's readbacks, by (provider, scope), and the
-# declaration's items they give (1b.3b-2; #407, 6101607240).
-_ANALYZER_REQUIREMENT = "analyzer-readback"
+# The authenticated readback's readbacks, by (provider, scope), and the declared
+# (requirement, item) each gives (1b.3b-2; #407, 6101607240). SonarCloud's
+# inventory is its own requirement's item, beside the gate the check manifest
+# gives (1b.3c; G1, #407 6119736075).
 _ANALYZER_ITEMS = {
-    ("deepsource", "DIFF"): "deepsource-diff",
-    ("deepsource", "FULL"): "deepsource-full",
-    ("codacy", "DIFF"): "codacy",
+    ("deepsource", "DIFF"): ("analyzer-readback", "deepsource-diff"),
+    ("deepsource", "FULL"): ("analyzer-readback", "deepsource-full"),
+    ("codacy", "DIFF"): ("analyzer-readback", "codacy"),
+    ("sonarcloud", "DIFF"): ("sonarcloud", "issue-inventory"),
 }
 # The kind of read each item stands for, as the producer marks a complete one; a
 # complete read of another kind does not give it (Decision 0091; Codex on #417).
@@ -81,6 +91,7 @@ _ANALYZER_COMPLETENESS = {
     "deepsource-diff": "DIFF_LOCAL",
     "deepsource-full": "FULL_RUN",
     "codacy": "FULL_RUN",
+    "issue-inventory": "FULL_RUN",
 }
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"
@@ -351,13 +362,35 @@ def parse_trust_roots(document: object) -> TrustRoots:
     return TrustRoots(tuple(_rule(pattern) for pattern in patterns))
 
 
+# SonarCloud's gate, the one check qualified by its pull request (Q-a, #424).
+_QUALIFIED_KEY = (
+    f"github-check-run:{sonarcloud_scope.CHECK_APP_ID}:{sonarcloud_scope.CHECK_NAME}"
+)
+
+
 def _check_key(value: object, label: str) -> str:
     check = require_mapping(value, label)
-    require_closed_keys(check, label, _CHECK_KEYS)
+    require_closed_keys(check, label, _CHECK_KEYS, frozenset({_PULL_REQUEST}))
     app_id = check["app_id"]
     if type(app_id) is not int or app_id <= 0:
         raise MergeEvidenceError(f"{label} app_id must be a positive integer")
-    return f"github-check-run:{app_id}:{require_text(check['name'], f'{label} name')}"
+    name = require_text(check["name"], f"{label} name")
+    sonarcloud = (app_id, name) == (
+        sonarcloud_scope.CHECK_APP_ID,
+        sonarcloud_scope.CHECK_NAME,
+    )
+    qualification = check.get(_PULL_REQUEST)
+    if _PULL_REQUEST in check and qualification != _DETAILS_URL:
+        raise MergeEvidenceError(f"{label} {_PULL_REQUEST} must be {_DETAILS_URL}")
+    if qualification is not None and not sonarcloud:
+        raise MergeEvidenceError(
+            f"{label} names a check its pull request cannot qualify"
+        )
+    if qualification is None and app_id == sonarcloud_scope.CHECK_APP_ID:
+        raise MergeEvidenceError(
+            f"{label} is SonarCloud's check, which must be qualified by its pull request"
+        )
+    return f"github-check-run:{app_id}:{name}"
 
 
 def load_required_checks(
@@ -449,30 +482,122 @@ def _check_receipts(
         runs = check_runs_by_key(checks, subject["head_commit"])
     except ReconciliationInputError as exc:
         raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    view = _CheckView(checks, coverage, latest, runs, snapshot["observed_at"])
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():
-            if coverage != "COMPLETE":
-                status = coverage if coverage in RECEIPT_STATUSES else "ERROR"
-                conclusion, observed_at = None, snapshot["observed_at"]
-            elif key in latest:
-                status, conclusion = _item_status(latest[key]["states"], runs[key])
-                observed_at = latest[key]["observed_at"]
-            else:
-                continue
-            receipts.append(
-                {
-                    "schema": RECEIPT_SCHEMA,
-                    "requirement": requirement,
-                    "subject": subject_of(subject),
-                    "producer": _CHECK_PRODUCER,
-                    "observed_at": observed_at,
-                    "status": status,
-                    "coverage": [item],
-                    "provenance": {"check": key, "conclusion": conclusion},
-                }
-            )
+            state = _item_state(view, key, subject)
+            if state is not None:
+                receipts.append(_check_receipt(requirement, item, key, subject, state))
     return receipts
+
+
+class _CheckView(NamedTuple):
+    """The snapshot's checks on the head, as the check producer reads them."""
+
+    checks: Sequence[Mapping[str, Any]]
+    coverage: str
+    latest: Mapping[str, Mapping[str, Any]]
+    runs: Mapping[str, Sequence[tuple[str, str | None]]]
+    observed_at: str
+
+
+def _qualified(key: str) -> bool:
+    """A key is qualified by being SonarCloud's check, so a key that arrives as
+    plain text keeps its qualification (Octopus on #424). The manifest must still
+    declare it, and `_check_key` refuses it on any other check."""
+    return key == _QUALIFIED_KEY
+
+
+def _item_state(
+    view: _CheckView, key: str, subject: Mapping[str, Any]
+) -> tuple[str, str | None, str] | None:
+    """An item's status, conclusion and observation time, or None when it has no
+    run (MISSING). A checks read that is not COMPLETE gives every item its own."""
+
+    if view.coverage != "COMPLETE":
+        status = view.coverage if view.coverage in RECEIPT_STATUSES else "ERROR"
+        return status, None, view.observed_at
+    if _qualified(key):
+        return _qualified_state(view.checks, key, subject, view.observed_at)
+    return _unqualified_state(key, view.latest, view.runs)
+
+
+def _check_receipt(
+    requirement: str,
+    item: str,
+    key: str,
+    subject: Mapping[str, Any],
+    state: tuple[str, str | None, str],
+) -> dict[str, Any]:
+    status, conclusion, observed_at = state
+    provenance: dict[str, Any] = {"check": key, "conclusion": conclusion}
+    if _qualified(key):
+        provenance[_PULL_REQUEST] = _DETAILS_URL
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "requirement": requirement,
+        "subject": subject_of(subject),
+        "producer": _CHECK_PRODUCER,
+        "observed_at": observed_at,
+        "status": status,
+        "coverage": [item],
+        "provenance": provenance,
+    }
+
+
+def _unqualified_state(
+    key: str,
+    latest: Mapping[str, Mapping[str, Any]],
+    runs: Mapping[str, Sequence[tuple[str, str | None]]],
+) -> tuple[str, str | None, str] | None:
+    """An unqualified item's status, conclusion and observation time from every
+    run of its key on the head, or None when it has none (MISSING)."""
+
+    if key not in latest:
+        return None
+    status, conclusion = _item_status(latest[key]["states"], runs[key])
+    return status, conclusion, latest[key]["observed_at"]
+
+
+def _qualified_state(
+    checks: Sequence[Mapping[str, Any]],
+    key: str,
+    subject: Mapping[str, Any],
+    observed_at: str,
+) -> tuple[str, str | None, str] | None:
+    """A pull-request-qualified item's status, conclusion and observation time
+    from this pull request's own runs, filtered before the existing reduction, or
+    None when it has none (MISSING). A foreign pull request, project or branch is
+    excluded; a run whose association is malformed or missing might be this pull
+    request's, so the item is PARTIAL even beside a qualifying success (Q-a, the
+    PAO on #424)."""
+
+    head = subject["head_commit"]
+    change = subject["change_request"]
+    if change["kind"] != "github-pull-request":
+        return "PARTIAL", None, observed_at
+    project = sonarcloud_scope.project_key(subject["repository"].removeprefix(_GITHUB))
+    own = []
+    for check in checks:
+        if check.get("key") != key or check.get("head_commit") != head:
+            continue
+        scope = sonarcloud_scope.details_scope(
+            check.get("source_url"), project=project, pull=change["id"]
+        )
+        if scope == "malformed":
+            return "PARTIAL", None, observed_at
+        if scope == "ours":
+            own.append(check)
+    if not own:
+        return None
+    try:
+        latest = latest_checks(own, head)[key]
+        runs = check_runs_by_key(own, head)[key]
+    except ReconciliationInputError as exc:
+        raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    status, conclusion = _item_status(latest["states"], runs)
+    return status, conclusion, latest["observed_at"]
 
 
 def _glob(text: str) -> str:
@@ -1281,6 +1406,20 @@ def _check_links(
             )
 
 
+def _github_repository(repository: str) -> None:
+    """The subject repository is a GitHub repository in owner/name form, so every
+    key derived from it names one repository (Kilo on #424)."""
+
+    if repository.startswith(_GITHUB):
+        try:
+            normalize_repository(repository.removeprefix(_GITHUB))
+        except AnalyzerReadbackError:
+            pass
+        else:
+            return
+    raise MergeEvidenceError("the subject repository is not a GitHub repository")
+
+
 def _change_control(
     body: str, decisions: Mapping[str, frozenset[str]], repository: str
 ) -> tuple[str, dict[str, list[str]]]:
@@ -1448,8 +1587,7 @@ def evidence_from_snapshot(
         # A cut description may have lost part of its section (CodeAnt on #413).
         raise MergeEvidenceError("the pull request's description is truncated")
     repository = subject["repository"]
-    if not repository.startswith(_GITHUB):
-        raise MergeEvidenceError("the subject repository is not a GitHub repository")
+    _github_repository(repository)
     change_class, links = _change_control(provider["body"], decisions, repository)
     _proven_work_items(document, links["work_items"], repository)
     state = "merged" if provider["merged"] else provider["state"]
@@ -1485,8 +1623,8 @@ def evidence_from_snapshot(
         "suppressions": _suppressions(files, suppression_markers),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
-        # The check items' receipts (1b.3b-1) and the analyzer items' (1b.3b-2);
-        # SonarCloud's come with 1b.3c.
+        # The check items' receipts (1b.3b-1), SonarCloud's gate among them, and
+        # the readback items' (1b.3b-2), SonarCloud's inventory among them (1b.3c).
         "receipts": [
             *_check_receipts(document, subject, required_checks),
             *analyzer_receipts,
@@ -1496,14 +1634,15 @@ def evidence_from_snapshot(
 
 def _analyzer_receipt(
     subject: Mapping[str, Any],
-    item: str,
+    pair: tuple[str, str],
     status: str,
     observed_at: str,
     provenance: Mapping[str, Any],
 ) -> dict[str, Any]:
+    requirement, item = pair
     return {
         "schema": RECEIPT_SCHEMA,
-        "requirement": _ANALYZER_REQUIREMENT,
+        "requirement": requirement,
         "subject": subject_of(subject),
         "producer": _ANALYZER_PRODUCER,
         "observed_at": observed_at,
@@ -1551,17 +1690,17 @@ def _analyzer_evidence(
         provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
         receipts = [
             _analyzer_receipt(
-                subject, item, "INCOMPLETE", bundle["observed_at"], provenance
+                subject, pair, "INCOMPLETE", bundle["observed_at"], provenance
             )
-            for item in _ANALYZER_ITEMS.values()
+            for pair in _ANALYZER_ITEMS.values()
         ]
         return receipts, {"coverage": "INCOMPLETE", "findings": []}
     receipts, findings = [], []
-    for item, readback in readbacks.items():
+    for (requirement, item), readback in readbacks.items():
         receipts.append(
             _analyzer_receipt(
                 subject,
-                item,
+                (requirement, item),
                 _analyzer_item_status(item, readback),
                 readback["observed_at"],
                 {"completeness": readback["completeness"], "bound": True},
@@ -1591,11 +1730,11 @@ def _check_times(bundle: Mapping[str, Any]) -> None:
 
 def _readbacks_by_item(
     readbacks: Sequence[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """A bound bundle's readbacks by the item each stands for. An unknown or a
-    repeated readback fails the run."""
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """A bound bundle's readbacks by the (requirement, item) each stands for. An
+    unknown or a repeated readback fails the run."""
 
-    by_item: dict[str, dict[str, Any]] = {}
+    by_item: dict[tuple[str, str], dict[str, Any]] = {}
     for readback in readbacks:
         pair = (readback["provider"], readback["scope"])
         if pair not in _ANALYZER_ITEMS:
@@ -1622,6 +1761,40 @@ def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:
     ):
         return "INCOMPLETE"
     return status
+
+
+def producer_routes(
+    declaration: Mapping[str, Any], required_checks: Mapping[str, Mapping[str, str]]
+) -> dict[tuple[str, str], str]:
+    """The producer of each (requirement, item) pair the declaration names: the
+    check manifest's runs or the authenticated analyzer readback. A pair with no
+    producer, a pair with two, and a produced pair the declaration does not name
+    are refused (G1, the coordinator's guidance on #407, 6119736075)."""
+
+    declared = {
+        (requirement["id"], item)
+        for requirement in declaration["requirements"]
+        for item in requirement["coverage"]
+    }
+    produced = [
+        *(
+            ((requirement, item), _CHECK_PRODUCER)
+            for requirement, items in required_checks.items()
+            for item in items
+        ),
+        *((pair, _ANALYZER_PRODUCER) for pair in _ANALYZER_ITEMS.values()),
+    ]
+    routes: dict[tuple[str, str], str] = {}
+    for pair, producer in produced:
+        if pair not in declared:
+            raise MergeEvidenceError(f"{'.'.join(pair)} is not declared")
+        if pair in routes:
+            raise MergeEvidenceError(f"{'.'.join(pair)} has two producers")
+        routes[pair] = producer
+    missing = sorted(declared - set(routes))
+    if missing:
+        raise MergeEvidenceError(f"{'.'.join(missing[0])} has no producer")
+    return routes
 
 
 def subject_of(subject: Mapping[str, Any]) -> dict[str, Any]:
@@ -1659,6 +1832,15 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_REQUIRED_CHECKS,
         help=f"the required-check manifest (default: {DEFAULT_REQUIRED_CHECKS})",
+    )
+    parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=DEFAULT_DECLARATION,
+        help=(
+            f"the required-evidence declaration (default: {DEFAULT_DECLARATION}); "
+            "each of its items must have exactly one producer"
+        ),
     )
     parser.add_argument(
         "--suppression-markers",
@@ -1710,6 +1892,12 @@ def main(argv: list[str] | None = None) -> int:
         codeowners = load_codeowners(root)
         required_checks = load_required_checks(
             inside(args.required_checks), project_root=root
+        )
+        # The one-producer rule is the command's own, against the protected
+        # target's declaration, not only its tests' (G1; cubic on #424).
+        producer_routes(
+            load_declaration(inside(args.declaration), project_root=root),
+            required_checks,
         )
         bundle = None
         if args.analyzer_readback is not None:

@@ -141,8 +141,30 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         for path in paths:
             with self.subTest(path=path):
                 self.assertEqual(1, binding.count(path))
-        self.assertIn("sb2.membership=25", binding)
         self.assertNotIn("sb2.membership=23", binding)
+
+    def test_candidate_binding_extends_sb2_with_the_sonarcloud_association(
+        self,
+    ) -> None:
+        """`knowledge merge-evidence` now imports the pure SonarCloud association
+        helper for its gate, so it joins SB2 after the adapter's block (Decision
+        0035; #407, slice 1b.3c; Q-a, #424)."""
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split("- name: Bind the exact PR executable candidate", 1)[1]
+        previous = 'test "$(wc -l < "${sb2_paths_file}")" -eq 25'
+        final = 'test "$(wc -l < "${sb2_paths_file}")" -eq 26'
+        path = "tools/sonarcloud_scope.py"
+        self.assertIn(final, binding)
+        self.assertIn(
+            'test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 26', binding
+        )
+        self.assertLess(binding.index(previous), binding.index(path))
+        self.assertLess(binding.index(path), binding.index(final))
+        self.assertEqual(1, binding.count(path))
+        self.assertIn("sb2.membership=26", binding)
+        self.assertNotIn("sb2.membership=25", binding)
 
     def test_fast_suite_runs_the_pre_registered_review_assurance_oracle(self) -> None:
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")

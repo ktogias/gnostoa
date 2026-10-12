@@ -21,3 +21,12 @@ requirements:
     # GitHub Advanced Security's code-scanning result, which applies the
     # "Require CodeQL on main" ruleset's alert threshold.
     codeql: {app_id: 57789, name: CodeQL}
+  sonarcloud:
+    # SonarCloud's check run on the exact head: "Quality Gate passed" on success.
+    # Only the gate comes from here; the issue inventory is the authenticated
+    # readback's, and a passing gate never stands for it (1b.3c; G1, #407
+    # 6119736075). A commit carries every analysed pull request's runs, so only
+    # runs whose details_url names this pull request count (Q-a, #424). The
+    # runbook records this check.
+    quality-gate:
+      {app_id: 12526, name: SonarCloud Code Analysis, pull_request: details_url}

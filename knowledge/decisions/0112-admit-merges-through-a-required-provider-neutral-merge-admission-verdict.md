@@ -128,16 +128,18 @@ provider-neutral public change-governance contract of
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
-  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 admitted in the owner's sequence (#325, 6113092417) |
-  | 1b.3c | SonarCloud's readback (#359) | conditionally admitted in that sequence, after 1b.3b-4 is integrated |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 merged (#423) |
+  | 1b.3c | SonarCloud's readback (#359) | admitted in the owner's sequence (#325, 6113092417), continued after 1b.3b-4's integration (#407, 6119460225) |
   | 1b.4 | publication and activation | conditionally admitted in that sequence, after 1b.3c is integrated |
   | 1b.5 | the post-merge audit | not yet admitted |
 
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
-- **While an item has no producer, the reducer reports it `MISSING`.** SonarCloud's
-  inventory is one such item until 1b.3c. So once the check is required, a merge
-  waits for its evidence rather than passing without it.
+- **While an item has no receipt, the reducer reports it `MISSING`.** So once the
+  check is required, a merge waits for its evidence rather than passing without
+  it. Since 1b.3c every declared item has exactly one producer: the check
+  manifest's runs or the authenticated readback (`producer_routes`, which refuses a
+  gap, an overlap and an undeclared item).
 - **The verdict's input is a normalized evidence document,** which the GitHub
   adapter (1b.3) produces. It names the change's subject and lifecycle, its class
   and links, the declared candidate, the declarer, the author and the required approvers, the
@@ -319,9 +321,10 @@ provider-neutral public change-governance contract of
     rebuilds it exactly. A bundle bound to the exact repository, pull request (a
     `github-pull-request` change request) and head gives each item the receipt of
     its readback's own coverage, whatever its findings; readbacks map to items by
-    provider and scope (DeepSource diff and full, Codacy). Each item stands for one
-    kind of read, as the producer marks a complete one: DeepSource's diff item a
-    `DIFF_LOCAL` read, its full item and Codacy's a `FULL_RUN`. A complete read of
+    provider and scope (DeepSource diff and full, Codacy; SonarCloud's inventory,
+    under its own requirement, since 1b.3c). Each item stands for one kind of read,
+    as the producer marks a complete one: DeepSource's diff item a `DIFF_LOCAL`
+    read, its full item, Codacy's and SonarCloud's a `FULL_RUN`. A complete read of
     another kind gives `INCOMPLETE` (Decision 0091). A bundle that is not bound to
     the subject gives every item `INCOMPLETE`, and a missing readback gives its
     item no receipt (`MISSING`). Whatever the binding, an unknown or repeated
@@ -335,7 +338,7 @@ provider-neutral public change-governance contract of
     when supplied its rule, severity, category, path, state, tool, range and
     native reference (the owner's re-admission, #417 6107601240). Their
     provenance and native metadata stay in the bundle, traceable by item and id.
-    It also lists their coverage: `COMPLETE` only when all three readbacks are
+    It also lists their coverage: `COMPLETE` only when all four readbacks are
     present and complete.
     M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
     listed finding counts, a suppressed one included, with no waiver: a justified
@@ -372,8 +375,65 @@ provider-neutral public change-governance contract of
       name it has, so a rename into or out of a root shows both. Any other file
       status leaves the list `PARTIAL`. The list is shown for the native
       approval; it is neither vetoed nor approved here.
-  - Until 1b.3c, SonarCloud's items stay `MISSING`, so the verdict denies rather
-    than passing them vacuously.
+  - **SonarCloud's two items** (1b.3c, under the coordinator's guidance on #407,
+    6119736075: G1, S1 and H1).
+    - **The quality gate** is SonarCloud's own check run on the exact head, from
+      the check manifest (app 12526, `SonarCloud Code Analysis`), under the check
+      items' rules. It is never evidence of the inventory. A commit carries every
+      analysed pull request's runs, so the item is qualified by its pull request
+      (`pull_request: details_url`, Q-a on #424): only runs whose `details_url`
+      names this project's pull request count, filtered before the reduction. A
+      foreign pull request, project or branch is excluded. A run whose association
+      is malformed, missing, blank (6123979691) or undecodable makes the item
+      `PARTIAL`. With no own run there is no receipt (`MISSING`), as when L1's
+      latest view hides it. The helper that
+      reads the association, `tools/sonarcloud_scope.py`, is the adapter's too.
+      The reduction qualifies the item because it is SonarCloud's check, so a key
+      that arrives as plain text keeps its qualification; the manifest must still
+      declare it.
+    - **The issue inventory** is the authenticated readback's. Its adapter binds
+      it to a published report of the exact head before any issue is read, and
+      again after the last page:
+      - SonarCloud's pull-request listing names the head and its analysis date,
+        the same both times;
+      - every SonarCloud check run naming the pull request is finished, and the
+        latest has a gate result and starts at that analysis date (as it did for
+        all 44 listed pull requests on 2026-10-12);
+      - the project's tasks hold none of the pull request's that is queued,
+        unfinished or failed, and no queued task of unknown identity, one that
+        names neither a pull request nor a branch.
+      Otherwise the inventory is `AMBIGUOUS`, never complete. A task naming the
+      pull request, with an analysis id, can be read in the project's `current`
+      task, but its association with the exact head's report is not established,
+      so none is claimed. Every page is read until the count reaches SonarCloud's
+      total, and a total past its 10,000-result window is `PARTIAL`. What this
+      does not prove is that SonarCloud indexed every issue before the pages were
+      read, nor that no other computation ran meanwhile; only that the bound
+      descriptors stayed the same.
+    - **Under the owner's selection (R1, #424 6122025441), a bound inventory is
+      `COMPLETE` as the latest observed published report's.** No source read here
+      is established to show a newer, unfinished analysis of the same head:
+      SonarCloud posts its check run only once finished, no task exists before an
+      analysis is submitted, and only a task's seconds of processing showed in the
+      queue. So `COMPLETE` means the fully enumerated, PR-scoped inventory of the
+      latest observed published, completed report of this repository, pull
+      request and head, over the reads' own interval. It is not an absence of
+      unpublished work, not a snapshot versioned by an analysis id, and no
+      freshness lease, and the provenance says so: `unfinished_analysis:
+      "UNOBSERVABLE"`, `binding`, `source_limitation` and the first and last
+      read times. A bound empty first page with a total of 0 is the clean case.
+      Every observed unfinished or failed relevant task, ambiguous association,
+      changed descriptor, short page before the total, or contradictory count
+      stays non-`COMPLETE`, and the admission point re-reads the inventory.
+    - **Every issue that is not `FIXED` is a finding**, with its state: `OPEN`,
+      `CONFIRMED`, `ACCEPTED` and `FALSE_POSITIVE`. An acceptance or a
+      false-positive marking in SonarCloud is no waiver of M17. A state that was
+      not asked for is an error, never dropped.
+    - **Security Hotspots are not read**; their inventory is an unadmitted
+      successor case (#407, 6119816718).
+    - Without `SONAR_TOKEN` in the `analyzer-readback` environment nothing is
+      read, although the project is public, and the inventory is
+      `AUTH_UNAVAILABLE`.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
@@ -396,6 +456,8 @@ provider-neutral public change-governance contract of
   `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).
   Under [Decision 0035](0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md),
   the next OCI candidate's G3 re-binding replays the affected boundary for them.
+- **Slice 1b.3c adds one file to SB2** (25 → 26): `knowledge merge-evidence` now
+  imports the pure SonarCloud association helper, `tools/sonarcloud_scope.py`.
 - **More owner configuration** is needed by 1b.3 and 1b.4: `SONAR_TOKEN`, the
   `gnostoa-ma0` App and its environment, and the requirement in R-main.
 

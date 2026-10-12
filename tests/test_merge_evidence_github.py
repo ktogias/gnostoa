@@ -69,7 +69,7 @@ def _commit(sha: str, message: str) -> dict[str, Any]:
 ACTIONS = 15368
 CODEQL = 57789
 REQUIRED = ("policy", "fast", "regression", "smoke")
-REQUIRED_CHECKS = {
+REQUIRED_CHECKS: dict[str, Any] = {
     "schema_version": "1.0",
     "id": "example.merge-required-checks",
     "version": "0.1.0",
@@ -78,6 +78,15 @@ REQUIRED_CHECKS = {
             name: {"app_id": ACTIONS, "name": name} for name in REQUIRED
         },
         "codeql": {"codeql": {"app_id": CODEQL, "name": "CodeQL"}},
+        # Each declared item has one producer, so the gate is here and the
+        # inventory is the readback's (G1).
+        "sonarcloud": {
+            "quality-gate": {
+                "app_id": 12526,
+                "name": "SonarCloud Code Analysis",
+                "pull_request": "details_url",
+            }
+        },
     },
 }
 CHECK_RUNS = f"{API}/commits/{HEAD}/check-runs?per_page=100"
@@ -316,7 +325,7 @@ def _readback(
 
 def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
     """The authenticated readback's bundle for the snapshot's pull request; by
-    default its three readbacks are complete and find nothing."""
+    default its four readbacks are complete and find nothing."""
 
     bundle: dict[str, Any] = {
         "schema": analyzer_readback.BUNDLE_SCHEMA,
@@ -332,6 +341,7 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
             _readback("deepsource", "DIFF"),
             _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         ],
     }
     bundle.update(changes)
@@ -340,6 +350,8 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
 
 ANALYZER_ITEMS = ("deepsource-diff", "deepsource-full", "codacy")
 ANALYZERS = (("deepsource", "DIFF"), ("deepsource", "FULL"), ("codacy", "DIFF"))
+# SonarCloud's inventory gives the `sonarcloud` requirement's own item (1b.3c).
+SONAR = ("sonarcloud", "DIFF")
 
 
 def _bundle_for(**subject: Any) -> dict[str, Any]:
@@ -351,7 +363,7 @@ def _bundle_for(**subject: Any) -> dict[str, Any]:
     return _bundle(
         *[
             _readback(p, s, head=head, repository=repository, pull=pull)
-            for p, s in ANALYZERS
+            for p, s in (*ANALYZERS, SONAR)
         ],
         requested_head=head,
         observed_head=head,
@@ -1869,6 +1881,35 @@ class EvidenceDocumentTests(unittest.TestCase):
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
             _evidence(snapshot)
 
+    def test_a_subject_repository_not_in_owner_name_form_is_refused(self) -> None:
+        """Kilo on #424: the subject repository is a GitHub repository in
+        owner/name form, checked where it is read, so a malformed one is a labelled
+        refusal before any producer derives a key from it. The description lists no
+        Work Item, so no Work Item check can refuse it first."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15\n", ""
+        )
+        for repository in (
+            "https://github.com/",
+            "https://github.com/ktogias",
+            "https://github.com/ktogias/",
+            "https://github.com//gnostoa",
+            "https://github.com/ktogias/gnostoa/extra",
+            "https://github.com/ktogias/..",
+            # Not GitHub's, though in owner/name form.
+            "ktogias/gnostoa",
+            "https://gitlab.com/ktogias/gnostoa",
+        ):
+            with self.subTest(repository):
+                snapshot = _snapshot(replies)
+                snapshot["subject"]["repository"] = repository
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "the subject repository is not a GitHub repository",
+                ):
+                    _evidence(snapshot)
+
     def test_incomplete_conversation_or_files_fail_the_run(self) -> None:
         for source in ("conversation", "files", "subject"):
             with self.subTest(source=source):
@@ -1898,7 +1939,11 @@ def _project(directory: Path, *, authorities: bool = True) -> Path:
     (project / "policy").mkdir(parents=True)
     (project / "core").mkdir()
     (project / ".github").mkdir()
-    for name in ("policy/change-control.yaml", "core/change-control.yaml"):
+    for name in (
+        "policy/change-control.yaml",
+        "core/change-control.yaml",
+        "policy/assurance-evidence.yaml",
+    ):
         shutil.copyfile(ROOT / name, project / name)
     shutil.copytree(
         ROOT / "knowledge" / "decisions", project / "knowledge" / "decisions"
@@ -1947,6 +1992,34 @@ class CommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             missing = _project(Path(directory), authorities=False)
             self.assertEqual(2, _run(missing, json.dumps(_snapshot()))[0])
+
+    def test_the_command_refuses_inconsistent_producer_routes(self) -> None:
+        """cubic on #424: the one-producer rule (G1) is the command's, not only the
+        tests'. Against the protected target's declaration, a manifest that also
+        claims a readback item, one that leaves a declared item without a
+        producer, or no declaration at all, fails the run."""
+        overlap = copy.deepcopy(REQUIRED_CHECKS)
+        overlap["requirements"]["sonarcloud"]["issue-inventory"] = {
+            "app_id": ACTIONS,
+            "name": "SonarCloud Inventory",
+        }
+        gap = copy.deepcopy(REQUIRED_CHECKS)
+        del gap["requirements"]["sonarcloud"]
+        for name, manifest, declaration, message in (
+            ("an overlap", overlap, True, "has two producers"),
+            ("a gap", gap, True, "has no producer"),
+            ("no declaration", REQUIRED_CHECKS, False, "assurance"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                project = _project(Path(directory))
+                (project / "policy" / "merge-required-checks.yaml").write_text(
+                    yaml.safe_dump(manifest), encoding="utf-8"
+                )
+                if not declaration:
+                    (project / "policy" / "assurance-evidence.yaml").unlink()
+                code, _, err = _run(project, json.dumps(_snapshot()))
+                self.assertEqual(2, code, err)
+                self.assertIn(message, err)
 
     def test_the_knowledge_cli_routes_merge_evidence(self) -> None:
         from tools import cli
@@ -2076,23 +2149,67 @@ class CheckReceiptTests(unittest.TestCase):
             }
         )
         statuses = _receipt_statuses(_command_evidence(replies))
-        self.assertEqual(5, len(statuses))
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses))
         self.assertTrue(all(s != "COMPLETE" for s in statuses.values()), statuses)
 
-    def test_gnostoa_s_manifest_names_each_declared_check_item(self) -> None:
-        """The manifest's items are exactly the declaration's, for each
-        requirement it names."""
+    def test_gnostoa_s_declared_items_each_have_one_producer(self) -> None:
+        """G1 (PAO 6119736075): every (requirement, item) pair the declaration
+        names has exactly one producer, the check manifest or the analyzer
+        readback, and neither names a pair it does not declare."""
         manifest = merge_evidence_github.load_required_checks(
             ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
         )
         declaration = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
-        coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
-        self.assertEqual({"verification-checks", "codeql"}, set(manifest))
-        for requirement, items in manifest.items():
-            with self.subTest(requirement=requirement):
-                self.assertCountEqual(coverage[requirement], list(items))
+        checks = "gnostoa.merge-evidence-github/check-runs"
+        readback = "gnostoa.merge-evidence-github/analyzer-readback"
+        self.assertEqual(
+            {
+                **{("verification-checks", n): checks for n in REQUIRED},
+                ("codeql", "codeql"): checks,
+                ("analyzer-readback", "deepsource-diff"): readback,
+                ("analyzer-readback", "deepsource-full"): readback,
+                ("analyzer-readback", "codacy"): readback,
+                ("sonarcloud", "quality-gate"): checks,
+                ("sonarcloud", "issue-inventory"): readback,
+            },
+            merge_evidence_github.producer_routes(declaration, manifest),
+        )
+
+    def test_a_declared_pair_needs_exactly_one_producer(self) -> None:
+        """G1: a gap, an overlap and an undeclared pair are each refused."""
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        manifest = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        gap = copy.deepcopy(declaration)
+        gap["requirements"][0]["coverage"].append("unproduced")
+        overlap = copy.deepcopy(manifest)
+        overlap["sonarcloud"]["issue-inventory"] = "github-check-run:12526:Inventory"
+        undeclared_item = copy.deepcopy(manifest)
+        undeclared_item["codeql"]["extra"] = "github-check-run:57789:Extra"
+        undeclared_requirement = copy.deepcopy(manifest)
+        undeclared_requirement["other"] = {"item": "github-check-run:1:Other"}
+        for name, (documents, message) in {
+            "a gap": ((gap, manifest), "has no producer"),
+            "an overlap": ((declaration, overlap), "has two producers"),
+            "an undeclared item": ((declaration, undeclared_item), "is not declared"),
+            "an undeclared requirement": (
+                (declaration, undeclared_requirement),
+                "is not declared",
+            ),
+        }.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, message
+                ),
+            ):
+                merge_evidence_github.producer_routes(*documents)
 
     def test_the_manifest_has_a_closed_contract(self) -> None:
         def changed(**change: Any) -> dict[str, Any]:
@@ -2172,7 +2289,8 @@ class CheckReceiptTests(unittest.TestCase):
         statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
         evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
         statuses_by_item = _receipt_statuses(evidence)
-        self.assertEqual(5, len(statuses_by_item))
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses_by_item))
         self.assertTrue(
             all(s != "COMPLETE" for s in statuses_by_item.values()), statuses_by_item
         )
@@ -2396,6 +2514,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             _readback("deepsource", "DIFF", suppressed),
             _readback("deepsource", "FULL", FINDING),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         )
         self.assertEqual(
             dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(bundle)
@@ -2439,6 +2558,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             _readback("deepsource", "DIFF"),
             _readback("deepsource", "FULL", raw, FINDING),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         )
         evidence = _evidence(analyzer=bundle)
         self.assertEqual(
@@ -2696,6 +2816,516 @@ class AnalyzerReceiptTests(unittest.TestCase):
                     )
                     self.assertEqual(2, code, err)
                     self.assertIn("analyzer readback", err)
+
+
+class SonarCloudInventoryTests(unittest.TestCase):
+    """MA0 1b.3c (#407 6119460225, lineage 6119607885): SonarCloud's inventory
+    reaches the existing receipt intake, under its own requirement, and M17."""
+
+    @staticmethod
+    def _inventory(bundle: dict[str, Any] | None) -> dict[tuple[str, str], str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_the_inventory_gives_its_own_requirement_s_item(self) -> None:
+        """C9: the readback's coverage is the receipt of `sonarcloud`'s
+        `issue-inventory`; the analyzer readback's items stay its own."""
+        evidence = _evidence(analyzer=_bundle())
+        [receipt] = [
+            r for r in evidence["receipts"] if r["requirement"] == "sonarcloud"
+        ]
+        self.assertEqual(["issue-inventory"], receipt["coverage"])
+        self.assertEqual("COMPLETE", receipt["status"])
+        self.assertEqual(
+            {"completeness": "FULL_RUN", "bound": True}, receipt["provenance"]
+        )
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
+            {
+                item: s
+                for (r, item), s in _receipt_statuses(evidence).items()
+                if r == "analyzer-readback"
+            },
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+
+    def test_a_green_gate_s_findings_reach_m17(self) -> None:
+        """C8, #353: 29 open issues behind a passing gate. The inventory is
+        complete, every finding is listed under its item, and M17 denies."""
+        issues = [
+            {**FINDING, "id": f"sonar-{n:02d}", "rule": "python:S5778"}
+            for n in range(29)
+        ]
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, *issues),
+        )
+        # The gate passed on the exact head, through the protected manifest, beside
+        # the inventory (cubic on #424).
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+            analyzer_readback=bundle,
+        )
+        statuses = _receipt_statuses(evidence)
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "quality-gate")])
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "issue-inventory")])
+        listed = evidence["analyzer_findings"]
+        self.assertEqual("COMPLETE", listed["coverage"])
+        self.assertEqual(
+            [{"item": "issue-inventory", **issue} for issue in issues],
+            listed["findings"],
+        )
+        self.assertEqual(["29 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+    def test_m17_needs_the_inventory_too(self) -> None:
+        """C9: a bundle without SonarCloud's readback, as every bundle before
+        1b.3c, gives its item no receipt, so the reducer reports it MISSING, and
+        M17's coverage is not COMPLETE."""
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+        )
+        self.assertEqual({}, self._inventory(bundle))
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual("INCOMPLETE", evidence["analyzer_findings"]["coverage"])
+        self.assertIn("M17", _failed(evidence))
+
+    def test_an_unbound_bundle_leaves_the_inventory_incomplete(self) -> None:
+        for name, bundle in (
+            ("another head", _bundle_for(head=PREVIOUS)),
+            ("another pull request", _bundle_for(pull=301)),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): "INCOMPLETE"},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_s_own_status_is_its_receipt_s(self) -> None:
+        """C1, C9: an unauthenticated or partial read stays what it is."""
+        unauthenticated = _readback(*SONAR, status="UNAVAILABLE")
+        for status, readback in (
+            ("UNAVAILABLE", unauthenticated),
+            *(
+                (
+                    status,
+                    {
+                        **unauthenticated,
+                        "completeness": "READBACK_UNAVAILABLE",
+                        "coverage": {
+                            "status": status,
+                            "pages": 1,
+                            "count": 0,
+                            "reason": "PROVIDER_ERROR",
+                        },
+                    },
+                )
+                for status in ("PARTIAL", "ERROR")
+            ),
+        ):
+            with self.subTest(status):
+                bundle = _bundle(
+                    _readback("deepsource", "DIFF"),
+                    _readback("deepsource", "FULL"),
+                    _readback("codacy", "DIFF"),
+                    readback,
+                )
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): status},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_needs_a_full_run(self) -> None:
+        """C9: a complete read of another kind does not give the item."""
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, completeness="DIFF_LOCAL"),
+        )
+        self.assertEqual(
+            {("sonarcloud", "issue-inventory"): "INCOMPLETE"}, self._inventory(bundle)
+        )
+
+    def test_the_inventory_s_item_is_the_declaration_s(self) -> None:
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        [requirement] = [
+            r for r in declaration["requirements"] if r["id"] == "sonarcloud"
+        ]
+        self.assertIn("issue-inventory", requirement["coverage"])
+
+    def test_accepted_and_false_positive_findings_reach_m17(self) -> None:
+        """S1 (PAO 6119736075): a SonarCloud acceptance or false-positive marking
+        is no waiver; such a finding denies M17 as an open one does."""
+        accepted = {**FINDING, "id": "sonar-accepted", "state": "accepted"}
+        false_positive = {
+            **FINDING,
+            "id": "sonar-false-positive",
+            "state": "false_positive",
+        }
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, accepted, false_positive),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            ["sonar-accepted", "sonar-false-positive"],
+            [f["id"] for f in evidence["analyzer_findings"]["findings"]],
+        )
+        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+
+SONAR_CHECK = 12526
+
+
+class SonarCloudGateTests(unittest.TestCase):
+    """G1 (PAO 6119736075): `sonarcloud/quality-gate` is SonarCloud's own check
+    run on the exact head, through the existing check-receipt producer and the
+    protected manifest; it never stands for the inventory."""
+
+    @staticmethod
+    def _statuses(*runs: dict[str, Any]) -> dict[tuple[str, str], str]:
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), *runs]}, {})})
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        statuses = _receipt_statuses(evidence)
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_a_passed_gate_gives_the_quality_gate_item(self) -> None:
+        self.assertEqual(
+            {("sonarcloud", "quality-gate"): "COMPLETE"},
+            self._statuses(self._run(60, self._for(300))),
+        )
+
+    def test_any_other_gate_state_is_not_complete(self) -> None:
+        for case, runs, status in (
+            (
+                "a failed gate",
+                [self._run(60, self._for(300), conclusion="failure")],
+                "INCOMPLETE",
+            ),
+            (
+                "an unfinished analysis",
+                [
+                    self._run(
+                        60,
+                        self._for(300),
+                        conclusion=None,
+                        status="in_progress",
+                        completed_at=None,
+                    )
+                ],
+                "INCOMPLETE",
+            ),
+            (
+                "a skipped check",
+                [self._run(60, self._for(300), conclusion="skipped")],
+                "SKIPPED",
+            ),
+            (
+                "a passed run beside a failed one",
+                [
+                    self._run(60, self._for(300)),
+                    self._run(61, self._for(300), conclusion="failure"),
+                ],
+                "PARTIAL",
+            ),
+        ):
+            with self.subTest(case):
+                self.assertEqual(
+                    {("sonarcloud", "quality-gate"): status}, self._statuses(*runs)
+                )
+
+    @staticmethod
+    def _run(identifier: int, details: object, **change: Any) -> dict[str, Any]:
+        """SonarCloud's run on the head, its `details_url` as given."""
+        return {
+            **_check_run(identifier, "SonarCloud Code Analysis", SONAR_CHECK, **change),
+            "details_url": details,
+        }
+
+    @staticmethod
+    def _for(pull: int, project: str = "ktogias_gnostoa") -> str:
+        return f"https://sonarcloud.io/dashboard?id={project}&pullRequest={pull}"
+
+    def _gate(self, *runs: dict[str, Any]) -> str | None:
+        return self._statuses(*runs).get(("sonarcloud", "quality-gate"))
+
+    def test_a_foreign_pull_request_s_gate_is_not_this_one_s(self) -> None:
+        """Codex on #424; Q-a (PAO 6123049205): a commit carries every pull
+        request's SonarCloud runs (#394, #395 and #396 share one), so the gate's
+        runs are this pull request's only, filtered before they are reduced."""
+        own, foreign = self._for(300), self._for(299)
+        for name, runs, expected in (
+            ("a foreign success alone", [self._run(60, foreign)], None),
+            # L1's `latest` view can hide this PR's run behind another one's: then
+            # there is no receipt, never the foreign result.
+            ("this PR's run hidden by the latest view", [self._run(61, foreign)], None),
+            (
+                "own success beside a foreign failure",
+                [self._run(60, own), self._run(61, foreign, conclusion="failure")],
+                "COMPLETE",
+            ),
+            (
+                "own failure beside a foreign success",
+                [self._run(60, own, conclusion="failure"), self._run(61, foreign)],
+                "INCOMPLETE",
+            ),
+            (
+                "two own runs, one not a success",
+                [self._run(60, own), self._run(61, own, conclusion="failure")],
+                "PARTIAL",
+            ),
+            (
+                "another project's run",
+                [self._run(60, self._for(300, "ktogias_other"))],
+                None,
+            ),
+            (
+                "a branch analysis",
+                [
+                    self._run(
+                        60,
+                        "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&branch=main",
+                    )
+                ],
+                None,
+            ),
+            (
+                "a malformed association beside own success",
+                [
+                    self._run(60, own),
+                    self._run(61, "https://sonarcloud.io/project/overview"),
+                ],
+                "PARTIAL",
+            ),
+            (
+                "no association beside own success",
+                [self._run(60, own), self._run(61, None)],
+                "PARTIAL",
+            ),
+            ("own success alone", [self._run(60, own)], "COMPLETE"),
+        ):
+            with self.subTest(name):
+                self.assertEqual(expected, self._gate(*runs))
+
+    def test_a_blank_association_is_not_a_foreign_one(self) -> None:
+        """The PAO on #424 (6123979691): beside this pull request's own success, a
+        run on the head whose details name an empty project, pull request or
+        branch might be anyone's, so the gate stays PARTIAL."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("an empty pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest="),
+            ("a blank pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest=%20"),
+            ("an empty project", f"{dashboard}?id=&pullRequest=300"),
+            ("a blank project", f"{dashboard}?id=%20&pullRequest=300"),
+            ("an empty branch", f"{dashboard}?id=ktogias_gnostoa&branch="),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
+    def test_an_unreadable_escape_is_not_a_foreign_association(self) -> None:
+        """CodeAnt on #424: beside this pull request's own success, a run whose
+        details hold an escape that cannot be read might be anyone's."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("a cut escape", f"{dashboard}?id=ktogias_gnostoa&pullRequest=30%3"),
+            (
+                "an escape that is not UTF-8",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%FF",
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
+    def test_the_gate_s_qualification_follows_its_identity(self) -> None:
+        """Octopus on #424: SonarCloud's gate is qualified because it is SonarCloud's
+        check, not because its key kept a type. Keys that arrive as plain text, as
+        after a JSON round trip, still count only this pull request's runs."""
+        parsed = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        plain = json.loads(json.dumps(parsed))
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(299)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=plain,
+        )
+        self.assertNotIn(("sonarcloud", "quality-gate"), _receipt_statuses(evidence))
+
+    def test_the_gate_qualifies_a_pull_request_only(self) -> None:
+        """Q-a: a pull request's id is what the qualification matches, so a change
+        request of another kind with the same id is not one."""
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        snapshot["subject"]["change_request"]["kind"] = "gitlab-merge-request"
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        self.assertEqual(
+            "PARTIAL", _receipt_statuses(evidence)[("sonarcloud", "quality-gate")]
+        )
+
+    def test_the_gate_s_receipt_names_its_qualification(self) -> None:
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        [receipt] = [
+            r for r in evidence["receipts"] if r["coverage"] == ["quality-gate"]
+        ]
+        self.assertEqual(
+            {
+                "check": "github-check-run:12526:SonarCloud Code Analysis",
+                "conclusion": "success",
+                "pull_request": "details_url",
+            },
+            receipt["provenance"],
+        )
+
+    def test_the_manifest_qualifies_sonarcloud_s_gate_only(self) -> None:
+        """Q-a: one optional key, `pull_request`, with one value, `details_url`;
+        SonarCloud's check must carry it, and no other check may."""
+
+        def manifest(**gate: Any) -> dict[str, Any]:
+            document = copy.deepcopy(REQUIRED_CHECKS)
+            document["requirements"]["sonarcloud"]["quality-gate"] = {
+                "app_id": SONAR_CHECK,
+                "name": "SonarCloud Code Analysis",
+                **gate,
+            }
+            return document
+
+        parsed = merge_evidence_github.parse_required_checks(
+            manifest(pull_request="details_url")
+        )
+        self.assertEqual(
+            "github-check-run:12526:SonarCloud Code Analysis",
+            parsed["sonarcloud"]["quality-gate"],
+        )
+        qualified_codeql = copy.deepcopy(REQUIRED_CHECKS)
+        qualified_codeql["requirements"]["codeql"]["codeql"]["pull_request"] = (
+            "details_url"
+        )
+        for name, document in (
+            ("an unqualified SonarCloud gate", manifest()),
+            ("an unsupported value", manifest(pull_request="url")),
+            ("another key", manifest(pull_request="details_url", branch="main")),
+            ("a qualified CodeQL check", qualified_codeql),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_another_app_s_check_of_that_name_gives_nothing(self) -> None:
+        self.assertEqual(
+            {}, self._statuses(_check_run(60, "SonarCloud Code Analysis", ACTIONS))
+        )
+
+    def test_a_passed_gate_never_gives_the_inventory(self) -> None:
+        """#353: a passing gate is no evidence that the inventory is empty."""
+        statuses = self._statuses(self._run(60, self._for(300)))
+        self.assertNotIn(("sonarcloud", "issue-inventory"), statuses)
 
 
 if __name__ == "__main__":
