@@ -1879,30 +1879,64 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def evidence_for(
+    snapshot: object,
+    *,
+    project_root: Path,
+    analyzer_readback: object = None,
+    authorities: Path = DEFAULT_AUTHORITIES,
+    required_checks: Path = DEFAULT_REQUIRED_CHECKS,
+    declaration: Path = DEFAULT_DECLARATION,
+    suppression_markers: Path = DEFAULT_SUPPRESSION_MARKERS,
+    trust_roots: Path = DEFAULT_TRUST_ROOTS,
+    change_policy: Path = DEFAULT_CHANGE_POLICY,
+) -> dict[str, Any]:
+    """The evidence document `knowledge merge-evidence` writes for the snapshot, from
+    the protected target's declarations under `project_root`. The command and the
+    guarded merge's re-read (#426, F1 part 3) both call it, so the two documents come
+    from one function, not a copy. `analyzer_readback` is the bundle itself; without
+    one, its items stay MISSING."""
+
+    def inside(path: Path) -> Path:
+        return path if path.is_absolute() else project_root / path
+
+    root = project_root
+    loaded_checks = load_required_checks(inside(required_checks), project_root=root)
+    # The one-producer rule is the command's own, against the protected
+    # target's declaration, not only its tests' (G1; cubic on #424).
+    producer_routes(
+        load_declaration(inside(declaration), project_root=root), loaded_checks
+    )
+    if analyzer_readback is not None and not isinstance(analyzer_readback, Mapping):
+        # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
+        raise MergeEvidenceError(
+            f"the {_ANALYZER_LABEL} is invalid: bundle must be an object"
+        )
+    return evidence_from_snapshot(
+        snapshot,
+        authorities=load_authorities(inside(authorities), project_root=root),
+        change_policy=load_policy(inside(change_policy), project_root=root),
+        codeowners=load_codeowners(root),
+        decisions=load_decisions(root),
+        required_checks=loaded_checks,
+        analyzer_readback=analyzer_readback,
+        suppression_markers=load_suppression_markers(
+            inside(suppression_markers), project_root=root
+        ),
+        trust_roots=load_trust_roots(inside(trust_roots), project_root=root),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
-    def inside(path: Path) -> Path:
-        return path if path.is_absolute() else args.project_root / path
-
     def compute() -> dict[str, Any]:
         root = args.project_root
-        authorities = load_authorities(inside(args.authorities), project_root=root)
-        policy = load_policy(inside(args.change_policy), project_root=root)
-        codeowners = load_codeowners(root)
-        required_checks = load_required_checks(
-            inside(args.required_checks), project_root=root
-        )
-        # The one-producer rule is the command's own, against the protected
-        # target's declaration, not only its tests' (G1; cubic on #424).
-        producer_routes(
-            load_declaration(inside(args.declaration), project_root=root),
-            required_checks,
-        )
         bundle = None
         if args.analyzer_readback is not None:
+            path = args.analyzer_readback
             bundle = read_json_file(
-                inside(args.analyzer_readback),
+                path if path.is_absolute() else root / path,
                 _ANALYZER_LABEL,
                 MergeEvidenceError,
                 project_root=root,
@@ -1912,18 +1946,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise MergeEvidenceError(
                     f"the {_ANALYZER_LABEL} is invalid: bundle must be an object"
                 )
-        return evidence_from_snapshot(
+        return evidence_for(
             read_json_input(_INPUT_LABEL, MergeEvidenceError),
-            authorities=authorities,
-            change_policy=policy,
-            codeowners=codeowners,
-            decisions=load_decisions(root),
-            required_checks=required_checks,
+            project_root=root,
             analyzer_readback=bundle,
-            suppression_markers=load_suppression_markers(
-                inside(args.suppression_markers), project_root=root
-            ),
-            trust_roots=load_trust_roots(inside(args.trust_roots), project_root=root),
+            authorities=args.authorities,
+            required_checks=args.required_checks,
+            declaration=args.declaration,
+            suppression_markers=args.suppression_markers,
+            trust_roots=args.trust_roots,
+            change_policy=args.change_policy,
         )
 
     return run(

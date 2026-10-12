@@ -7,6 +7,7 @@ head, and only while the evidence the verdict rests on is still current.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import functools
 import importlib.util
@@ -122,7 +123,7 @@ class PublicationPlanTests(unittest.TestCase):
 
     def test_an_allow_verdict_on_current_evidence_publishes_success(self) -> None:
         evidence, verdict = _allowing()
-        planned = _relay().plan(evidence, copy.deepcopy(evidence), verdict, 0)
+        planned = _plan(evidence, copy.deepcopy(evidence), verdict, 0)
         self.assertEqual("PUBLISH", planned["action"])
         self.assertEqual("success", planned["conclusion"])
         self.assertEqual(HEAD, planned["head_sha"])
@@ -133,7 +134,7 @@ class PublicationPlanTests(unittest.TestCase):
         failing = [c["id"] for c in verdict["criteria"] if c["status"] == "FAIL"]
         self.assertEqual("DENY", verdict["status"])
         self.assertTrue(failing)
-        planned = _relay().plan(evidence, copy.deepcopy(evidence), verdict, 1)
+        planned = _plan(evidence, copy.deepcopy(evidence), verdict, 1)
         self.assertEqual("PUBLISH", planned["action"])
         self.assertEqual("failure", planned["conclusion"])
         for criterion in failing:
@@ -143,7 +144,6 @@ class PublicationPlanTests(unittest.TestCase):
         """A failed run, a missing or malformed verdict, a verdict for another
         subject, and an ALLOW the command did not exit 0 for, all publish failure."""
 
-        relay = _relay()
         evidence, verdict = _allowing()
         other_subject = copy.deepcopy(verdict)
         other_subject["subject"]["head_commit"] = OTHER
@@ -163,7 +163,7 @@ class PublicationPlanTests(unittest.TestCase):
             ("another pull request's verdict", other_pull, 0),
         ):
             with self.subTest(name):
-                planned = relay.plan(evidence, copy.deepcopy(evidence), document, code)
+                planned = _plan(evidence, copy.deepcopy(evidence), document, code)
                 self.assertEqual("PUBLISH", planned["action"])
                 self.assertEqual("failure", planned["conclusion"])
 
@@ -171,7 +171,6 @@ class PublicationPlanTests(unittest.TestCase):
         """The head-move invariant (d), and an edit with the head unchanged: the
         evaluated verdict is never published once its evidence has changed."""
 
-        relay = _relay()
         evidence, verdict = _allowing()
         moved = copy.deepcopy(evidence)
         moved["subject"]["head_commit"] = OTHER
@@ -185,36 +184,33 @@ class PublicationPlanTests(unittest.TestCase):
             ("the approval went away", unapproved),
         ):
             with self.subTest(name):
-                planned = relay.plan(evidence, current, verdict, 0)
+                planned = _plan(evidence, current, verdict, 0)
                 self.assertEqual("SUPERSEDED", planned["action"])
 
     def test_observation_times_alone_do_not_supersede(self) -> None:
-        relay = _relay()
         evidence, verdict = _allowing()
         current = copy.deepcopy(evidence)
         for receipt in current["receipts"]:
             receipt["observed_at"] = "2026-10-12T18:00:00Z"
-        self.assertEqual("PUBLISH", relay.plan(evidence, current, verdict, 0)["action"])
+        self.assertEqual("PUBLISH", _plan(evidence, current, verdict, 0)["action"])
 
     def test_the_external_id_names_exactly_what_was_evaluated(self) -> None:
-        relay = _relay()
         evidence, verdict = _allowing()
-        first = relay.plan(evidence, copy.deepcopy(evidence), verdict, 0)
-        again = relay.plan(copy.deepcopy(evidence), copy.deepcopy(evidence), verdict, 0)
+        first = _plan(evidence, copy.deepcopy(evidence), verdict, 0)
+        again = _plan(copy.deepcopy(evidence), copy.deepcopy(evidence), verdict, 0)
         self.assertEqual(first["external_id"], again["external_id"])
         self.assertRegex(first["external_id"], r"^[0-9a-f]{64}$")
-        denied = relay.plan(evidence, copy.deepcopy(evidence), verdict, 1)
+        denied = _plan(evidence, copy.deepcopy(evidence), verdict, 1)
         self.assertNotEqual(first["external_id"], denied["external_id"])
 
     def test_the_summary_is_bounded(self) -> None:
-        relay = _relay()
         evidence = _evidence(_snapshot())
         verdict = _verdict(evidence)
         # A failing criterion's reasons are what the summary lists.
         failing = [c for c in verdict["criteria"] if c["status"] == "FAIL"]
         self.assertTrue(failing)
         failing[0]["reasons"] = ["x" * 1000] * 200
-        planned = relay.plan(evidence, copy.deepcopy(evidence), verdict, 1)
+        planned = _plan(evidence, copy.deepcopy(evidence), verdict, 1)
         self.assertLessEqual(len(planned["summary"]), 60_000)
         self.assertLessEqual(len(planned["title"]), 255)
 
@@ -224,256 +220,673 @@ LATEST = (
     "?check_name=merge-admission&filter=latest&per_page=100"
 )
 EMPTY = {"total_count": 0, "check_runs": []}
+# This workflow run, as the runner names it: the protected facts a run correlates by.
+RUN_ID = 901
+MAIN = "b" * 40
+CORRELATION = {
+    "workflow_run_id": RUN_ID,
+    "run_attempt": 1,
+    "protected_revision": MAIN,
+    "unbundled_evidence_sha256": "c" * 64,
+}
+PENDING_ID = "pending:901:1"
 
 
-class PublishTests(unittest.TestCase):
-    """The check run is written at most once, as the dedicated App, then read back."""
+POPULATION = {
+    "coverage": "COMPLETE",
+    "pulls": [{"pull_number": 300, "head": HEAD}, {"pull_number": 301, "head": OTHER}],
+}
 
-    @staticmethod
-    def _planned(conclusion: str = "success") -> dict[str, Any]:
+
+def _plan(
+    evaluated: dict[str, Any],
+    current: dict[str, Any],
+    verdict: object,
+    code: int,
+    *,
+    evaluated_population: Any = None,
+    current_population: Any = None,
+    **options: Any,
+) -> dict[str, Any]:
+    """The relay's plan, both snapshots observing the same unique population unless a
+    test says otherwise."""
+    planned: dict[str, Any] = _relay().plan(
+        evaluated,
+        current,
+        verdict,
+        code,
+        evaluated_population=copy.deepcopy(
+            POPULATION if evaluated_population is None else evaluated_population
+        ),
+        current_population=copy.deepcopy(
+            POPULATION if current_population is None else current_population
+        ),
+        **options,
+    )
+    return planned
+
+
+def _with(*pulls: tuple[int, str]) -> dict[str, Any]:
+    return {
+        "coverage": "COMPLETE",
+        "pulls": [{"pull_number": number, "head": head} for number, head in pulls],
+    }
+
+
+class SharedHeadTests(unittest.TestCase):
+    """H1 (the Decisions Router on #426, 6131149850): a check run belongs to a commit,
+    so a success is published only when the complete open population shows this
+    pull request alone at its exact head. The neutral verdict is unchanged."""
+
+    def test_a_unique_head_with_an_allow_is_a_success(self) -> None:
         evidence, verdict = _allowing()
-        code = 0 if conclusion == "success" else 1
-        if conclusion != "success":
-            verdict["status"] = "DENY"
-        return _relay().plan(evidence, copy.deepcopy(evidence), verdict, code)
-
-    def test_it_posts_one_completed_check_run_on_the_exact_head(self) -> None:
-        planned = self._planned()
-        client = _FakeClient(
-            gets={LATEST: EMPTY, f"{CHECK_RUNS}/77": _posted(planned)},
-            post=_posted(planned),
-        )
-        result = _relay().publish(
-            client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-        )
-        self.assertEqual("PUBLISHED", result["result"])
-        self.assertEqual(77, result["check_run_id"])
-        self.assertEqual(1, len(client.posts))
-        url, payload = client.posts[0]
-        self.assertEqual(CHECK_RUNS, url)
+        planned = _plan(evidence, copy.deepcopy(evidence), verdict, 0)
         self.assertEqual(
-            {
-                "name": "merge-admission",
-                "head_sha": HEAD,
-                "status": "completed",
-                "conclusion": "success",
-                "external_id": planned["external_id"],
-            },
-            {
-                k: payload[k]
-                for k in ("name", "head_sha", "status", "conclusion", "external_id")
-            },
+            ("PUBLISH", "success"), (planned["action"], planned["conclusion"])
         )
-        self.assertEqual(planned["title"], payload["output"]["title"])
-        self.assertEqual(planned["summary"], payload["output"]["summary"])
-        self.assertIn(f"{CHECK_RUNS}/77", client.reads)
 
-    def test_a_read_back_that_differs_is_a_failure(self) -> None:
-        relay = _relay()
-        planned = self._planned()
-        error = relay.PublicationError
-        for field, value in (
-            ("head_sha", OTHER),
-            ("conclusion", "failure"),
-            ("external_id", "0" * 64),
-            ("name", "merge-admission-x"),
-            ("status", "in_progress"),
-            ("app", {"id": OTHER_APP}),
+    def test_a_shared_head_never_borrows_a_success(self) -> None:
+        evidence, verdict = _allowing()
+        shared = _with((300, HEAD), (302, HEAD), (301, OTHER))
+        planned = _plan(
+            evidence,
+            copy.deepcopy(evidence),
+            verdict,
+            0,
+            evaluated_population=shared,
+            current_population=shared,
+        )
+        self.assertEqual(
+            ("PUBLISH", "failure"), (planned["action"], planned["conclusion"])
+        )
+        self.assertIn("#300", planned["title"])
+        self.assertIn("#302", planned["title"])
+        self.assertNotIn("#301", planned["title"])
+
+    def test_a_population_that_contradicts_the_subject_is_no_success(self) -> None:
+        evidence, verdict = _allowing()
+        for name, population in (
+            ("this pull request missing", _with((301, OTHER))),
+            ("listed at another head", _with((300, OTHER))),
         ):
-            with self.subTest(field):
-                read = {**_posted(planned), field: value}
-                client = _FakeClient(
-                    gets={LATEST: EMPTY, f"{CHECK_RUNS}/77": read},
-                    post=_posted(planned),
+            with self.subTest(name):
+                planned = _plan(
+                    evidence,
+                    copy.deepcopy(evidence),
+                    verdict,
+                    0,
+                    evaluated_population=population,
+                    current_population=population,
                 )
-                with self.assertRaises(error) as raised:
-                    relay.publish(
-                        client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-                    )
-                self.assertEqual("MISMATCH", raised.exception.kind)
-                self.assertEqual(1, len(client.posts))
-
-    def test_an_unknown_outcome_is_read_back_never_reposted(self) -> None:
-        relay = _relay()
-        planned = self._planned()
-        lost = github_rest.GitHubWriteError(
-            "GitHub API HTTP 502", status=502, outcome_unknown=True
-        )
-
-        class _Written(_FakeClient):
-            """The run appears in the latest view only after the lost write."""
-
-            def get(self, url: str) -> tuple[Any, dict[str, str]]:
-                if url == LATEST and self.posts:
-                    self.reads.append(url)
-                    return {"total_count": 1, "check_runs": [_posted(planned, 78)]}, {}
-                return super().get(url)
-
-        found = _Written(gets={LATEST: EMPTY}, post=lost)
-        result = relay.publish(
-            found, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-        )
-        self.assertEqual(("PUBLISHED", 78), (result["result"], result["check_run_id"]))
-        self.assertEqual(1, len(found.posts))
-        absent = _FakeClient(gets={LATEST: EMPTY}, post=lost)
-        error = relay.PublicationError
-        with self.assertRaises(error) as raised:
-            relay.publish(
-                absent, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-            )
-        self.assertEqual("UNKNOWN", raised.exception.kind)
-        self.assertEqual(1, len(absent.posts))
-
-    def test_a_listing_past_one_page_is_not_trusted(self) -> None:
-        """A latest view that does not hold every run it counts cannot show the
-        posted one is absent, nor that it is present."""
-        relay = _relay()
-        planned = self._planned()
-        client = _FakeClient(
-            gets={LATEST: {"total_count": 2, "check_runs": [_posted(planned, 78)]}}
-        )
-        error = relay.PublicationError
-        with self.assertRaises(error) as raised:
-            relay.publish(
-                client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-            )
-        self.assertEqual("UNKNOWN", raised.exception.kind)
-        self.assertEqual([], client.posts)
-
-    def test_a_refused_write_is_not_retried(self) -> None:
-        relay = _relay()
-        planned = self._planned()
-        client = _FakeClient(
-            gets={LATEST: EMPTY},
-            post=github_rest.GitHubWriteError("GitHub API HTTP 403", status=403),
-        )
-        error = relay.PublicationError
-        with self.assertRaises(error) as raised:
-            relay.publish(
-                client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-            )
-        self.assertEqual("REFUSED", raised.exception.kind)
-        self.assertEqual(1, len(client.posts))
-
-    def test_superseded_is_never_written(self) -> None:
-        evidence, verdict = _allowing()
-        moved = copy.deepcopy(evidence)
-        moved["subject"]["head_commit"] = OTHER
-        planned = _relay().plan(evidence, moved, verdict, 0)
-        client = _FakeClient()
-        result = _relay().publish(
-            client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-        )
-        self.assertEqual("SUPERSEDED", result["result"])
-        self.assertEqual([], client.posts)
-
-
-class IdempotentPublicationTests(unittest.TestCase):
-    """Round 1 (Claude, Octopus and CodeAnt on #426): a verdict already published
-    by the dedicated App as the head's latest run is not posted again, and a run is
-    ours only when the dedicated App posted it."""
-
-    @staticmethod
-    def _planned() -> dict[str, Any]:
-        evidence, verdict = _allowing()
-        return _relay().plan(evidence, copy.deepcopy(evidence), verdict, 0)
-
-    @staticmethod
-    def _run(planned: dict[str, Any], run_id: int, app: int) -> dict[str, Any]:
-        return {**_posted(planned, run_id), "app": {"id": app, "slug": "x"}}
-
-    def test_the_same_verdict_already_latest_is_not_posted_again(self) -> None:
-        planned = self._planned()
-        mine = self._run(planned, 90, MA0_APP)
-        client = _FakeClient(gets={LATEST: {"total_count": 1, "check_runs": [mine]}})
-        result = _relay().publish(
-            client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-        )
-        self.assertEqual(("PUBLISHED", 90), (result["result"], result["check_run_id"]))
-        self.assertEqual([], client.posts)
-
-    def test_another_app_s_run_is_not_ours(self) -> None:
-        planned = self._planned()
-        foreign = self._run(planned, 91, OTHER_APP)
-        posted = self._run(planned, 92, MA0_APP)
-        client = _FakeClient(
-            gets={
-                LATEST: {"total_count": 1, "check_runs": [foreign]},
-                f"{CHECK_RUNS}/92": posted,
-            },
-            post=posted,
-        )
-        result = _relay().publish(
-            client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-        )
-        self.assertEqual(92, result["check_run_id"])
-        self.assertEqual(1, len(client.posts))
-
-    def test_a_read_back_from_another_app_is_a_mismatch(self) -> None:
-        relay = _relay()
-        planned = self._planned()
-        client = _FakeClient(
-            gets={LATEST: EMPTY, f"{CHECK_RUNS}/93": self._run(planned, 93, OTHER_APP)},
-            post=self._run(planned, 93, OTHER_APP),
-        )
-        error = relay.PublicationError
-        with self.assertRaises(error) as raised:
-            relay.publish(
-                client, repository=REPOSITORY, planned=planned, app_id=MA0_APP
-            )
-        self.assertEqual("MISMATCH", raised.exception.kind)
-        self.assertEqual(1, len(client.posts))
+                self.assertEqual("failure", planned["conclusion"])
+                self.assertIn("do not show this one at its head", planned["title"])
 
     def test_a_head_other_than_the_subject_s_supersedes(self) -> None:
         """Octopus on #426: a push between selecting the subject and evaluating it
         moves both snapshots to the new head, while the readback covered the old
         one, so the evaluation is not the subject's."""
         evidence, verdict = _allowing()
-        planned = _relay().plan(
+        planned = _plan(
             evidence, copy.deepcopy(evidence), verdict, 0, expected_head=OTHER
         )
         self.assertEqual("SUPERSEDED", planned["action"])
-        same = _relay().plan(
-            evidence, copy.deepcopy(evidence), verdict, 0, expected_head=HEAD
-        )
+        same = _plan(evidence, copy.deepcopy(evidence), verdict, 0, expected_head=HEAD)
         self.assertEqual("PUBLISH", same["action"])
+
+    def test_a_population_that_changes_between_the_snapshots_supersedes(self) -> None:
+        evidence, verdict = _allowing()
+        for name, current in (
+            ("a peer added", _with((300, HEAD), (301, OTHER), (302, HEAD))),
+            ("a peer moved to the head", _with((300, HEAD), (301, HEAD))),
+            ("a peer closed", _with((300, HEAD))),
+        ):
+            with self.subTest(name):
+                planned = _plan(
+                    evidence,
+                    copy.deepcopy(evidence),
+                    verdict,
+                    0,
+                    current_population=current,
+                )
+                self.assertEqual("SUPERSEDED", planned["action"])
+
+    def test_recovery_follows_a_fresh_unique_population(self) -> None:
+        evidence, verdict = _allowing()
+        shared = _with((300, HEAD), (302, HEAD))
+        blocked = _plan(
+            evidence,
+            copy.deepcopy(evidence),
+            verdict,
+            0,
+            evaluated_population=shared,
+            current_population=shared,
+        )
+        recovered = _plan(evidence, copy.deepcopy(evidence), verdict, 0)
+        self.assertEqual(
+            ("failure", "success"), (blocked["conclusion"], recovered["conclusion"])
+        )
+        self.assertNotEqual(blocked["external_id"], recovered["external_id"])
+
+
+class _Provider(_FakeClient):
+    """A provider whose latest view follows the runs it holds, so a write changes what
+    the next read sees, as GitHub's does. Every write is recorded."""
+
+    def __init__(self, runs: list[dict[str, Any]] | None = None) -> None:
+        super().__init__()
+        self.runs = [copy.deepcopy(run) for run in runs or []]
+        self.patches: list[tuple[str, dict[str, Any]]] = []
+        self.next_id = 500
+        self.lose_write = False
+        self.drop_write = False
+        self.refuse_write = False
+        self.reads_as: dict[int, dict[str, Any]] = {}
+
+    def _latest_view(self) -> dict[str, Any]:
+        latest: dict[int, dict[str, Any]] = {}
+        for run in self.runs:
+            if run["head_sha"] != HEAD or run["name"] != "merge-admission":
+                continue
+            app = run["app"]["id"]
+            if app not in latest or run["id"] > latest[app]["id"]:
+                latest[app] = run
+        runs = sorted(latest.values(), key=lambda run: run["id"])
+        return {"total_count": len(runs), "check_runs": copy.deepcopy(runs)}
+
+    def get(self, url: str) -> tuple[Any, dict[str, str]]:
+        self.reads.append(url)
+        if url == LATEST:
+            return self._latest_view(), {}
+        for run in self.runs:
+            if url == f"{CHECK_RUNS}/{run['id']}":
+                return {**copy.deepcopy(run), **self.reads_as.get(run["id"], {})}, {}
+        raise AssertionError(f"unexpected read {url}")
+
+    def _fail(self) -> None:
+        if self.refuse_write:
+            raise github_rest.GitHubWriteError("GitHub API HTTP 403", status=403)
+
+    def post(self, url: str, payload: dict[str, Any]) -> Any:
+        self.posts.append((url, copy.deepcopy(payload)))
+        if url != CHECK_RUNS:
+            raise AssertionError(f"unexpected write {url}")
+        self._fail()
+        if self.drop_write:
+            raise github_rest.GitHubWriteError(
+                "GitHub API HTTP 502", status=502, outcome_unknown=True
+            )
+        self.next_id += 1
+        run = {
+            "id": self.next_id,
+            "app": {"id": MA0_APP, "slug": "gnostoa-ma0"},
+            "conclusion": None,
+            **copy.deepcopy(payload),
+        }
+        self.runs.append(run)
+        if self.lose_write:
+            raise github_rest.GitHubWriteError(
+                "GitHub API HTTP 502", status=502, outcome_unknown=True
+            )
+        return copy.deepcopy(run)
+
+    def patch(self, url: str, payload: dict[str, Any]) -> Any:
+        self.patches.append((url, copy.deepcopy(payload)))
+        self._fail()
+        for run in self.runs:
+            if url == f"{CHECK_RUNS}/{run['id']}":
+                run.update(copy.deepcopy(payload))
+                if self.lose_write:
+                    raise github_rest.GitHubWriteError(
+                        "GitHub API HTTP 502", status=502, outcome_unknown=True
+                    )
+                return copy.deepcopy(run)
+        raise AssertionError(f"unexpected write {url}")
+
+
+def _run(
+    run_id: int,
+    *,
+    conclusion: str | None = "success",
+    app: int = MA0_APP,
+    external_id: str = "e" * 64,
+) -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "name": "merge-admission",
+        "head_sha": HEAD,
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "external_id": external_id,
+        "app": {"id": app, "slug": "x"},
+        "output": {"title": "t", "summary": "s", "text": ""},
+    }
+
+
+def _planned(conclusion: str = "success", action: str = "PUBLISH") -> dict[str, Any]:
+    evidence, verdict = _allowing()
+    code = 0
+    if conclusion != "success":
+        verdict["status"] = "DENY"
+        code = 1
+    planned = _plan(evidence, copy.deepcopy(evidence), verdict, code)
+    planned["action"] = action
+    return planned
+
+
+def _publish(
+    provider: _Provider, planned: dict[str, Any], record: dict[str, Any] | None
+) -> dict[str, Any]:
+    result: dict[str, Any] = _relay().publish(
+        provider,
+        repository=REPOSITORY,
+        planned=planned,
+        app_id=MA0_APP,
+        record=record,
+        correlation=CORRELATION,
+    )
+    return result
+
+
+class InvalidationTests(unittest.TestCase):
+    """F1 part 2 (the Decisions Router on #426, 6130207025): before anything is
+    acquired again, a success the dedicated App published on the head stops
+    standing. A pending run of the App replaces it until this run completes."""
+
+    @staticmethod
+    def _invalidate(provider: _Provider) -> dict[str, Any]:
+        record: dict[str, Any] = _relay().invalidate(
+            provider,
+            repository=REPOSITORY,
+            head=HEAD,
+            app_id=MA0_APP,
+            correlation=CORRELATION,
+        )
+        return record
+
+    def test_a_standing_success_is_replaced_by_a_pending_run(self) -> None:
+        provider = _Provider([_run(90)])
+        record = self._invalidate(provider)
+        self.assertEqual("PENDING", record["result"])
+        self.assertEqual(90, record["observed"])
+        self.assertEqual(1, len(provider.posts))
+        _, payload = provider.posts[0]
+        self.assertEqual("in_progress", payload["status"])
+        self.assertEqual(PENDING_ID, payload["external_id"])
+        self.assertEqual(HEAD, payload["head_sha"])
+        self.assertNotIn("conclusion", payload)
+        latest = provider._latest_view()["check_runs"][-1]
+        self.assertEqual(record["pending"], latest["id"])
+        self.assertEqual("in_progress", latest["status"])
+
+    def test_nothing_is_pending_when_no_success_stands(self) -> None:
+        for name, runs, observed in (
+            ("a failure stands", [_run(91, conclusion="failure")], 91),
+            ("no run at all", [], None),
+            ("a pending run already stands", [_run(92, conclusion=None)], 92),
+            ("only another App's success", [_run(93, app=OTHER_APP)], None),
+        ):
+            with self.subTest(name):
+                provider = _Provider(runs)
+                record = self._invalidate(provider)
+                self.assertEqual("NOT_NEEDED", record["result"])
+                self.assertIsNone(record["pending"])
+                self.assertEqual(observed, record["observed"])
+                self.assertEqual([], provider.posts)
+
+    def test_an_unknown_outcome_is_found_never_reposted(self) -> None:
+        provider = _Provider([_run(90)])
+        provider.lose_write = True
+        record = self._invalidate(provider)
+        self.assertEqual("PENDING", record["result"])
+        self.assertEqual(1, len(provider.posts))
+
+    def test_a_lost_write_that_did_not_land_is_unknown(self) -> None:
+        """The App's latest run after an unknown outcome is the older success, not a
+        run with this external id: nothing was found, so nothing is claimed."""
+        relay = _relay()
+        provider = _Provider([_run(90)])
+        provider.drop_write = True
+        with self.assertRaises(relay.PublicationError) as raised:
+            self._invalidate(provider)
+        self.assertEqual("UNKNOWN", raised.exception.kind)
+        self.assertEqual(1, len(provider.posts))
+
+    def test_a_refused_or_unread_invalidation_fails(self) -> None:
+        relay = _relay()
+        error = relay.PublicationError
+        refused = _Provider([_run(90)])
+        refused.refuse_write = True
+        with self.assertRaises(error) as raised:
+            self._invalidate(refused)
+        self.assertEqual("REFUSED", raised.exception.kind)
+        doubled = _Provider()
+        doubled.runs = [_run(94), {**_run(95), "app": {"id": MA0_APP}}]
+
+        def listing(url: str) -> tuple[Any, dict[str, str]]:
+            return {"total_count": 2, "check_runs": copy.deepcopy(doubled.runs)}, {}
+
+        with (
+            mock.patch.object(doubled, "get", side_effect=listing),
+            self.assertRaises(error) as raised,
+        ):
+            self._invalidate(doubled)
+        self.assertEqual("UNKNOWN", raised.exception.kind)
+        self.assertEqual([], doubled.posts)
+
+
+class CompletionTests(unittest.TestCase):
+    """F1 part 2: the run completes the pending run it created while that run is the
+    App's latest. Without one, a success is written only when the latest is still
+    the run observed at invalidation. Superseded, denied, incomplete and failed
+    evaluations never end as a success, and never leave an older one standing."""
+
+    @staticmethod
+    def _pending(provider: _Provider) -> dict[str, Any]:
+        record: dict[str, Any] = _relay().invalidate(
+            provider,
+            repository=REPOSITORY,
+            head=HEAD,
+            app_id=MA0_APP,
+            correlation=CORRELATION,
+        )
+        return record
+
+    def test_the_pending_run_is_completed_with_the_verdict(self) -> None:
+        provider = _Provider([_run(90)])
+        record = self._pending(provider)
+        planned = _planned()
+        result = _publish(provider, planned, record)
+        self.assertEqual("COMPLETED", result["result"])
+        self.assertEqual(record["pending"], result["check_run_id"])
+        self.assertEqual(1, len(provider.posts))
+        ((url, payload),) = provider.patches
+        self.assertEqual(f"{CHECK_RUNS}/{record['pending']}", url)
+        self.assertEqual("completed", payload["status"])
+        self.assertEqual("success", payload["conclusion"])
+        self.assertEqual(planned["external_id"], payload["external_id"])
+        checks = _checks()
+        self.assertEqual(
+            CORRELATION, checks.correlation_of({"output": payload["output"]})
+        )
+
+    def test_a_superseded_or_incomplete_evaluation_completes_it_as_failure(
+        self,
+    ) -> None:
+        for action in ("SUPERSEDED", "INCOMPLETE"):
+            with self.subTest(action):
+                provider = _Provider([_run(90)])
+                record = self._pending(provider)
+                result = _publish(provider, _planned(action=action), record)
+                self.assertEqual("COMPLETED", result["result"])
+                ((_, payload),) = provider.patches
+                self.assertEqual("failure", payload["conclusion"])
+                latest = provider._latest_view()["check_runs"][-1]
+                self.assertEqual("failure", latest["conclusion"])
+
+    def test_without_a_pending_run_a_superseded_success_is_invalidated(self) -> None:
+        """Codex r4251432507 and cubic r4251147639 on #426: a superseded run never
+        leaves the App's older success standing, even when no pending run was made."""
+        provider = _Provider([_run(90)])
+        record = {"result": "FAILED", "pending": None, "observed": None}
+        result = _publish(provider, _planned(action="SUPERSEDED"), record)
+        self.assertEqual("INVALIDATED", result["result"])
+        ((_, payload),) = provider.posts
+        self.assertEqual("completed", payload["status"])
+        self.assertEqual("failure", payload["conclusion"])
+        self.assertEqual(
+            "failure", provider._latest_view()["check_runs"][-1]["conclusion"]
+        )
+
+    def test_a_superseded_run_over_no_success_writes_nothing(self) -> None:
+        provider = _Provider([_run(91, conclusion="failure")])
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        result = _publish(provider, _planned(action="SUPERSEDED"), record)
+        self.assertEqual("SUPERSEDED", result["result"])
+        self.assertEqual(([], []), (provider.posts, provider.patches))
+
+    def test_an_older_worker_never_restores_a_success(self) -> None:
+        """A run whose pending run is no longer the App's latest, or whose observed
+        latest has since been replaced, writes no success over the newer run."""
+        provider = _Provider([_run(90)])
+        record = self._pending(provider)
+        provider.runs.append(_run(700, conclusion="failure"))
+        result = _publish(provider, _planned(), record)
+        self.assertEqual("OVERTAKEN", result["result"])
+        latest = provider._latest_view()["check_runs"][-1]
+        self.assertEqual((700, "failure"), (latest["id"], latest["conclusion"]))
+        ((_, closed),) = provider.patches
+        self.assertEqual("failure", closed["conclusion"])
+        observed = _Provider(
+            [_run(91, conclusion="failure"), _run(701, conclusion="failure")]
+        )
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        result = _publish(observed, _planned(), record)
+        self.assertEqual("OVERTAKEN", result["result"])
+        self.assertEqual(([], []), (observed.posts, observed.patches))
+
+    def test_a_success_without_its_record_is_never_written(self) -> None:
+        provider = _Provider([_run(91, conclusion="failure")])
+        result = _publish(provider, _planned(), None)
+        self.assertEqual("OVERTAKEN", result["result"])
+        self.assertEqual(([], []), (provider.posts, provider.patches))
+
+    def test_with_no_success_standing_the_verdict_is_posted_once(self) -> None:
+        provider = _Provider([_run(91, conclusion="failure")])
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        planned = _planned()
+        result = _publish(provider, planned, record)
+        self.assertEqual("PUBLISHED", result["result"])
+        ((url, payload),) = provider.posts
+        self.assertEqual(CHECK_RUNS, url)
+        self.assertEqual(
+            ("completed", "success", planned["external_id"]),
+            (payload["status"], payload["conclusion"], payload["external_id"]),
+        )
+        self.assertEqual(planned["summary"], payload["output"]["summary"])
+        self.assertEqual(
+            CORRELATION, _checks().correlation_of({"output": payload["output"]})
+        )
+
+    def test_a_denial_already_latest_is_not_posted_again(self) -> None:
+        planned = _planned("failure")
+        provider = _Provider(
+            [_run(92, conclusion="failure", external_id=planned["external_id"])]
+        )
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 92}
+        result = _publish(provider, planned, record)
+        self.assertEqual(("PUBLISHED", 92), (result["result"], result["check_run_id"]))
+        self.assertEqual(([], []), (provider.posts, provider.patches))
+
+    def test_an_unknown_completion_is_read_back_never_rewritten(self) -> None:
+        provider = _Provider([_run(90)])
+        record = self._pending(provider)
+        provider.lose_write = True
+        result = _publish(provider, _planned(), record)
+        self.assertEqual("COMPLETED", result["result"])
+        self.assertEqual(1, len(provider.patches))
+
+    def test_a_completion_that_reads_back_otherwise_fails(self) -> None:
+        relay = _relay()
+        provider = _Provider([_run(90)])
+        record = self._pending(provider)
+        original = provider.patch
+
+        def wrong(url: str, payload: dict[str, Any]) -> Any:
+            return original(url, {**payload, "conclusion": "neutral"})
+
+        with (
+            mock.patch.object(provider, "patch", side_effect=wrong),
+            self.assertRaises(relay.PublicationError) as raised,
+        ):
+            _publish(provider, _planned(), record)
+        self.assertEqual("MISMATCH", raised.exception.kind)
+
+    def test_a_post_that_reads_back_otherwise_fails_once(self) -> None:
+        """A posted run is verified as read back, by its App, head, state, conclusion
+        and external id, and a mismatch is never answered with another post."""
+        relay = _relay()
+        for field, value in (
+            ("conclusion", "neutral"),
+            ("app", {"id": OTHER_APP}),
+            ("external_id", "0" * 64),
+            ("status", "in_progress"),
+            ("head_sha", OTHER),
+        ):
+            with self.subTest(field):
+                provider = _Provider([_run(91, conclusion="failure")])
+                provider.reads_as[501] = {field: value}
+                record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+                with self.assertRaises(relay.PublicationError) as raised:
+                    _publish(provider, _planned(), record)
+                self.assertEqual("MISMATCH", raised.exception.kind)
+                self.assertEqual(1, len(provider.posts))
+
+    def test_another_app_s_runs_are_never_ours(self) -> None:
+        planned = _planned("failure")
+        provider = _Provider(
+            [
+                _run(
+                    93,
+                    app=OTHER_APP,
+                    conclusion="failure",
+                    external_id=planned["external_id"],
+                )
+            ]
+        )
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": None}
+        result = _publish(provider, planned, record)
+        self.assertEqual("PUBLISHED", result["result"])
+        self.assertEqual(1, len(provider.posts))
+
+
+@functools.cache
+def _checks() -> Any:
+    from tools import merge_admission_checks
+
+    return merge_admission_checks
+
+
+class CorrelationTests(unittest.TestCase):
+    """The check run carries what the guarded merge correlates it by, so the run the
+    pinned App wrote is the record, never an artifact."""
+
+    def test_the_record_reads_back_exactly(self) -> None:
+        checks = _checks()
+        text = checks.correlation_text(CORRELATION)
+        self.assertEqual(CORRELATION, checks.correlation_of({"output": {"text": text}}))
+
+    def test_anything_else_is_no_correlation(self) -> None:
+        checks = _checks()
+        text = checks.correlation_text(CORRELATION)
+        for name, run in (
+            ("no output", {}),
+            ("no text", {"output": {"text": None}}),
+            ("no marker", {"output": {"text": text.split("\n", 1)[1]}}),
+            ("an extra field", {"output": {"text": text.replace("{", '{"x": 1, ', 1)}}),
+            ("a short digest", {"output": {"text": text.replace("c" * 64, "c" * 63)}}),
+            ("a boolean run", {"output": {"text": text.replace("901", "true")}}),
+            (
+                "a duplicated field",
+                {"output": {"text": text.replace("{", '{"run_attempt": 1, ', 1)}},
+            ),
+            ("no record", {"output": {"text": "no record"}}),
+        ):
+            with self.subTest(name):
+                self.assertIsNone(checks.correlation_of(run))
+        changed = checks.correlation_of(
+            {"output": {"text": text.replace("901", "902")}}
+        )
+        self.assertEqual({**CORRELATION, "workflow_run_id": 902}, changed)
+
+    def test_a_latest_view_short_of_its_count_is_unknown(self) -> None:
+        checks = _checks()
+        provider = _Provider()
+        provider.runs = [_run(90)]
+        with (
+            mock.patch.object(
+                provider,
+                "get",
+                return_value=({"total_count": 2, "check_runs": [_run(90)]}, {}),
+            ),
+            self.assertRaises(checks.PublicationError) as raised,
+        ):
+            checks.app_latest(provider, REPOSITORY, HEAD, MA0_APP)
+        self.assertEqual("UNKNOWN", raised.exception.kind)
+
+    def test_the_digest_drops_observation_times(self) -> None:
+        checks = _checks()
+        evidence, _ = _allowing()
+        later = copy.deepcopy(evidence)
+        for receipt in later["receipts"]:
+            receipt["observed_at"] = "2026-10-12T19:00:00Z"
+        self.assertEqual(checks.digest(evidence), checks.digest(later))
+        later["links"] = {"work_items": [], "decisions": []}
+        self.assertNotEqual(checks.digest(evidence), checks.digest(later))
+        self.assertRegex(checks.digest(evidence), r"^[0-9a-f]{64}$")
+
+
+def _env(directory: Path, **changes: str) -> dict[str, str]:
+    """The runner's environment: its temporary directory, and the run's identity."""
+    environment = {
+        "RUNNER_TEMP": str(directory),
+        "GITHUB_RUN_ID": str(RUN_ID),
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_SHA": MAIN,
+        MA0_ENV: "",
+    }
+    environment.update(changes)
+    return environment
+
+
+def _work(directory: Path) -> Path:
+    work = directory / "gnostoa-merge-admission"
+    work.mkdir(exist_ok=True)
+    return work
 
 
 class CommandTests(unittest.TestCase):
-    """The command reads files written by the workflow's own steps, in its work
-    directory."""
+    """The commands read and write fixed names under the runner's temporary directory
+    alone: no path reaches a file operation from the command line (SonarCloud S8707
+    on #426, and the precedent of `admit_mention.py`)."""
 
     @staticmethod
     def _files(directory: Path, *, code: int = 0) -> list[str]:
         evidence, verdict = _allowing()
-        (directory / "evaluated.json").write_text(
+        work = _work(directory)
+        (work / "evaluated-evidence.json").write_text(
             json.dumps(evidence), encoding="utf-8"
         )
-        (directory / "current.json").write_text(json.dumps(evidence), encoding="utf-8")
-        (directory / "verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+        (work / "current-evidence.json").write_text(
+            json.dumps(evidence), encoding="utf-8"
+        )
+        (work / "current-unbundled-evidence.json").write_text(
+            json.dumps(evidence), encoding="utf-8"
+        )
+        (work / "verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+        for label in ("evaluated", "current"):
+            (work / f"{label}-population.json").write_text(
+                json.dumps(POPULATION), encoding="utf-8"
+            )
+        (work / "pending.json").write_text(
+            json.dumps({"result": "SHADOW", "pending": None, "observed": None}),
+            encoding="utf-8",
+        )
         return [
+            "publish",
             "--repository",
             REPOSITORY,
-            "--work-dir",
-            str(directory),
             "--expected-head",
             HEAD,
-            "--evaluated",
-            str(directory / "evaluated.json"),
-            "--current",
-            str(directory / "current.json"),
-            "--verdict",
-            str(directory / "verdict.json"),
             "--verdict-exit",
             str(code),
-            "--output",
-            str(directory / "result.json"),
         ]
 
     @staticmethod
-    def _main(relay: Any, argv: list[str], credential: str, **patches: Any) -> int:
+    def _main(
+        relay: Any, argv: list[str], environment: dict[str, str], **patches: Any
+    ) -> int:
         with (
-            mock.patch.dict(os.environ, {MA0_ENV: credential}),
+            mock.patch.dict(os.environ, environment),
             redirect_stdout(io.StringIO()),
             redirect_stderr(io.StringIO()),
         ):
@@ -482,9 +895,13 @@ class CommandTests(unittest.TestCase):
             with mock.patch.multiple(relay, **patches):
                 return int(relay.main(argv))
 
+    @staticmethod
+    def _result(directory: Path) -> dict[str, Any]:
+        path = directory / "gnostoa-merge-admission" / "result.json"
+        document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        return document
+
     def test_without_the_app_s_credential_it_publishes_nothing(self) -> None:
-        """Shadow mode: before `gnostoa-ma0` exists, the run records its verdict
-        and its plan, and constructs no client."""
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -494,65 +911,91 @@ class CommandTests(unittest.TestCase):
                 "GitHubRestClient",
                 side_effect=AssertionError("no client"),
             ):
-                code = self._main(relay, argv, "")
+                code = self._main(relay, argv, _env(directory))
             self.assertEqual(0, code)
-            result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+            result = self._result(directory)
             self.assertEqual("SHADOW", result["result"])
             self.assertEqual("success", result["planned"]["conclusion"])
+
+    def test_no_option_takes_a_path(self) -> None:
+        """The shape, not the instance: no command accepts a path at all."""
+        relay = _relay()
+        for argv in (
+            ["publish", "--work-dir", "/x"],
+            ["publish", "--evaluated", "/x"],
+            ["publish", "--output", "/x"],
+        ):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    relay._parser().parse_args(argv)
+                self.assertEqual(2, raised.exception.code)
+        parser = relay._parser()
+        commands = [action for action in parser._actions if action.dest == "command"]
+        self.assertEqual(1, len(commands))
+        for name, sub in commands[0].choices.items():
+            for action in sub._actions:
+                with self.subTest(command=name, option=action.dest):
+                    self.assertIsNot(Path, action.type)
+
+    def test_the_runner_s_directory_and_identity_are_required(self) -> None:
+        """Without them the command stops before it writes anything anywhere, the
+        working directory included."""
+        relay = _relay()
+        for missing in (
+            "RUNNER_TEMP",
+            "GITHUB_RUN_ID",
+            "GITHUB_RUN_ATTEMPT",
+            "GITHUB_SHA",
+        ):
+            with (
+                self.subTest(missing),
+                tempfile.TemporaryDirectory() as raw,
+                tempfile.TemporaryDirectory() as elsewhere,
+                contextlib.chdir(elsewhere),
+            ):
+                directory = Path(raw)
+                argv = self._files(directory)
+                environment = _env(directory)
+                del environment[missing]
+                with mock.patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop(missing, None)
+                    code = self._main(relay, argv, environment)
+                self.assertEqual(2, code)
+                self.assertEqual([], sorted(Path(elsewhere).iterdir()))
+                self.assertFalse((_work(directory) / "result.json").exists())
 
     def test_publishing_needs_the_app_s_id(self) -> None:
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
-            code = self._main(relay, self._files(directory), "x" * 40)
+            code = self._main(
+                relay, self._files(directory), _env(directory, **{MA0_ENV: "x" * 40})
+            )
             self.assertEqual(2, code)
-            self.assertFalse((directory / "result.json").exists())
 
     def test_a_publication_failure_fails_the_run(self) -> None:
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             argv = [*self._files(directory), "--app-id", str(MA0_APP)]
-            refusing = _FakeClient(
-                gets={LATEST: EMPTY},
-                post=github_rest.GitHubWriteError("GitHub API HTTP 403", status=403),
+            (_work(directory) / "pending.json").write_text(
+                json.dumps({"result": "NOT_NEEDED", "pending": None, "observed": None}),
+                encoding="utf-8",
             )
+            refusing = _Provider()
+            refusing.refuse_write = True
             code = self._main(
-                relay, argv, "x" * 40, _client=mock.Mock(return_value=refusing)
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40}),
+                _client=mock.Mock(return_value=refusing),
             )
             self.assertEqual(1, code)
 
-    def test_inputs_outside_the_work_directory_are_refused(self) -> None:
-        """SonarCloud S8707 on #426: every file the command reads or writes is
-        confined to its work directory."""
-        relay = _relay()
-        files = {
-            "--evaluated": "evaluated.json",
-            "--current": "current.json",
-            "--verdict": "verdict.json",
-            "--output": "result.json",
-        }
-        for flag, name in files.items():
-            with self.subTest(flag=flag):
-                with (
-                    tempfile.TemporaryDirectory() as raw,
-                    tempfile.TemporaryDirectory() as other,
-                ):
-                    directory = Path(raw)
-                    argv = self._files(directory)
-                    outside = Path(other) / name
-                    if flag != "--output":
-                        outside.write_bytes((directory / name).read_bytes())
-                    argv[argv.index(flag) + 1] = str(outside)
-                    code = self._main(relay, argv, "")
-                    self.assertEqual(2, code)
-                    self.assertFalse((directory / "result.json").exists())
-                    if flag == "--output":
-                        self.assertFalse(outside.exists())
-
-    def test_an_unreadable_evidence_file_fails_closed(self) -> None:
-        """cubic on #426: a missing, unparsable, non-object or over-bound evidence
-        file stops the command before any plan, publication or result."""
+    def test_an_unreadable_evidence_file_still_completes_as_incomplete(self) -> None:
+        """A failed evaluation (cubic r4251147766 on #426) stops before any verdict is
+        planned on it, and the run's record says INCOMPLETE: a pending run is
+        completed as a failure, never left to look like an evaluation."""
         relay = _relay()
         corruptions: dict[str, bytes | None] = {
             "missing": None,
@@ -560,24 +1003,44 @@ class CommandTests(unittest.TestCase):
             "not an object": b"[]",
             "over its bound": b" " * (MAX_INPUT_BYTES + 1),
         }
-        for label in ("evaluated", "current"):
+        corruptions["a repeated number"] = json.dumps(
+            _with((300, HEAD), (300, OTHER))
+        ).encode()
+        corruptions["not complete"] = json.dumps(
+            {**POPULATION, "coverage": "PARTIAL"}
+        ).encode()
+        names = [
+            *(
+                f"{label}-evidence.json"
+                for label in ("evaluated", "current", "current-unbundled")
+            ),
+            "evaluated-population.json",
+            "current-population.json",
+        ]
+        for file_name in names:
             for name, content in corruptions.items():
-                with self.subTest(file=label, corruption=name):
-                    with tempfile.TemporaryDirectory() as raw:
-                        directory = Path(raw)
-                        argv = self._files(directory)
-                        path = directory / f"{label}.json"
-                        if content is None:
-                            path.unlink()
-                        else:
-                            path.write_bytes(content)
-                        self.assertEqual(2, self._main(relay, argv, ""))
-                        self.assertFalse((directory / "result.json").exists())
+                if (
+                    name in ("a repeated number", "not complete")
+                    and "population" not in file_name
+                ):
+                    continue
+                with (
+                    self.subTest(file=file_name, corruption=name),
+                    tempfile.TemporaryDirectory() as raw,
+                ):
+                    directory = Path(raw)
+                    argv = self._files(directory)
+                    path = _work(directory) / file_name
+                    if content is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(content)
+                    self.assertEqual(2, self._main(relay, argv, _env(directory)))
+                    result = self._result(directory)
+                    self.assertEqual("INCOMPLETE", result["planned"]["action"])
+                    self.assertEqual("failure", result["planned"]["conclusion"])
 
     def test_evidence_is_read_under_the_owned_input_rules(self) -> None:
-        """The evidence is read as every verdict command reads its input
-        (`tools.verdict_cli.read_json_file`): a duplicated field, or a document past
-        the depth bound, is refused as `knowledge merge-admission` refuses it."""
         relay = _relay()
         evidence, _ = _allowing()
         text = json.dumps(evidence)
@@ -595,44 +1058,80 @@ class CommandTests(unittest.TestCase):
         }
         for label in ("evaluated", "current"):
             for name, content in documents.items():
-                with self.subTest(file=label, document=name):
-                    with tempfile.TemporaryDirectory() as raw:
-                        directory = Path(raw)
-                        argv = self._files(directory)
-                        (directory / f"{label}.json").write_text(
-                            content, encoding="utf-8"
-                        )
-                        self.assertEqual(2, self._main(relay, argv, ""))
-                        self.assertFalse((directory / "result.json").exists())
+                with (
+                    self.subTest(file=label, document=name),
+                    tempfile.TemporaryDirectory() as raw,
+                ):
+                    directory = Path(raw)
+                    argv = self._files(directory)
+                    (_work(directory) / f"{label}-evidence.json").write_text(
+                        content, encoding="utf-8"
+                    )
+                    self.assertEqual(2, self._main(relay, argv, _env(directory)))
+                    self.assertEqual(
+                        "INCOMPLETE", self._result(directory)["planned"]["action"]
+                    )
 
     def test_a_verdict_with_a_duplicated_field_is_no_verdict(self) -> None:
-        """Read under the same rules, a verdict whose `status` is given twice is no
-        verdict: the plan fails, and never allows."""
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             argv = self._files(directory)
-            path = directory / "verdict.json"
+            path = _work(directory) / "verdict.json"
             text = path.read_text(encoding="utf-8")
             path.write_text(text[:-1] + ', "status": "ALLOW"}', encoding="utf-8")
-            self.assertEqual(0, self._main(relay, argv, ""))
-            result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
-            self.assertEqual("failure", result["planned"]["conclusion"])
+            self.assertEqual(0, self._main(relay, argv, _env(directory)))
+            self.assertEqual(
+                "failure", self._result(directory)["planned"]["conclusion"]
+            )
 
     def test_a_moved_current_head_supersedes_through_the_command(self) -> None:
-        """The command reads the current evidence it is given: a head that moved
-        between the two snapshots supersedes the verdict."""
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             argv = self._files(directory)
-            path = directory / "current.json"
+            path = _work(directory) / "current-evidence.json"
             evidence = json.loads(path.read_text(encoding="utf-8"))
             evidence["subject"]["head_commit"] = OTHER
             path.write_text(json.dumps(evidence), encoding="utf-8")
-            self.assertEqual(0, self._main(relay, argv, ""))
-            result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
-            self.assertEqual("SUPERSEDED", result["planned"]["action"])
+            self.assertEqual(0, self._main(relay, argv, _env(directory)))
+            self.assertEqual("SUPERSEDED", self._result(directory)["planned"]["action"])
+
+    def test_the_published_digest_is_the_unbundled_evidence_s(self) -> None:
+        """The guarded merge rebuilds the evidence without the analyzer bundle it
+        cannot re-read, so the run records that document's digest."""
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = [*self._files(directory), "--app-id", str(MA0_APP)]
+            (_work(directory) / "pending.json").write_text(
+                json.dumps({"result": "NOT_NEEDED", "pending": None, "observed": None}),
+                encoding="utf-8",
+            )
+            unbundled, _ = _allowing()
+            unbundled["receipts"] = []
+            (_work(directory) / "current-unbundled-evidence.json").write_text(
+                json.dumps(unbundled), encoding="utf-8"
+            )
+            provider = _Provider()
+            code = self._main(
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40}),
+                _client=mock.Mock(return_value=provider),
+            )
+            self.assertEqual(0, code)
+            ((_, payload),) = provider.posts
+            found = _checks().correlation_of({"output": payload["output"]})
+            self.assertEqual(
+                {
+                    "workflow_run_id": RUN_ID,
+                    "run_attempt": 1,
+                    "protected_revision": MAIN,
+                    "unbundled_evidence_sha256": _checks().digest(unbundled),
+                },
+                found,
+            )
 
     def test_an_expected_head_that_is_no_exact_sha_is_refused(self) -> None:
         relay = _relay()
@@ -640,20 +1139,175 @@ class CommandTests(unittest.TestCase):
             directory = Path(raw)
             argv = self._files(directory)
             argv[argv.index("--expected-head") + 1] = "abc"
-            self.assertEqual(2, self._main(relay, argv, ""))
-            self.assertFalse((directory / "result.json").exists())
+            self.assertEqual(2, self._main(relay, argv, _env(directory)))
 
-    def test_an_evidence_head_that_is_no_exact_sha_is_refused(self) -> None:
-        """Claude on #426: the head is checked where it is read, as L1 checks it."""
+    def test_an_evidence_head_that_is_no_exact_sha_is_incomplete(self) -> None:
         relay = _relay()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             argv = self._files(directory)
-            path = directory / "evaluated.json"
+            path = _work(directory) / "evaluated-evidence.json"
             evidence = json.loads(path.read_text(encoding="utf-8"))
             evidence["subject"]["head_commit"] = "abc"
             path.write_text(json.dumps(evidence), encoding="utf-8")
-            self.assertEqual(2, self._main(relay, argv, ""))
+            self.assertEqual(2, self._main(relay, argv, _env(directory)))
+            self.assertEqual("INCOMPLETE", self._result(directory)["planned"]["action"])
+
+    def test_invalidate_writes_its_record_for_the_completing_job(self) -> None:
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = [
+                "invalidate",
+                "--repository",
+                REPOSITORY,
+                "--expected-head",
+                HEAD,
+                "--app-id",
+                str(MA0_APP),
+            ]
+            provider = _Provider([_run(90)])
+            code = self._main(
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40}),
+                _client=mock.Mock(return_value=provider),
+            )
+            self.assertEqual(0, code)
+            record = json.loads(
+                (directory / "gnostoa-merge-admission" / "pending.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("PENDING", record["result"])
+            self.assertEqual(90, record["observed"])
+            self.assertEqual(provider.runs[-1]["id"], record["pending"])
+
+    def test_a_failed_invalidation_fails_its_job_and_records_it(self) -> None:
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = [
+                "invalidate",
+                "--repository",
+                REPOSITORY,
+                "--expected-head",
+                HEAD,
+                "--app-id",
+                str(MA0_APP),
+            ]
+            provider = _Provider([_run(90)])
+            provider.refuse_write = True
+            code = self._main(
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40}),
+                _client=mock.Mock(return_value=provider),
+            )
+            self.assertEqual(1, code)
+            record = json.loads(
+                (_work(directory) / "pending.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(("FAILED", None), (record["result"], record["pending"]))
+
+    def test_another_head_s_record_is_no_record(self) -> None:
+        """A record the invalidation wrote for another head says nothing about what
+        this run observed, so no success is written on it."""
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = [*self._files(directory), "--app-id", str(MA0_APP)]
+            (_work(directory) / "pending.json").write_text(
+                json.dumps(
+                    {
+                        "result": "NOT_NEEDED",
+                        "pending": None,
+                        "observed": None,
+                        "head": OTHER,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            provider = _Provider()
+            code = self._main(
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40}),
+                _client=mock.Mock(return_value=provider),
+            )
+            self.assertEqual(0, code)
+            self.assertEqual("OVERTAKEN", self._result(directory)["result"])
+            self.assertEqual([], provider.posts)
+
+    def test_invalidate_in_shadow_writes_nothing_to_the_provider(self) -> None:
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = ["invalidate", "--repository", REPOSITORY, "--expected-head", HEAD]
+            with mock.patch.object(
+                relay.github_rest,
+                "GitHubRestClient",
+                side_effect=AssertionError("no client"),
+            ):
+                self.assertEqual(0, self._main(relay, argv, _env(directory)))
+            record = json.loads(
+                (directory / "gnostoa-merge-admission" / "pending.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("SHADOW", record["result"])
+
+
+class HintTests(unittest.TestCase):
+    """F1 part 1: a relayed PR conversation comment names its pull request only as a
+    hint, derived in protected code from the event GitHub delivered."""
+
+    @staticmethod
+    def _hint(directory: Path, content: bytes | None) -> tuple[int, str]:
+        relay = _relay()
+        relayed = directory / "gnostoa-merge-admission-relay"
+        relayed.mkdir()
+        if content is not None:
+            (relayed / "event.json").write_bytes(content)
+        out = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, _env(directory)),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            code = int(relay.main(["hint"]))
+        return code, out.getvalue().strip()
+
+    def test_a_pull_request_comment_names_its_pull_request(self) -> None:
+        event = {"action": "deleted", "issue": {"number": 426, "pull_request": {}}}
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertEqual(
+                (0, "426"), self._hint(Path(raw), json.dumps(event).encode())
+            )
+
+    def test_an_issue_comment_names_nothing(self) -> None:
+        event = {"action": "created", "issue": {"number": 407}}
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertEqual((0, ""), self._hint(Path(raw), json.dumps(event).encode()))
+
+    def test_a_missing_malformed_or_unbounded_event_fails(self) -> None:
+        from tools.agent_review_github import DELIVERED_EVENT_BYTES
+
+        for name, content in (
+            ("missing", None),
+            ("not json", b"{"),
+            ("no issue", b"{}"),
+            ("a boolean number", b'{"issue": {"number": true, "pull_request": {}}}'),
+            # Valid JSON past the delivered-event bound, so only the bound refuses it.
+            (
+                "over its bound",
+                b'{"issue": {"number": 426, "pull_request": {}}}'
+                + b" " * DELIVERED_EVENT_BYTES,
+            ),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
+                code, out = self._hint(Path(raw), content)
+                self.assertEqual((2, ""), (code, out))
 
 
 if __name__ == "__main__":

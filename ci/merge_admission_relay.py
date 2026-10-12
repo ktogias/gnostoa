@@ -4,17 +4,30 @@ Decision 0112 item 5: a dedicated App, `gnostoa-ma0`, posts `merge-admission` fr
 main-only environment, woken by Decision 0096's relay and a sweep. This command never
 decides admission. It publishes the existing verdict (`knowledge merge-admission`) on
 the exact head that verdict was evaluated for, and only while the evidence it rests on
-is unchanged. The workflow evaluates, reads a second snapshot, rebuilds the evidence
-from it, and this command compares the two, observation times aside. A moved head, or
-a changed description, relation, review, thread or check supersedes the verdict, so a
-stale check is never published; the next event or the sweep evaluates again.
+is unchanged: the workflow evaluates, reads a second snapshot and rebuilds the
+evidence from it, and the two are compared, observation times aside.
 
-A verdict the dedicated App already published as the head's latest run is not posted
-again; otherwise the check is posted once and read back, and an unknown outcome is
-found by its `external_id` rather than posted again. A run counts as the App's only
-when the App's id says so. Every file the command reads or writes is confined to its
-work directory. Without the App's token the run is a shadow: it records its plan and
-writes nothing.
+Three commands, run by the privileged workflow (F1, the Decisions Router on #426):
+
+- `hint` names the pull request a relayed PR conversation comment is on. It is a hint
+  only: L1 re-reads the subject.
+- `invalidate` runs before anything is acquired again. A success the App published on
+  the head stops standing: a pending run of the App replaces it until this workflow
+  run completes it.
+- `publish` completes that pending run while it is the App's latest run. Without one,
+  a success is written only while the latest run is still the one observed at
+  invalidation. A superseded, incomplete or denied evaluation never ends as a success,
+  and never leaves an older one standing.
+
+A check run belongs to a commit, not to a pull request, so a success is planned only
+when the complete open population shows this pull request alone at its head (H1 on
+#426): a shared head is a failure naming the pull requests. Each run records the
+workflow run, attempt and protected revision that wrote it, and the digest of the
+evidence rebuilt without the analyzer bundle, which the guarded merge re-reads.
+
+No path comes from the command line: the commands read and write fixed names under
+the runner's `RUNNER_TEMP`, and take the run's identity from the runner. Without the
+App's token the run is a shadow: it records its plan and writes nothing.
 """
 
 from __future__ import annotations
@@ -27,12 +40,26 @@ import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from tools import github_rest
-from tools.verdict_cli import confine, read_json_file
+from tools.agent_review_admission import Refused, read_payload
+from tools.agent_review_github import DELIVERED_EVENT_BYTES
+from tools.github_events import delivered_comment_pull_number
+from tools.merge_admission_checks import (
+    CHECK_NAME,
+    PublicationError,
+    app_latest,
+    canonical,
+    comparable,
+    correlation_text,
+    digest,
+    ours,
+    read_run,
+    run_id,
+)
+from tools.verdict_cli import read_json_file
 
-CHECK_NAME = "merge-admission"
 _APP_CREDENTIAL_VARIABLE = "GNOSTOA_MA0_TOKEN"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _VERDICT_SCHEMA = "gnostoa-merge-admission/v1"
@@ -40,40 +67,13 @@ _SUBJECT_KIND = "github-pull-request"
 # GitHub's limits for a check run's output.
 _MAX_TITLE = 255
 _MAX_SUMMARY = 60_000
-_MAX_LISTED_RUNS = 100
+_WORK = "gnostoa-merge-admission"
+_RELAYED = "gnostoa-merge-admission-relay"
 _POLICY = github_rest.Policy(
     timeout_seconds=30, attempts=1, max_response_bytes=4_194_304
 )
 
-
-class PublicationError(RuntimeError):
-    """A check run that was refused, could not be read back, or reads back as
-    something other than what was posted."""
-
-    def __init__(self, kind: str, message: str) -> None:
-        super().__init__(message)
-        self.kind = kind
-
-
-def _comparable(value: Any) -> Any:
-    """The evidence as the verdict reads it: every observation time dropped, at any
-    depth, since a re-read observes again without changing what it found."""
-
-    if isinstance(value, Mapping):
-        return {
-            key: _comparable(item)
-            for key, item in value.items()
-            if key != "observed_at"
-        }
-    if isinstance(value, list):
-        return [_comparable(item) for item in value]
-    return value
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
-    ).encode("utf-8")
+__all__ = ["CHECK_NAME", "PublicationError", "invalidate", "main", "plan", "publish"]
 
 
 def _bounded(text: str, limit: int) -> str:
@@ -83,12 +83,12 @@ def _bounded(text: str, limit: int) -> str:
     return text[: limit - len(marker)] + marker
 
 
-def _malformed(verdict: object) -> bool:
+def _well_formed(verdict: object) -> TypeGuard[Mapping[str, Any]]:
     return (
-        not isinstance(verdict, Mapping)
-        or verdict.get("schema") != _VERDICT_SCHEMA
-        or verdict.get("status") not in {"ALLOW", "DENY"}
-        or not isinstance(verdict.get("criteria"), list)
+        isinstance(verdict, Mapping)
+        and verdict.get("schema") == _VERDICT_SCHEMA
+        and verdict.get("status") in {"ALLOW", "DENY"}
+        and isinstance(verdict.get("criteria"), list)
     )
 
 
@@ -113,7 +113,7 @@ def _verdict_state(
     """The conclusion, title and summary lines. Only a well-formed ALLOW for this
     exact subject, from a command that exited 0, is ever a success."""
 
-    if _malformed(verdict) or not isinstance(verdict, Mapping):
+    if not _well_formed(verdict):
         return (
             "failure",
             "merge-admission: the evaluation produced no verdict",
@@ -140,32 +140,73 @@ def _verdict_state(
     )
 
 
+def _sharing(
+    subject: Mapping[str, Any], population: Mapping[str, Any]
+) -> tuple[str, str, list[str]] | None:
+    """H1: a failure when the population does not show this pull request alone at
+    its head, else None."""
+
+    head = subject["head_commit"]
+    number = int(subject["change_request"]["id"])
+    listed = {item["pull_number"]: item["head"] for item in population["pulls"]}
+    if listed.get(number) != head:
+        return (
+            "failure",
+            "merge-admission: the open pull requests do not show this one at its head",
+            [
+                f"The complete open population lists #{number} "
+                + (f"at `{listed[number]}`." if number in listed else "nowhere.")
+            ],
+        )
+    sharing = sorted(pull for pull, at in listed.items() if at == head)
+    if len(sharing) == 1:
+        return None
+    names = ", ".join(f"#{pull}" for pull in sharing)
+    return (
+        "failure",
+        f"merge-admission: the head is shared by {names}",
+        [
+            "A check run belongs to a commit, so a success here would also satisfy "
+            "every other pull request at this head. Each is denied until the others "
+            "close or move, and a fresh evaluation recovers."
+        ],
+    )
+
+
 def plan(
     evaluated: Mapping[str, Any],
     current: Mapping[str, Any],
     verdict: object,
     verdict_exit: int,
     *,
+    evaluated_population: Mapping[str, Any],
+    current_population: Mapping[str, Any],
     expected_head: str | None = None,
 ) -> dict[str, Any]:
-    """What to publish for the evaluated evidence, given the current evidence and
-    the head the run selected. An evaluation of another head than the selected one
-    is not this run's subject (Octopus on #426): it is superseded too."""
+    """What to publish for the evaluated evidence, given the current evidence, the
+    open population each snapshot observed, and the head the run selected. An
+    evaluation of another head than the selected one is not this run's subject
+    (Octopus on #426): it is superseded too."""
 
     subject = evaluated["subject"]
     head = subject["head_commit"]
-    conclusion, title, lines = _verdict_state(subject, verdict, verdict_exit)
+    conclusion, title, lines = _sharing(
+        subject, evaluated_population
+    ) or _verdict_state(subject, verdict, verdict_exit)
     external_id = hashlib.sha256(
-        _canonical(
+        canonical(
             {
-                "evidence": _comparable(evaluated),
+                "evidence": comparable(evaluated),
+                "population": comparable(evaluated_population),
                 "verdict": verdict,
                 "exit": verdict_exit,
             }
         )
     ).hexdigest()
-    unchanged = _comparable(current) == _comparable(evaluated) and (
-        expected_head is None or expected_head == head
+    unchanged = (
+        comparable(current) == comparable(evaluated)
+        and current_population == evaluated_population
+        and (expected_head is None or expected_head == head)
     )
     summary = "\n".join(
         [
@@ -187,120 +228,283 @@ def plan(
     }
 
 
-def _ours(run: object, app_id: int) -> bool:
-    app = run.get("app") if isinstance(run, Mapping) else None
-    return isinstance(app, Mapping) and app.get("id") == app_id
+def plan_incomplete(head: str, reason: str) -> dict[str, Any]:
+    """The plan of an evaluation that did not complete: never a success."""
 
-
-def _verified(run: object, planned: Mapping[str, Any], app_id: int) -> int:
-    expected = {
-        "name": CHECK_NAME,
-        "head_sha": planned["head_sha"],
-        "status": "completed",
-        "conclusion": planned["conclusion"],
-        "external_id": planned["external_id"],
+    return {
+        "action": "INCOMPLETE",
+        "subject": None,
+        "head_sha": head,
+        "conclusion": "failure",
+        "title": "merge-admission: the evaluation did not complete",
+        "summary": _bounded(
+            f"No verdict is published for `{head}`: {reason}", _MAX_SUMMARY
+        ),
+        "external_id": None,
     }
-    if not isinstance(run, Mapping) or any(
-        run.get(field) != value for field, value in expected.items()
-    ):
-        raise PublicationError("MISMATCH", "the check run reads back otherwise")
-    if not _ours(run, app_id):
+
+
+def _identity(correlation: Mapping[str, Any]) -> str:
+    return f"{correlation['workflow_run_id']}:{correlation['run_attempt']}"
+
+
+def _final(
+    planned: Mapping[str, Any], correlation: Mapping[str, Any]
+) -> dict[str, Any]:
+    """What the completed run holds: the planned verdict, or a failure that names why
+    nothing current was admitted."""
+
+    if planned["action"] == "PUBLISH":
+        conclusion, title, summary = (
+            planned["conclusion"],
+            planned["title"],
+            planned["summary"],
+        )
+        external_id = planned["external_id"]
+    elif planned["action"] == "SUPERSEDED":
+        conclusion = "failure"
+        title = "merge-admission: superseded; re-evaluating"
+        summary = (
+            "The evidence changed while it was evaluated, so nothing is admitted until "
+            "the next evaluation completes."
+        )
+        external_id = f"superseded:{_identity(correlation)}"
+    else:
+        conclusion, title, summary = "failure", planned["title"], planned["summary"]
+        external_id = f"incomplete:{_identity(correlation)}"
+    record = correlation.get("unbundled_evidence_sha256")
+    text = (
+        correlation_text(correlation)
+        if isinstance(record, str)
+        else "The evaluation rebuilt no evidence, so this run records no digest."
+    )
+    return {
+        "conclusion": conclusion,
+        "external_id": external_id,
+        "output": {"title": title, "summary": summary, "text": text},
+    }
+
+
+def _verified(
+    run: Mapping[str, Any], head: str, app_id: int, expected: Mapping[str, Any]
+) -> int:
+    if not ours(run, app_id):
         raise PublicationError("MISMATCH", "the check run is another App's")
-    identifier = run.get("id")
-    if type(identifier) is not int:
+    wanted = {"name": CHECK_NAME, "head_sha": head, **expected}
+    if any(run.get(field) != value for field, value in wanted.items()):
+        raise PublicationError("MISMATCH", "the check run reads back otherwise")
+    identifier = run_id(run)
+    if identifier is None:
         raise PublicationError("MISMATCH", "the check run reads back with no id")
     return identifier
 
 
-def _latest(
-    client: Any, repository: str, planned: Mapping[str, Any], app_id: int
-) -> object:
-    """The dedicated App's latest run of the check on the head with this external
-    id, or None. GitHub's latest view keeps one run per App and name, so a listing
-    longer than its page is refused rather than trusted."""
+def _post(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    payload: Mapping[str, Any],
+) -> int:
+    """Post a run once. An unknown outcome is found in the App's latest run by its
+    `external_id`, never posted again."""
 
-    url = client.url(
-        f"repos/{repository}/commits/{planned['head_sha']}/check-runs"
-        f"?check_name={CHECK_NAME}&filter=latest&per_page={_MAX_LISTED_RUNS}"
-    )
-    try:
-        document, _ = client.get(url)
-    except github_rest.GitHubError as exc:
-        raise PublicationError("UNKNOWN", "the check runs could not be read") from exc
-    runs = document.get("check_runs") if isinstance(document, Mapping) else None
-    total = document.get("total_count") if isinstance(document, Mapping) else None
-    if not isinstance(runs, list) or type(total) is not int or total > len(runs):
-        raise PublicationError("UNKNOWN", "the check runs read back incompletely")
-    matches = [
-        run
-        for run in runs
-        if _ours(run, app_id) and run.get("external_id") == planned["external_id"]
-    ]
-    return matches[-1] if matches else None
-
-
-def publish(
-    client: Any, *, repository: str, planned: Mapping[str, Any], app_id: int
-) -> dict[str, Any]:
-    """Publish the planned check run as the dedicated App, at most once: a verdict
-    already the App's latest run on the head is not posted again (Claude, Octopus
-    and CodeAnt on #426)."""
-
-    if planned["action"] != "PUBLISH":
-        return {"result": "SUPERSEDED"}
-    existing = _latest(client, repository, planned, app_id)
-    if existing is not None:
-        return {
-            "result": "PUBLISHED",
-            "check_run_id": _verified(existing, planned, app_id),
-        }
-    payload = {
-        "name": CHECK_NAME,
-        "head_sha": planned["head_sha"],
-        "status": "completed",
-        "conclusion": planned["conclusion"],
-        "external_id": planned["external_id"],
-        "output": {"title": planned["title"], "summary": planned["summary"]},
+    expected = {
+        "status": payload["status"],
+        "external_id": payload["external_id"],
+        **({"conclusion": payload["conclusion"]} if "conclusion" in payload else {}),
     }
+    body = {"name": CHECK_NAME, "head_sha": head, **payload}
     try:
-        posted = client.post(client.url(f"repos/{repository}/check-runs"), payload)
+        posted = client.post(client.url(f"repos/{repository}/check-runs"), body)
     except github_rest.GitHubWriteError as exc:
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
-        found = _latest(client, repository, planned, app_id)
-        if found is None:
+        found = app_latest(client, repository, head, app_id)
+        if found is None or found.get("external_id") != payload["external_id"]:
             raise PublicationError(
                 "UNKNOWN", "the write's outcome is unknown and no such run is listed"
             ) from exc
+        return _verified(found, head, app_id, expected)
+    identifier = run_id(posted)
+    if identifier is None:
+        raise PublicationError("MISMATCH", "the provider's answer names no check run")
+    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+
+
+def _complete(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    identifier: int,
+    final: Mapping[str, Any],
+) -> int:
+    """Complete one run of the App by its id, read back. An unknown outcome is read
+    back by that id, never written again."""
+
+    payload = {"status": "completed", **final}
+    expected = {
+        "status": "completed",
+        "conclusion": final["conclusion"],
+        "external_id": final["external_id"],
+    }
+    try:
+        client.patch(client.url(f"repos/{repository}/check-runs/{identifier}"), payload)
+    except github_rest.GitHubWriteError as exc:
+        if not exc.outcome_unknown:
+            raise PublicationError("REFUSED", str(exc)) from exc
+    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+
+
+def invalidate(
+    client: Any,
+    *,
+    repository: str,
+    head: str,
+    app_id: int,
+    correlation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Before anything is acquired again, replace a success the App's latest run
+    stands on with a pending run of the App, and record what was observed."""
+
+    latest = app_latest(client, repository, head, app_id)
+    observed = run_id(latest)
+    if (
+        latest is None
+        or latest.get("status") != "completed"
+        or latest.get("conclusion") != "success"
+    ):
+        return {"result": "NOT_NEEDED", "pending": None, "observed": observed}
+    payload = {
+        "status": "in_progress",
+        "external_id": f"pending:{_identity(correlation)}",
+        "output": {
+            "title": "merge-admission: re-evaluating",
+            "summary": (
+                "An earlier success on this head no longer stands while the head is "
+                "evaluated again."
+            ),
+        },
+    }
+    pending = _post(client, repository, head, app_id, payload)
+    return {"result": "PENDING", "pending": pending, "observed": observed}
+
+
+def _standing_success(run: Mapping[str, Any] | None) -> bool:
+    return (
+        run is not None
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+    )
+
+
+def _close(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    pending: int,
+    correlation: Mapping[str, Any],
+) -> None:
+    """Complete this run's own pending run, no longer the latest, as a failure, so it
+    never lingers as an evaluation that might still conclude."""
+
+    _complete(
+        client,
+        repository,
+        head,
+        app_id,
+        pending,
+        {
+            "conclusion": "failure",
+            "external_id": f"overtaken:{_identity(correlation)}",
+            "output": {
+                "title": "merge-admission: overtaken",
+                "summary": "A later run of the App on this head stands instead.",
+                "text": "",
+            },
+        },
+    )
+
+
+def publish(
+    client: Any,
+    *,
+    repository: str,
+    planned: Mapping[str, Any],
+    app_id: int,
+    record: Mapping[str, Any] | None,
+    correlation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Complete this run's evaluation as the dedicated App, at most once."""
+
+    head = planned["head_sha"]
+    latest = app_latest(client, repository, head, app_id)
+    pending = record.get("pending") if record is not None else None
+    final = _final(planned, correlation)
+    if type(pending) is int:
+        if run_id(latest) != pending:
+            _close(client, repository, head, app_id, pending, correlation)
+            return {"result": "OVERTAKEN"}
+        identifier = _complete(client, repository, head, app_id, pending, final)
+        return {"result": "COMPLETED", "check_run_id": identifier}
+    succeeding = planned["action"] == "PUBLISH" and planned["conclusion"] == "success"
+    current = record is not None and run_id(latest) == record.get("observed")
+    if succeeding and not current:
+        # An older worker never restores a success over a newer run, nor without the
+        # record of what it observed.
+        return {"result": "OVERTAKEN"}
+    if planned["action"] != "PUBLISH":
+        if not _standing_success(latest):
+            return {"result": planned["action"]}
+        identifier = _post(
+            client, repository, head, app_id, {"status": "completed", **final}
+        )
+        return {"result": "INVALIDATED", "check_run_id": identifier}
+    if (
+        latest is not None
+        and latest.get("status") == "completed"
+        and latest.get("conclusion") == final["conclusion"]
+        and latest.get("external_id") == final["external_id"]
+    ):
         return {
             "result": "PUBLISHED",
-            "check_run_id": _verified(found, planned, app_id),
+            "check_run_id": _verified(
+                latest,
+                head,
+                app_id,
+                {
+                    "external_id": final["external_id"],
+                    "conclusion": final["conclusion"],
+                },
+            ),
         }
-    identifier = posted.get("id") if isinstance(posted, Mapping) else None
-    if type(identifier) is not int:
-        raise PublicationError("MISMATCH", "the provider's answer names no check run")
-    try:
-        read, _ = client.get(client.url(f"repos/{repository}/check-runs/{identifier}"))
-    except github_rest.GitHubError as exc:
-        raise PublicationError(
-            "UNKNOWN", "the check run could not be read back"
-        ) from exc
-    return {"result": "PUBLISHED", "check_run_id": _verified(read, planned, app_id)}
+    identifier = _post(
+        client, repository, head, app_id, {"status": "completed", **final}
+    )
+    return {"result": "PUBLISHED", "check_run_id": identifier}
 
 
-def _evidence(path: Path, root: Path, label: str) -> dict[str, Any]:
-    """The evidence, read as every verdict command reads its input: confined to the
-    work directory, bounded before it is held, strictly decoded and depth-bounded
-    (cubic on #426)."""
+def _document(path: Path, root: Path, label: str) -> dict[str, Any]:
+    """One file, read as every verdict command reads its input: confined to the work
+    directory, bounded before it is held, strictly decoded and depth-bounded."""
 
-    document = read_json_file(path, f"{label} evidence", ValueError, project_root=root)
+    document = read_json_file(path, label, ValueError, project_root=root)
     if not isinstance(document, dict):
-        raise ValueError(f"the {label} evidence is not an object")
+        raise ValueError(f"the {label} is not an object")
+    return document
+
+
+def _evidence(root: Path, name: str, label: str) -> dict[str, Any]:
+    document = _document(root / name, root, f"{label} evidence")
     subject = document.get("subject")
     if (
         not isinstance(subject, dict)
         or not isinstance(subject.get("change_request"), dict)
         or subject["change_request"].get("kind") != _SUBJECT_KIND
+        or not isinstance(subject["change_request"].get("id"), str)
+        or not subject["change_request"]["id"].isdigit()
         or not isinstance(subject.get("head_commit"), str)
         or _SHA40.fullmatch(subject["head_commit"]) is None
     ):
@@ -308,14 +512,38 @@ def _evidence(path: Path, root: Path, label: str) -> dict[str, Any]:
     return document
 
 
-def _verdict(path: Path | None, root: Path) -> object:
+def _population(root: Path, name: str, label: str) -> dict[str, Any]:
+    """The complete open population an evaluation observed: each pull request once,
+    with an exact head."""
+
+    document = _document(root / name, root, f"{label} population")
+    pulls = document.get("pulls")
+    if document.get("coverage") != "COMPLETE" or not isinstance(pulls, list):
+        raise ValueError(f"the {label} population is not complete")
+    numbers = set()
+    for item in pulls:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"pull_number", "head"}
+            or type(item["pull_number"]) is not int
+            or item["pull_number"] <= 0
+            or not isinstance(item["head"], str)
+            or _SHA40.fullmatch(item["head"]) is None
+            or item["pull_number"] in numbers
+        ):
+            raise ValueError(f"the {label} population is malformed")
+        numbers.add(item["pull_number"])
+    return document
+
+
+def _verdict(root: Path) -> object:
     """The verdict, or None when the evaluation wrote none, or wrote what the verdict
     commands' own input rules refuse."""
 
-    if path is None:
-        return None
     try:
-        return read_json_file(path, "verdict", ValueError, project_root=root)
+        return read_json_file(
+            root / "verdict.json", "verdict", ValueError, project_root=root
+        )
     except ValueError:
         return None
 
@@ -328,15 +556,15 @@ def _client(token: str) -> Any:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--evaluated", type=Path, required=True)
-    parser.add_argument("--current", type=Path, required=True)
-    parser.add_argument("--verdict", type=Path)
-    parser.add_argument("--verdict-exit", type=int, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--work-dir", type=Path, required=True)
-    parser.add_argument("--expected-head", required=True)
-    parser.add_argument("--app-id", type=int)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("hint", help="the pull request a relayed comment names")
+    for name in ("invalidate", "publish"):
+        command = commands.add_parser(name)
+        command.add_argument("--repository", required=True)
+        command.add_argument("--expected-head", required=True)
+        command.add_argument("--app-id", type=int)
+        if name == "publish":
+            command.add_argument("--verdict-exit", type=int, required=True)
     return parser
 
 
@@ -344,14 +572,14 @@ def _summary(result: Mapping[str, Any]) -> None:
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
-    planned = result["planned"]
+    planned = result.get("planned") or {}
     lines = [
         "## Gnostoa merge admission",
         "",
         f"- Result: {result['result']}",
-        f"- Head: `{planned['head_sha']}`",
-        f"- Conclusion: {planned['conclusion']} ({planned['action']})",
-        f"- {planned['title']}",
+        f"- Head: `{planned.get('head_sha')}`",
+        f"- Conclusion: {planned.get('conclusion')} ({planned.get('action')})",
+        f"- {planned.get('title')}",
     ]
     try:
         with open(path, "a", encoding="utf-8") as handle:
@@ -360,38 +588,104 @@ def _summary(result: Mapping[str, Any]) -> None:
         print("Gnostoa merge admission: STEP_SUMMARY_UNAVAILABLE")
 
 
-def _confined(path: Path, root: Path, label: str) -> Path:
-    """Every file under the work directory (SonarCloud S8707 on #426)."""
+def _runner() -> tuple[Path, dict[str, Any]]:
+    """The runner's work directory and this run's identity, from the runner alone."""
 
-    return confine(path, root, label=label, error=ValueError)
+    temporary = os.environ.get("RUNNER_TEMP", "")
+    run, attempt = (
+        os.environ.get("GITHUB_RUN_ID", ""),
+        os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+    )
+    revision = os.environ.get("GITHUB_SHA", "")
+    if not temporary:
+        raise ValueError("the runner names no temporary directory")
+    if not run.isdigit() or not attempt.isdigit() or int(run) <= 0 or int(attempt) <= 0:
+        raise ValueError("the runner names no workflow run")
+    if _SHA40.fullmatch(revision) is None:
+        raise ValueError("the runner names no protected revision")
+    return Path(temporary).resolve(strict=True), {
+        "workflow_run_id": int(run),
+        "run_attempt": int(attempt),
+        "protected_revision": revision,
+    }
+
+
+def _hint(temporary: Path) -> int:
+    event = read_payload(
+        str(temporary / _RELAYED / "event.json"), limit=DELIVERED_EVENT_BYTES
+    )
+    number = delivered_comment_pull_number(event)
+    if number is not None:
+        print(number)
+    return 0
+
+
+def _write(root: Path, name: str, document: Mapping[str, Any]) -> None:
+    (root / name).write_text(
+        json.dumps(document, sort_keys=True, indent=1), encoding="utf-8"
+    )
+
+
+def _publish_inputs(
+    root: Path, args: argparse.Namespace, correlation: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """The plan from the work directory's files, or an INCOMPLETE plan and exit 2
+    when any of them cannot be read."""
+
+    try:
+        evaluated = _evidence(root, "evaluated-evidence.json", "evaluated")
+        current = _evidence(root, "current-evidence.json", "current")
+        unbundled = _evidence(root, "current-unbundled-evidence.json", "unbundled")
+        evaluated_population = _population(
+            root, "evaluated-population.json", "evaluated"
+        )
+        current_population = _population(root, "current-population.json", "current")
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return plan_incomplete(args.expected_head, str(exc)), 2
+    correlation["unbundled_evidence_sha256"] = digest(unbundled)
+    planned = plan(
+        evaluated,
+        current,
+        _verdict(root),
+        args.verdict_exit,
+        evaluated_population=evaluated_population,
+        current_population=current_population,
+        expected_head=args.expected_head,
+    )
+    return planned, 0
+
+
+def _record(root: Path, head: str) -> dict[str, Any] | None:
+    """This run's invalidation record for the head, or None: a record for another
+    head, or none at all, is no record of what this run observed."""
+
+    try:
+        record = _document(root / "pending.json", root, "invalidation record")
+    except (OSError, ValueError):
+        return None
+    return record if record.get("head", head) == head else None
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     token = os.environ.get(_APP_CREDENTIAL_VARIABLE, "")
     try:
-        root = args.work_dir.resolve(strict=True)
-        evaluated = _evidence(args.evaluated, root, "evaluated")
-        current = _evidence(args.current, root, "current")
-        verdict_path = (
-            None if args.verdict is None else _confined(args.verdict, root, "verdict")
-        )
-        output = _confined(args.output, root, "result")
+        temporary, correlation = _runner()
+        if args.command == "hint":
+            return _hint(temporary)
         if _SHA40.fullmatch(args.expected_head) is None:
             raise ValueError("the expected head is no exact SHA")
         if token and (args.app_id is None or args.app_id <= 0):
             raise ValueError("publishing needs the dedicated App's id")
-    except (OSError, ValueError) as exc:
+        root = temporary / _WORK
+        root.mkdir(exist_ok=True)
+    except (OSError, ValueError, Refused) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    planned = plan(
-        evaluated,
-        current,
-        _verdict(verdict_path, root),
-        args.verdict_exit,
-        expected_head=args.expected_head,
-    )
-    code = 0
+    if args.command == "invalidate":
+        return _run_invalidate(root, args, token, correlation)
+    planned, code = _publish_inputs(root, args, correlation)
     if not token:
         result: dict[str, Any] = {"result": "SHADOW", "planned": planned}
     else:
@@ -402,6 +696,8 @@ def main(argv: list[str] | None = None) -> int:
                     repository=args.repository,
                     planned=planned,
                     app_id=int(args.app_id),
+                    record=_record(root, args.expected_head),
+                    correlation=correlation,
                 ),
                 "planned": planned,
             }
@@ -412,10 +708,40 @@ def main(argv: list[str] | None = None) -> int:
                 "reason": str(exc),
                 "planned": planned,
             }
-            code = 1
-    output.write_text(json.dumps(result, sort_keys=True, indent=1), encoding="utf-8")
+            code = code or 1
+    _write(root, "result.json", result)
     _summary(result)
     print(f"merge-admission: {result['result']} ({planned['conclusion']})")
+    return code
+
+
+def _run_invalidate(
+    root: Path, args: argparse.Namespace, token: str, correlation: Mapping[str, Any]
+) -> int:
+    if not token:
+        record: dict[str, Any] = {"result": "SHADOW", "pending": None, "observed": None}
+        code = 0
+    else:
+        try:
+            record = invalidate(
+                _client(token),
+                repository=args.repository,
+                head=args.expected_head,
+                app_id=int(args.app_id),
+                correlation=correlation,
+            )
+            code = 0
+        except PublicationError as exc:
+            record = {
+                "result": "FAILED",
+                "kind": exc.kind,
+                "reason": str(exc),
+                "pending": None,
+                "observed": None,
+            }
+            code = 1
+    _write(root, "pending.json", {**record, "head": args.expected_head})
+    print(f"merge-admission invalidation: {record['result']}")
     return code
 
 

@@ -137,10 +137,22 @@ provider-neutral public change-governance contract of
   - `merge-admission-trigger.yml` holds nothing and wakes `merge-admission.yml`, which runs from protected `main` only, with an hourly sweep.
   - L1 re-reads each subject; event numbers are hints. The admission point re-reads the inventory by calling the existing `analyzer-readback.yml` for the exact subject, so the bundle the evidence reads is that run's own, which authenticates it.
   - The relay publishes `merge-admission` on the exact evaluated head, and only while the evidence rebuilt from a second snapshot equals the evaluated one, observation times aside. A moved head (invariant d), or an edited description, relation, review, thread or check, supersedes the verdict.
-  - The check is posted once and read back. An unknown outcome is found by its `external_id`, never posted again.
+  - The check is written at most once and read back. An unknown outcome is found or read back, never written again.
   - Only a well-formed `ALLOW` for the exact subject, from a command that exited 0, is ever a success.
+  - **Freshness (F1, the Decisions Router on #426, 6130207025).**
+    - The seal's comments, created, edited or deleted, and thread resolution wake the relay too. The comment filter is the declarer's identity, never the body.
+    - Before anything is acquired again, a success the App's latest run stands on is replaced by a pending run of the App. The run completes it, or, without one, writes a success only while the latest run is still the one it observed. A superseded, incomplete or denied evaluation ends as a failure and invalidates an older success. An interrupted run stays pending, which blocks.
+    - After activation, the guarded merge obtains its own admission (`ci/merge_admission_guard.py`). It dispatches the protected workflow for the approved head, and correlates the result through the workflow run the dispatch returns, never through time. It reads the pinned App's check natively, re-reads the subject, compares it with the evaluation's digest, and does not merge itself.
+  - **One pull request per head (H1, 6131149850).** A check run belongs to a commit, so a success needs this pull request alone at its exact head in the complete open population, read beside both snapshots and again by the guard. A shared head is a failure naming the pull requests, whatever the neutral verdict, which is unchanged. The cost is liveness: both stay denied until one closes or moves and a fresh evaluation recovers.
+  - **The residual,** bounded and recorded rather than accepted:
+    - the window from the guard's last reads to the provider's merge, measured before activation;
+    - an analyzer inventory change after the run's readback, which the guard cannot re-read;
+    - a change no event names, until the sweep revisits the pull request;
+    - an open-population change that no event names, between the reads.
+
+    No atomic provider guarantee follows from event coverage, the sweep, timestamps or a digest.
   - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
-  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It also waits for the rerun-successor case below.
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case below. It also waits for two native read-backs: a pending run blocking R-main's App-pinned required check over an older success, and one guarded dispatch whose `workflow_run_id` correlates to its published run.
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no receipt, the reducer reports it `MISSING`.** So once the

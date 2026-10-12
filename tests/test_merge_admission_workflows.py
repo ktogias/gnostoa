@@ -31,6 +31,7 @@ TRIGGER = WORKFLOWS / "merge-admission-trigger.yml"
 ADMISSION = WORKFLOWS / "merge-admission.yml"
 READBACK = WORKFLOWS / "analyzer-readback.yml"
 RUNBOOK = ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
+AUTHORITIES = ROOT / "policy" / "merge-authorities.yaml"
 # Selected in the MA0 package (#407, 6069729619): v3.2.0, MIT.
 APP_MINT_ACTION = (
     "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
@@ -59,6 +60,41 @@ def _run_lines(step: dict[str, Any]) -> list[str]:
     return [line for line in lines if line and not line.startswith("#")]
 
 
+def _declarer() -> str:
+    document = yaml.safe_load(AUTHORITIES.read_text(encoding="utf-8"))
+    declarer: str = document["declarer"]
+    return declarer
+
+
+def _normalized(expression: object) -> str:
+    return " ".join(str(expression).split())
+
+
+# The exact conditions (cubic r4251444309 on #426): a substring proves nothing about
+# what an `||` beside it admits.
+SUBJECTS_IF = (
+    "github.ref == 'refs/heads/main' && (github.event_name == 'schedule'"
+    " || github.event_name == 'workflow_dispatch'"
+    " || (github.event_name == 'workflow_run'"
+    " && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'"
+    " && github.event.workflow_run.conclusion == 'success'"
+    ' && contains(fromJSON(\'["pull_request","pull_request_review",'
+    '"pull_request_review_thread","issue_comment"]\'), github.event.workflow_run.event))'
+    " || (github.event.workflow_run.path == '.github/workflows/verification.yml'"
+    " && github.event.workflow_run.event == 'pull_request'))))"
+)
+INVALIDATE_IF = (
+    "github.ref == 'refs/heads/main' && needs.subjects.result == 'success'"
+    " && needs.subjects.outputs.subjects != '[]'"
+)
+AFTER_INVALIDATION_IF = (
+    "always() && github.ref == 'refs/heads/main' && needs.subjects.result == 'success'"
+    " && needs.subjects.outputs.subjects != '[]'"
+)
+UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+DOWNLOAD_ACTION = "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0"
+
+
 class TriggerWorkflowTests(unittest.TestCase):
     """Decision 0096 rule 2: the untrusted trigger has no permission, no secret
     and no checkout, and computes nothing."""
@@ -67,7 +103,16 @@ class TriggerWorkflowTests(unittest.TestCase):
         workflow = _load(TRIGGER)
         self.assertEqual("Merge admission trigger", workflow["name"])
         events = workflow["on"]
-        self.assertEqual({"pull_request", "pull_request_review"}, set(events))
+        # F1 part 1 (#426 6130207025): the seal and the threads change a verdict too.
+        self.assertEqual(
+            {
+                "pull_request",
+                "pull_request_review",
+                "pull_request_review_thread",
+                "issue_comment",
+            },
+            set(events),
+        )
         # cubic on #426: a draft is denied (M1), so turning one back into a draft
         # changes the verdict.
         self.assertLessEqual(
@@ -85,6 +130,36 @@ class TriggerWorkflowTests(unittest.TestCase):
             {"submitted", "edited", "dismissed"},
             set(events["pull_request_review"]["types"]),
         )
+        self.assertEqual(
+            {"resolved", "unresolved"},
+            set(events["pull_request_review_thread"]["types"]),
+        )
+        # A deleted or edited seal must wake the relay as a created one does.
+        self.assertEqual(
+            {"created", "edited", "deleted"}, set(events["issue_comment"]["types"])
+        )
+
+    def test_a_comment_is_relayed_by_its_author_never_by_its_body(self) -> None:
+        """The Router's F1: a filter on the body's prefix would miss an edit that
+        removes it. The filter is the declarer's identity, as
+        `policy/merge-authorities.yaml` declares it, and only an efficiency filter:
+        the protected side re-reads the seal."""
+        job = _load(TRIGGER)["jobs"]["relay-comment"]
+        self.assertEqual(
+            "github.event_name == 'issue_comment' && github.event.issue.pull_request"
+            f" && github.event.comment.user.login == '{_declarer()}'",
+            _normalized(job["if"]),
+        )
+        self.assertNotIn("body", str(job["if"]))
+        (step,) = _steps(job)
+        self.assertEqual(UPLOAD_ACTION, step["uses"])
+        self.assertEqual("${{ github.event_path }}", step["with"]["path"])
+        self.assertEqual("merge-admission-event", step["with"]["name"])
+        self.assertEqual("error", step["with"]["if-no-files-found"])
+
+    def test_the_wake_job_leaves_comments_to_the_relay(self) -> None:
+        job = _load(TRIGGER)["jobs"]["wake"]
+        self.assertEqual("github.event_name != 'issue_comment'", _normalized(job["if"]))
 
     def test_it_holds_nothing(self) -> None:
         text = TRIGGER.read_text(encoding="utf-8")
@@ -95,9 +170,45 @@ class TriggerWorkflowTests(unittest.TestCase):
         for name, job in workflow["jobs"].items():
             with self.subTest(job=name):
                 self.assertNotIn("environment", job)
-                self.assertNotIn("permissions", job)
+                self.assertIn(job.get("permissions", {}), ({},))
                 for step in _steps(job):
-                    self.assertNotIn("uses", step)
+                    self.assertIn(step.get("uses"), (None, UPLOAD_ACTION))
+                    self.assertNotIn("run", step if step.get("uses") else {})
+
+
+class DeliveredCommentHintTests(unittest.TestCase):
+    """The relayed comment's pull request, parsed once in the shared module of event
+    fields, as a hint: it is re-read before anything relies on it."""
+
+    def test_a_pull_request_comment_names_its_number(self) -> None:
+        from tools import github_events
+
+        for action in ("created", "edited", "deleted"):
+            with self.subTest(action):
+                event = {"action": action, "issue": {"number": 426, "pull_request": {}}}
+                self.assertEqual(
+                    426, github_events.delivered_comment_pull_number(event)
+                )
+
+    def test_an_issue_comment_names_none(self) -> None:
+        from tools import github_events
+
+        event = {"action": "created", "issue": {"number": 407}}
+        self.assertIsNone(github_events.delivered_comment_pull_number(event))
+
+    def test_a_malformed_event_is_refused(self) -> None:
+        from tools import github_events
+
+        for name, event in (
+            ("not an object", []),
+            ("no issue", {}),
+            ("a boolean", {"issue": {"number": True, "pull_request": {}}}),
+            ("a string", {"issue": {"number": "426", "pull_request": {}}}),
+            ("zero", {"issue": {"number": 0, "pull_request": {}}}),
+            ("a list pull request", {"issue": {"number": 426, "pull_request": []}}),
+        ):
+            with self.subTest(name), self.assertRaises(ValueError):
+                github_events.delivered_comment_pull_number(event)
 
 
 class AdmissionWorkflowTests(unittest.TestCase):
@@ -132,39 +243,84 @@ class AdmissionWorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertIn(MAIN_ONLY, str(job.get("if", "")))
 
-    def test_a_workflow_run_counts_only_from_its_named_files(self) -> None:
-        """Rule 7: `workflow_run` matches by name, so the path and the event of the
-        triggering run are admitted explicitly."""
-
-        conditions = " ".join(
-            str(job.get("if", "")) for job in _load(ADMISSION)["jobs"].values()
-        )
-        for needle in (
-            ".github/workflows/merge-admission-trigger.yml",
-            ".github/workflows/verification.yml",
-            "github.event.workflow_run.event == 'pull_request'",
-            "github.event.workflow_run.event == 'pull_request_review'",
+    def test_each_job_s_condition_is_exactly_its_own(self) -> None:
+        """Rule 7, Kilo's failed selection and the trigger's conclusion, pinned whole:
+        `workflow_run` matches by name, so the path and the event are admitted
+        explicitly, and only a successful trigger run counts."""
+        jobs = _load(ADMISSION)["jobs"]
+        for name, expected in (
+            ("subjects", SUBJECTS_IF),
+            ("invalidate", INVALIDATE_IF),
+            ("readback", AFTER_INVALIDATION_IF),
+            ("admit", AFTER_INVALIDATION_IF),
         ):
-            with self.subTest(needle=needle):
-                self.assertIn(needle, conditions)
-
-    def test_a_failed_selection_starts_no_readback(self) -> None:
-        """Kilo on #426: a failed `subjects` job leaves no list to expand."""
-        condition = str(_load(ADMISSION)["jobs"]["readback"]["if"])
-        self.assertIn("needs.subjects.result == 'success'", condition)
+            with self.subTest(job=name):
+                self.assertEqual(expected, _normalized(jobs[name]["if"]))
 
     def test_permissions_are_granted_per_job(self) -> None:
         """SonarCloud S8264 on #426: the workflow grants nothing, and each job only
-        the reads it needs."""
+        the reads it needs. Only `subjects` reads another run's artifact (the
+        relayed comment), and `admit` reads no Actions state (cubic r4251444300)."""
         workflow = _load(ADMISSION)
         self.assertEqual({}, workflow["permissions"])
-        for name, job in workflow["jobs"].items():
+        jobs = workflow["jobs"]
+        self.assertEqual(
+            {"contents": "read", "pull-requests": "read", "actions": "read"},
+            jobs["subjects"]["permissions"],
+        )
+        self.assertEqual({"contents": "read"}, jobs["invalidate"]["permissions"])
+        self.assertNotIn("actions", jobs["admit"]["permissions"])
+        for name, job in jobs.items():
             with self.subTest(job=name):
                 self.assertTrue(job.get("permissions"))
 
-    def test_only_a_successful_trigger_run_counts(self) -> None:
-        conditions = str(_load(ADMISSION)["jobs"]["subjects"]["if"])
-        self.assertIn("github.event.workflow_run.conclusion == 'success'", conditions)
+    def test_the_relayed_comment_is_downloaded_from_its_trigger_run(self) -> None:
+        steps = _steps(_load(ADMISSION)["jobs"]["subjects"])
+        (download,) = [s for s in steps if s.get("uses") == DOWNLOAD_ACTION]
+        self.assertEqual(
+            "github.event_name == 'workflow_run'"
+            " && github.event.workflow_run.event == 'issue_comment'",
+            _normalized(download["if"]),
+        )
+        self.assertEqual("merge-admission-event", download["with"]["name"])
+        self.assertEqual(
+            "${{ github.event.workflow_run.id }}", download["with"]["run-id"]
+        )
+        self.assertEqual("${{ github.token }}", download["with"]["github-token"])
+        self.assertEqual(
+            "${{ runner.temp }}/gnostoa-merge-admission-relay", download["with"]["path"]
+        )
+
+    def test_invalidation_precedes_every_acquisition(self) -> None:
+        jobs = _load(ADMISSION)["jobs"]
+        self.assertEqual("subjects", jobs["invalidate"]["needs"])
+        self.assertEqual(["subjects", "invalidate"], jobs["readback"]["needs"])
+        self.assertEqual(["subjects", "invalidate", "readback"], jobs["admit"]["needs"])
+        record = [
+            s for s in _steps(jobs["invalidate"]) if s.get("uses") == UPLOAD_ACTION
+        ]
+        self.assertEqual(1, len(record))
+        self.assertEqual(
+            "gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}"
+            "-${{ matrix.subject.head }}",
+            record[0]["with"]["name"],
+        )
+        fetched = [
+            s
+            for s in _steps(jobs["admit"])
+            if s.get("uses") == DOWNLOAD_ACTION
+            and str(s["with"]["name"]).startswith("gnostoa-merge-admission-pending-")
+        ]
+        self.assertEqual(1, len(fetched))
+        self.assertEqual(record[0]["with"]["name"], fetched[0]["with"]["name"])
+        self.assertNotIn("run-id", fetched[0]["with"])
+
+    def test_a_failed_evaluation_still_completes_the_run(self) -> None:
+        steps = _steps(_load(ADMISSION)["jobs"]["admit"])
+        (publish,) = [
+            s for s in steps if s.get("name") == "Publish the verdict on the exact head"
+        ]
+        self.assertEqual("${{ !cancelled() }}", publish["if"])
 
     def test_the_inventory_is_re_read_through_the_existing_readback(self) -> None:
         jobs = _load(ADMISSION)["jobs"]
@@ -178,22 +334,29 @@ class AdmissionWorkflowTests(unittest.TestCase):
         self.assertIn("pull_number", callers[0]["with"])
         self.assertIn("head", callers[0]["with"])
 
-    def test_only_the_publishing_job_holds_the_dedicated_app(self) -> None:
+    def test_only_the_publishing_jobs_hold_the_dedicated_app(self) -> None:
         jobs = _load(ADMISSION)["jobs"]
         holders = {
             name: job
             for name, job in jobs.items()
             if job.get("environment") == "gnostoa-ma0"
         }
-        self.assertEqual(1, len(holders))
-        (job,) = holders.values()
-        minting = [step for step in _steps(job) if step.get("uses") == APP_MINT_ACTION]
-        self.assertEqual(1, len(minting))
-        inputs = minting[0].get("with", {})
-        permissions = {k: v for k, v in inputs.items() if k.startswith("permission-")}
-        self.assertEqual({"permission-checks": "write"}, permissions)
-        # cubic on #426: without the App's id no token is minted (the shadow).
-        self.assertEqual("${{ vars.GNOSTOA_MA0_APP_ID != '' }}", minting[0].get("if"))
+        self.assertEqual({"invalidate", "admit"}, set(holders))
+        gates = {
+            # cubic on #426: without the App's id no token is minted (the shadow).
+            "invalidate": "${{ vars.GNOSTOA_MA0_APP_ID != '' }}",
+            "admit": "${{ !cancelled() && vars.GNOSTOA_MA0_APP_ID != '' }}",
+        }
+        for name, job in holders.items():
+            with self.subTest(job=name):
+                minting = [s for s in _steps(job) if s.get("uses") == APP_MINT_ACTION]
+                self.assertEqual(1, len(minting))
+                inputs = minting[0].get("with", {})
+                permissions = {
+                    k: v for k, v in inputs.items() if k.startswith("permission-")
+                }
+                self.assertEqual({"permission-checks": "write"}, permissions)
+                self.assertEqual(gates[name], minting[0].get("if"))
         for other_name, other in jobs.items():
             if other_name in holders:
                 continue
@@ -215,17 +378,25 @@ class AdmissionWorkflowTests(unittest.TestCase):
         expected = {
             ("subjects", "Select the subjects"): (
                 "--mode subjects",
+                'hint="$(PYTHONPATH=. python ci/merge_admission_relay.py hint)"',
+                'args+=(--pull-number "${hint}")',
                 'PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"',
+            ),
+            ("invalidate", "Invalidate a standing success on the exact head"): (
+                "PYTHONPATH=. python ci/merge_admission_relay.py invalidate \\",
             ),
             ("admit", "Evaluate the exact subject"): (
                 "PYTHONPATH=. python ci/review_github_current_state.py"
                 " --mode merge-evidence \\",
+                "&& PYTHONPATH=. python ci/review_github_current_state.py"
+                " --mode open-heads \\",
                 "&& PYTHONPATH=. python -m tools.cli merge-evidence --project-root ."
                 ' "${bundle[@]}" \\',
                 "PYTHONPATH=. python -m tools.cli merge-admission --project-root . \\",
+                "PYTHONPATH=. python -m tools.cli merge-evidence --project-root . \\",
             ),
             ("admit", "Publish the verdict on the exact head"): (
-                "PYTHONPATH=. python ci/merge_admission_relay.py \\",
+                "PYTHONPATH=. python ci/merge_admission_relay.py publish \\",
             ),
         }
         for (job, name), lines in expected.items():
@@ -235,22 +406,48 @@ class AdmissionWorkflowTests(unittest.TestCase):
             for line in lines:
                 with self.subTest(step=name, line=line):
                     self.assertIn(line, executable)
-        self.assertNotIn("pull_request_target", ADMISSION.read_text(encoding="utf-8"))
+        text = ADMISSION.read_text(encoding="utf-8")
+        self.assertNotIn("pull_request_target", text)
+        # No path reaches the relay from the command line (SonarCloud S8707).
+        for job, name in (
+            ("invalidate", "Invalidate a standing success on the exact head"),
+            ("admit", "Publish the verdict on the exact head"),
+        ):
+            (step,) = [s for s in _steps(jobs[job]) if s.get("name") == name]
+            for line in _run_lines(step):
+                for option in (
+                    "--work-dir",
+                    "--evaluated",
+                    "--current",
+                    "--verdict ",
+                    "--output",
+                ):
+                    with self.subTest(step=name, option=option):
+                        self.assertNotIn(option, line)
 
 
 class ActivationRunbookTests(unittest.TestCase):
     """The owner's activation steps in the merge-gate runbook (#407, MA0 1b.4)."""
 
     @staticmethod
-    def _steps() -> dict[str, str]:
+    def _section() -> str:
         text = RUNBOOK.read_text(encoding="utf-8")
-        section = text.split("### Merge admission (MA0 1b.4)", 1)[1]
-        section = section.split("\n### ", 1)[0].split("**Owner operations.**", 1)[1]
-        return {
-            match.group(1): line
-            for line in section.splitlines()
-            if (match := re.match(r"(\d+)\. ", line))
-        }
+        return text.split("### Merge admission (MA0 1b.4)", 1)[1].split("\n### ", 1)[0]
+
+    @classmethod
+    def _steps(cls) -> dict[str, str]:
+        """Each numbered owner operation with its indented lines."""
+        section = cls._section().split("**Owner operations.**", 1)[1]
+        steps: dict[str, str] = {}
+        current = ""
+        for line in section.splitlines():
+            match = re.match(r"(\d+)\. ", line)
+            if match:
+                current = match.group(1)
+                steps[current] = line
+            elif current and line.startswith(" "):
+                steps[current] += "\n" + line
+        return steps
 
     def test_the_credentials_are_the_environment_s(self) -> None:
         """cubic on #426: a repository secret reaches every branch's workflows, the
@@ -266,6 +463,23 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertNotIn("or explicitly routed", step)
         self.assertIn("**the owner explicitly chooses**", step)
         self.assertIn("activation stays pending", step)
+
+    def test_activation_waits_for_the_live_proofs_f1_names(self) -> None:
+        """The Router's F1: a same-named pending run is no proof by itself that
+        GitHub stopped using an older success, and the dispatch's run id is not yet
+        exercised here. Both are read back natively before activation."""
+        step = self._steps()["4"]
+        self.assertIn("a pending run over an older success", step)
+        self.assertIn("App-pinned", step)
+        self.assertIn("`workflow_run_id`", step)
+
+    def test_the_merge_after_activation_obtains_its_own_admission(self) -> None:
+        text = RUNBOOK.read_text(encoding="utf-8")
+        procedure = text.split("## Procedure", 1)[1]
+        step8 = procedure.split("8. **The merge.**", 1)[1].split("\n9. ", 1)[0]
+        self.assertIn("ci/merge_admission_guard.py", step8)
+        guard = step8.index("ci/merge_admission_guard.py")
+        self.assertLess(guard, step8.rindex("--match-head-commit"))
 
 
 class ReadbackCallTests(unittest.TestCase):
@@ -359,6 +573,95 @@ class L1ModeTests(unittest.TestCase):
             except SystemExit as exc:
                 # A message instead of a status exits 1, as Python's own exit does.
                 return exc.code if isinstance(exc.code, int) else 1
+
+    @staticmethod
+    def _open(number: int, head: str, *, base: str = "main") -> dict[str, Any]:
+        return {
+            "number": number,
+            "state": "open",
+            "html_url": f"https://github.com/ktogias/gnostoa/pull/{number}",
+            "head": {"sha": head, "repo": {"full_name": "someone/fork"}},
+            "base": {"sha": "b" * 40, "ref": base},
+        }
+
+    def test_open_heads_reads_the_whole_population_with_each_head(self) -> None:
+        """H1 (#426 6131149850): every open pull request of the repository, whatever
+        its author, fork or target, from L1's one enumeration, every page read."""
+        module = adapter_fixture()
+        first = [self._open(n, f"{n:040x}") for n in range(1, 101)]
+        second = [self._open(426, HEAD, base="release")]
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies = {
+            listing: (first, {"link": f'<{listing}&page=2>; rel="next"'}),
+            f"{listing}&page=2": (second, {}),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "population.json"
+            code = self._run(
+                module,
+                replies,
+                "--mode",
+                "open-heads",
+                "--repository",
+                "ktogias/gnostoa",
+                "--output",
+                str(output),
+            )
+            self.assertEqual(0, code)
+            population = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual("COMPLETE", population["coverage"])
+        pulls = population["pulls"]
+        self.assertEqual(101, len(pulls))
+        self.assertEqual({"pull_number": 426, "head": HEAD}, pulls[-1])
+        self.assertEqual(
+            sorted(p["pull_number"] for p in pulls), [p["pull_number"] for p in pulls]
+        )
+        # The sweep's projection of the same enumeration is unchanged.
+        self.assertEqual(
+            [*range(1, 101), 426],
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
+            module._open_pull_numbers(paged_fake_fixture(replies), "ktogias/gnostoa"),
+        )
+
+    def test_the_sweep_keeps_a_repeated_number_once(self) -> None:
+        """The Router's H1: the sweep's projection of the one enumeration is
+        unchanged, so a number an overlapping page repeats is kept once there, while
+        the population refuses a number listed at two heads."""
+        module = adapter_fixture()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies = {listing: ([self._open(1, HEAD), self._open(1, "c" * 40)], {})}
+        self.assertEqual(
+            [1],
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
+            module._open_pull_numbers(paged_fake_fixture(replies), "ktogias/gnostoa"),
+        )
+        with self.assertRaises(module.ProviderReadError):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
+            module._open_pulls(paged_fake_fixture(replies), "ktogias/gnostoa")
+
+    def test_open_heads_refuses_an_incomplete_or_conflicting_population(self) -> None:
+        module = adapter_fixture()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        broken = self._open(2, "c" * 40)
+        broken["head"] = {"sha": "short"}
+        for name, items in (
+            ("a malformed item", [self._open(1, HEAD), broken]),
+            ("a repeated number", [self._open(1, HEAD), self._open(1, "c" * 40)]),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
+                output = Path(raw) / "population.json"
+                code = self._run(
+                    module,
+                    {listing: (items, {})},
+                    "--mode",
+                    "open-heads",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--output",
+                    str(output),
+                )
+                self.assertNotEqual(0, code)
+                self.assertFalse(output.exists())
 
     def test_subjects_from_a_hint_read_each_head_natively(self) -> None:
         module = adapter_fixture()

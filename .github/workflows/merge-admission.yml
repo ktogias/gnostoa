@@ -6,9 +6,15 @@ name: Merge admission
 # completion), and a sweep covers what no event names, such as a fork's pull request.
 # An event's pull requests are hints only: L1 re-reads each subject, the analyzer
 # readback re-reads the inventory at the admission point, and the existing verdict
-# decides. The relay publishes only while the evidence is unchanged. Until
-# `gnostoa-ma0` and its environment exist, the run is a shadow and publishes nothing.
-# Decision 0110's Phase-1a procedure governs merges until R-main requires the check.
+# decides. Until `gnostoa-ma0` and its environment exist, the run is a shadow and
+# publishes nothing. Decision 0110's Phase-1a procedure governs merges until R-main
+# requires the check.
+#
+# F1 (the Decisions Router on #426, 6130207025): before anything is acquired again, a
+# success the App published on the head stops standing (`invalidate`), and the run
+# completes that pending run with the verdict, which is published only while its
+# evidence is unchanged. H1 (6131149850): a success needs this pull request alone at
+# its head in the complete open population, read beside each snapshot.
 on:
   workflow_run:
     workflows: ["Merge admission trigger", "Gnostoa verification"]
@@ -23,8 +29,8 @@ on:
         type: number
 
 # The workflow grants nothing; each job grants its own reads (SonarCloud S8264 on
-# #426). The only write, the check run, is the `gnostoa-ma0` App's, minted in the
-# publishing job alone.
+# #426). The only writes, the check runs, are the `gnostoa-ma0` App's, minted in the
+# two jobs that hold its environment.
 permissions: {}
 
 # Admissions queue, one at a time, and none is cancelled, as the readback's do.
@@ -37,8 +43,8 @@ jobs:
   subjects:
     # Each admitted event is named. `workflow_run` matches the triggering workflow by
     # name, so a same-named workflow on any branch could start this run: only the
-    # trigger's pull-request and review runs, and verification's pull-request runs,
-    # count (Decision 0096 rule 7).
+    # trigger's successful runs, for the events it is written for, and verification's
+    # pull-request runs, count (Decision 0096 rule 7).
     if: >-
       github.ref == 'refs/heads/main'
       && (github.event_name == 'schedule'
@@ -46,15 +52,16 @@ jobs:
           || (github.event_name == 'workflow_run'
               && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
                    && github.event.workflow_run.conclusion == 'success'
-                   && (github.event.workflow_run.event == 'pull_request'
-                       || github.event.workflow_run.event == 'pull_request_review'))
+                   && contains(fromJSON('["pull_request","pull_request_review","pull_request_review_thread","issue_comment"]'), github.event.workflow_run.event))
                   || (github.event.workflow_run.path == '.github/workflows/verification.yml'
                       && github.event.workflow_run.event == 'pull_request'))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # `actions: read` downloads the comment event the trigger relayed, from its run.
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       subjects: ${{ steps.subjects.outputs.subjects }}
     steps:
@@ -80,6 +87,16 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/runtime.lock
+      # Downloaded after the checkout and outside the workspace, as data only: the
+      # relay derives the pull request from it in protected code.
+      - name: Download the comment event the trigger relayed
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'issue_comment'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: merge-admission-event
+          path: ${{ runner.temp }}/gnostoa-merge-admission-relay
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
       # The event's pull requests reach only L1, through the environment; L1 reads
       # each one's current head and drops a closed one.
       - name: Select the subjects
@@ -87,6 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
           DISPATCH_PULL: ${{ inputs.pull_number }}
         run: |
           set -euo pipefail
@@ -99,16 +117,94 @@ jobs:
           if [[ -n "${DISPATCH_PULL:-}" ]]; then
             args+=(--pull-number "${DISPATCH_PULL}")
           fi
+          if [[ "${TRIGGER_EVENT:-}" == "issue_comment" ]]; then
+            hint="$(PYTHONPATH=. python ci/merge_admission_relay.py hint)"
+            if [[ -n "${hint}" ]]; then
+              args+=(--pull-number "${hint}")
+            fi
+          fi
           PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"
           printf 'subjects=%s\n' "$(cat "${RUNNER_TEMP}/gnostoa-merge-admission-subjects.json")" \
             >> "${GITHUB_OUTPUT}"
 
-  readback:
-    # The admission point re-reads the inventory (Decision 0112), through the existing
-    # main-only readback and its `analyzer-readback` environment, for the exact subject.
+  invalidate:
+    # F1 part 2: before the readback or the evaluation acquires anything, a success
+    # the App's latest run stands on is replaced by a pending run of the App. The
+    # record of what was observed passes to `admit` inside this protected run.
     needs: subjects
     if: >-
       github.ref == 'refs/heads/main'
+      && needs.subjects.result == 'success'
+      && needs.subjects.outputs.subjects != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
+    environment: gnostoa-ma0
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install exact runtime dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/runtime.lock
+      - name: Mint gnostoa-ma0's installation token
+        id: token
+        if: ${{ vars.GNOSTOA_MA0_APP_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.GNOSTOA_MA0_APP_ID }}
+          private-key: ${{ secrets.GNOSTOA_MA0_PRIVATE_KEY }}
+          permission-checks: write
+      - name: Invalidate a standing success on the exact head
+        env:
+          GNOSTOA_MA0_TOKEN: ${{ steps.token.outputs.token }}
+          GNOSTOA_MA0_APP_ID: ${{ vars.GNOSTOA_MA0_APP_ID }}
+          EXPECTED_HEAD: ${{ matrix.subject.head }}
+        run: |
+          set -euo pipefail
+          app=()
+          if [ -n "${GNOSTOA_MA0_APP_ID}" ]; then
+            app=(--app-id "${GNOSTOA_MA0_APP_ID}")
+          fi
+          PYTHONPATH=. python ci/merge_admission_relay.py invalidate \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-head "${EXPECTED_HEAD}" \
+            "${app[@]}"
+      - name: Upload the invalidation record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          path: ${{ runner.temp }}/gnostoa-merge-admission/pending.json
+          if-no-files-found: warn
+
+  readback:
+    # The admission point re-reads the inventory (Decision 0112), through the existing
+    # main-only readback and its `analyzer-readback` environment, for the exact
+    # subject, after the invalidation, whatever its outcome.
+    needs: [subjects, invalidate]
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
       && needs.subjects.result == 'success'
       && needs.subjects.outputs.subjects != '[]'
     strategy:
@@ -128,8 +224,9 @@ jobs:
 
   admit:
     # A readback that binds no subject fails its job and writes no bundle; the
-    # evaluation still runs, and the missing items deny.
-    needs: [subjects, readback]
+    # evaluation still runs, and the missing items deny. A failed invalidation leaves
+    # no record, and without one no success is written.
+    needs: [subjects, invalidate, readback]
     if: >-
       always()
       && github.ref == 'refs/heads/main'
@@ -142,13 +239,13 @@ jobs:
     environment: gnostoa-ma0
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # No `actions: read`: both downloads are this run's own artifacts (cubic on #426).
     permissions:
       contents: read
       pull-requests: read
       issues: read
       checks: read
       statuses: read
-      actions: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -177,8 +274,17 @@ jobs:
         with:
           name: gnostoa-analyzer-readback-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
           path: ${{ runner.temp }}/gnostoa-merge-admission-readback
-      # Evaluate, then read the subject again and rebuild the evidence: the relay
-      # publishes only if the two agree, observation times aside.
+      # This run's own invalidation record; data, never executed.
+      - name: Download the invalidation record
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          path: ${{ runner.temp }}/gnostoa-merge-admission
+      # Evaluate, then read the subject and the open population again and rebuild the
+      # evidence: the relay publishes only if the two agree, observation times aside.
+      # The current evidence is also rebuilt without the bundle, the document the
+      # guarded merge can rebuild itself.
       - name: Evaluate the exact subject
         id: evaluate
         env:
@@ -198,6 +304,8 @@ jobs:
             PYTHONPATH=. python ci/review_github_current_state.py --mode merge-evidence \
               --repository "${GITHUB_REPOSITORY}" --pull-number "${PULL_NUMBER}" \
               --output "${work}/$1-snapshot.json" \
+            && PYTHONPATH=. python ci/review_github_current_state.py --mode open-heads \
+              --repository "${GITHUB_REPOSITORY}" --output "${work}/$1-population.json" \
             && PYTHONPATH=. python -m tools.cli merge-evidence --project-root . "${bundle[@]}" \
               < "${work}/$1-snapshot.json" > "${work}/$1-evidence.json"
           }
@@ -207,37 +315,37 @@ jobs:
             < "${work}/evaluated-evidence.json" > "${work}/verdict.json" || status=$?
           echo "verdict_exit=${status}" >> "${GITHUB_OUTPUT}"
           evidence current || exit 2
+          PYTHONPATH=. python -m tools.cli merge-evidence --project-root . \
+            < "${work}/current-snapshot.json" > "${work}/current-unbundled-evidence.json" \
+            || exit 2
       - name: Mint gnostoa-ma0's installation token
         id: token
-        if: ${{ vars.GNOSTOA_MA0_APP_ID != '' }}
+        if: ${{ !cancelled() && vars.GNOSTOA_MA0_APP_ID != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           app-id: ${{ vars.GNOSTOA_MA0_APP_ID }}
           private-key: ${{ secrets.GNOSTOA_MA0_PRIVATE_KEY }}
           permission-checks: write
+      # Also after a failed evaluation: the pending run is then completed as INCOMPLETE,
+      # a failure, never left to look like an evaluation that might still pass.
       - name: Publish the verdict on the exact head
+        if: ${{ !cancelled() }}
         env:
           GNOSTOA_MA0_TOKEN: ${{ steps.token.outputs.token }}
           GNOSTOA_MA0_APP_ID: ${{ vars.GNOSTOA_MA0_APP_ID }}
           VERDICT_EXIT: ${{ steps.evaluate.outputs.verdict_exit }}
           EXPECTED_HEAD: ${{ matrix.subject.head }}
         run: |
-          set -eu
-          work="${RUNNER_TEMP}/gnostoa-merge-admission"
+          set -euo pipefail
           app=()
           if [ -n "${GNOSTOA_MA0_APP_ID}" ]; then
             app=(--app-id "${GNOSTOA_MA0_APP_ID}")
           fi
-          PYTHONPATH=. python ci/merge_admission_relay.py \
+          PYTHONPATH=. python ci/merge_admission_relay.py publish \
             --repository "${GITHUB_REPOSITORY}" \
-            --work-dir "${work}" \
             --expected-head "${EXPECTED_HEAD}" \
             "${app[@]}" \
-            --evaluated "${work}/evaluated-evidence.json" \
-            --current "${work}/current-evidence.json" \
-            --verdict "${work}/verdict.json" \
-            --verdict-exit "${VERDICT_EXIT}" \
-            --output "${work}/result.json"
+            --verdict-exit "${VERDICT_EXIT:--1}"
       - name: Upload the non-secret admission record
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -245,6 +353,8 @@ jobs:
           name: gnostoa-merge-admission-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
           path: |
             ${{ runner.temp }}/gnostoa-merge-admission/*-evidence.json
+            ${{ runner.temp }}/gnostoa-merge-admission/*-population.json
             ${{ runner.temp }}/gnostoa-merge-admission/verdict.json
+            ${{ runner.temp }}/gnostoa-merge-admission/pending.json
             ${{ runner.temp }}/gnostoa-merge-admission/result.json
           if-no-files-found: warn

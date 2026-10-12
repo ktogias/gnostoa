@@ -771,6 +771,9 @@ guardrails:
     guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
     implementation:
       - ci/merge_admission_relay.py
+      - ci/merge_admission_guard.py
+      - tools/merge_admission_checks.py
+      - tools/github_events.py
       - tools/github_rest.py
       - .github/workflows/merge-admission.yml
       - .github/workflows/merge-admission-trigger.yml
@@ -782,6 +785,7 @@ guardrails:
     tests:
       - tests/test_merge_admission_relay.py
       - tests/test_merge_admission_workflows.py
+      - tests/test_merge_admission_guard.py
       - tests/test_github_rest.py
   - id: github-merge-evidence
     title: A GitHub pull request's merge evidence comes from L1's snapshot and the protected target's declarations, and an incomplete read never passes as complete
@@ -984,6 +988,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_another_app_s_check_of_that_name_gives_nothing
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_a_passed_gate_never_gives_the_inventory
       - tests/test_merge_evidence_github.py::CommandTests.test_the_command_refuses_inconsistent_producer_routes
+      - tests/test_merge_evidence_github.py::CommandTests.test_the_command_s_evidence_is_the_shared_function_s
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_a_foreign_pull_request_s_gate_is_not_this_one_s
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_s_receipt_names_its_qualification
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_manifest_qualifies_sonarcloud_s_gate_only

@@ -1695,19 +1695,48 @@ def _workflow_run_pull_numbers(raw: str) -> list[int]:
         raise ProviderReadError(str(exc)) from exc
 
 
-def _open_pull_numbers(
+def _open_pull_listing(
     client: JsonReader,
     repository: str,
-) -> list[int]:
+) -> list[dict[str, Any]]:
+    """Every open Pull Request of the repository with its head, from one complete
+    enumeration, whatever its author, fork or target. An enumeration that is not
+    COMPLETE is refused."""
     root = f"{_API_ROOT}/repos/{repository}"
     pulls, coverage = _collect_pages(
         client,
         f"{root}/pulls?state=open&per_page=100",
-        normalize=lambda item: {"number": _normalize_pull(item)["number"]},
+        normalize=lambda item: {
+            key: _normalize_pull(item)[key] for key in ("number", "head_sha")
+        },
     )
     if coverage["status"] != "COMPLETE":
         raise ProviderReadError("open Pull Request enumeration is incomplete")
-    return sorted({item["number"] for item in pulls})
+    return pulls
+
+
+def _open_pulls(
+    client: JsonReader,
+    repository: str,
+) -> list[dict[str, Any]]:
+    """The open population, each Pull Request once with its head (H1 on #426). A
+    number listed at two heads contradicts itself, so it is refused rather than
+    reconciled; one listed twice at one head, as an overlapping page lists it, is
+    kept once."""
+    heads: dict[int, str] = {}
+    for item in _open_pull_listing(client, repository):
+        if heads.setdefault(item["number"], item["head_sha"]) != item["head_sha"]:
+            raise ProviderReadError(
+                "open Pull Request enumeration lists a number at two heads"
+            )
+    return [{"number": number, "head_sha": heads[number]} for number in sorted(heads)]
+
+
+def _open_pull_numbers(
+    client: JsonReader,
+    repository: str,
+) -> list[int]:
+    return sorted({item["number"] for item in _open_pull_listing(client, repository)})
 
 
 def _select_scheduled_pull_batch(
@@ -1941,7 +1970,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=("collect", "publish", "subjects", "merge-evidence"),
+        choices=("collect", "publish", "subjects", "merge-evidence", "open-heads"),
         required=True,
     )
     parser.add_argument("--repository", required=True)
@@ -2056,6 +2085,26 @@ def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     return 0
 
 
+def _open_heads_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the complete open population with each head, the population the
+    merge-admission relay binds a success to (H1 on #426). Nothing is written when
+    the enumeration is incomplete."""
+    if args.output is None:
+        raise SystemExit("--output is required for open-heads")
+    try:
+        pulls = _open_pulls(client, args.repository)
+    except ProviderReadError as exc:
+        raise SystemExit(f"open-heads: {exc}") from exc
+    population = {
+        "coverage": "COMPLETE",
+        "pulls": [
+            {"pull_number": item["number"], "head": item["head_sha"]} for item in pulls
+        ],
+    }
+    args.output.write_text(json.dumps(population, sort_keys=True), encoding="utf-8")
+    return 0
+
+
 def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Write one Pull Request's merge-evidence snapshot, the document `knowledge
     merge-evidence` reads (#407, slice 1b.4), bounded as that command bounds its
@@ -2112,6 +2161,7 @@ def main(argv: list[str] | None = None) -> int:
         "collect": _collect_mode,
         "subjects": _subjects_mode,
         "merge-evidence": _merge_evidence_mode,
+        "open-heads": _open_heads_mode,
     }
     return modes.get(args.mode, _publish_mode)(args, client)
 
