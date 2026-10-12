@@ -16,8 +16,10 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess  # nosec B404 -- the test's own git repository
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -69,9 +71,60 @@ def _guard() -> Any:
     return module
 
 
+# The guard's nonce in these tests, and another dispatch's.
+NONCE = "ab" * 16
+FOREIGN = "cd" * 16
+DISPATCHES = f"{API}/dispatches"
+LATEST = f"{API}/commits/{HEAD}/check-runs?check_name=merge-admission&filter=latest&per_page=100"
+
+
+def _check(
+    identifier: int,
+    *,
+    nonce: str | None = NONCE,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    run: int = RUN,
+    attempt: int = 1,
+    revision: str = MAIN,
+    digest: str | None = None,
+    app: int = MA0_APP,
+    head: str = HEAD,
+) -> dict[str, Any]:
+    """A run of the check as the pinned App writes it, with its correlation block."""
+    recorded = (
+        merge_admission_checks.digest(EVIDENCE)
+        if digest is None and status == "completed"
+        else digest
+    )
+    correlation = {
+        "workflow_run_id": run,
+        "run_attempt": attempt,
+        "protected_revision": revision,
+        "nonce": nonce,
+        "unbundled_evidence_sha256": recorded,
+    }
+    return {
+        "id": identifier,
+        "name": "merge-admission",
+        "head_sha": head,
+        "status": status,
+        "conclusion": conclusion if status == "completed" else None,
+        "external_id": "e" * 64,
+        "app": {"id": app, "slug": "gnostoa-ma0"},
+        "output": {
+            "title": "merge-admission",
+            "summary": "s",
+            "text": merge_admission_checks.correlation_text(correlation),
+        },
+    }
+
+
 class _GitHub:
-    """The provider as the guard reads it. It answers the reads it was given and the
-    one dispatch; it has no merge, so a guard that tried to merge would fail."""
+    """The provider as the guard reads it. A repository dispatch answers with no body,
+    as GitHub's `204` does, so no run id is ever handed back. The pinned App's latest
+    run on the head moves along `timeline`, one state per read, the last one kept. It
+    has no merge, so a guard that tried to merge would fail."""
 
     def __init__(self) -> None:
         self.pull = {
@@ -81,42 +134,27 @@ class _GitHub:
             "base": {"ref": "main"},
         }
         self.main = MAIN
-        self.dispatched: dict[str, Any] | None = {
-            "workflow_run_id": RUN,
-            "run_url": f"{API}/actions/runs/{RUN}",
-            "html_url": f"https://github.com/{REPOSITORY}/actions/runs/{RUN}",
-        }
+        # An older success with no nonce, then this dispatch's pending run, then its
+        # completed success.
+        self.timeline: list[dict[str, Any] | None] = [
+            _check(CHECK - 7, nonce=None),
+            _check(CHECK, status="in_progress", conclusion=None),
+            _check(CHECK),
+        ]
+        self.position = -1
         self.run = {
             "id": RUN,
             "path": ".github/workflows/merge-admission.yml",
-            "event": "workflow_dispatch",
+            "event": "repository_dispatch",
             "head_branch": "main",
             "head_sha": MAIN,
             "run_attempt": 1,
             "status": "completed",
             "conclusion": "success",
+            "repository": {"full_name": REPOSITORY},
         }
         self.running_reads = 0
-        correlation = {
-            "workflow_run_id": RUN,
-            "run_attempt": 1,
-            "protected_revision": MAIN,
-            "unbundled_evidence_sha256": merge_admission_checks.digest(EVIDENCE),
-        }
-        self.check = {
-            "id": CHECK,
-            "name": "merge-admission",
-            "head_sha": HEAD,
-            "status": "completed",
-            "conclusion": "success",
-            "external_id": "e" * 64,
-            "app": {"id": MA0_APP, "slug": "gnostoa-ma0"},
-            "output": {
-                "title": "merge-admission: ALLOW",
-                "summary": "s",
-                "text": merge_admission_checks.correlation_text(correlation),
-            },
-        }
+        self.dispatch_error: BaseException | None = None
         self.posts: list[tuple[str, dict[str, Any]]] = []
         self.reads: list[str] = []
         self.after_dispatch: list[Any] = []
@@ -126,34 +164,38 @@ class _GitHub:
     def url(path: str) -> str:
         return f"https://api.github.com/{path.lstrip('/')}"
 
+    def _current(self) -> dict[str, Any] | None:
+        return self.timeline[max(0, min(self.position, len(self.timeline) - 1))]
+
     def get(self, url: str) -> tuple[Any, dict[str, str]]:
         self.reads.append(url)
-        latest = (
-            f"{API}/commits/{HEAD}/check-runs"
-            "?check_name=merge-admission&filter=latest&per_page=100"
-        )
         if url == f"{API}/pulls/{PULL}":
             return copy.deepcopy(self.pull), {}
         if url == f"{API}/branches/main":
             return {"name": "main", "commit": {"sha": self.main}}, {}
-        if url == f"{API}/actions/runs/{RUN}":
+        if url == f"{API}/actions/runs/{self.run['id']}":
             if self.running_reads:
                 self.running_reads -= 1
                 return {**self.run, "status": "in_progress", "conclusion": None}, {}
             return copy.deepcopy(self.run), {}
-        if url == latest:
-            return {"total_count": 1, "check_runs": [copy.deepcopy(self.check)]}, {}
-        if url == f"{API}/check-runs/{self.check['id']}":
-            return {**copy.deepcopy(self.check), **self.read_as}, {}
+        if url == LATEST:
+            self.position += 1
+            current = self._current()
+            runs = [] if current is None else [copy.deepcopy(current)]
+            return {"total_count": len(runs), "check_runs": runs}, {}
+        current = self._current()
+        if current is not None and url == f"{API}/check-runs/{current['id']}":
+            return {**copy.deepcopy(current), **self.read_as}, {}
         raise AssertionError(f"unexpected read {url}")
 
-    def post(self, url: str, payload: dict[str, Any]) -> Any:
+    def post_accepted(self, url: str, payload: dict[str, Any]) -> None:
         self.posts.append((url, copy.deepcopy(payload)))
-        if url != f"{API}/actions/workflows/merge-admission.yml/dispatches":
+        if url != DISPATCHES:
             raise AssertionError(f"unexpected write {url}")
         for change in self.after_dispatch:
             change(self)
-        return copy.deepcopy(self.dispatched)
+        if self.dispatch_error is not None:
+            raise self.dispatch_error
 
 
 class _Clock:
@@ -186,6 +228,7 @@ def _run_guard(
         population=lambda: copy.deepcopy(
             POPULATION if population is None else population
         ),
+        nonce=NONCE,
         sleep=clock.sleep,
         clock=clock,
         poll_seconds=15.0,
@@ -201,7 +244,7 @@ class GuardTests(unittest.TestCase):
 
     def test_a_correlated_current_success_proceeds(self) -> None:
         github = _GitHub()
-        github.running_reads = 3
+        github.running_reads = 2
         result = _run_guard(github)
         self.assertEqual(
             {
@@ -212,12 +255,27 @@ class GuardTests(unittest.TestCase):
             },
             result,
         )
-        ((_, payload),) = github.posts
-        self.assertEqual({"ref": "main", "inputs": {"pull_number": str(PULL)}}, payload)
+        self.assertEqual(1, len(github.posts))
+        url, payload = github.posts[0]
+        self.assertEqual(DISPATCHES, url)
+        self.assertEqual(
+            {
+                "event_type": "gnostoa-merge-admission",
+                "client_payload": {"pull_number": PULL, "nonce": NONCE},
+            },
+            payload,
+        )
         # The last reads are the subject and protected main, after the comparison.
         self.assertEqual(
             [f"{API}/pulls/{PULL}", f"{API}/branches/main"], github.reads[-2:]
         )
+
+    def test_each_guard_dispatches_its_own_fresh_nonce(self) -> None:
+        guard = _guard()
+        nonces = {guard.fresh_nonce() for _ in range(8)}
+        self.assertEqual(8, len(nonces))
+        for nonce in nonces:
+            self.assertRegex(nonce, r"^[0-9a-f]{32}$")
 
     def test_it_runs_only_from_protected_main_s_checkout(self) -> None:
         github = _GitHub()
@@ -236,52 +294,119 @@ class GuardTests(unittest.TestCase):
                 self.assertRefused(github, "pull request")
                 self.assertEqual([], github.posts)
 
-    def test_a_dispatch_that_names_no_run_is_refused(self) -> None:
-        """Without the run the dispatch created there is nothing to correlate, and
-        time is no substitute."""
-        for answer in (
-            None,
-            {},
-            {"workflow_run_id": "9001"},
-            {"workflow_run_id": True},
+    def test_a_refused_dispatch_is_refused(self) -> None:
+        github = _GitHub()
+        github.dispatch_error = github_rest.GitHubWriteError(
+            "GitHub API HTTP 403", status=403
+        )
+        self.assertRefused(github, "dispatch")
+        self.assertEqual([], [url for url in github.reads if url == LATEST])
+
+    def test_a_lost_dispatch_answer_is_reconciled_by_its_nonce_never_resent(
+        self,
+    ) -> None:
+        github = _GitHub()
+        github.dispatch_error = github_rest.GitHubWriteError(
+            "GitHub API HTTP 502", status=502, outcome_unknown=True
+        )
+        self.assertEqual("PROCEED", _run_guard(github)["result"])
+        self.assertEqual(1, len(github.posts))
+
+    def test_a_record_with_another_or_no_nonce_never_substitutes(self) -> None:
+        """An older success, another dispatch's run or a scheduled run carries no
+        record of this nonce, and is never accepted, even while it is the latest."""
+        for name, timeline in (
+            ("an older success", [_check(CHECK - 7, nonce=None)]),
+            ("another dispatch's success", [_check(CHECK + 1, nonce=FOREIGN)]),
+            ("no run at all", [None]),
         ):
-            with self.subTest(answer=answer):
+            with self.subTest(name):
                 github = _GitHub()
-                github.dispatched = answer
-                self.assertRefused(github, "dispatch")
+                github.timeline = timeline
+                self.assertRefused(github, "no record of this dispatch")
+
+    def test_a_newer_record_overtaking_this_dispatch_s_refuses(self) -> None:
+        """Concurrent dispatches: once this nonce's run has been seen, a newer run
+        without it means this one no longer stands. Nothing falls back to it."""
+        github = _GitHub()
+        github.timeline = [
+            _check(CHECK, status="in_progress", conclusion=None),
+            _check(CHECK + 1, nonce=FOREIGN),
+            _check(CHECK),
+        ]
+        self.assertRefused(github, "overtaken")
+
+    def test_a_duplicate_delivery_counts_only_by_its_latest_complete_record(
+        self,
+    ) -> None:
+        """Two runs for one nonce (a duplicate delivery or a re-run): only the latest
+        record counts, and its own run and attempt must match it."""
+        github = _GitHub()
+        github.timeline = [
+            _check(CHECK - 1, run=RUN - 1, status="in_progress", conclusion=None),
+            _check(CHECK, attempt=2),
+        ]
+        github.run = {**github.run, "run_attempt": 2}
+        self.assertEqual("PROCEED", _run_guard(github)["result"])
+        stale = _GitHub()
+        stale.timeline = [_check(CHECK, attempt=2)]
+        self.assertRefused(stale, "run")
+
+    def test_a_record_that_changed_after_the_run_was_read_refuses(self) -> None:
+        """The record is re-read after its run: a newer attempt for this nonce, or
+        another dispatch's record, is not the run that was checked."""
+        for name, later in (
+            ("a newer attempt", _check(CHECK + 1, attempt=2)),
+            ("another dispatch's record", _check(CHECK + 1, nonce=FOREIGN)),
+        ):
+            with self.subTest(name):
+                github = _GitHub()
+                github.timeline = [_check(CHECK), later]
+                self.assertRefused(github, "does not correlate")
 
     def test_only_the_protected_admission_run_counts(self) -> None:
         for name, change in (
             ("another workflow", {"path": ".github/workflows/verification.yml"}),
-            ("another event", {"event": "schedule"}),
+            ("another event", {"event": "workflow_dispatch"}),
             ("another branch", {"head_branch": "feature"}),
             ("another revision", {"head_sha": OTHER}),
-            ("another run", {"id": RUN + 1}),
+            ("another repository", {"repository": {"full_name": "someone/else"}}),
+            ("another attempt", {"run_attempt": 3}),
             ("a failed run", {"conclusion": "failure"}),
+            ("a cancelled run", {"conclusion": "cancelled"}),
         ):
             with self.subTest(name):
                 github = _GitHub()
                 github.run.update(change)
                 self.assertRefused(github, "run")
 
-    def test_a_run_that_does_not_finish_in_time_is_refused(self) -> None:
-        github = _GitHub()
-        github.running_reads = 10_000
-        self.assertRefused(github, "did not complete")
+    def test_a_run_or_record_that_does_not_finish_in_time_is_refused(self) -> None:
+        running = _GitHub()
+        running.running_reads = 10_000
+        self.assertRefused(running, "did not complete")
+        pending = _GitHub()
+        pending.timeline = [_check(CHECK, status="in_progress", conclusion=None)]
+        self.assertRefused(pending, "did not complete")
 
-    def test_only_the_pinned_app_s_latest_success_counts(self) -> None:
+    def test_only_the_pinned_app_s_complete_success_counts(self) -> None:
         for name, change in (
-            ("another App", {"app": {"id": OTHER_APP}}),
             ("a failure", {"conclusion": "failure"}),
             ("a neutral", {"conclusion": "neutral"}),
-            ("still pending", {"status": "in_progress", "conclusion": None}),
             ("another head", {"head_sha": OTHER}),
             ("another check", {"name": "merge-admission-x"}),
         ):
             with self.subTest(name):
                 github = _GitHub()
-                github.check.update(change)
+                github.timeline = [{**_check(CHECK), **change}]
                 self.assertRefused(github, "check")
+        foreign = _GitHub()
+        foreign.timeline = [_check(CHECK, app=OTHER_APP)]
+        self.assertRefused(foreign, "no record of this dispatch")
+        undigested = _GitHub()
+        undigested.timeline = [
+            {**_check(CHECK), "output": _check(CHECK, status="in_progress")["output"]}
+        ]
+        self.assertRefused(undigested, "check")
 
     def test_the_check_read_by_its_id_is_checked_again(self) -> None:
         """The run the latest view names is read natively by its id, and that read is
@@ -294,29 +419,6 @@ class GuardTests(unittest.TestCase):
                 github = _GitHub()
                 github.read_as = change
                 self.assertRefused(github, "check")
-
-    def test_an_old_or_foreign_result_never_substitutes(self) -> None:
-        """An earlier success, another dispatch's run or another revision's carries
-        another correlation, and is refused even while it is the latest run."""
-        for name, field, value in (
-            ("another run", "workflow_run_id", RUN - 1),
-            ("another attempt", "run_attempt", 2),
-            ("another revision", "protected_revision", OTHER),
-        ):
-            with self.subTest(name):
-                github = _GitHub()
-                correlation = dict(
-                    merge_admission_checks.correlation_of(github.check) or {}
-                )
-                self.assertTrue(correlation)
-                correlation[field] = value
-                github.check["output"]["text"] = (
-                    merge_admission_checks.correlation_text(correlation)
-                )
-                self.assertRefused(github, "correlat")
-        github = _GitHub()
-        github.check["output"]["text"] = "no record"
-        self.assertRefused(github, "correlat")
 
     def test_a_subject_changed_since_the_evaluation_is_refused(self) -> None:
         """The untriggered change the Router names: a required-evidence change no
@@ -377,10 +479,14 @@ class GuardTests(unittest.TestCase):
         def invalid() -> Any:
             raise ValueError("the snapshot is invalid")
 
+        def unopenable() -> Any:
+            raise OSError("policy/merge-authorities.yaml is unreadable")
+
         for name, options in (
             ("the subject unreadable", {"rebuild": unreadable}),
             ("the subject invalid", {"rebuild": invalid}),
             ("the population unreadable", {"population": unreadable}),
+            ("a policy file unreadable", {"rebuild": unopenable}),
         ):
             with self.subTest(name):
                 clock = _Clock()
@@ -392,6 +498,7 @@ class GuardTests(unittest.TestCase):
                     "checkout_revision": MAIN,
                     "rebuild": lambda: copy.deepcopy(EVIDENCE),
                     "population": lambda: copy.deepcopy(POPULATION),
+                    "nonce": NONCE,
                     "sleep": clock.sleep,
                     "clock": clock,
                 }
@@ -416,11 +523,57 @@ class GuardTests(unittest.TestCase):
     def test_it_never_merges(self) -> None:
         github = _GitHub()
         _run_guard(github)
-        self.assertEqual(
-            [f"{API}/actions/workflows/merge-admission.yml/dispatches"],
-            [url for url, _ in github.posts],
-        )
+        self.assertEqual([DISPATCHES], [url for url, _ in github.posts])
         self.assertFalse(hasattr(github, "put"))
+        self.assertFalse(hasattr(github, "post"))
+
+
+class RebuilderTests(unittest.TestCase):
+    """CodeAnt and Kilo on #426: the re-reads are built as L1's own command builds its
+    client, from the token alone, and call L1's snapshot, the shared evidence
+    function and L1's one population enumeration."""
+
+    def test_the_re_readers_are_l1_s_own(self) -> None:
+        guard = _guard()
+        rebuild, population = guard._rebuilders("x" * 40, REPOSITORY, PULL, ROOT)
+        l1 = sys.modules["review_github_current_state"]
+        listed = [{"number": PULL, "head_sha": HEAD}, {"number": 1, "head_sha": OTHER}]
+        with mock.patch.object(l1, "_open_pulls", return_value=listed) as pulls:
+            self.assertEqual(
+                {
+                    "coverage": "COMPLETE",
+                    "pulls": [
+                        {"pull_number": PULL, "head": HEAD},
+                        {"pull_number": 1, "head": OTHER},
+                    ],
+                },
+                population(),
+            )
+        reader = pulls.call_args.args[0]
+        self.assertIsInstance(reader, l1.GitHubRestClient)
+        self.assertEqual(REPOSITORY, pulls.call_args.args[1])
+        from tools import merge_evidence_github
+
+        with (
+            mock.patch.object(
+                l1, "collect_snapshot", return_value={"s": 1}
+            ) as snapshot,
+            mock.patch.object(
+                merge_evidence_github, "evidence_for", return_value=EVIDENCE
+            ) as evidence,
+        ):
+            self.assertEqual(EVIDENCE, rebuild())
+        self.assertEqual(
+            {
+                "repository": REPOSITORY,
+                "pull_number": PULL,
+                "observed_at": None,
+                "merge_evidence": True,
+            },
+            snapshot.call_args.kwargs,
+        )
+        self.assertIs(reader, snapshot.call_args.args[0])
+        evidence.assert_called_once_with({"s": 1}, project_root=ROOT)
 
 
 class CheckoutRevisionTests(unittest.TestCase):
@@ -445,7 +598,7 @@ class CheckoutRevisionTests(unittest.TestCase):
             ) as which,
             mock.patch.object(guard.subprocess, "run", side_effect=run),
         ):
-            self.assertEqual(MAIN, guard._checkout_revision(ROOT))
+            self.assertEqual(MAIN, guard.checkout_revision(ROOT))
         which.assert_called_with("git", path=guard.TRUSTED_PATH)
         self.assertEqual({"/usr/bin/git"}, {argv[0] for argv in calls})
 
@@ -460,7 +613,7 @@ class CheckoutRevisionTests(unittest.TestCase):
         environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
         def run(directory: str, *arguments: str) -> None:
-            subprocess.run(  # nosec B603 -- the test's own fixed git arguments
+            subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                 [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
                 cwd=directory,
                 env=environment,
@@ -473,10 +626,38 @@ class CheckoutRevisionTests(unittest.TestCase):
             (Path(raw) / "tracked.txt").write_text("x", encoding="utf-8")
             run(raw, "add", "tracked.txt")
             run(raw, "commit", "-q", "-m", "x")
-            self.assertRegex(guard._checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
+            self.assertRegex(guard.checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
             (Path(raw) / "sitecustomize.py").write_text("", encoding="utf-8")
             with self.assertRaises(guard.Refused):
-                guard._checkout_revision(Path(raw))
+                guard.checkout_revision(Path(raw))
+
+    def test_an_ignored_file_in_the_checkout_refuses(self) -> None:
+        """Codex and CodeAnt on #426: an ignored file, such as a `*.pyc` the
+        repository ignores, is not protected main's either."""
+        guard = _guard()
+        git = shutil.which("git", path=guard.TRUSTED_PATH)
+        if git is None:
+            self.skipTest("git is unavailable")
+        environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as raw:
+            for arguments in (
+                ["init", "-q"],
+                ["add", "."],
+                ["commit", "-q", "-m", "x"],
+            ):
+                if arguments[0] == "add":
+                    (Path(raw) / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
+                    cwd=raw,
+                    env=environment,
+                    check=True,
+                    capture_output=True,
+                )
+            self.assertRegex(guard.checkout_revision(Path(raw)), r"^[0-9a-f]{40}$")
+            (Path(raw) / "sitecustomize.pyc").write_bytes(b"x")
+            with self.assertRaises(guard.Refused):
+                guard.checkout_revision(Path(raw))
 
     def test_without_git_on_the_trusted_path_it_refuses(self) -> None:
         guard = _guard()
@@ -484,7 +665,182 @@ class CheckoutRevisionTests(unittest.TestCase):
             mock.patch.object(guard.shutil, "which", return_value=None),
             self.assertRaises(guard.Refused),
         ):
-            guard._checkout_revision(ROOT)
+            guard.checkout_revision(ROOT)
+
+
+RUNBOOK = ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
+# The stand-ins the launch runs: a guard that records that it ran and whether it holds
+# the minted credential, and a startup module that records what it could reach.
+_STUB_GUARD = (
+    "import os, pathlib, sys\n"
+    "pathlib.Path(os.environ['HOME'], 'guard-ran').write_text(\n"
+    "    os.environ.get('GH_TOKEN', '') + ' ' + ' '.join(sys.argv[1:])\n"
+    ")\n"
+    'print(\'{"result": "PROCEED"}\')\n'
+)
+_STARTUP_MODULE = (
+    "import os, pathlib\n"
+    "pathlib.Path(os.environ.get('HOME', '/nonexistent'), 'reached').write_text(\n"
+    "    os.environ.get('GH_TOKEN', '')\n"
+    ")\n"
+)
+_MINT = "#!/bin/sh\n: > \"$HOME/minted\"\nprintf 'credential-%s' 1\n"
+
+
+class GuardLaunchTests(unittest.TestCase):
+    """The PAO (6132349006), Codex and CodeAnt on #426: the runbook's launch checks
+    the checkout by a git read that must succeed, ignored files included, before any
+    credential exists, and starts the interpreter isolated, so no file of the
+    checkout runs at startup with the credential present. Run as the runbook writes
+    it, against real checkouts."""
+
+    @staticmethod
+    def _launch() -> str:
+        text = RUNBOOK.read_text(encoding="utf-8")
+        found = re.search(r"\n  guard_merge\(\) \{\n.*?\n  \}\n", text, re.S)
+        if found is None:
+            raise AssertionError("the runbook defines no guard_merge launch")
+        return found.group(0)
+
+    @staticmethod
+    def _git(directory: Path, *arguments: str) -> None:
+        git = shutil.which("git", path=_guard().TRUSTED_PATH)
+        assert git is not None  # nosec B101 -- a test precondition
+        subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
+            cwd=directory,
+            env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+            check=True,
+            capture_output=True,
+        )
+
+    def _checkout(self, root: Path, *, tracked_startup: bool = False) -> Path:
+        checkout = root / "checkout"
+        (checkout / "ci").mkdir(parents=True)
+        (checkout / "ci" / "merge_admission_guard.py").write_text(
+            _STUB_GUARD, encoding="utf-8"
+        )
+        (checkout / ".gitignore").write_text(
+            "ignored-startup/\n*.pyc\n", encoding="utf-8"
+        )
+        if tracked_startup:
+            (checkout / "sitecustomize.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+        self._git(checkout, "init", "-q")
+        self._git(checkout, "add", ".")
+        self._git(checkout, "commit", "-q", "-m", "x")
+        return checkout
+
+    def _run(self, root: Path, cwd: Path, **environment: str) -> int:
+        home = root / "home"
+        helper = home / ".config" / "gnostoa-agent" / "bin"
+        helper.mkdir(parents=True, exist_ok=True)
+        (helper / "agent-token.sh").write_text(_MINT, encoding="utf-8")
+        (helper / "agent-token.sh").chmod(0o700)
+        shell = shutil.which("bash", path=_guard().TRUSTED_PATH)
+        assert shell is not None  # nosec B101 -- a test precondition
+        script = self._launch() + "guard_merge --repository r --pull-number 1\n"
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [shell, "-c", script],
+            cwd=cwd,
+            env={
+                "HOME": str(home),
+                "PATH": _guard().TRUSTED_PATH,
+                "PYTHONPATH": str(cwd),
+                **environment,
+            },
+            capture_output=True,
+            check=False,
+        )
+        return completed.returncode
+
+    def _results(self, root: Path) -> tuple[bool, bool, bool]:
+        home = root / "home"
+        return (
+            (home / "minted").exists(),
+            (home / "guard-ran").exists(),
+            (home / "reached").exists(),
+        )
+
+    def test_a_clean_checkout_runs_the_guard_with_its_credential(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout = self._checkout(root)
+            self.assertEqual(0, self._run(root, checkout))
+            self.assertEqual((True, True, False), self._results(root))
+            ran = (root / "home" / "guard-ran").read_text(encoding="utf-8")
+            self.assertTrue(ran.startswith("credential-1 "))
+
+    def test_no_startup_module_runs_beside_the_credential(self) -> None:
+        """Neither protected main's own `sitecustomize.py`, which the caller's
+        `PYTHONPATH` would reach, nor a `usercustomize.py` in the user site of the
+        `HOME` the fresh shell keeps: the interpreter is isolated, and the checkout
+        joins its path only after startup."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout = self._checkout(root, tracked_startup=True)
+            version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+            user_site = root / "home" / ".local" / "lib" / version / "site-packages"
+            user_site.mkdir(parents=True)
+            (user_site / "usercustomize.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+            self.assertEqual(0, self._run(root, checkout))
+            self.assertEqual((True, True, False), self._results(root))
+
+    def test_a_checkout_that_is_not_exactly_its_revision_stops_before_the_credential(
+        self,
+    ) -> None:
+        for name, plant in (
+            ("an untracked startup module", "sitecustomize.py"),
+            ("an ignored startup module", "ignored-startup/sitecustomize.py"),
+            ("an ignored bytecode file", "sitecustomize.pyc"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                checkout = self._checkout(root)
+                target = checkout / plant
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(_STARTUP_MODULE, encoding="utf-8")
+                self.assertNotEqual(0, self._run(root, checkout))
+                self.assertEqual((False, False, False), self._results(root))
+
+    def test_the_guard_imports_under_an_isolated_interpreter(self) -> None:
+        """Run as `guard_merge` runs it: `python3 -I`, no `PYTHONPATH`. The guard adds
+        its checkout to the path itself, after startup."""
+        python = shutil.which("python3", path=_guard().TRUSTED_PATH)
+        assert python is not None  # nosec B101 -- a test precondition
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [python, "-I", "-B", str(GUARD_PATH), "--help"],
+            cwd="/",
+            env={"PATH": _guard().TRUSTED_PATH},
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_a_failed_git_read_stops_before_the_credential(self) -> None:
+        """The PAO's falsifier: no checkout to read, and the caller's Git routing
+        pointing at another, clean one. The read fails, so nothing starts."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            elsewhere = self._checkout(root)
+            plain = root / "plain"
+            plain.mkdir()
+            (plain / "sitecustomize.py").write_text(_STARTUP_MODULE, encoding="utf-8")
+            (plain / "ci").mkdir()
+            (plain / "ci" / "merge_admission_guard.py").write_text(
+                _STUB_GUARD, encoding="utf-8"
+            )
+            code = self._run(
+                root,
+                plain,
+                GIT_DIR=str(elsewhere / ".git"),
+                GIT_WORK_TREE=str(elsewhere),
+            )
+            self.assertNotEqual(0, code)
+            self.assertEqual((False, False, False), self._results(root))
 
 
 class GuardCommandTests(unittest.TestCase):
@@ -521,7 +877,7 @@ class GuardCommandTests(unittest.TestCase):
             {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(return_value=proceed),
             _client=mock.Mock(),
-            _checkout_revision=mock.Mock(return_value=MAIN),
+            checkout_revision=mock.Mock(return_value=MAIN),
             _rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
         )
         self.assertEqual((0, proceed), (code, json.loads(out)))
@@ -530,7 +886,7 @@ class GuardCommandTests(unittest.TestCase):
             {GUARD_CREDENTIAL: "x" * 40},
             guard=mock.Mock(side_effect=_guard().Refused("the check is another App's")),
             _client=mock.Mock(),
-            _checkout_revision=mock.Mock(return_value=MAIN),
+            checkout_revision=mock.Mock(return_value=MAIN),
             _rebuilders=mock.Mock(return_value=(mock.Mock(), mock.Mock())),
         )
         self.assertEqual(1, code)

@@ -6,13 +6,17 @@ result of its own instead of relying on the check's last publication. This comma
 
 1. refuses unless it runs from a checkout of protected `main`, and the pull request
    is open, targets `main` and has the approved head;
-2. dispatches the protected `merge-admission.yml` for that pull request, and takes the
-   workflow run the dispatch answers with: the correlation is that run, never time;
-3. waits for the run, and refuses unless it is that workflow, dispatched, on `main` at
-   the protected revision, and succeeded;
-4. reads the pinned App's latest `merge-admission` run on the approved head natively,
-   and refuses unless it is a completed success that names that workflow run, its
-   attempt and the protected revision (`tools.merge_admission_checks`);
+2. requests the protected `merge-admission.yml` for that pull request by
+   `repository_dispatch` (G1, #426 6132395441), with a fresh 128-bit nonce. GitHub
+   answers with an empty `204` and names no run, so the nonce is the correlation,
+   never time;
+3. finds this dispatch's record as the pinned App's latest `merge-admission` run on
+   the approved head carrying the nonce, beside the workflow run, attempt and
+   protected revision that wrote it (`tools.merge_admission_checks`). A newer record
+   without the nonce refuses;
+4. reads that workflow run natively, and refuses unless it is the protected workflow,
+   dispatched, on `main` at the protected revision, at that attempt, and succeeded;
+   then re-reads the record, which must still be the latest and a completed success;
 5. re-reads the subject, rebuilding its evidence through the function the workflow's
    command calls (without the analyzer bundle it cannot re-read), and refuses unless
    its digest is the one the run recorded; and re-reads the open population,
@@ -30,6 +34,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess  # nosec B404 -- git alone, by its absolute trusted path, with fixed arguments
 import sys
@@ -38,8 +43,14 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from tools import github_rest
-from tools.merge_admission_checks import (
+# Run as `python3 -I ci/merge_admission_guard.py` (runbook `guard_merge`), so no file of
+# the checkout runs at interpreter startup: the checkout joins the path only here.
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from tools import github_rest  # noqa: E402
+from tools.merge_admission_checks import (  # noqa: E402
     CHECK_NAME,
     PublicationError,
     app_latest,
@@ -51,6 +62,7 @@ from tools.merge_admission_checks import (
 )
 
 _WORKFLOW = ".github/workflows/merge-admission.yml"
+_DISPATCH_TYPE = "gnostoa-merge-admission"
 _PROTECTED = "main"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 # The executable search path the preparation helper trusts (AGENTS.md).
@@ -100,20 +112,75 @@ def _main(client: Any, repository: str) -> str:
     return sha
 
 
-def _dispatch(client: Any, repository: str, number: int) -> int:
-    url = client.url(
-        f"repos/{repository}/actions/workflows/merge-admission.yml/dispatches"
-    )
+def fresh_nonce() -> str:
+    """A fresh, unpredictable 128-bit nonce for one guarded dispatch (G1)."""
+
+    return secrets.token_hex(16)
+
+
+def _dispatch(client: Any, repository: str, number: int, nonce: str) -> None:
+    """Request the protected admission by `repository_dispatch`, with the App's own
+    `contents: write` (G1, #426 6132395441). GitHub accepts it with an empty `204`
+    and names no run. A lost answer is reconciled by the nonce, never sent again."""
+
     try:
-        answer = client.post(
-            url, {"ref": _PROTECTED, "inputs": {"pull_number": str(number)}}
+        client.post_accepted(
+            client.url(f"repos/{repository}/dispatches"),
+            {
+                "event_type": _DISPATCH_TYPE,
+                "client_payload": {"pull_number": number, "nonce": nonce},
+            },
         )
+    except github_rest.GitHubWriteError as exc:
+        if not exc.outcome_unknown:
+            raise Refused(f"the dispatch was refused: {exc}") from exc
     except github_rest.GitHubError as exc:
-        raise Refused(f"the dispatch failed: {exc}") from exc
-    identifier = answer.get("workflow_run_id") if isinstance(answer, Mapping) else None
-    if type(identifier) is not int or identifier <= 0:
-        raise Refused("the dispatch named no workflow run to correlate")
-    return identifier
+        raise Refused(f"the dispatch was refused: {exc}") from exc
+
+
+def _latest_record(
+    client: Any, repository: str, approved: str, app_id: int
+) -> tuple[Mapping[str, Any] | None, dict[str, Any] | None]:
+    try:
+        latest = app_latest(client, repository, approved, app_id)
+    except PublicationError as exc:
+        raise Refused(f"the check could not be read: {exc}") from exc
+    return latest, (correlation_of(latest) if latest is not None else None)
+
+
+def _discover(
+    client: Any,
+    repository: str,
+    approved: str,
+    app_id: int,
+    nonce: str,
+    *,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+    poll_seconds: float,
+    deadline: float,
+) -> dict[str, Any]:
+    """This dispatch's completed record, found as the pinned App's latest run on the
+    head carrying the nonce. A pending record names the run early. Once this nonce
+    has been seen, a newer record without it means this dispatch no longer stands:
+    nothing falls back to it, and nothing is chosen by time."""
+
+    seen = False
+    while True:
+        latest, record = _latest_record(client, repository, approved, app_id)
+        if record is not None and record["nonce"] == nonce:
+            seen = True
+            if latest is not None and latest.get("status") == "completed":
+                return record
+        elif seen:
+            raise Refused("this dispatch's record was overtaken by a newer run")
+        if clock() >= deadline:
+            raise Refused(
+                "the admission did not complete in time"
+                if seen
+                else "no record of this dispatch appeared in time"
+            )
+        sleep(poll_seconds)
 
 
 def _await(
@@ -124,9 +191,8 @@ def _await(
     sleep: Callable[[float], None],
     clock: Callable[[], float],
     poll_seconds: float,
-    deadline_seconds: float,
+    deadline: float,
 ) -> Mapping[str, Any]:
-    deadline = clock() + deadline_seconds
     while True:
         run = _read(client, f"repos/{repository}/actions/runs/{workflow_run}")
         if run.get("status") == "completed":
@@ -136,26 +202,31 @@ def _await(
         sleep(poll_seconds)
 
 
-def _protected_run(run: Mapping[str, Any], workflow_run: int, revision: str) -> int:
+def _protected_run(
+    run: Mapping[str, Any],
+    repository: str,
+    record: Mapping[str, Any],
+    revision: str,
+) -> None:
+    workflow_run = record["workflow_run_id"]
     expected = {
         "id": workflow_run,
         "path": _WORKFLOW,
-        "event": "workflow_dispatch",
+        "event": "repository_dispatch",
         "head_branch": _PROTECTED,
         "head_sha": revision,
+        "run_attempt": record["run_attempt"],
         "conclusion": "success",
     }
     wrong = sorted(
         field for field, value in expected.items() if run.get(field) != value
     )
+    if _mapping(run.get("repository")).get("full_name") != repository:
+        wrong.append("repository")
     if wrong:
         raise Refused(
             f"workflow run {workflow_run} is not the protected admission run: {wrong}"
         )
-    attempt = run.get("run_attempt")
-    if type(attempt) is not int or attempt <= 0:
-        raise Refused(f"workflow run {workflow_run} names no attempt")
-    return attempt
 
 
 def _admitted(
@@ -163,15 +234,19 @@ def _admitted(
     repository: str,
     approved: str,
     app_id: int,
-    correlation: Mapping[str, Any],
+    record: Mapping[str, Any],
 ) -> tuple[int, str]:
+    """The record re-read: still the pinned App's latest run on the head, read again
+    by its id, a completed success carrying exactly this dispatch's correlation and
+    the evaluation's digest."""
+
+    latest, current = _latest_record(client, repository, approved, app_id)
+    if latest is None or current is None:
+        raise Refused("this dispatch's check is no longer the latest")
+    identifier = run_id(latest)
+    if identifier is None:
+        raise Refused("the pinned App's check has no id")
     try:
-        latest = app_latest(client, repository, approved, app_id)
-        if latest is None:
-            raise Refused("the pinned App has no check on the approved head")
-        identifier = run_id(latest)
-        if identifier is None:
-            raise Refused("the pinned App's check has no id")
         check = read_run(client, repository, identifier)
     except PublicationError as exc:
         raise Refused(f"the check could not be read: {exc}") from exc
@@ -187,11 +262,13 @@ def _admitted(
     ):
         raise Refused("the check is not the pinned App's completed success on the head")
     recorded = correlation_of(check)
-    if recorded is None or any(
-        recorded[field] != value for field, value in correlation.items()
-    ):
+    identity = ("workflow_run_id", "run_attempt", "protected_revision", "nonce")
+    if recorded is None or any(recorded[field] != record[field] for field in identity):
         raise Refused("the check does not correlate with this dispatch's run")
-    return identifier, str(recorded["unbundled_evidence_sha256"])
+    digest_recorded = recorded["unbundled_evidence_sha256"]
+    if not isinstance(digest_recorded, str):
+        raise Refused("the check records no evidence digest")
+    return identifier, digest_recorded
 
 
 def _unchanged(
@@ -235,6 +312,7 @@ def guard(
     checkout_revision: str,
     rebuild: Callable[[], Any],
     population: Callable[[], Any],
+    nonce: str | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     poll_seconds: float = 15.0,
@@ -248,32 +326,38 @@ def guard(
         raise Refused(
             f"the guard's checkout is {checkout_revision}, not protected {_PROTECTED} {revision}"
         )
-    workflow_run = _dispatch(client, repository, pull_number)
-    run = _await(
-        client,
-        repository,
-        workflow_run,
-        sleep=sleep,
-        clock=clock,
-        poll_seconds=poll_seconds,
-        deadline_seconds=deadline_seconds,
-    )
-    attempt = _protected_run(run, workflow_run, revision)
-    check, recorded = _admitted(
+    nonce = nonce or fresh_nonce()
+    deadline = clock() + deadline_seconds
+    _dispatch(client, repository, pull_number, nonce)
+    record = _discover(
         client,
         repository,
         approved,
         app_id,
-        {
-            "workflow_run_id": workflow_run,
-            "run_attempt": attempt,
-            "protected_revision": revision,
-        },
+        nonce,
+        sleep=sleep,
+        clock=clock,
+        poll_seconds=poll_seconds,
+        deadline=deadline,
     )
+    if record["protected_revision"] != revision:
+        raise Refused("the check does not correlate with this dispatch's run")
+    run = _await(
+        client,
+        repository,
+        record["workflow_run_id"],
+        sleep=sleep,
+        clock=clock,
+        poll_seconds=poll_seconds,
+        deadline=deadline,
+    )
+    _protected_run(run, repository, record, revision)
+    check, recorded = _admitted(client, repository, approved, app_id, record)
     try:
         rebuilt, observed = rebuild(), population()
-    except (github_rest.GitHubError, ValueError) as exc:
-        # An unreadable or invalid re-read refuses with its reason (Kilo on #426).
+    except (github_rest.GitHubError, ValueError, OSError) as exc:
+        # An unreadable or invalid re-read, a policy file included, refuses with its
+        # reason (Kilo on #426).
         raise Refused(f"the subject could not be re-read: {exc}") from exc
     _unchanged(rebuilt, recorded, repository, pull_number, approved)
     _alone(observed, pull_number, approved)
@@ -282,7 +366,7 @@ def guard(
         raise Refused(f"protected {_PROTECTED} moved during the guard")
     return {
         "result": "PROCEED",
-        "workflow_run_id": workflow_run,
+        "workflow_run_id": record["workflow_run_id"],
         "check_run_id": check,
         "protected_revision": revision,
     }
@@ -320,19 +404,19 @@ def _git(root: Path, *arguments: str) -> str:
     return str(completed.stdout)
 
 
-def _checkout_revision(root: Path) -> str:
+def checkout_revision(root: Path) -> str:
     """The checkout's revision, refused when its files differ from it: a changed
-    tracked file, or an untracked one, such as a stray decision the rebuild would
-    read (CodeAnt on #426)."""
+    tracked file, an untracked one, such as a stray decision the rebuild would read,
+    or an ignored one, such as a `*.pyc` (CodeAnt and Codex on #426)."""
 
     head = _git(root, "rev-parse", "HEAD").strip()
-    if _git(root, "status", "--porcelain", "--untracked-files=all"):
+    if _git(root, "status", "--porcelain", "--untracked-files=all", "--ignored"):
         raise Refused("the checkout is not exactly its revision")
     return head
 
 
 def _rebuilders(
-    repository: str, number: int, root: Path
+    token: str, repository: str, number: int, root: Path
 ) -> tuple[Callable[[], Any], Callable[[], Any]]:
     """The re-reads the workflow's own commands make, in process: L1's snapshot with
     merge evidence, the evidence built from it, and L1's open population."""
@@ -342,9 +426,9 @@ def _rebuilders(
 
     from tools import merge_evidence_github
 
-    reader = l1.GitHubRestClient.from_environment(
-        user_agent="gnostoa-merge-admission-guard"
-    )
+    # Built as L1's own command builds it, from the token alone (CodeAnt and Kilo on
+    # #426: its constructor takes no other option).
+    reader = l1.GitHubRestClient(token)
 
     def rebuild() -> Any:
         snapshot = l1.collect_snapshot(
@@ -390,14 +474,16 @@ def main(argv: list[str] | None = None) -> int:
     root = Path.cwd()
     try:
         client = _client(token)
-        rebuild, population = _rebuilders(args.repository, args.pull_number, root)
+        rebuild, population = _rebuilders(
+            token, args.repository, args.pull_number, root
+        )
         result = guard(
             client,
             repository=args.repository,
             pull_number=args.pull_number,
             approved=args.approved,
             app_id=args.app_id,
-            checkout_revision=_checkout_revision(root),
+            checkout_revision=checkout_revision(root),
             rebuild=rebuild,
             population=population,
         )

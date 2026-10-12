@@ -838,11 +838,13 @@ class GitHubRestClient:
         payload: dict[str, Any] | None = None,
         *,
         read: bool = False,
+        empty: bool = False,
     ) -> tuple[Any, dict[str, str]]:
         """Make one attempt and decode it, reporting failures by kind.
 
         A GET, or a POST marked ``read`` (GraphQL), fails as a read; any other method
-        fails as a write.
+        fails as a write. A write marked ``empty`` expects no body: its answer is the
+        provider's acceptance, and a body where none belongs is an unknown outcome.
         """
         write = not read and method != "GET"
         request = self.build_request(method, url, payload)
@@ -876,6 +878,13 @@ class GitHubRestClient:
             raise failure(
                 "GitHub API transport failed", outcome_unknown=write
             ) from error
+        if empty:
+            if raw.strip():
+                raise GitHubWriteError(
+                    "GitHub API answered a body-less write with a body",
+                    outcome_unknown=True,
+                )
+            return None, headers
         try:
             return decode_json(raw, url), headers
         except GitHubReadError as error:
@@ -915,6 +924,12 @@ class GitHubRestClient:
         """POST ``payload`` once and return the provider's document."""
         document, _ = self._request("POST", url, payload)
         return document
+
+    def post_accepted(self, url: str, payload: dict[str, Any]) -> None:
+        """POST ``payload`` once to an endpoint that answers with no body, such as a
+        repository dispatch's `204` (G1 on #426). The answer is the provider's
+        acceptance of the request, not the outcome of anything it starts."""
+        self._request("POST", url, payload, empty=True)
 
     def patch(self, url: str, payload: dict[str, Any]) -> Any:
         """PATCH ``payload`` once and return the provider's document."""

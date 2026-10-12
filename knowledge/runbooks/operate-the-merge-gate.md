@@ -327,6 +327,35 @@ written here.
     ' as_machine_user "$@"
   }
   ```
+- `guard_merge` launches the merge-admission guard (step 8, once `merge-admission`
+  is required) in the same fresh shell, run from a clean clone of protected `main`.
+  Before any credential exists, it reads the checkout with git, and that read must
+  succeed: an unreadable checkout is not a clean one, and `env -i` drops the caller's
+  `GIT_*` routing, so git reads this checkout and no other. The read must show
+  nothing: no change, no untracked file and no ignored one, such as a
+  `sitecustomize.py` or a `*.pyc`. Only then is the token minted. The interpreter
+  starts isolated (`-I`), so no file of the checkout runs at its startup, and the
+  guard adds the checkout to its own path afterwards. It writes no bytecode, and
+  reads it only from the directory `mktemp` made (the PAO on #426, 6132349006; Codex
+  and CodeAnt):
+  ```sh
+  guard_merge() {
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
+      HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rm -rf -- "$created"; }
+      trap "exit 130" INT
+      trap "exit 143" TERM
+      trap "exit 129" HUP
+      created=$(mktemp -d) || exit
+      trap cleanup EXIT
+      state=$(git status --porcelain --untracked-files=all --ignored) || exit
+      test -z "$state" || exit
+      GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
+        && test -n "$GH_TOKEN" && export GH_TOKEN \
+        && python3 -I -B -X pycache_prefix="$created" ci/merge_admission_guard.py "$@"
+    ' guard_merge "$@"
+  }
+  ```
 - Every helper and the token file are named by their full path, so they work from
   any directory, including an agent's isolated clone.
 - Commits in an agent's clone are authored by
@@ -410,23 +439,27 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```
    **After `merge-admission` is required** (MA0 1b.4 activated), the merge obtains
    an admission of its own first (F1 part 3, #426 6130207025). After the reads above,
-   the App runs the guard from a clean checkout of protected `main`, and merges only
-   on its `PROCEED`, at once. The checkout is checked before the token is minted:
-   with `PYTHONPATH=.`, a stray file such as `sitecustomize.py` would run before the
-   guard does.
+   the App runs the guard through `guard_merge` (Credentials), from a clean clone of
+   protected `main`, and merges only on its `PROCEED`, at once. `guard_merge`
+   refuses before minting the token unless git reads the checkout and it holds
+   nothing but its revision, ignored files included:
    ```sh
-   test -z "$(git status --porcelain --untracked-files=all)" \
-     && GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
-     PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python ci/merge_admission_guard.py \
-     --repository ktogias/gnostoa --pull-number <N> --approved <approved> \
-     --app-id <gnostoa-ma0's App ID>
+   guard_merge --repository ktogias/gnostoa --pull-number <N> \
+     --approved <approved> --app-id <gnostoa-ma0's App ID>
    ```
-   It dispatches `merge-admission.yml` for `<N>`, and correlates the result through
-   the workflow run the dispatch returns, never through time. It refuses unless:
-   - that run is the protected workflow's, dispatched on `main` at the revision the
-     checkout holds, and succeeded;
-   - `gnostoa-ma0`'s latest check on `<approved>` is a completed success that names
-     that run, its attempt and that revision;
+   It requests `merge-admission.yml` for `<N>` by `repository_dispatch`
+   (`gnostoa-merge-admission`), with the App's own `contents: write` and a fresh
+   128-bit nonce (G1, #426 6132395441). GitHub accepts it with an empty `204` and names
+   no run, so the guard finds the run through the nonce in the pinned App's record,
+   never through time; a lost answer is reconciled by the same nonce, never sent
+   again. It refuses unless:
+   - `gnostoa-ma0`'s latest check on `<approved>` carries this nonce, and no newer
+     record without it has overtaken it;
+   - the run it names is the protected workflow's, by `repository_dispatch`, on
+     `main` at the revision the checkout holds, at the attempt the record names, and
+     succeeded;
+   - re-read, that check is a completed success naming that run, its attempt, that
+     revision and this nonce, with the evaluation's digest;
    - the subject re-read now rebuilds the digest the run recorded, and the open
      population shows `<N>` alone at `<approved>`;
    - neither the pull request nor `main` moved.
@@ -472,7 +505,7 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
 
 **What runs.** Decision 0112 item 5's publication, from protected `main` only:
 - `merge-admission-trigger.yml` wakes the relay on a pull request's `opened`, `edited`, `reopened`, `synchronize`, `ready_for_review` and `converted_to_draft`; on a review's `submitted`, `edited` and `dismissed`; on a review thread's `resolved` and `unresolved`; and on the declarer's PR conversation comment `created`, `edited` or `deleted` (F1, #426 6130207025). The comment filter is its author, `policy/merge-authorities.yaml`'s `declarer`, never its body, so removing the seal's prefix or deleting it wakes the relay too. A comment's event is relayed unchanged as an artifact, and the relay derives the pull request from it in protected code (`hint`). It holds no permission, secret or checkout (Decision 0096 rule 2).
-- `merge-admission.yml` runs on the trigger's and verification's completed runs, on an hourly sweep at minute 41, and by hand:
+- `merge-admission.yml` runs on the trigger's and verification's completed runs, on an hourly sweep at minute 41, by hand, and on a guarded merge's `repository_dispatch` of type `gnostoa-merge-admission`, whose payload must be exactly a pull request and a 128-bit nonce, or the selection fails:
   1. L1's `--mode subjects` re-reads each hinted pull request's head, and drops a closed one. Without a hint, the sweep takes L1's scheduled batch of the open population.
   2. **Invalidation first** (`invalidate`, in `gnostoa-ma0`). Before anything is acquired again, a success that `gnostoa-ma0`'s latest run on the head stands on is replaced by a pending run of the App. The record of what was observed passes to step 5 inside the same run.
   3. The admission point re-reads the inventory: the job calls `analyzer-readback.yml` for the exact subject, in its `analyzer-readback` environment.
@@ -494,7 +527,7 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    - a superseded verdict after a push, or after an edit with the head unchanged;
    - the check's publisher, `gnostoa-ma0`;
    - **a pending run over an older success**, and R-main's required check read back natively and App-pinned while it is pending: it must block. A same-named pending run is no proof by itself that GitHub stopped using the older success (F1);
-   - one guarded dispatch (`ci/merge_admission_guard.py`), with the `workflow_run_id` the dispatch returned read back and correlated to the run it published. That field of the dispatch's answer is documented but not yet exercised here;
+   - one guarded `repository_dispatch` (`guard_merge`), its nonce read back in the pinned App's record of the run it published, and that workflow run read back natively: `event: repository_dispatch`, on `main` at the protected revision;
    - the residual, measured on that dispatch: the seconds from the guard's last reads to the merge.
 5. **The rerun-successor case** (Decision 0112, the check receipts; #407 6129661615) is resolved before activation. Either it is **accepted**, through its own separately admitted L1 extension, or **the owner explicitly chooses** to keep today's cost (a failed attempt beside its successful re-run denies until a new commit). Routing it is not resolving it: while it is only routed, activation stays pending (the PAO on #426, 6130135014).
 6. **Activate.** R-main's `required_status_checks` gains this entry, beside the four above:

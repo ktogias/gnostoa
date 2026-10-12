@@ -14,13 +14,17 @@ name: Merge admission
 # success the App published on the head stops standing (`invalidate`), and the run
 # completes that pending run with the verdict, which is published only while its
 # evidence is unchanged. H1 (6131149850): a success needs this pull request alone at
-# its head in the complete open population, read beside each snapshot.
+# its head in the complete open population, read beside each snapshot. G1 (6132395441):
+# the guarded merge requests a run of its own by `repository_dispatch`, carrying its pull
+# request and a nonce as data; the run records the nonce beside its own identity.
 on:
   workflow_run:
     workflows: ["Merge admission trigger", "Gnostoa verification"]
     types: [completed]
   schedule:
     - cron: "41 * * * *"
+  repository_dispatch:
+    types: [gnostoa-merge-admission]
   workflow_dispatch:
     inputs:
       pull_number:
@@ -49,6 +53,8 @@ jobs:
       github.ref == 'refs/heads/main'
       && (github.event_name == 'schedule'
           || github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'repository_dispatch'
+              && github.event.action == 'gnostoa-merge-admission')
           || (github.event_name == 'workflow_run'
               && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
                    && github.event.workflow_run.conclusion == 'success'
@@ -64,6 +70,7 @@ jobs:
       actions: read
     outputs:
       subjects: ${{ steps.subjects.outputs.subjects }}
+      nonce: ${{ steps.subjects.outputs.nonce }}
     steps:
       # No ref is named: the checkout takes its event's own revision, main's
       # `github.sha`, which the next step verifies (Decision 0096 rule 11).
@@ -105,6 +112,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          EVENT_NAME: ${{ github.event_name }}
           DISPATCH_PULL: ${{ inputs.pull_number }}
         run: |
           set -euo pipefail
@@ -116,6 +124,14 @@ jobs:
           args+=(--workflow-run-pulls-json "${WORKFLOW_RUN_PULLS_JSON:-}")
           if [[ -n "${DISPATCH_PULL:-}" ]]; then
             args+=(--pull-number "${DISPATCH_PULL}")
+          fi
+          # A guarded merge's dispatch: its pull request and nonce exactly, from the
+          # runner's own event file, or the selection fails; it never falls back to
+          # the sweep (G1).
+          if [[ "${EVENT_NAME}" == "repository_dispatch" ]]; then
+            dispatched="$(PYTHONPATH=. python ci/merge_admission_relay.py dispatch-hint)"
+            args+=(--pull-number "${dispatched% *}")
+            printf 'nonce=%s\n' "${dispatched#* }" >> "${GITHUB_OUTPUT}"
           fi
           if [[ "${TRIGGER_EVENT:-}" == "issue_comment" ]]; then
             hint="$(PYTHONPATH=. python ci/merge_admission_relay.py hint)"
@@ -179,6 +195,7 @@ jobs:
           GNOSTOA_MA0_TOKEN: ${{ steps.token.outputs.token }}
           GNOSTOA_MA0_APP_ID: ${{ vars.GNOSTOA_MA0_APP_ID }}
           EXPECTED_HEAD: ${{ matrix.subject.head }}
+          DISPATCH_NONCE: ${{ needs.subjects.outputs.nonce }}
         run: |
           set -euo pipefail
           app=()
@@ -335,6 +352,7 @@ jobs:
           GNOSTOA_MA0_APP_ID: ${{ vars.GNOSTOA_MA0_APP_ID }}
           VERDICT_EXIT: ${{ steps.evaluate.outputs.verdict_exit }}
           EXPECTED_HEAD: ${{ matrix.subject.head }}
+          DISPATCH_NONCE: ${{ needs.subjects.outputs.nonce }}
         run: |
           set -euo pipefail
           app=()

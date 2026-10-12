@@ -223,10 +223,13 @@ EMPTY = {"total_count": 0, "check_runs": []}
 # This workflow run, as the runner names it: the protected facts a run correlates by.
 RUN_ID = 901
 MAIN = "b" * 40
+# The guard's nonce, when a guarded merge dispatched the run (G1, #426 6132395441).
+NONCE = "ab" * 16
 CORRELATION = {
     "workflow_run_id": RUN_ID,
     "run_attempt": 1,
     "protected_revision": MAIN,
+    "nonce": NONCE,
     "unbundled_evidence_sha256": "c" * 64,
 }
 PENDING_ID = "pending:901:1"
@@ -514,6 +517,11 @@ class InvalidationTests(unittest.TestCase):
         self.assertEqual(PENDING_ID, payload["external_id"])
         self.assertEqual(HEAD, payload["head_sha"])
         self.assertNotIn("conclusion", payload)
+        # The pending run names the run and the nonce, so a guard can find it (G1).
+        self.assertEqual(
+            {**CORRELATION, "unbundled_evidence_sha256": None},
+            _checks().correlation_of({"output": payload["output"]}),
+        )
         latest = provider.latest_view()["check_runs"][-1]
         self.assertEqual(record["pending"], latest["id"])
         self.assertEqual("in_progress", latest["status"])
@@ -599,7 +607,8 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual("COMPLETED", result["result"])
         self.assertEqual(record["pending"], result["check_run_id"])
         self.assertEqual(1, len(provider.posts))
-        ((url, payload),) = provider.patches
+        self.assertEqual(1, len(provider.patches))
+        url, payload = provider.patches[0]
         self.assertEqual(f"{CHECK_RUNS}/{record['pending']}", url)
         self.assertEqual("completed", payload["status"])
         self.assertEqual("success", payload["conclusion"])
@@ -618,7 +627,8 @@ class CompletionTests(unittest.TestCase):
                 record = self._pending(provider)
                 result = _publish(provider, _planned(action=action), record)
                 self.assertEqual("COMPLETED", result["result"])
-                ((_, payload),) = provider.patches
+                self.assertEqual(1, len(provider.patches))
+                _, payload = provider.patches[0]
                 self.assertEqual("failure", payload["conclusion"])
                 latest = provider.latest_view()["check_runs"][-1]
                 self.assertEqual("failure", latest["conclusion"])
@@ -630,7 +640,8 @@ class CompletionTests(unittest.TestCase):
         record = {"result": "FAILED", "pending": None, "observed": None}
         result = _publish(provider, _planned(action="SUPERSEDED"), record)
         self.assertEqual("INVALIDATED", result["result"])
-        ((_, payload),) = provider.posts
+        self.assertEqual(1, len(provider.posts))
+        _, payload = provider.posts[0]
         self.assertEqual("completed", payload["status"])
         self.assertEqual("failure", payload["conclusion"])
         self.assertEqual(
@@ -654,7 +665,8 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual("OVERTAKEN", result["result"])
         latest = provider.latest_view()["check_runs"][-1]
         self.assertEqual((700, "failure"), (latest["id"], latest["conclusion"]))
-        ((_, closed),) = provider.patches
+        self.assertEqual(1, len(provider.patches))
+        _, closed = provider.patches[0]
         self.assertEqual("failure", closed["conclusion"])
         observed = _Provider(
             [_run(91, conclusion="failure"), _run(701, conclusion="failure")]
@@ -676,7 +688,8 @@ class CompletionTests(unittest.TestCase):
         planned = _planned()
         result = _publish(provider, planned, record)
         self.assertEqual("PUBLISHED", result["result"])
-        ((url, payload),) = provider.posts
+        self.assertEqual(1, len(provider.posts))
+        url, payload = provider.posts[0]
         self.assertEqual(CHECK_RUNS, url)
         self.assertEqual(
             ("completed", "success", planned["external_id"]),
@@ -776,6 +789,27 @@ class CorrelationTests(unittest.TestCase):
         checks = _checks()
         text = checks.correlation_text(CORRELATION)
         self.assertEqual(CORRELATION, checks.correlation_of({"output": {"text": text}}))
+
+    def test_a_record_without_a_nonce_or_a_digest_reads_back_exactly(self) -> None:
+        """A scheduled or manual run has no nonce, and a pending or incomplete run no
+        digest: both stay well-defined records (G1)."""
+        checks = _checks()
+        for record in (
+            {**CORRELATION, "nonce": None},
+            {**CORRELATION, "unbundled_evidence_sha256": None},
+        ):
+            with self.subTest(record=record):
+                text = checks.correlation_text(record)
+                self.assertEqual(
+                    record, checks.correlation_of({"output": {"text": text}})
+                )
+
+    def test_a_malformed_nonce_is_no_correlation(self) -> None:
+        checks = _checks()
+        for nonce in ("AB" * 16, "ab" * 15, "ab" * 17, "zz" * 16, 7, True):
+            with self.subTest(nonce=nonce):
+                text = checks.correlation_text({**CORRELATION, "nonce": nonce})
+                self.assertIsNone(checks.correlation_of({"output": {"text": text}}))
 
     def test_anything_else_is_no_correlation(self) -> None:
         checks = _checks()
@@ -1147,17 +1181,49 @@ class CommandTests(unittest.TestCase):
                 _client=mock.Mock(return_value=provider),
             )
             self.assertEqual(0, code)
-            ((_, payload),) = provider.posts
+            self.assertEqual(1, len(provider.posts))
+            _, payload = provider.posts[0]
             found = _checks().correlation_of({"output": payload["output"]})
             self.assertEqual(
                 {
                     "workflow_run_id": RUN_ID,
                     "run_attempt": 1,
                     "protected_revision": MAIN,
+                    "nonce": None,
                     "unbundled_evidence_sha256": _checks().digest(unbundled),
                 },
                 found,
             )
+
+    def test_the_dispatch_nonce_is_recorded_once_validated(self) -> None:
+        """The nonce reaches the publishing job as data from its own protected
+        `subjects` job, and is recorded only when it is exactly 128 bits of hex."""
+        relay = _relay()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            argv = [*self._files(directory), "--app-id", str(MA0_APP)]
+            (_work(directory) / "pending.json").write_text(
+                json.dumps({"result": "NOT_NEEDED", "pending": None, "observed": None}),
+                encoding="utf-8",
+            )
+            provider = _Provider()
+            code = self._main(
+                relay,
+                argv,
+                _env(directory, **{MA0_ENV: "x" * 40, "DISPATCH_NONCE": NONCE}),
+                _client=mock.Mock(return_value=provider),
+            )
+            self.assertEqual(0, code)
+            _, payload = provider.posts[0]
+            found = _checks().correlation_of({"output": payload["output"]})
+            self.assertEqual(NONCE, (found or {}).get("nonce"))
+        for bad in ("AB" * 16, "ab" * 15, "not hex at all, 32 characters!!"):
+            with self.subTest(nonce=bad), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                code = self._main(
+                    relay, self._files(directory), _env(directory, DISPATCH_NONCE=bad)
+                )
+                self.assertEqual(2, code)
 
     def test_an_expected_head_that_is_no_exact_sha_is_refused(self) -> None:
         relay = _relay()
@@ -1313,6 +1379,65 @@ class CommandTests(unittest.TestCase):
                 )
             )
             self.assertEqual("SHADOW", record["result"])
+
+
+class DispatchHintTests(unittest.TestCase):
+    """G1: a guarded merge's `repository_dispatch` names its pull request and its
+    nonce, as data. The event is the runner's own file; its payload must be exactly
+    those two, well-typed, or the selection refuses, never falling back to the
+    sweep."""
+
+    @staticmethod
+    def _hint(directory: Path, event: object) -> tuple[int, str]:
+        relay = _relay()
+        path = directory / "event.json"
+        if event is not None:
+            path.write_text(json.dumps(event), encoding="utf-8")
+        out = io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ, {**_env(directory), "GITHUB_EVENT_PATH": str(path)}
+            ),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            code = int(relay.main(["dispatch-hint"]))
+        return code, out.getvalue().strip()
+
+    @staticmethod
+    def _event(**payload: object) -> dict[str, object]:
+        return {"action": "gnostoa-merge-admission", "client_payload": payload}
+
+    def test_a_well_formed_dispatch_names_its_pull_request_and_nonce(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertEqual(
+                (0, f"426 {NONCE}"),
+                self._hint(Path(raw), self._event(pull_number=426, nonce=NONCE)),
+            )
+
+    def test_anything_else_refuses(self) -> None:
+        for name, event in (
+            ("no event file", None),
+            (
+                "another type",
+                {
+                    "action": "other",
+                    "client_payload": {"pull_number": 426, "nonce": NONCE},
+                },
+            ),
+            ("no payload", {"action": "gnostoa-merge-admission"}),
+            ("no nonce", self._event(pull_number=426)),
+            ("no pull request", self._event(nonce=NONCE)),
+            ("an extra field", self._event(pull_number=426, nonce=NONCE, head=HEAD)),
+            ("a string number", self._event(pull_number="426", nonce=NONCE)),
+            ("a boolean number", self._event(pull_number=True, nonce=NONCE)),
+            ("zero", self._event(pull_number=0, nonce=NONCE)),
+            ("an upper-case nonce", self._event(pull_number=426, nonce="AB" * 16)),
+            ("a short nonce", self._event(pull_number=426, nonce="ab" * 15)),
+            ("a list nonce", self._event(pull_number=426, nonce=[NONCE])),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
+                self.assertEqual((2, ""), self._hint(Path(raw), event))
 
 
 class HintTests(unittest.TestCase):

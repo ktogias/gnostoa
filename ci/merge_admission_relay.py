@@ -7,10 +7,13 @@ the exact head that verdict was evaluated for, and only while the evidence it re
 is unchanged: the workflow evaluates, reads a second snapshot and rebuilds the
 evidence from it, and the two are compared, observation times aside.
 
-Three commands, run by the privileged workflow (F1, the Decisions Router on #426):
+Four commands, run by the privileged workflow (F1, the Decisions Router on #426):
 
 - `hint` names the pull request a relayed PR conversation comment is on. It is a hint
   only: L1 re-reads the subject.
+- `dispatch-hint` names the pull request and the nonce a guarded merge's
+  `repository_dispatch` carries (G1), exactly, or refuses. The nonce is recorded
+  beside the run's own identity, so the guard finds this run; it grants nothing.
 - `invalidate` runs before anything is acquired again. A success the App published on
   the head stops standing: a pending run of the App replaces it until this workflow
   run completes it.
@@ -48,6 +51,7 @@ from tools.agent_review_github import DELIVERED_EVENT_BYTES
 from tools.github_events import delivered_comment_pull_number
 from tools.merge_admission_checks import (
     CHECK_NAME,
+    NONCE,
     PublicationError,
     app_latest,
     canonical,
@@ -69,6 +73,7 @@ _MAX_TITLE = 255
 _MAX_SUMMARY = 60_000
 _WORK = "gnostoa-merge-admission"
 _RELAYED = "gnostoa-merge-admission-relay"
+_DISPATCH_TYPE = "gnostoa-merge-admission"
 _POLICY = github_rest.Policy(
     timeout_seconds=30, attempts=1, max_response_bytes=4_194_304
 )
@@ -271,12 +276,7 @@ def _final(
     else:
         conclusion, title, summary = "failure", planned["title"], planned["summary"]
         external_id = f"incomplete:{_identity(correlation)}"
-    record = correlation.get("unbundled_evidence_sha256")
-    text = (
-        correlation_text(correlation)
-        if isinstance(record, str)
-        else "The evaluation rebuilt no evidence, so this run records no digest."
-    )
+    text = correlation_text({"unbundled_evidence_sha256": None, **correlation})
     return {
         "conclusion": conclusion,
         "external_id": external_id,
@@ -383,6 +383,10 @@ def invalidate(
             "summary": (
                 "An earlier success on this head no longer stands while the head is "
                 "evaluated again."
+            ),
+            # The run and the nonce, so a guarded merge can find this run (G1).
+            "text": correlation_text(
+                {**correlation, "unbundled_evidence_sha256": None}
             ),
         },
     }
@@ -558,6 +562,9 @@ def parser() -> argparse.ArgumentParser:
     commands_parser = argparse.ArgumentParser(description=__doc__)
     commands = commands_parser.add_subparsers(dest="command", required=True)
     commands.add_parser("hint", help="the pull request a relayed comment names")
+    commands.add_parser(
+        "dispatch-hint", help="the pull request and nonce a guarded merge dispatched"
+    )
     for name in ("invalidate", "publish"):
         command = commands.add_parser(name)
         command.add_argument("--repository", required=True)
@@ -603,11 +610,40 @@ def _runner() -> tuple[Path, dict[str, Any]]:
         raise ValueError("the runner names no workflow run")
     if _SHA40.fullmatch(revision) is None:
         raise ValueError("the runner names no protected revision")
+    # The guarded merge's nonce, from this run's own `subjects` job, as data (G1).
+    nonce = os.environ.get("DISPATCH_NONCE", "") or None
+    if nonce is not None and NONCE.fullmatch(nonce) is None:
+        raise ValueError("the dispatch nonce is not 128 bits of hex")
     return Path(temporary).resolve(strict=True), {
         "workflow_run_id": int(run),
         "run_attempt": int(attempt),
         "protected_revision": revision,
+        "nonce": nonce,
     }
+
+
+def _dispatch_hint() -> int:
+    """A guarded merge's `repository_dispatch`: exactly its pull request and its nonce,
+    from the runner's own event file (G1, #426 6132395441). Anything else refuses,
+    and never falls back to the sweep."""
+
+    event = read_payload(
+        os.environ.get("GITHUB_EVENT_PATH", ""), limit=DELIVERED_EVENT_BYTES
+    )
+    payload = event.get("client_payload") if isinstance(event, dict) else None
+    if (
+        not isinstance(event, dict)
+        or event.get("action") != _DISPATCH_TYPE
+        or not isinstance(payload, dict)
+        or set(payload) != {"pull_number", "nonce"}
+        or type(payload["pull_number"]) is not int
+        or payload["pull_number"] <= 0
+        or not isinstance(payload["nonce"], str)
+        or NONCE.fullmatch(payload["nonce"]) is None
+    ):
+        raise ValueError("the dispatch names no pull request and nonce exactly")
+    print(f"{payload['pull_number']} {payload['nonce']}")
+    return 0
 
 
 def _hint(temporary: Path) -> int:
@@ -677,6 +713,8 @@ def main(argv: list[str] | None = None) -> int:
         temporary, correlation = _runner()
         if args.command == "hint":
             return _hint(temporary)
+        if args.command == "dispatch-hint":
+            return _dispatch_hint()
         if _SHA40.fullmatch(args.expected_head) is None:
             raise ValueError("the expected head is no exact SHA")
         if token and (args.app_id is None or args.app_id <= 0):

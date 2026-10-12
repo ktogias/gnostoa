@@ -216,10 +216,11 @@ class GitHubRestClient(github_rest.GitHubRestClient):
         payload: dict[str, Any] | None = None,
         *,
         read: bool = False,
+        empty: bool = False,
     ) -> tuple[Any, dict[str, str]]:
         """Make one attempt, failing under this adapter's error names."""
         try:
-            return super()._request(method, url, payload, read=read)
+            return super()._request(method, url, payload, read=read, empty=empty)
         except github_rest.GitHubError as error:
             raise _translated(error) from error
 

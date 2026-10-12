@@ -9,9 +9,10 @@ same way, from this module:
 - a run is the App's only when its App id says so;
 - the App's latest run on a head is GitHub's `filter=latest` view, which keeps one run
   per App and name, and a view that does not hold every run it counts is refused;
-- a run records the workflow run, attempt and protected revision that wrote it, and
-  the digest of the evidence that evaluation rebuilt without the analyzer bundle, in
-  one fenced block of its text.
+- a run records the workflow run, attempt and protected revision that wrote it, the
+  nonce of the guarded merge that dispatched it, if one did (G1), and the digest of
+  the evidence that evaluation rebuilt without the analyzer bundle, once there is
+  one, in one fenced block of its text.
 """
 
 from __future__ import annotations
@@ -33,9 +34,11 @@ _CORRELATION_FIELDS = frozenset(
         "workflow_run_id",
         "run_attempt",
         "protected_revision",
+        "nonce",
         "unbundled_evidence_sha256",
     }
 )
+NONCE = re.compile(r"[0-9a-f]{32}")
 _CORRELATION_BLOCK = re.compile(
     re.escape(CORRELATION_MARKER) + r"\n```json\n(\{[^\n]*\})\n```"
 )
@@ -163,8 +166,16 @@ def correlation_of(run: object) -> dict[str, Any] | None:
         or not _positive(value["run_attempt"])
         or not isinstance(value["protected_revision"], str)
         or _SHA40.fullmatch(value["protected_revision"]) is None
-        or not isinstance(value["unbundled_evidence_sha256"], str)
-        or _SHA256.fullmatch(value["unbundled_evidence_sha256"]) is None
+        or not _optional(value["nonce"], NONCE)
+        or not _optional(value["unbundled_evidence_sha256"], _SHA256)
     ):
         return None
     return value
+
+
+def _optional(value: object, pattern: re.Pattern[str]) -> bool:
+    """None, or a string the pattern matches whole."""
+
+    return value is None or (
+        isinstance(value, str) and pattern.fullmatch(value) is not None
+    )

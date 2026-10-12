@@ -75,6 +75,8 @@ def _normalized(expression: object) -> str:
 SUBJECTS_IF = (
     "github.ref == 'refs/heads/main' && (github.event_name == 'schedule'"
     " || github.event_name == 'workflow_dispatch'"
+    " || (github.event_name == 'repository_dispatch'"
+    " && github.event.action == 'gnostoa-merge-admission')"
     " || (github.event_name == 'workflow_run'"
     " && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'"
     " && github.event.workflow_run.conclusion == 'success'"
@@ -218,7 +220,14 @@ class AdmissionWorkflowTests(unittest.TestCase):
         workflow = _load(ADMISSION)
         self.assertEqual("Merge admission", workflow["name"])
         events = workflow["on"]
-        self.assertEqual({"workflow_run", "schedule", "workflow_dispatch"}, set(events))
+        self.assertEqual(
+            {"workflow_run", "schedule", "workflow_dispatch", "repository_dispatch"},
+            set(events),
+        )
+        # G1 (#426 6132395441): the guarded merge's dispatch, by its one type.
+        self.assertEqual(
+            ["gnostoa-merge-admission"], events["repository_dispatch"]["types"]
+        )
         self.assertEqual(
             ["Merge admission trigger", "Gnostoa verification"],
             events["workflow_run"]["workflows"],
@@ -315,6 +324,24 @@ class AdmissionWorkflowTests(unittest.TestCase):
         self.assertEqual(record[0]["with"]["name"], fetched[0]["with"]["name"])
         self.assertNotIn("run-id", fetched[0]["with"])
 
+    def test_the_dispatch_nonce_reaches_both_app_jobs_as_data(self) -> None:
+        """The nonce leaves `subjects` as an output and reaches the two jobs that hold
+        the App through the environment, never through an expression in a script."""
+        jobs = _load(ADMISSION)["jobs"]
+        self.assertEqual(
+            "${{ steps.subjects.outputs.nonce }}", jobs["subjects"]["outputs"]["nonce"]
+        )
+        for job, name in (
+            ("invalidate", "Invalidate a standing success on the exact head"),
+            ("admit", "Publish the verdict on the exact head"),
+        ):
+            with self.subTest(job=job):
+                (step,) = [s for s in _steps(jobs[job]) if s.get("name") == name]
+                self.assertEqual(
+                    "${{ needs.subjects.outputs.nonce }}", step["env"]["DISPATCH_NONCE"]
+                )
+                self.assertNotIn("nonce }}", str(step.get("run")))
+
     def test_a_failed_evaluation_still_completes_the_run(self) -> None:
         steps = _steps(_load(ADMISSION)["jobs"]["admit"])
         (publish,) = [
@@ -380,6 +407,9 @@ class AdmissionWorkflowTests(unittest.TestCase):
                 "--mode subjects",
                 'hint="$(PYTHONPATH=. python ci/merge_admission_relay.py hint)"',
                 'args+=(--pull-number "${hint}")',
+                'dispatched="$(PYTHONPATH=. python ci/merge_admission_relay.py dispatch-hint)"',
+                'args+=(--pull-number "${dispatched% *}")',
+                'printf \'nonce=%s\\n\' "${dispatched#* }" >> "${GITHUB_OUTPUT}"',
                 'PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"',
             ),
             ("invalidate", "Invalidate a standing success on the exact head"): (
@@ -471,15 +501,21 @@ class ActivationRunbookTests(unittest.TestCase):
         step = self._steps()["4"]
         self.assertIn("a pending run over an older success", step)
         self.assertIn("App-pinned", step)
-        self.assertIn("`workflow_run_id`", step)
+        # G1: the dispatch names no run; its nonce, in the run's record, does.
+        self.assertIn("nonce", step)
+        self.assertIn("`repository_dispatch`", step)
 
     def test_the_merge_after_activation_obtains_its_own_admission(self) -> None:
         text = RUNBOOK.read_text(encoding="utf-8")
         procedure = text.split("## Procedure", 1)[1]
         step8 = procedure.split("8. **The merge.**", 1)[1].split("\n9. ", 1)[0]
-        self.assertIn("ci/merge_admission_guard.py", step8)
-        guard = step8.index("ci/merge_admission_guard.py")
+        self.assertIn("guard_merge --repository", step8)
+        guard = step8.index("guard_merge --repository")
         self.assertLess(guard, step8.rindex("--match-head-commit"))
+        # The launch it names runs the guard (Credentials; the PAO on #426).
+        launch = text.split("  guard_merge() {", 1)[1].split("\n  }\n", 1)[0]
+        self.assertIn("python3 -I -B", launch)
+        self.assertIn("ci/merge_admission_guard.py", launch)
 
 
 class ReadbackCallTests(unittest.TestCase):
