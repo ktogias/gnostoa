@@ -521,7 +521,7 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertLess(guard, step8.rindex("--match-head-commit"))
         # The launch it names runs the guard (Credentials; the PAO on #426).
         launch = text.split("  guard_merge() {", 1)[1].split("\n  }\n", 1)[0]
-        self.assertIn("python3 -I -B", launch)
+        self.assertIn('"$created/venv/bin/python" -I -B', launch)
         self.assertIn("ci/merge_admission_guard.py", launch)
 
 

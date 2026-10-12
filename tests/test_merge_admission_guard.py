@@ -376,7 +376,35 @@ class GuardTests(unittest.TestCase):
             _check(CHECK),
             _check(CHECK + 1, nonce=FOREIGN),
         ]
-        self.assertRefused(github, "latest")
+        self.assertRefused(github, "does not correlate with this dispatch's run")
+
+    def test_the_same_check_changed_during_the_evidence_reads_refuses(self) -> None:
+        """The PAO on #426 (6133766569): a check run's id does not freeze its
+        contents. The same run, still carrying this dispatch's identity, but no
+        longer a completed success, or recording another evaluation's digest, when
+        it is read after the evidence, refuses."""
+        for name, final, needle in (
+            (
+                "a failure",
+                _check(CHECK, conclusion="failure"),
+                "not the pinned App's completed success",
+            ),
+            (
+                "pending again",
+                _check(CHECK, status="in_progress", conclusion=None),
+                "not the pinned App's completed success",
+            ),
+            ("another digest", _check(CHECK, digest="f" * 64), "changed"),
+        ):
+            with self.subTest(name):
+                github = _GitHub()
+                github.timeline = [
+                    _check(CHECK, status="in_progress", conclusion=None),
+                    _check(CHECK),
+                    _check(CHECK),
+                    final,
+                ]
+                self.assertRefused(github, needle)
 
     def test_only_the_protected_admission_run_counts(self) -> None:
         for name, change in (
@@ -736,6 +764,9 @@ _STUB_GUARD = (
     "pathlib.Path(os.environ['HOME'], 'guard-ran').write_text(\n"
     "    os.environ.get('GH_TOKEN', '') + ' ' + ' '.join(sys.argv[1:])\n"
     ")\n"
+    "pathlib.Path(os.environ['HOME'], 'guard-environment').write_text(\n"
+    "    'pinned' if sys.prefix != sys.base_prefix else 'host'\n"
+    ")\n"
     'print(\'{"result": "PROCEED"}\')\n'
 )
 _STARTUP_MODULE = (
@@ -744,6 +775,10 @@ _STARTUP_MODULE = (
     "    os.environ.get('GH_TOKEN', '')\n"
     ")\n"
 )
+# The runtime lock protected main holds: none here, as the offline tests install
+# nothing; one the installer cannot read, for the failure.
+_LOCK = "--only-binary :all:\n--require-hashes\n"
+_UNREADABLE_LOCK = "--require-hashes\n!!! not a requirement\n"
 _MINT = "#!/bin/sh\n: > \"$HOME/minted\"\nprintf 'credential-%s' 1\n"
 
 
@@ -781,13 +816,18 @@ class GuardLaunchTests(unittest.TestCase):
             capture_output=True,
         )
 
-    def _source(self, root: Path, *, tracked_startup: bool = False) -> Path:
-        """Protected main, as the provider holds it: the guard committed on `main`."""
+    def _source(
+        self, root: Path, *, tracked_startup: bool = False, lock: str = _LOCK
+    ) -> Path:
+        """Protected main, as the provider holds it: the guard and its runtime lock
+        committed on `main`."""
         source = root / "source"
         (source / "ci").mkdir(parents=True)
         (source / "ci" / "merge_admission_guard.py").write_text(
             _STUB_GUARD, encoding="utf-8"
         )
+        (source / "requirements").mkdir()
+        (source / "requirements" / "runtime.lock").write_text(lock, encoding="utf-8")
         if tracked_startup:
             (source / "sitecustomize.py").write_text(_STARTUP_MODULE, encoding="utf-8")
         self._git(source, "init", "-q", "-b", "main")
@@ -829,10 +869,15 @@ class GuardLaunchTests(unittest.TestCase):
 
     @staticmethod
     def _hostile(directory: Path) -> None:
-        """A caller's directory holding everything a launch must never run."""
+        """A caller's directory holding everything a launch must never run, laid out
+        as a checkout is, its runtime lock included."""
         (directory / "ci").mkdir(parents=True, exist_ok=True)
         (directory / "ci" / "merge_admission_guard.py").write_text(
             _STARTUP_MODULE, encoding="utf-8"
+        )
+        (directory / "requirements").mkdir(exist_ok=True)
+        (directory / "requirements" / "runtime.lock").write_text(
+            _LOCK, encoding="utf-8"
         )
         for name in ("sitecustomize.py", "usercustomize.py"):
             (directory / name).write_text(_STARTUP_MODULE, encoding="utf-8")
@@ -847,6 +892,47 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual((True, True, False), self._results(root))
             ran = (root / "home" / "guard-ran").read_text(encoding="utf-8")
             self.assertTrue(ran.startswith("credential-1 "))
+
+    def test_the_guard_runs_in_the_environment_main_s_lock_pins(self) -> None:
+        """Codex on #426: the guard's dependencies are the ones protected main's
+        runtime lock pins, installed from that lock into an environment of the
+        launch's own, never whatever the host interpreter happens to hold."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
+            environment = root / "home" / "guard-environment"
+            self.assertEqual("pinned", environment.read_text(encoding="utf-8"))
+
+    def test_a_failed_install_stops_before_the_credential(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root, lock=_UNREADABLE_LOCK)
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertNotEqual(0, self._run(root, caller, source))
+            self.assertEqual((False, False, False), self._results(root))
+
+    def test_the_user_s_installer_configuration_never_reaches_the_install(
+        self,
+    ) -> None:
+        """The install reads no configuration: a user's `pip.conf` naming a
+        constraint that cannot be read would otherwise fail it."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            configuration = root / "home" / ".config" / "pip"
+            configuration.mkdir(parents=True)
+            (configuration / "pip.conf").write_text(
+                "[install]\nconstraint = /nonexistent/constraints.txt\n",
+                encoding="utf-8",
+            )
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
+            self.assertEqual((True, True, False), self._results(root))
 
     def test_nothing_in_the_caller_s_directory_runs(self) -> None:
         """A replaced guard and startup modules where the launch is started from:

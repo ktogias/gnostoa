@@ -255,7 +255,8 @@ owner.
 
 The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `cmp`, `rm` and
 `mktemp` on the fixed system path below, besides the system's `/usr/bin/env` and
-`/bin/sh`. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
+`/bin/sh`. `python3` must provide `venv` with its bundled `pip`; the guard's own
+dependencies are installed by `guard_merge`, never taken from the host. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
 the list of reviews outside the guarded body, so it never holds a token.
 
 **Temporary debt.** `as_app`, `as_machine_user`, break glass's isolated shell and the
@@ -335,10 +336,14 @@ written here.
   of its own, and the clone must succeed. A checkout's own state cannot vouch for itself: its configuration can name
   a monitor that runs programs, or a clean filter that makes modified bytes look
   committed to `git status` (the PAO on #426, 6132349006; Codex and CodeAnt). Only
-  then is the token minted. The guard runs from that clone, its interpreter isolated
-  (`-I`), so no file runs at its startup; it adds the clone to its own path
-  afterwards, writes no bytecode, and checks the clone's revision against protected
-  `main` by the API:
+  the guard's dependencies installed, still before the token: exactly what the
+  clone's `requirements/runtime.lock` pins, wheels only and every hash checked, as
+  the runtime image installs them, into a virtual environment of the launch's own
+  that nothing else uses (`pip --isolated` reads no configuration), and the install
+  must succeed (Codex on #426). Only then is the token minted. The guard runs from
+  that clone with that environment's interpreter, isolated (`-I`), so no file runs
+  at its startup; it adds the clone to its own path afterwards, writes no bytecode,
+  and checks the clone's revision against protected `main` by the API:
   ```sh
   guard_merge() {
     /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
@@ -354,9 +359,14 @@ written here.
         clone --quiet --depth 1 --branch main --single-branch --no-tags \
         https://github.com/ktogias/gnostoa.git "$created/main" || exit
       cd "$created/main" || exit
+      python3 -I -m venv "$created/venv" \
+        && "$created/venv/bin/python" -I -m pip --isolated --disable-pip-version-check \
+        install --quiet --no-cache-dir --only-binary=:all: --require-hashes \
+        -r requirements/runtime.lock || exit
       GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
         && test -n "$GH_TOKEN" && export GH_TOKEN \
-        && python3 -I -B -X pycache_prefix="$created/cache" ci/merge_admission_guard.py "$@"
+        && "$created/venv/bin/python" -I -B -X pycache_prefix="$created/cache" \
+        ci/merge_admission_guard.py "$@"
     ' guard_merge "$@"
   }
   ```

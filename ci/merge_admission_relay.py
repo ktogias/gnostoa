@@ -455,21 +455,39 @@ def publish(
     latest = app_latest(client, repository, head, app_id)
     pending = record.get("pending") if record is not None else None
     final = _final(planned, correlation)
-    if type(pending) is int:
-        if run_id(latest) != pending:
-            _close(client, repository, head, app_id, pending, correlation)
-            return {"result": "OVERTAKEN"}
-        identifier = _complete(client, repository, head, app_id, pending, final)
-        return {"result": "COMPLETED", "check_run_id": identifier}
     # A guarded merge's run always leaves the record its nonce is found by, so the
     # guard refuses at once rather than at its deadline (Octopus on #426).
     dispatched = correlation.get("nonce") is not None
+    if type(pending) is int:
+        if run_id(latest) != pending:
+            _close(client, repository, head, app_id, pending, correlation)
+            return _overtaken(
+                client,
+                repository,
+                head,
+                app_id,
+                correlation,
+                dispatched,
+                latest=latest,
+                record=record,
+            )
+        identifier = _complete(client, repository, head, app_id, pending, final)
+        return {"result": "COMPLETED", "check_run_id": identifier}
     succeeding = planned["action"] == "PUBLISH" and planned["conclusion"] == "success"
     current = record is not None and run_id(latest) == record.get("observed")
     if succeeding and not current:
         # An older worker never restores a success over a newer run, nor without the
         # record of what it observed.
-        return _overtaken(client, repository, head, app_id, correlation, dispatched)
+        return _overtaken(
+            client,
+            repository,
+            head,
+            app_id,
+            correlation,
+            dispatched,
+            latest=latest,
+            record=record,
+        )
     if planned["action"] != "PUBLISH":
         return _without_verdict(
             client,
@@ -491,12 +509,18 @@ def _overtaken(
     app_id: int,
     correlation: Mapping[str, Any],
     dispatched: bool,
+    *,
+    latest: Mapping[str, Any] | None,
+    record: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """A success this run may not write. A scheduled run writes nothing; a dispatched
-    run records a failure carrying its nonce, so the guard refuses at once (CodeAnt on
-    #426): the cost is a fresh evaluation, never a merge."""
+    """A success this run may not write. A dispatched run records a failure carrying
+    its nonce, so the guard refuses at once; and a run with no record of what it
+    observed, its invalidation having failed, replaces a success standing, which may
+    predate the change that woke it (CodeAnt on #426). Otherwise nothing is written:
+    a newer run's verdict stands. The cost is a fresh evaluation, never a merge."""
 
-    if not dispatched:
+    standing = record is None and _standing_success(latest)
+    if not dispatched and not standing:
         return {"result": "OVERTAKEN"}
     final = {
         "conclusion": "failure",
@@ -515,7 +539,10 @@ def _overtaken(
     identifier = _post(
         client, repository, head, app_id, {"status": "completed", **final}
     )
-    return {"result": "RECORDED", "check_run_id": identifier}
+    return {
+        "result": "INVALIDATED" if _standing_success(latest) else "RECORDED",
+        "check_run_id": identifier,
+    }
 
 
 def _without_verdict(

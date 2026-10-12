@@ -274,28 +274,6 @@ def _admitted(
     return identifier, digest_recorded
 
 
-def _still_latest(
-    client: Any,
-    repository: str,
-    approved: str,
-    app_id: int,
-    record: Mapping[str, Any],
-    check: int,
-) -> None:
-    """The record read once more, after the evidence reads: still the same run, the
-    pinned App's latest on the head, carrying this dispatch's identity (CodeAnt on
-    #426)."""
-
-    latest, current = _latest_record(client, repository, approved, app_id)
-    if (
-        latest is None
-        or current is None
-        or run_id(latest) != check
-        or any(current[field] != record[field] for field in _IDENTITY)
-    ):
-        raise Refused("this dispatch's check is no longer the latest")
-
-
 def _unchanged(
     rebuilt: Any, recorded: str, repository: str, number: int, approved: str
 ) -> None:
@@ -386,7 +364,11 @@ def guard(
         raise Refused(f"the subject could not be re-read: {exc}") from exc
     _unchanged(rebuilt, recorded, repository, pull_number, approved)
     _alone(observed, pull_number, approved)
-    _still_latest(client, repository, approved, app_id, record, check)
+    # Read once more after the evidence, by the same rule: a check's id does not
+    # freeze its contents, so the run must still be this dispatch's completed success
+    # recording the digest the evidence matched (the PAO and CodeAnt on #426).
+    if _admitted(client, repository, approved, app_id, record) != (check, recorded):
+        raise Refused("this dispatch's admission changed during the evidence reads")
     _pull(client, repository, pull_number, approved)
     if _main(client, repository) != revision:
         raise Refused(f"protected {_PROTECTED} moved during the guard")

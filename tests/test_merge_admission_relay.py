@@ -418,7 +418,8 @@ class _Provider(_FakeClient):
             raise github_rest.GitHubWriteError(
                 "GitHub API HTTP 502", status=502, outcome_unknown=True
             )
-        self.next_id += 1
+        # GitHub's ids only increase: a run written now is newer than every run held.
+        self.next_id = max([self.next_id, *(run["id"] for run in self.runs)]) + 1
         run = {
             "id": self.next_id,
             "app": {"id": MA0_APP, "slug": "gnostoa-ma0"},
@@ -668,7 +669,7 @@ class CompletionTests(unittest.TestCase):
         provider = _Provider([_run(90)])
         record = self._pending(provider)
         provider.runs.append(_run(700, conclusion="failure"))
-        result = _publish(provider, _planned(), record)
+        result = _publish(provider, _planned(), record, SCHEDULED)
         self.assertEqual("OVERTAKEN", result["result"])
         latest = provider.latest_view()["check_runs"][-1]
         self.assertEqual((700, "failure"), (latest["id"], latest["conclusion"]))
@@ -682,6 +683,43 @@ class CompletionTests(unittest.TestCase):
         result = _publish(observed, _planned(), record, SCHEDULED)
         self.assertEqual("OVERTAKEN", result["result"])
         self.assertEqual(([], []), (observed.posts, observed.patches))
+
+    def test_a_dispatched_run_whose_pending_run_was_overtaken_still_records(
+        self,
+    ) -> None:
+        """A dispatched run whose pending run is no longer the latest closes it, then
+        records a failure carrying its nonce, so a guard that never saw the pending
+        run still finds this dispatch's record at once."""
+        provider = _Provider([_run(90)])
+        record = self._pending(provider)
+        provider.runs.append(_run(700))
+        result = _publish(provider, _planned(), record)
+        self.assertEqual("INVALIDATED", result["result"])
+        self.assertEqual((1, 2), (len(provider.patches), len(provider.posts)))
+        latest = provider.latest_view()["check_runs"][-1]
+        self.assertEqual("failure", latest["conclusion"])
+        found = _checks().correlation_of(latest)
+        self.assertEqual(NONCE, (found or {}).get("nonce"))
+
+    def test_a_success_standing_without_this_run_s_record_is_replaced(self) -> None:
+        """CodeAnt on #426: when invalidation failed, a success already standing may
+        predate the change that woke this run, so a run that may not write its own
+        success replaces it with a failure rather than leave it standing."""
+        provider = _Provider([_run(91)])
+        result = _publish(provider, _planned(), None, SCHEDULED)
+        self.assertEqual("INVALIDATED", result["result"])
+        self.assertEqual(1, len(provider.posts))
+        latest = provider.latest_view()["check_runs"][-1]
+        self.assertEqual("failure", latest["conclusion"])
+
+    def test_a_newer_run_s_success_stands_over_an_older_worker(self) -> None:
+        """With a record of what this run observed, a success written since is a
+        newer run's verdict: a scheduled run leaves it standing."""
+        provider = _Provider([_run(91, conclusion="failure"), _run(701)])
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        result = _publish(provider, _planned(), record, SCHEDULED)
+        self.assertEqual("OVERTAKEN", result["result"])
+        self.assertEqual(([], []), (provider.posts, provider.patches))
 
     def test_a_success_without_its_record_is_never_written(self) -> None:
         provider = _Provider([_run(91, conclusion="failure")])
@@ -776,18 +814,19 @@ class CompletionTests(unittest.TestCase):
         invalidation having failed or the latest run having moved, records a failure
         carrying its nonce, so the guard refuses at once. The newer run's success,
         if any, is invalidated: the cost is a fresh evaluation, never a merge."""
-        for name, runs, record in (
-            ("no record", [_run(91, conclusion="failure")], None),
+        for name, runs, record, outcome in (
+            ("no record", [_run(91, conclusion="failure")], None, "RECORDED"),
             (
                 "the latest moved",
                 [_run(91, conclusion="failure"), _run(701)],
                 {"result": "NOT_NEEDED", "pending": None, "observed": 91},
+                "INVALIDATED",
             ),
         ):
             with self.subTest(name):
                 provider = _Provider(runs)
                 result = _publish(provider, _planned(), record)
-                self.assertEqual("RECORDED", result["result"])
+                self.assertEqual(outcome, result["result"])
                 self.assertEqual(1, len(provider.posts))
                 _, payload = provider.posts[0]
                 self.assertEqual("failure", payload["conclusion"])
