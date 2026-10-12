@@ -1,0 +1,22 @@
+name: Merge admission trigger
+
+# Decision 0096 rule 2 (#407, MA0 slice 1b.4; Decision 0112 item 5): this workflow
+# only wakes the protected merge-admission relay, `merge-admission.yml`, on the events
+# that can change a verdict. It holds no permission, secret or checkout and computes
+# nothing. The relay takes the pull request's number from GitHub's record of this run,
+# as a hint, and re-reads everything else from the provider.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions: {}
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Wake the protected merge-admission relay
+        run: echo "The protected relay re-reads this pull request from the provider."

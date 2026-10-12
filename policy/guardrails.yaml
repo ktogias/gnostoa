@@ -763,6 +763,26 @@ guardrails:
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_denies_unless_the_findings_were_read_completely
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_the_findings_have_a_closed_contract
 
+  - id: merge-admission-publication
+    title: The merge-admission check is published from protected main only, on the exact evaluated head, and never once its evidence has changed
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md#decision
+    implementation:
+      - ci/merge_admission_relay.py
+      - tools/github_rest.py
+      - .github/workflows/merge-admission.yml
+      - .github/workflows/merge-admission-trigger.yml
+      - .github/workflows/analyzer-readback.yml
+      - ci/analyzer_readback_subject.py
+      - ci/review_github_current_state.py
+      - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+      - knowledge/runbooks/operate-the-merge-gate.md
+    tests:
+      - tests/test_merge_admission_relay.py
+      - tests/test_merge_admission_workflows.py
+      - tests/test_github_rest.py
   - id: github-merge-evidence
     title: A GitHub pull request's merge evidence comes from L1's snapshot and the protected target's declarations, and an incomplete read never passes as complete
     applies_to: [kit]

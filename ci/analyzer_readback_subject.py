@@ -11,6 +11,8 @@ provider, and refuses a head that does not match (Decisions 0091 and 0107). Ever
 value is validated before it is printed, so no field can add an output of its own.
 
 - `workflow_dispatch`: `DISPATCH_PULL`, `DISPATCH_HEAD`, from the owner's inputs.
+- `workflow_call`: the same, from the merge-admission run's call, which re-reads
+  the inventory at the admission point (#407, slice 1b.4).
 - `repository_dispatch`: `REQUEST_PULL`, `REQUEST_HEAD`, from the request's payload.
 - `workflow_run`: `RUN_PULLS`, the run's `pull_requests` as JSON, and `RUN_HEAD`. A
   run with no Pull Request, as a fork's, or with more than one binds none.
@@ -49,6 +51,7 @@ def resolve(environ: Mapping[str, str]) -> dict[str, str]:
         return {"pull_number": str(numbers[0]), "head": head}
     fields = {
         "workflow_dispatch": ("DISPATCH_PULL", "DISPATCH_HEAD"),
+        "workflow_call": ("DISPATCH_PULL", "DISPATCH_HEAD"),
         "repository_dispatch": ("REQUEST_PULL", "REQUEST_HEAD"),
     }.get(event)
     if fields is None:

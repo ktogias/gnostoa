@@ -130,9 +130,17 @@ provider-neutral public change-governance contract of
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
   | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 merged (#423) |
   | 1b.3c | SonarCloud's readback (#359) | admitted in the owner's sequence (#325, 6113092417), continued after 1b.3b-4's integration (#407, 6119460225) |
-  | 1b.4 | publication and activation | conditionally admitted in that sequence, after 1b.3c is integrated |
+  | 1b.4 | publication and activation | continued after 1b.3c's integration (#407, 6129370606); publication implemented, in shadow until the owner's activation |
   | 1b.5 | the post-merge audit | not yet admitted |
 
+- **Publication (1b.4)** follows item 5 and runbook "Merge admission":
+  - `merge-admission-trigger.yml` holds nothing and wakes `merge-admission.yml`, which runs from protected `main` only, with an hourly sweep.
+  - L1 re-reads each subject; event numbers are hints. The admission point re-reads the inventory by calling the existing `analyzer-readback.yml` for the exact subject, so the bundle the evidence reads is that run's own, which authenticates it.
+  - The relay publishes `merge-admission` on the exact evaluated head, and only while the evidence rebuilt from a second snapshot equals the evaluated one, observation times aside. A moved head (invariant d), or an edited description, relation, review, thread or check, supersedes the verdict.
+  - The check is posted once and read back. An unknown outcome is found by its `external_id`, never posted again.
+  - Only a well-formed `ALLOW` for the exact subject, from a command that exited 0, is ever a success.
+  - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It also waits for the rerun-successor case below.
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no receipt, the reducer reports it `MISSING`.** So once the

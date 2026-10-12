@@ -441,6 +441,40 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    It records the outcome on the Work Item. A Work Item that
    survives the merge was only referenced (`Refs`, never a closing keyword).
 
+### Merge admission (MA0 1b.4): shadow until activation
+
+**What runs.** Decision 0112 item 5's publication, from protected `main` only:
+- `merge-admission-trigger.yml` wakes the relay on a pull request's `opened`, `edited`, `reopened`, `synchronize` and `ready_for_review`, and on a review's `submitted`, `edited` and `dismissed`. It holds no permission, secret or checkout (Decision 0096 rule 2).
+- `merge-admission.yml` runs on the trigger's and verification's completed runs, on an hourly sweep at minute 41, and by hand:
+  1. L1's `--mode subjects` re-reads each hinted pull request's head, and drops a closed one. Without a hint, the sweep takes L1's scheduled batch of the open population.
+  2. The admission point re-reads the inventory: the job calls `analyzer-readback.yml` for the exact subject, in its `analyzer-readback` environment.
+  3. In the `gnostoa-ma0` environment, L1's `--mode merge-evidence` snapshot goes through `knowledge merge-evidence`, then `knowledge merge-admission`. A second snapshot rebuilds the evidence.
+  4. `ci/merge_admission_relay.py` publishes the `merge-admission` check run on the exact head, **only if both evidence documents agree**, observation times aside. Otherwise the verdict is superseded, and the next event or the sweep evaluates again.
+  5. The relay posts the check once and reads it back. An unknown outcome is found by its `external_id`, never posted again.
+- **Shadow.** Without the variable `GNOSTOA_MA0_APP_ID`, no token is minted: the run writes its plan to its summary and its artifact, and publishes nothing.
+
+**Owner operations.** Each is the owner's, done in this order and read back after it:
+1. **Create the App `gnostoa-ma0`** at <https://github.com/settings/apps/new>:
+   - Webhook inactive.
+   - Repository permissions: **Checks: Read and write**, and the mandatory Metadata: Read. Nothing else.
+   - Installable only on this account; installed on `ktogias/gnostoa` only.
+2. **Protect the `gnostoa-ma0` environment before it holds anything.** Set its deployment branches to `main` alone. The first run of `merge-admission.yml` after its merge creates the environment without protection, as GitHub does for a named environment.
+3. **Add its credentials.** The variable `GNOSTOA_MA0_APP_ID` (the App's ID) and the secret `GNOSTOA_MA0_PRIVATE_KEY`. The token is minted with `permission-checks: write` alone, by `actions/create-github-app-token` pinned to `bcd2ba49218906704ab6c1aa796996da409d3eb1` (v3.2.0).
+4. **Shadow with publication.** The check now appears on pull-request heads without being required. Before activation, record on #407:
+   - an `ALLOW` on a converged head, and a `DENY` naming its criteria;
+   - a superseded verdict after a push, or after an edit with the head unchanged;
+   - the check's publisher, `gnostoa-ma0`.
+5. **The rerun-successor case** (Decision 0112, the check receipts) is accepted, or explicitly routed, before activation.
+6. **Activate.** R-main's `required_status_checks` gains this entry, beside the four above:
+   ```json
+   {"context": "merge-admission", "integration_id": <gnostoa-ma0's App ID>}
+   ```
+   - It is **never** app 15368: a same-named check from GitHub Actions or any other App must not satisfy it.
+   - Read the ruleset back, and record it on #407.
+   - Until this is verified, Decision 0110's Phase-1a procedure governs every merge.
+
+**Rollback.** Remove the `merge-admission` entry from R-main, and Phase-1a resumes. Revoke the App's key or uninstall the App to stop publication. Existing check runs stay as history.
+
 ### Break glass
 
 **When.** Only when the normal procedure is impossible, not merely slow. For

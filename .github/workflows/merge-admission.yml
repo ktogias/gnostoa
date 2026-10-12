@@ -1,0 +1,232 @@
+name: Merge admission
+
+# Decision 0112 item 5 (#407, MA0 slice 1b.4): the dedicated `gnostoa-ma0` App posts the
+# `merge-admission` check run, from protected main, on the exact head it was evaluated
+# for. Decision 0096's relay wakes it (the trigger workflow and verification's
+# completion), and a sweep covers what no event names, such as a fork's pull request.
+# An event's pull requests are hints only: L1 re-reads each subject, the analyzer
+# readback re-reads the inventory at the admission point, and the existing verdict
+# decides. The relay publishes only while the evidence is unchanged. Until
+# `gnostoa-ma0` and its environment exist, the run is a shadow and publishes nothing.
+# Decision 0110's Phase-1a procedure governs merges until R-main requires the check.
+on:
+  workflow_run:
+    workflows: ["Merge admission trigger", "Gnostoa verification"]
+    types: [completed]
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Pull Request number to admit
+        required: true
+        type: number
+
+# Every read is the workflow token's; the only write, the check run, is the
+# `gnostoa-ma0` App's, minted in the publishing job alone.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  checks: read
+  statuses: read
+  actions: read
+
+# Admissions queue, one at a time, and none is cancelled, as the readback's do.
+concurrency:
+  group: gnostoa-merge-admission
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  subjects:
+    # Each admitted event is named. `workflow_run` matches the triggering workflow by
+    # name, so a same-named workflow on any branch could start this run: only the
+    # trigger's pull-request and review runs, and verification's pull-request runs,
+    # count (Decision 0096 rule 7).
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'workflow_run'
+              && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
+                   && (github.event.workflow_run.event == 'pull_request'
+                       || github.event.workflow_run.event == 'pull_request_review'))
+                  || (github.event.workflow_run.path == '.github/workflows/verification.yml'
+                      && github.event.workflow_run.event == 'pull_request'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      subjects: ${{ steps.subjects.outputs.subjects }}
+    steps:
+      # No ref is named: the checkout takes its event's own revision, main's
+      # `github.sha`, which the next step verifies (Decision 0096 rule 11).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install exact runtime dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/runtime.lock
+      # The event's pull requests reach only L1, through the environment; L1 reads
+      # each one's current head and drops a closed one.
+      - name: Select the subjects
+        id: subjects
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          DISPATCH_PULL: ${{ inputs.pull_number }}
+        run: |
+          set -euo pipefail
+          args=(
+            --mode subjects
+            --repository "${GITHUB_REPOSITORY}"
+            --output "${RUNNER_TEMP}/gnostoa-merge-admission-subjects.json"
+          )
+          args+=(--workflow-run-pulls-json "${WORKFLOW_RUN_PULLS_JSON:-}")
+          if [[ -n "${DISPATCH_PULL:-}" ]]; then
+            args+=(--pull-number "${DISPATCH_PULL}")
+          fi
+          PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"
+          printf 'subjects=%s\n' "$(cat "${RUNNER_TEMP}/gnostoa-merge-admission-subjects.json")" \
+            >> "${GITHUB_OUTPUT}"
+
+  readback:
+    # The admission point re-reads the inventory (Decision 0112), through the existing
+    # main-only readback and its `analyzer-readback` environment, for the exact subject.
+    needs: subjects
+    if: github.ref == 'refs/heads/main' && needs.subjects.outputs.subjects != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+      checks: read
+    uses: ./.github/workflows/analyzer-readback.yml
+    with:
+      pull_number: ${{ matrix.subject.pull_number }}
+      head: ${{ matrix.subject.head }}
+      admission: true
+
+  admit:
+    # A readback that binds no subject fails its job and writes no bundle; the
+    # evaluation still runs, and the missing items deny.
+    needs: [subjects, readback]
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
+      && needs.subjects.result == 'success'
+      && needs.subjects.outputs.subjects != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
+    environment: gnostoa-ma0
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install exact runtime dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/runtime.lock
+      # This run's own readback, by its exact subject's name; data, never executed.
+      - name: Download the admission point's analyzer readback
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: gnostoa-analyzer-readback-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          path: ${{ runner.temp }}/gnostoa-merge-admission-readback
+      # Evaluate, then read the subject again and rebuild the evidence: the relay
+      # publishes only if the two agree, observation times aside.
+      - name: Evaluate the exact subject
+        id: evaluate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ matrix.subject.pull_number }}
+        run: |
+          set -u
+          work="${RUNNER_TEMP}/gnostoa-merge-admission"
+          mkdir -p "${work}" .gnostoa-merge-admission
+          bundle=()
+          if [ -f "${RUNNER_TEMP}/gnostoa-merge-admission-readback/gnostoa-analyzer-readback.json" ]; then
+            cp "${RUNNER_TEMP}/gnostoa-merge-admission-readback/gnostoa-analyzer-readback.json" \
+              .gnostoa-merge-admission/readback.json
+            bundle=(--analyzer-readback .gnostoa-merge-admission/readback.json)
+          fi
+          evidence() {
+            PYTHONPATH=. python ci/review_github_current_state.py --mode merge-evidence \
+              --repository "${GITHUB_REPOSITORY}" --pull-number "${PULL_NUMBER}" \
+              --output "${work}/$1-snapshot.json" \
+            && PYTHONPATH=. python -m tools.cli merge-evidence --project-root . "${bundle[@]}" \
+              < "${work}/$1-snapshot.json" > "${work}/$1-evidence.json"
+          }
+          evidence evaluated || exit 2
+          status=0
+          PYTHONPATH=. python -m tools.cli merge-admission --project-root . \
+            < "${work}/evaluated-evidence.json" > "${work}/verdict.json" || status=$?
+          echo "verdict_exit=${status}" >> "${GITHUB_OUTPUT}"
+          evidence current || exit 2
+      - name: Mint gnostoa-ma0's installation token
+        id: token
+        if: ${{ vars.GNOSTOA_MA0_APP_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.GNOSTOA_MA0_APP_ID }}
+          private-key: ${{ secrets.GNOSTOA_MA0_PRIVATE_KEY }}
+          permission-checks: write
+      - name: Publish the verdict on the exact head
+        env:
+          GNOSTOA_MA0_TOKEN: ${{ steps.token.outputs.token }}
+          VERDICT_EXIT: ${{ steps.evaluate.outputs.verdict_exit }}
+        run: |
+          set -eu
+          work="${RUNNER_TEMP}/gnostoa-merge-admission"
+          PYTHONPATH=. python ci/merge_admission_relay.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --evaluated "${work}/evaluated-evidence.json" \
+            --current "${work}/current-evidence.json" \
+            --verdict "${work}/verdict.json" \
+            --verdict-exit "${VERDICT_EXIT}" \
+            --output "${work}/result.json"
+      - name: Upload the non-secret admission record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-merge-admission-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          path: |
+            ${{ runner.temp }}/gnostoa-merge-admission/*-evidence.json
+            ${{ runner.temp }}/gnostoa-merge-admission/verdict.json
+            ${{ runner.temp }}/gnostoa-merge-admission/result.json
+          if-no-files-found: warn

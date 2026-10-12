@@ -17,6 +17,7 @@ from tools.review_reconcile import (
     parse_projection_comment,
     render_projection,
 )
+from tools.verdict_cli import MAX_INPUT_BYTES
 
 _API_ROOT = "https://api.github.com"
 _REVIEW_THREADS_QUERY = """
@@ -1938,7 +1939,11 @@ def _emit_publication_results(results: list[dict[str, Any]]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("collect", "publish"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("collect", "publish", "subjects", "merge-evidence"),
+        required=True,
+    )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pull-number", type=int, action="append", default=[])
     parser.add_argument("--workflow-run-pulls-json", default="")
@@ -1964,12 +1969,9 @@ def _collection_summary(lines: list[str]) -> None:
         )
 
 
-def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
-    """Collect a projection for each selected Pull Request and write the payload."""
-    if args.output is None:
-        raise SystemExit("--output is required for collect")
-    if args.run_id <= 0 or args.run_attempt <= 0:
-        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+def _selected_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """The Pull Requests a run reconciles: the event's hints, else the scheduled
+    batch of the open population, within the bounded capacity."""
     pulls = list(
         dict.fromkeys(
             [
@@ -1987,6 +1989,16 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
         raise SystemExit(
             "selected Pull Request population exceeds bounded reconciliation capacity"
         )
+    return pulls
+
+
+def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Collect a projection for each selected Pull Request and write the payload."""
+    if args.output is None:
+        raise SystemExit("--output is required for collect")
+    if args.run_id <= 0 or args.run_attempt <= 0:
+        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+    pulls = _selected_pulls(args, client)
     entries = []
     for number in pulls:
         try:
@@ -2026,6 +2038,49 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     return 0
 
 
+def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the open Pull Requests the merge-admission relay evaluates, each with
+    its head as GitHub reports it now (#407, slice 1b.4). An event's numbers are
+    hints only: each is re-read, and a closed one is no subject."""
+    if args.output is None:
+        raise SystemExit("--output is required for subjects")
+    subjects = []
+    for number in _selected_pulls(args, client):
+        document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
+        pull = _normalize_pull(document)
+        if pull["number"] != number:
+            raise ProviderReadError("the pull request read is not the one asked for")
+        if pull["state"] == "open":
+            subjects.append({"pull_number": number, "head": pull["head_sha"]})
+    args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write one Pull Request's merge-evidence snapshot, the document `knowledge
+    merge-evidence` reads (#407, slice 1b.4), bounded as that command bounds its
+    input. Nothing is written when the read fails."""
+    if args.output is None:
+        raise SystemExit("--output is required for merge-evidence")
+    if len(args.pull_number) != 1 or args.workflow_run_pulls_json:
+        raise SystemExit("merge-evidence reads exactly one --pull-number")
+    snapshot = collect_snapshot(
+        client,
+        repository=args.repository,
+        pull_number=args.pull_number[0],
+        observed_at=None,
+        merge_evidence=True,
+    )
+    encoded = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    if len(encoded) > MAX_INPUT_BYTES:
+        raise SystemExit("the merge-evidence snapshot exceeds its bounded size")
+    with args.output.open("xb") as handle:
+        handle.write(encoded)
+    return 0
+
+
 def _publish_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Publish each collected projection, isolating one entry's failure."""
     if args.payload is None:
@@ -2053,9 +2108,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     client = GitHubRestClient(token)
-    if args.mode == "collect":
-        return _collect_mode(args, client)
-    return _publish_mode(args, client)
+    modes = {
+        "collect": _collect_mode,
+        "subjects": _subjects_mode,
+        "merge-evidence": _merge_evidence_mode,
+    }
+    return modes.get(args.mode, _publish_mode)(args, client)
 
 
 if __name__ == "__main__":
