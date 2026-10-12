@@ -4,13 +4,20 @@ import argparse
 import os
 import re
 import sys
+import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools import analyzer_codacy, analyzer_deepsource, github_events, github_rest
+from tools import (
+    analyzer_codacy,
+    analyzer_deepsource,
+    analyzer_sonarcloud,
+    github_events,
+    github_rest,
+)
 from tools.analyzer_readback import (
     AnalyzerReadbackError,
     build_readback,
@@ -229,6 +236,89 @@ def _check_runs(
     )
 
 
+def _sonarcloud_checks(
+    client: GitHubReader, repository: str, head: str
+) -> list[Mapping[str, Any]]:
+    """Every SonarCloud check run on the head, not only the latest: a commit carries
+    the runs of every pull request analysed on it, and each must be finished
+    (1b.3c). The collection is complete only when it holds GitHub's total, the
+    same on every page."""
+
+    query = urllib.parse.urlencode(
+        {
+            "app_id": analyzer_sonarcloud.CHECK_APP_ID,
+            "check_name": analyzer_sonarcloud.CHECK_NAME,
+            "filter": "all",
+            "per_page": 100,
+        }
+    )
+    totals: set[object] = set()
+
+    def runs(payload: object) -> list[Any]:
+        totals.add(_mapping(payload, "GitHub check-runs response").get("total_count"))
+        return _check_runs_payload(payload)
+
+    collected = _collect_pages(
+        client,
+        f"{_API_ROOT}/repos/{repository}/commits/{head}/check-runs?{query}",
+        extract=runs,
+    )
+    if totals != {len(collected)}:
+        raise RunnerError("GitHub's SonarCloud check runs are incomplete")
+    return collected
+
+
+def _sonarcloud_check_reader(
+    client: GitHubReader, repository: str, head: str
+) -> Callable[[], list[Mapping[str, Any]]]:
+    """A read of the head's SonarCloud check runs that the adapter can repeat,
+    failing as the adapter's own provider failure."""
+
+    def read() -> list[Mapping[str, Any]]:
+        try:
+            return _sonarcloud_checks(client, repository, head)
+        except RunnerError as exc:
+            raise analyzer_sonarcloud.ProviderReadFailure("ERROR", str(exc)) from exc
+
+    return read
+
+
+def _sonarcloud_readback(
+    github: GitHubReader,
+    sonarcloud: analyzer_sonarcloud.JsonReader | None,
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    observed_at: str,
+) -> dict[str, Any]:
+    """SonarCloud's inventory of the head, or why it is unread: without the
+    readback's own credential nothing is read, although the project is public."""
+
+    if sonarcloud is None:
+        return _unavailable_readback(
+            provider="sonarcloud",
+            adapter="sonarcloud-web-api/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            analysis_id=None,
+            scope="DIFF",
+            native_mode="PULL_REQUEST",
+            completeness="AUTH_UNAVAILABLE",
+            observed_at=observed_at,
+            reason="AUTH_UNAVAILABLE",
+        )
+    return analyzer_sonarcloud.read_pull_request(
+        sonarcloud,
+        repository=repository,
+        pull_number=pull_number,
+        requested_head=requested_head,
+        check_runs=_sonarcloud_check_reader(github, repository, requested_head),
+        observed_at=observed_at,
+    )
+
+
 def _review_comments(
     client: GitHubReader,
     repository: str,
@@ -356,6 +446,7 @@ def collect_bundle(
     requested_head: str,
     deepsource: analyzer_deepsource.GraphQLReader | None,
     codacy: analyzer_codacy.JsonReader | None,
+    sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
 ) -> dict[str, Any]:
     _repository(repository)
@@ -458,6 +549,15 @@ def collect_bundle(
             observed_at=observed,
         )
 
+    sonarcloud_readback = _sonarcloud_readback(
+        github,
+        sonarcloud,
+        repository=repository,
+        pull_number=pull_number,
+        requested_head=requested,
+        observed_at=observed,
+    )
+
     final_head = _pull_head(github, repository, pull_number)
     if final_head != requested:
         return {
@@ -485,7 +585,7 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": [diff_local, full, codacy_readback],
+        "readbacks": [diff_local, full, codacy_readback, sonarcloud_readback],
     }
 
 
@@ -533,6 +633,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         except analyzer_codacy.ProviderReadFailure:
             codacy = None
+        try:
+            sonarcloud: analyzer_sonarcloud.JsonReader | None = (
+                analyzer_sonarcloud.SonarCloudRestClient.from_environment()
+            )
+        except analyzer_sonarcloud.ProviderReadFailure:
+            sonarcloud = None
         bundle = collect_bundle(
             github,
             repository=args.repository,
@@ -540,6 +646,7 @@ def main(argv: list[str] | None = None) -> int:
             requested_head=args.head,
             deepsource=deepsource,
             codacy=codacy,
+            sonarcloud=sonarcloud,
         )
         serialized = canonical_json(bundle)
         _assert_secret_free(
@@ -549,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 os.environ.get("GH_TOKEN", ""),
                 os.environ.get("DEEPSOURCE_API_TOKEN", ""),
                 os.environ.get("CODACY_API_TOKEN", ""),
+                os.environ.get("SONAR_TOKEN", ""),
             ],
         )
         _write_create_only(args.output, serialized)

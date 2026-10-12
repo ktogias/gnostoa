@@ -160,6 +160,28 @@ record. It was observed on #413's `3fe8e95` and #415's `381e8a6` on 2026-10-10:
 }
 ```
 
+**SonarCloud's check.** SonarCloud posts a `SonarCloud Code Analysis` check run on
+each pull-request head, titled "Quality Gate passed" when it succeeds. Its
+`details_url` names the pull request it was analysed for. The merge-evidence
+adapter's `sonarcloud/quality-gate` receipt reads it, and a test keeps the manifest
+equal to this record. The gate is never evidence of the issue inventory, which the
+authenticated readback gives (1b.3c). The authenticated readback also binds its
+inventory to the latest such run for the pull request, which must start at
+SonarCloud's listed analysis date. It was observed on #423's `0457f3c` (check
+114609123587) on 2026-10-12, and the start matched the analysis date on all 44
+pull requests SonarCloud listed then:
+
+```json
+{
+  "sonarcloud_check": {
+    "app_id": 12526,
+    "app_slug": "sonarqubecloud",
+    "name": "SonarCloud Code Analysis",
+    "observed_at": "2026-10-12"
+  }
+}
+```
+
 **Who can read what.** The App reads each ruleset and its rules, but GitHub omits
 `bypass_actors` from its read, as it does for anyone without Administration access.
 The bypass lists above were read back with an admin-capable credential on

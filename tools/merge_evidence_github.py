@@ -10,12 +10,12 @@ coverage field, it carries the read's real status; where it has none, an incompl
 read fails the run.
 
 The receipts cover the check items the protected target's required-check manifest
-names (slice 1b.3b-1) and the analyzer-readback items, from the authenticated
-readback's bundle (slice 1b.3b-2). The suppressions and trust-root changes come
+names (slice 1b.3b-1), SonarCloud's quality gate among them, and the readback
+items, from the authenticated readback's bundle (slice 1b.3b-2), SonarCloud's
+issue inventory among them (slice 1b.3c). Each declared item has exactly one of
+the two producers (`producer_routes`). The suppressions and trust-root changes come
 from the exact comparison, against the protected target's declarations (slice
-1b.3b-4); without a declaration, what it governs is `UNAVAILABLE`. Until
-SonarCloud's (1b.3c) receipts exist, the verdict denies on M2-M8 rather than
-passing it vacuously.
+1b.3b-4); without a declaration, what it governs is `UNAVAILABLE`.
 """
 
 from __future__ import annotations
@@ -67,13 +67,15 @@ _MARKERS_LABEL = "suppression markers"
 _ROOTS_LABEL = "trust roots"
 _CHECK_KEYS = frozenset({"app_id", "name"})
 _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
-# The authenticated readback's readbacks, by (provider, scope), and the
-# declaration's items they give (1b.3b-2; #407, 6101607240).
-_ANALYZER_REQUIREMENT = "analyzer-readback"
+# The authenticated readback's readbacks, by (provider, scope), and the declared
+# (requirement, item) each gives (1b.3b-2; #407, 6101607240). SonarCloud's
+# inventory is its own requirement's item, beside the gate the check manifest
+# gives (1b.3c; G1, #407 6119736075).
 _ANALYZER_ITEMS = {
-    ("deepsource", "DIFF"): "deepsource-diff",
-    ("deepsource", "FULL"): "deepsource-full",
-    ("codacy", "DIFF"): "codacy",
+    ("deepsource", "DIFF"): ("analyzer-readback", "deepsource-diff"),
+    ("deepsource", "FULL"): ("analyzer-readback", "deepsource-full"),
+    ("codacy", "DIFF"): ("analyzer-readback", "codacy"),
+    ("sonarcloud", "DIFF"): ("sonarcloud", "issue-inventory"),
 }
 # The kind of read each item stands for, as the producer marks a complete one; a
 # complete read of another kind does not give it (Decision 0091; Codex on #417).
@@ -81,6 +83,7 @@ _ANALYZER_COMPLETENESS = {
     "deepsource-diff": "DIFF_LOCAL",
     "deepsource-full": "FULL_RUN",
     "codacy": "FULL_RUN",
+    "issue-inventory": "FULL_RUN",
 }
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"
@@ -1485,8 +1488,8 @@ def evidence_from_snapshot(
         "suppressions": _suppressions(files, suppression_markers),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
-        # The check items' receipts (1b.3b-1) and the analyzer items' (1b.3b-2);
-        # SonarCloud's come with 1b.3c.
+        # The check items' receipts (1b.3b-1), SonarCloud's gate among them, and
+        # the readback items' (1b.3b-2), SonarCloud's inventory among them (1b.3c).
         "receipts": [
             *_check_receipts(document, subject, required_checks),
             *analyzer_receipts,
@@ -1496,14 +1499,15 @@ def evidence_from_snapshot(
 
 def _analyzer_receipt(
     subject: Mapping[str, Any],
-    item: str,
+    pair: tuple[str, str],
     status: str,
     observed_at: str,
     provenance: Mapping[str, Any],
 ) -> dict[str, Any]:
+    requirement, item = pair
     return {
         "schema": RECEIPT_SCHEMA,
-        "requirement": _ANALYZER_REQUIREMENT,
+        "requirement": requirement,
         "subject": subject_of(subject),
         "producer": _ANALYZER_PRODUCER,
         "observed_at": observed_at,
@@ -1551,17 +1555,17 @@ def _analyzer_evidence(
         provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
         receipts = [
             _analyzer_receipt(
-                subject, item, "INCOMPLETE", bundle["observed_at"], provenance
+                subject, pair, "INCOMPLETE", bundle["observed_at"], provenance
             )
-            for item in _ANALYZER_ITEMS.values()
+            for pair in _ANALYZER_ITEMS.values()
         ]
         return receipts, {"coverage": "INCOMPLETE", "findings": []}
     receipts, findings = [], []
-    for item, readback in readbacks.items():
+    for (requirement, item), readback in readbacks.items():
         receipts.append(
             _analyzer_receipt(
                 subject,
-                item,
+                (requirement, item),
                 _analyzer_item_status(item, readback),
                 readback["observed_at"],
                 {"completeness": readback["completeness"], "bound": True},
@@ -1591,11 +1595,11 @@ def _check_times(bundle: Mapping[str, Any]) -> None:
 
 def _readbacks_by_item(
     readbacks: Sequence[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """A bound bundle's readbacks by the item each stands for. An unknown or a
-    repeated readback fails the run."""
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """A bound bundle's readbacks by the (requirement, item) each stands for. An
+    unknown or a repeated readback fails the run."""
 
-    by_item: dict[str, dict[str, Any]] = {}
+    by_item: dict[tuple[str, str], dict[str, Any]] = {}
     for readback in readbacks:
         pair = (readback["provider"], readback["scope"])
         if pair not in _ANALYZER_ITEMS:
@@ -1622,6 +1626,40 @@ def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:
     ):
         return "INCOMPLETE"
     return status
+
+
+def producer_routes(
+    declaration: Mapping[str, Any], required_checks: Mapping[str, Mapping[str, str]]
+) -> dict[tuple[str, str], str]:
+    """The producer of each (requirement, item) pair the declaration names: the
+    check manifest's runs or the authenticated analyzer readback. A pair with no
+    producer, a pair with two, and a produced pair the declaration does not name
+    are refused (G1, the coordinator's guidance on #407, 6119736075)."""
+
+    declared = {
+        (requirement["id"], item)
+        for requirement in declaration["requirements"]
+        for item in requirement["coverage"]
+    }
+    produced = [
+        *(
+            ((requirement, item), _CHECK_PRODUCER)
+            for requirement, items in required_checks.items()
+            for item in items
+        ),
+        *((pair, _ANALYZER_PRODUCER) for pair in _ANALYZER_ITEMS.values()),
+    ]
+    routes: dict[tuple[str, str], str] = {}
+    for pair, producer in produced:
+        if pair not in declared:
+            raise MergeEvidenceError(f"{'.'.join(pair)} is not declared")
+        if pair in routes:
+            raise MergeEvidenceError(f"{'.'.join(pair)} has two producers")
+        routes[pair] = producer
+    missing = sorted(declared - set(routes))
+    if missing:
+        raise MergeEvidenceError(f"{'.'.join(missing[0])} has no producer")
+    return routes
 
 
 def subject_of(subject: Mapping[str, Any]) -> dict[str, Any]:

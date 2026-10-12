@@ -316,7 +316,7 @@ def _readback(
 
 def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
     """The authenticated readback's bundle for the snapshot's pull request; by
-    default its three readbacks are complete and find nothing."""
+    default its four readbacks are complete and find nothing."""
 
     bundle: dict[str, Any] = {
         "schema": analyzer_readback.BUNDLE_SCHEMA,
@@ -332,6 +332,7 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
             _readback("deepsource", "DIFF"),
             _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         ],
     }
     bundle.update(changes)
@@ -340,6 +341,8 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
 
 ANALYZER_ITEMS = ("deepsource-diff", "deepsource-full", "codacy")
 ANALYZERS = (("deepsource", "DIFF"), ("deepsource", "FULL"), ("codacy", "DIFF"))
+# SonarCloud's inventory gives the `sonarcloud` requirement's own item (1b.3c).
+SONAR = ("sonarcloud", "DIFF")
 
 
 def _bundle_for(**subject: Any) -> dict[str, Any]:
@@ -351,7 +354,7 @@ def _bundle_for(**subject: Any) -> dict[str, Any]:
     return _bundle(
         *[
             _readback(p, s, head=head, repository=repository, pull=pull)
-            for p, s in ANALYZERS
+            for p, s in (*ANALYZERS, SONAR)
         ],
         requested_head=head,
         observed_head=head,
@@ -2079,20 +2082,63 @@ class CheckReceiptTests(unittest.TestCase):
         self.assertEqual(5, len(statuses))
         self.assertTrue(all(s != "COMPLETE" for s in statuses.values()), statuses)
 
-    def test_gnostoa_s_manifest_names_each_declared_check_item(self) -> None:
-        """The manifest's items are exactly the declaration's, for each
-        requirement it names."""
+    def test_gnostoa_s_declared_items_each_have_one_producer(self) -> None:
+        """G1 (PAO 6119736075): every (requirement, item) pair the declaration
+        names has exactly one producer, the check manifest or the analyzer
+        readback, and neither names a pair it does not declare."""
         manifest = merge_evidence_github.load_required_checks(
             ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
         )
         declaration = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
-        coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
-        self.assertEqual({"verification-checks", "codeql"}, set(manifest))
-        for requirement, items in manifest.items():
-            with self.subTest(requirement=requirement):
-                self.assertCountEqual(coverage[requirement], list(items))
+        checks = "gnostoa.merge-evidence-github/check-runs"
+        readback = "gnostoa.merge-evidence-github/analyzer-readback"
+        self.assertEqual(
+            {
+                **{("verification-checks", n): checks for n in REQUIRED},
+                ("codeql", "codeql"): checks,
+                ("analyzer-readback", "deepsource-diff"): readback,
+                ("analyzer-readback", "deepsource-full"): readback,
+                ("analyzer-readback", "codacy"): readback,
+                ("sonarcloud", "quality-gate"): checks,
+                ("sonarcloud", "issue-inventory"): readback,
+            },
+            merge_evidence_github.producer_routes(declaration, manifest),
+        )
+
+    def test_a_declared_pair_needs_exactly_one_producer(self) -> None:
+        """G1: a gap, an overlap and an undeclared pair are each refused."""
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        manifest = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        gap = copy.deepcopy(declaration)
+        gap["requirements"][0]["coverage"].append("unproduced")
+        overlap = copy.deepcopy(manifest)
+        overlap["sonarcloud"]["issue-inventory"] = "github-check-run:12526:Inventory"
+        undeclared_item = copy.deepcopy(manifest)
+        undeclared_item["codeql"]["extra"] = "github-check-run:57789:Extra"
+        undeclared_requirement = copy.deepcopy(manifest)
+        undeclared_requirement["other"] = {"item": "github-check-run:1:Other"}
+        for name, (documents, message) in {
+            "a gap": ((gap, manifest), "has no producer"),
+            "an overlap": ((declaration, overlap), "has two producers"),
+            "an undeclared item": ((declaration, undeclared_item), "is not declared"),
+            "an undeclared requirement": (
+                (declaration, undeclared_requirement),
+                "is not declared",
+            ),
+        }.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, message
+                ),
+            ):
+                merge_evidence_github.producer_routes(*documents)
 
     def test_the_manifest_has_a_closed_contract(self) -> None:
         def changed(**change: Any) -> dict[str, Any]:
@@ -2396,6 +2442,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             _readback("deepsource", "DIFF", suppressed),
             _readback("deepsource", "FULL", FINDING),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         )
         self.assertEqual(
             dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(bundle)
@@ -2439,6 +2486,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             _readback("deepsource", "DIFF"),
             _readback("deepsource", "FULL", raw, FINDING),
             _readback("codacy", "DIFF"),
+            _readback(*SONAR),
         )
         evidence = _evidence(analyzer=bundle)
         self.assertEqual(
@@ -2696,6 +2744,253 @@ class AnalyzerReceiptTests(unittest.TestCase):
                     )
                     self.assertEqual(2, code, err)
                     self.assertIn("analyzer readback", err)
+
+
+class SonarCloudInventoryTests(unittest.TestCase):
+    """MA0 1b.3c (#407 6119460225, lineage 6119607885): SonarCloud's inventory
+    reaches the existing receipt intake, under its own requirement, and M17."""
+
+    @staticmethod
+    def _inventory(bundle: dict[str, Any] | None) -> dict[tuple[str, str], str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_the_inventory_gives_its_own_requirement_s_item(self) -> None:
+        """C9: the readback's coverage is the receipt of `sonarcloud`'s
+        `issue-inventory`; the analyzer readback's items stay its own."""
+        evidence = _evidence(analyzer=_bundle())
+        [receipt] = [
+            r for r in evidence["receipts"] if r["requirement"] == "sonarcloud"
+        ]
+        self.assertEqual(["issue-inventory"], receipt["coverage"])
+        self.assertEqual("COMPLETE", receipt["status"])
+        self.assertEqual(
+            {"completeness": "FULL_RUN", "bound": True}, receipt["provenance"]
+        )
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
+            {
+                item: s
+                for (r, item), s in _receipt_statuses(evidence).items()
+                if r == "analyzer-readback"
+            },
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+
+    def test_a_green_gate_s_findings_reach_m17(self) -> None:
+        """C8, #353: 29 open issues behind a passing gate. The inventory is
+        complete, every finding is listed under its item, and M17 denies."""
+        issues = [
+            {**FINDING, "id": f"sonar-{n:02d}", "rule": "python:S5778"}
+            for n in range(29)
+        ]
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, *issues),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            {("sonarcloud", "issue-inventory"): "COMPLETE"}, self._inventory(bundle)
+        )
+        listed = evidence["analyzer_findings"]
+        self.assertEqual("COMPLETE", listed["coverage"])
+        self.assertEqual(
+            [{"item": "issue-inventory", **issue} for issue in issues],
+            listed["findings"],
+        )
+        self.assertEqual(["29 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+    def test_m17_needs_the_inventory_too(self) -> None:
+        """C9: a bundle without SonarCloud's readback, as every bundle before
+        1b.3c, gives its item no receipt, so the reducer reports it MISSING, and
+        M17's coverage is not COMPLETE."""
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+        )
+        self.assertEqual({}, self._inventory(bundle))
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual("INCOMPLETE", evidence["analyzer_findings"]["coverage"])
+        self.assertIn("M17", _failed(evidence))
+
+    def test_an_unbound_bundle_leaves_the_inventory_incomplete(self) -> None:
+        for name, bundle in (
+            ("another head", _bundle_for(head=PREVIOUS)),
+            ("another pull request", _bundle_for(pull=301)),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): "INCOMPLETE"},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_s_own_status_is_its_receipt_s(self) -> None:
+        """C1, C9: an unauthenticated or partial read stays what it is."""
+        unauthenticated = _readback(*SONAR, status="UNAVAILABLE")
+        for status, readback in (
+            ("UNAVAILABLE", unauthenticated),
+            *(
+                (
+                    status,
+                    {
+                        **unauthenticated,
+                        "completeness": "READBACK_UNAVAILABLE",
+                        "coverage": {
+                            "status": status,
+                            "pages": 1,
+                            "count": 0,
+                            "reason": "PROVIDER_ERROR",
+                        },
+                    },
+                )
+                for status in ("PARTIAL", "ERROR")
+            ),
+        ):
+            with self.subTest(status):
+                bundle = _bundle(
+                    _readback("deepsource", "DIFF"),
+                    _readback("deepsource", "FULL"),
+                    _readback("codacy", "DIFF"),
+                    readback,
+                )
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): status},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_needs_a_full_run(self) -> None:
+        """C9: a complete read of another kind does not give the item."""
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, completeness="DIFF_LOCAL"),
+        )
+        self.assertEqual(
+            {("sonarcloud", "issue-inventory"): "INCOMPLETE"}, self._inventory(bundle)
+        )
+
+    def test_the_inventory_s_item_is_the_declaration_s(self) -> None:
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        [requirement] = [
+            r for r in declaration["requirements"] if r["id"] == "sonarcloud"
+        ]
+        self.assertIn("issue-inventory", requirement["coverage"])
+
+    def test_accepted_and_false_positive_findings_reach_m17(self) -> None:
+        """S1 (PAO 6119736075): a SonarCloud acceptance or false-positive marking
+        is no waiver; such a finding denies M17 as an open one does."""
+        accepted = {**FINDING, "id": "sonar-accepted", "state": "accepted"}
+        false_positive = {
+            **FINDING,
+            "id": "sonar-false-positive",
+            "state": "false_positive",
+        }
+        bundle = _bundle(
+            _readback("deepsource", "DIFF"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, accepted, false_positive),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            ["sonar-accepted", "sonar-false-positive"],
+            [f["id"] for f in evidence["analyzer_findings"]["findings"]],
+        )
+        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+
+SONAR_CHECK = 12526
+
+
+class SonarCloudGateTests(unittest.TestCase):
+    """G1 (PAO 6119736075): `sonarcloud/quality-gate` is SonarCloud's own check
+    run on the exact head, through the existing check-receipt producer and the
+    protected manifest; it never stands for the inventory."""
+
+    @staticmethod
+    def _statuses(*runs: dict[str, Any]) -> dict[tuple[str, str], str]:
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), *runs]}, {})})
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        statuses = _receipt_statuses(evidence)
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_a_passed_gate_gives_the_quality_gate_item(self) -> None:
+        self.assertEqual(
+            {("sonarcloud", "quality-gate"): "COMPLETE"},
+            self._statuses(_check_run(60, "SonarCloud Code Analysis", SONAR_CHECK)),
+        )
+
+    def test_any_other_gate_state_is_not_complete(self) -> None:
+        name = "SonarCloud Code Analysis"
+        for case, runs, status in (
+            (
+                "a failed gate",
+                [_check_run(60, name, SONAR_CHECK, conclusion="failure")],
+                "INCOMPLETE",
+            ),
+            (
+                "an unfinished analysis",
+                [
+                    _check_run(
+                        60,
+                        name,
+                        SONAR_CHECK,
+                        conclusion=None,
+                        status="in_progress",
+                        completed_at=None,
+                    )
+                ],
+                "INCOMPLETE",
+            ),
+            (
+                "a skipped check",
+                [_check_run(60, name, SONAR_CHECK, conclusion="skipped")],
+                "SKIPPED",
+            ),
+            (
+                "a passed run beside a failed one",
+                [
+                    _check_run(60, name, SONAR_CHECK),
+                    _check_run(61, name, SONAR_CHECK, conclusion="failure"),
+                ],
+                "PARTIAL",
+            ),
+        ):
+            with self.subTest(case):
+                self.assertEqual(
+                    {("sonarcloud", "quality-gate"): status}, self._statuses(*runs)
+                )
+
+    def test_another_app_s_check_of_that_name_gives_nothing(self) -> None:
+        self.assertEqual(
+            {}, self._statuses(_check_run(60, "SonarCloud Code Analysis", ACTIONS))
+        )
+
+    def test_a_passed_gate_never_gives_the_inventory(self) -> None:
+        """#353: a passing gate is no evidence that the inventory is empty."""
+        statuses = self._statuses(
+            _check_run(60, "SonarCloud Code Analysis", SONAR_CHECK)
+        )
+        self.assertNotIn(("sonarcloud", "issue-inventory"), statuses)
 
 
 if __name__ == "__main__":

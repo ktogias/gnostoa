@@ -93,6 +93,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
           CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+          # SonarCloud's inventory (1b.3c): the environment's own secret, read only
+          # by main's runner in this step, as the other analyzers' are.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
           REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
         # The step keeps the runner's status, and says whether it wrote a receipt,

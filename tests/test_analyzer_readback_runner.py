@@ -72,6 +72,11 @@ def _github_urls() -> dict[str, str]:
         "statuses": f"{root}/commits/{HEAD}/statuses?per_page=100",
         "checks": f"{root}/commits/{HEAD}/check-runs?per_page=100",
         "comments": f"{root}/pulls/312/comments?per_page=50",
+        # Every SonarCloud run on the head, not only the latest (1b.3c).
+        "sonar_checks": (
+            f"{root}/commits/{HEAD}/check-runs?app_id=12526"
+            "&check_name=SonarCloud+Code+Analysis&filter=all&per_page=100"
+        ),
     }
 
 
@@ -716,6 +721,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     requested_head=HEAD,
                     deepsource=None,
                     codacy=None,
+                    sonarcloud=None,
                     observed_at=OBSERVED,
                 )
 
@@ -744,6 +750,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     requested_head=head,
                     deepsource=None,
                     codacy=None,
+                    sonarcloud=None,
                     observed_at=OBSERVED,
                 )
 
@@ -764,6 +771,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             requested_head=HEAD,
             deepsource=None,
             codacy=None,
+            sonarcloud=None,
             observed_at=OBSERVED,
         )
         self.assertEqual("INCOMPLETE", bundle["subject_binding"])
@@ -821,6 +829,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             requested_head=HEAD,
             deepsource=_deepsource_fake(),
             codacy=_CodacyReader(),
+            sonarcloud=None,
             observed_at=OBSERVED,
         )
         self.assertEqual("BOUND", bundle["subject_binding"])
@@ -901,6 +910,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             requested_head=HEAD,
             deepsource=_deepsource_fake(),
             codacy=_CodacyReader(),
+            sonarcloud=None,
             observed_at=OBSERVED,
         )
         readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
@@ -929,6 +939,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             requested_head=HEAD,
             deepsource=None,
             codacy=None,
+            sonarcloud=None,
             observed_at=OBSERVED,
         )
         self.assertEqual("BOUND", bundle["subject_binding"])
@@ -973,6 +984,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             requested_head=HEAD,
             deepsource=_deepsource_fake(),
             codacy=None,
+            sonarcloud=None,
             observed_at=OBSERVED,
         )
         readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
@@ -1008,10 +1020,12 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             "tools/analyzer_readback.py",
             "tools/analyzer_deepsource.py",
             "tools/analyzer_codacy.py",
+            "tools/analyzer_sonarcloud.py",
             "ci/analyzer_readback.py",
             ".github/workflows/analyzer-readback.yml",
             "tests/test_analyzer_readback.py",
             "tests/test_analyzer_readback_runner.py",
+            "tests/test_analyzer_sonarcloud.py",
         ):
             self.assertIn(path, section)
 
@@ -1106,6 +1120,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             ("GITHUB_TOKEN", "github.token"),
             ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
             ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
+            ("SONAR_TOKEN", "secrets.SONAR_TOKEN"),
             ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
             ("REQUESTED_HEAD", "steps.subject.outputs.head"),
         )
@@ -1146,6 +1161,439 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', bind_step["run"]
         )
+
+
+class _SonarCloudReader:
+    """SonarCloud for the runner's tests: the head analysed, no issue. Every read
+    is logged in ``events``, beside the GitHub reads, so their order shows."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def get(self, url: str) -> Mapping[str, Any]:
+        self.events.append(url)
+        if url.startswith("https://sonarcloud.io/api/project_pull_requests/list?"):
+            return {
+                "pullRequests": [
+                    {
+                        "key": "312",
+                        "url": "https://github.com/ktogias/gnostoa/pull/312",
+                        "commit": {"sha": HEAD},
+                        "analysisDate": "2026-10-11T23:57:56+0000",
+                        "pullRequestId": "882e653f-7208-4ec7-a92e-4a139efba1c8",
+                    }
+                ]
+            }
+        if url == "https://sonarcloud.io/api/ce/component?component=ktogias_gnostoa":
+            return {"queue": []}
+        if url.startswith("https://sonarcloud.io/api/issues/search?"):
+            return {
+                "total": 0,
+                "p": 1,
+                "ps": 500,
+                "paging": {"pageIndex": 1, "pageSize": 500, "total": 0},
+                "issues": [],
+            }
+        raise AssertionError(f"unexpected SonarCloud URL: {url}")
+
+
+class _OrderedGitHub(_GitHubFake):
+    def __init__(self, responses: dict[str, Any], events: list[str]) -> None:
+        super().__init__(responses)
+        self.events = events
+
+    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+        self.events.append(url)
+        return super().get(url)
+
+
+def _main(output: Path) -> int:
+    return runner.main(
+        [
+            "--repository",
+            "ktogias/gnostoa",
+            "--pull-number",
+            "312",
+            "--head",
+            HEAD,
+            "--output",
+            str(output),
+        ]
+    )
+
+
+class SonarCloudRunnerTests(unittest.TestCase):
+    """MA0 1b.3c (#407 6119460225, lineage 6119607885): SonarCloud's readback
+    joins the bundle, inside its GitHub head bracket, with its own credential."""
+
+    def test_the_bundle_reads_sonarcloud_inside_the_head_bracket(self) -> None:
+        events: list[str] = []
+        urls = _github_urls()
+        sonar_check = {
+            "id": 114609123587,
+            "name": "SonarCloud Code Analysis",
+            "head_sha": HEAD,
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-10-11T23:57:56Z",
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=312",
+            "app": {"id": 12526},
+        }
+        github = _OrderedGitHub(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                urls["sonar_checks"]: {"total_count": 1, "check_runs": [sonar_check]},
+            },
+            events,
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=None,
+            codacy=None,
+            sonarcloud=_SonarCloudReader(events),
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(4, len(bundle["readbacks"]))
+        readback = bundle["readbacks"][-1]
+        self.assertEqual("sonarcloud-web-api/v1", readback["adapter"])
+        self.assertEqual("FULL_RUN", readback["completeness"])
+        self.assertEqual(114609123587, readback["native"]["check_run"]["id"])
+        self.assertIn(urls["sonar_checks"], events)
+        sonar = [n for n, url in enumerate(events) if "sonarcloud.io" in url]
+        heads = [n for n, url in enumerate(events) if url == urls["pr"]]
+        self.assertEqual(2, len(heads))
+        self.assertLess(heads[0], sonar[0])
+        self.assertLess(sonar[-1], heads[-1])
+
+    def test_without_a_reader_the_inventory_is_unauthenticated(self) -> None:
+        """C1: no reader, no read, and the readback says why."""
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=None,
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
+        readback = readbacks["sonarcloud-web-api/v1"]
+        self.assertEqual("sonarcloud", readback["provider"])
+        self.assertEqual("DIFF", readback["scope"])
+        self.assertEqual("AUTH_UNAVAILABLE", readback["completeness"])
+        self.assertEqual(
+            {
+                "status": "UNAVAILABLE",
+                "pages": 0,
+                "count": 0,
+                "reason": "AUTH_UNAVAILABLE",
+            },
+            readback["coverage"],
+        )
+        self.assertNotIn("observed_head", readback)
+
+    def test_main_without_a_token_sends_sonarcloud_nothing(self) -> None:
+        """C1: SonarCloud's API is public, and still nothing is read from it
+        without the readback's own credential."""
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+            }
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                runner.GitHubReadClient, "from_environment", return_value=github
+            ),
+            patch.object(
+                http.client.HTTPSConnection,
+                "connect",
+                side_effect=AssertionError("network forbidden"),
+            ) as connect,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            output = Path(directory) / "readback.json"
+            self.assertEqual(0, _main(output))
+            document = json.loads(output.read_text())
+        readbacks = {item["provider"]: item for item in document["readbacks"]}
+        self.assertEqual("AUTH_UNAVAILABLE", readbacks["sonarcloud"]["completeness"])
+        connect.assert_not_called()
+
+    def test_a_malformed_token_keeps_the_other_readbacks(self) -> None:
+        """C1, C10: Decision 0091's rule for an optional credential, for
+        SonarCloud's too."""
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [
+                    {
+                        "context": "DeepSource: Python",
+                        "state": "success",
+                        "target_url": "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                        + RUN_UID
+                        + "/python/",
+                        "creator": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    }
+                ],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+            }
+        )
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ, {"SONAR_TOKEN": "synthetic-sonar-credential\n"}, clear=True
+            ),
+            patch.object(
+                runner.GitHubReadClient, "from_environment", return_value=github
+            ),
+            patch.object(
+                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                "from_environment",
+                return_value=_deepsource_fake(),
+            ),
+            patch.object(
+                runner.analyzer_codacy.CodacyRestClient,
+                "from_environment",
+                return_value=_CodacyReader(),
+            ),
+            patch.object(
+                http.client.HTTPSConnection,
+                "connect",
+                side_effect=AssertionError("network forbidden"),
+            ) as connect,
+            contextlib.redirect_stderr(stderr),
+            contextlib.redirect_stdout(stdout),
+        ):
+            output = Path(directory) / "readback.json"
+            self.assertEqual(0, _main(output))
+            serialized = output.read_text()
+        self.assertNotIn(
+            "synthetic-sonar-credential",
+            serialized + stderr.getvalue() + stdout.getvalue(),
+        )
+        readbacks = {
+            item["provider"]: item
+            for item in json.loads(serialized)["readbacks"]
+            if item["adapter"] != "deepsource-github/v1"
+        }
+        self.assertEqual("AUTH_UNAVAILABLE", readbacks["sonarcloud"]["completeness"])
+        self.assertEqual("FULL_RUN", readbacks["deepsource"]["completeness"])
+        self.assertEqual("FULL_RUN", readbacks["codacy"]["completeness"])
+        connect.assert_not_called()
+
+    def test_main_reads_with_the_token_s_own_client(self) -> None:
+        """C1: with `SONAR_TOKEN` the bundle gets SonarCloud's client, and without
+        it none; nothing is sent here."""
+        for name, environment, expected in (
+            ("a token", {"SONAR_TOKEN": "synthetic-sonar-credential"}, True),
+            ("no token", {}, False),
+        ):
+            with (
+                self.subTest(name),
+                tempfile.TemporaryDirectory() as directory,
+                patch.dict(os.environ, environment, clear=True),
+                patch.object(
+                    runner.GitHubReadClient,
+                    "from_environment",
+                    return_value=_GitHubFake({}),
+                ),
+                patch.object(
+                    runner, "collect_bundle", return_value={"subject_binding": "BOUND"}
+                ) as collect,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(0, _main(Path(directory) / "readback.json"))
+                client = collect.call_args.kwargs["sonarcloud"]
+                self.assertIs(
+                    expected,
+                    isinstance(client, runner.analyzer_sonarcloud.SonarCloudRestClient),
+                )
+                if not expected:
+                    self.assertIsNone(client)
+
+    def test_the_token_never_reaches_the_receipt(self) -> None:
+        """C10: the serialized bundle is refused when it holds SonarCloud's
+        credential bytes, as for every other credential."""
+        leaked = {"subject_binding": "BOUND", "note": "synthetic-sonar-credential"}
+        stderr = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ, {"SONAR_TOKEN": "synthetic-sonar-credential"}, clear=True
+            ),
+            patch.object(
+                runner.GitHubReadClient,
+                "from_environment",
+                return_value=_GitHubFake({}),
+            ),
+            patch.object(runner, "collect_bundle", return_value=leaked),
+            contextlib.redirect_stderr(stderr),
+        ):
+            output = Path(directory) / "readback.json"
+            self.assertEqual(2, _main(output))
+            self.assertFalse(output.exists())
+        self.assertIn("credential bytes", stderr.getvalue())
+        self.assertNotIn("synthetic-sonar-credential", stderr.getvalue())
+
+
+def _sonar_run(
+    *,
+    run_id: int = 114609123587,
+    started: str = "2026-10-11T23:57:56Z",
+    status: str = "completed",
+    conclusion: str | None = "success",
+    pull: str = "312",
+) -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "name": "SonarCloud Code Analysis",
+        "head_sha": HEAD,
+        "status": status,
+        "conclusion": conclusion,
+        "started_at": started,
+        "details_url": f"https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest={pull}",
+        "app": {"id": 12526},
+    }
+
+
+def _runs(*runs: dict[str, Any], total: int | None = None) -> dict[str, Any]:
+    return {
+        "total_count": len(runs) if total is None else total,
+        "check_runs": list(runs),
+    }
+
+
+class _SequencedGitHub(_GitHubFake):
+    """Answers each sequenced URL's responses in order, so a later read can
+    differ from an earlier one."""
+
+    def __init__(
+        self, responses: dict[str, Any], sequenced: dict[str, list[Any]]
+    ) -> None:
+        super().__init__(responses)
+        self.sequenced = {url: list(values) for url, values in sequenced.items()}
+
+    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+        if url not in self.sequenced:
+            return super().get(url)
+        self.calls.append(url)
+        if not self.sequenced[url]:
+            raise AssertionError(f"no remaining fake responses for {url}")
+        return self.sequenced[url].pop(0), {}
+
+
+def _bracketed(*collections: dict[str, Any]) -> tuple[dict[str, Any], _SequencedGitHub]:
+    """SonarCloud's readback when the exact head's SonarCloud runs read as
+    ``collections``, in order."""
+
+    urls = _github_urls()
+    github = _SequencedGitHub(
+        {
+            urls["pr"]: [_pr(), _pr()],
+            urls["statuses"]: [],
+            urls["checks"]: {"check_runs": []},
+            urls["comments"]: [],
+        },
+        {urls["sonar_checks"]: list(collections)},
+    )
+    bundle = runner.collect_bundle(
+        github,
+        repository="ktogias/gnostoa",
+        pull_number=312,
+        requested_head=HEAD,
+        deepsource=None,
+        codacy=None,
+        sonarcloud=_SonarCloudReader([]),
+        observed_at=OBSERVED,
+    )
+    readback: dict[str, Any] = bundle["readbacks"][-1]
+    return readback, github
+
+
+class SonarCloudReportBracketTests(unittest.TestCase):
+    """C4b (PAO 6119999041 on #407): the exact head's SonarCloud runs are read,
+    completely, before the issue pages and again after them, and the published
+    report must be the same both times."""
+
+    def test_a_stable_published_report_is_complete(self) -> None:
+        """The positive control: the same finished run both times."""
+        readback, github = _bracketed(_runs(_sonar_run()), _runs(_sonar_run()))
+        self.assertEqual("FULL_RUN", readback["completeness"])
+        self.assertEqual("COMPLETE", readback["coverage"]["status"])
+        self.assertEqual(2, github.calls.count(_github_urls()["sonar_checks"]))
+
+    def test_a_run_that_starts_between_the_reads_holds_the_inventory(self) -> None:
+        """The old published analysis is unchanged, the head too, and a newer run
+        for the pull request is unfinished: not this head's complete report."""
+        newer = _sonar_run(
+            run_id=2,
+            status="in_progress",
+            conclusion=None,
+            started="2026-10-12T00:10:00Z",
+        )
+        readback, _ = _bracketed(_runs(_sonar_run()), _runs(_sonar_run(), newer))
+        self.assertEqual("AMBIGUOUS", readback["completeness"])
+        self.assertEqual("INCOMPLETE", readback["coverage"]["status"])
+        self.assertEqual("ANALYSIS_IN_PROGRESS", readback["coverage"]["reason"])
+        self.assertEqual([], readback["findings"])
+
+    def test_a_changed_publication_is_not_the_report_that_was_read(self) -> None:
+        for name, after in (
+            ("a new start", _runs(_sonar_run(started="2026-10-12T00:10:00Z"))),
+            (
+                "a newer finished run",
+                _runs(
+                    _sonar_run(), _sonar_run(run_id=2, started="2026-10-12T00:10:00Z")
+                ),
+            ),
+            ("another conclusion", _runs(_sonar_run(conclusion="failure"))),
+        ):
+            with self.subTest(name):
+                readback, _ = _bracketed(_runs(_sonar_run()), after)
+                self.assertEqual("AMBIGUOUS", readback["completeness"])
+                self.assertEqual("INCOMPLETE", readback["coverage"]["status"])
+                self.assertEqual([], readback["findings"])
+
+    def test_another_pull_request_s_run_on_the_commit_changes_nothing(self) -> None:
+        """#394 and #395 share `5ef97e5`: another one's later run is not this one's."""
+        other = _sonar_run(run_id=2, pull="311", started="2026-10-12T00:10:00Z")
+        readback, _ = _bracketed(_runs(_sonar_run(), other), _runs(_sonar_run(), other))
+        self.assertEqual("COMPLETE", readback["coverage"]["status"])
+
+    def test_an_incomplete_run_collection_is_never_complete(self) -> None:
+        for name, before, after in (
+            ("before the pages", _runs(_sonar_run(), total=2), _runs(_sonar_run())),
+            ("after the pages", _runs(_sonar_run()), _runs(_sonar_run(), total=2)),
+        ):
+            with self.subTest(name):
+                readback, _ = _bracketed(before, after)
+                self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
+                self.assertNotEqual("COMPLETE", readback["coverage"]["status"])
 
 
 def _resolve(environ: dict[str, str]) -> dict[str, str]:

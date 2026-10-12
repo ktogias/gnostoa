@@ -126,6 +126,16 @@ result is `AMBIGUOUS` with `INCOMPLETE` exact-subject coverage; matching PR
 number, repository name or GitHub check state does not substitute for exact-head
 proof.
 
+For SonarCloud (MA0 1b.3c, Decision 0112), whose issue search names no commit and
+answers an unanalysed pull request with an empty inventory, the adapter binds the
+inventory to a published report of the exact head through SonarCloud's
+pull-request listing, SonarCloud's own GitHub check run for that pull request, and
+the project's task queue, read before the issue pages and again after them. When
+they cannot prove that binding, the result is `AMBIGUOUS` with `INCOMPLETE`
+coverage. Its transport is the shared GitHub REST client on SonarCloud's origin
+(Decision 0100), and its credential is the `analyzer-readback` environment's
+`SONAR_TOKEN`.
+
 ### 3. Preserve DeepSource mode semantics
 
 DeepSource retains the owner-selected distinction:
