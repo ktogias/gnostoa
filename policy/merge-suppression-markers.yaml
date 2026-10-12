@@ -1,0 +1,23 @@
+# The suppression markers M13 reads (#407, slice 1b.3b-4; Decision 0112), admitted
+# with the contract #325 6112833932.
+#
+# `knowledge merge-evidence` reads this from the protected target, never from the
+# candidate. Each marker is a case-sensitive literal: every occurrence in a line
+# the exact comparison adds is a suppression, reported with its head line. It is
+# justified when the same line goes on, after the marker, with `--` and a
+# non-blank reason, which is kept as written; it is never judged adequate. Without
+# this file the suppressions are UNAVAILABLE, so it cannot certify the change
+# that introduces it. A change to it is a trust-root change (M15).
+schema_version: "1.0"
+id: gnostoa.merge-suppression-markers
+version: "0.1.0"
+markers:
+  - noqa
+  - "# type: ignore"
+  - "# nosec"
+  - skipcq
+  - nosemgrep
+  - "# pragma: no cover"
+  - "pragma: allowlist secret"
+  - NOSONAR
+  - eslint-disable

@@ -128,9 +128,9 @@ provider-neutral public change-governance contract of
   | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
   | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
-  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 admitted (#407, 6108453639); 1b.3b-4 needs admission |
-  | 1b.3c | SonarCloud's readback (#359) | not yet admitted |
-  | 1b.4 | publication and activation | not yet admitted |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 admitted in the owner's sequence (#325, 6113092417) |
+  | 1b.3c | SonarCloud's readback (#359) | conditionally admitted in that sequence, after 1b.3b-4 is integrated |
+  | 1b.4 | publication and activation | conditionally admitted in that sequence, after 1b.3c is integrated |
   | 1b.5 | the post-merge audit | not yet admitted |
 
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
@@ -338,12 +338,42 @@ provider-neutral public change-governance contract of
     It also lists their coverage: `COMPLETE` only when all three readbacks are
     present and complete.
     M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
-    listed finding counts, a suppressed one included, with no waiver; whether a
-    justified suppression can discharge one is 1b.3b-4's (M13). The verdict lists
-    the findings for the approval.
-  - Until 1b.3c, SonarCloud's items stay
-    `MISSING`, and until 1b.3b-4 the suppressions and trust-root changes are
-    `UNAVAILABLE`, so the verdict denies rather than passing them vacuously.
+    listed finding counts, a suppressed one included, with no waiver: a justified
+    suppression discharges none (1b.3b-4). The verdict lists the findings for the
+    approval.
+  - **M13 and M15 read the exact comparison** against two declarations of the
+    protected target (1b.3b-4, the owner's sequence admission, #325 6113092417,
+    with the contract 6112833932). The declarations are
+    `policy/merge-suppression-markers.yaml` and `policy/merge-trust-roots.yaml`,
+    in the required-check manifest's closed, versioned convention. They are read
+    from the project root, never from the candidate. Without one, what it
+    governs is `UNAVAILABLE`, so the change that introduces them cannot certify
+    itself, and Decision 0110's procedure governs its merge.
+    - **Suppressions (M13).** L1 keeps each changed file's typed `additions`,
+      blob and patch, bounded and marked when cut. Only the lines the patch adds
+      are read, with their head-line numbers, so an unchanged marker never
+      counts. Every case-sensitive occurrence of a declared marker is a
+      suppression, with its path, head line and marker. It is justified when the
+      same line goes on, after the marker, with `--` and a non-blank reason,
+      which is kept as written and never judged adequate. A missing or blank
+      reason denies M13. A patch whose hunks do not account exactly for its
+      lines and additions, or a truncated one, leaves the suppressions
+      `PARTIAL`. So does a file without hunks, unless it is a removal or its head
+      blob is Git's empty blob, since only then can nothing have been added; and
+      such a file whose patch keeps any head-side line, context included,
+      contradicts itself and is `PARTIAL` too. A comparison yields at most 1,000
+      suppressions and 1 MiB of them as the command writes them, each charged
+      its serialized size. Past either budget the list keeps what it holds and is
+      `PARTIAL`, since a reason is the rest of its line and a line packed with
+      markers grows quadratically (the coordinator's selection on #423).
+    - **Trust-root changes (M15).** Each pattern is compiled by the CODEOWNERS
+      matcher, which refuses what GitHub does not document. An added, modified,
+      removed or renamed file with a name under a pattern is listed under every
+      name it has, so a rename into or out of a root shows both. Any other file
+      status leaves the list `PARTIAL`. The list is shown for the native
+      approval; it is neither vetoed nor approved here.
+  - Until 1b.3c, SonarCloud's items stay `MISSING`, so the verdict denies rather
+    than passing them vacuously.
 - **The effective change policy is the candidate's own.** Its whole inheritance
   chain is confined to the project root, through the parent-reference resolver
   that Decision 0033 established for profiles and that both loaders now share. The
