@@ -81,7 +81,7 @@ SUBJECTS_IF = (
     " && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'"
     " && github.event.workflow_run.conclusion == 'success'"
     ' && contains(fromJSON(\'["pull_request","pull_request_review",'
-    '"pull_request_review_thread","pull_request_review_comment","issue_comment"]\'),'
+    '"pull_request_review_comment","issue_comment"]\'),'
     " github.event.workflow_run.event))"
     " || (github.event.workflow_run.path == '.github/workflows/verification.yml'"
     " && github.event.workflow_run.event == 'pull_request'))))"
@@ -94,6 +94,47 @@ AFTER_INVALIDATION_IF = (
     "always() && github.ref == 'refs/heads/main' && needs.subjects.result == 'success'"
     " && needs.subjects.outputs.subjects != '[]'"
 )
+# GitHub Actions' trigger events, as "Events that trigger workflows" documents them
+# (docs.github.com, read 2026-10-13). A webhook-only event in `on:`, such as
+# `pull_request_review_thread`, makes the whole workflow invalid, so nothing wakes
+# (Codex on #426; run 38321482587, "Unexpected value 'pull_request_review_thread'").
+ACTIONS_EVENTS = frozenset(
+    {
+        "branch_protection_rule",
+        "check_run",
+        "check_suite",
+        "create",
+        "delete",
+        "deployment",
+        "deployment_status",
+        "discussion",
+        "discussion_comment",
+        "fork",
+        "gollum",
+        "image_version",
+        "issue_comment",
+        "issues",
+        "label",
+        "merge_group",
+        "milestone",
+        "page_build",
+        "public",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "pull_request_target",
+        "push",
+        "registry_package",
+        "release",
+        "repository_dispatch",
+        "schedule",
+        "status",
+        "watch",
+        "workflow_call",
+        "workflow_dispatch",
+        "workflow_run",
+    }
+)
 UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD_ACTION = "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0"
 
@@ -102,16 +143,26 @@ class TriggerWorkflowTests(unittest.TestCase):
     """Decision 0096 rule 2: the untrusted trigger has no permission, no secret
     and no checkout, and computes nothing."""
 
+    def test_every_event_is_an_actions_trigger(self) -> None:
+        """The Router's T1 on #426 (6134806265): each workflow declares, and the
+        relay admits, only events Actions can trigger a workflow with."""
+        for path in (TRIGGER, ADMISSION):
+            with self.subTest(path.name):
+                self.assertLessEqual(set(_load(path)["on"]), ACTIONS_EVENTS)
+        condition = str(_load(ADMISSION)["jobs"]["subjects"]["if"])
+        (listed,) = re.findall(r"fromJSON\('(\[[^']*\])'\)", condition)
+        self.assertLessEqual(set(json.loads(listed)), ACTIONS_EVENTS)
+
     def test_it_wakes_on_the_events_that_change_a_verdict(self) -> None:
         workflow = _load(TRIGGER)
         self.assertEqual("Merge admission trigger", workflow["name"])
         events = workflow["on"]
-        # F1 part 1 (#426 6130207025): the seal and the threads change a verdict too.
+        # F1 part 1 (#426 6130207025): the seal changes a verdict too. A thread's
+        # resolution has no Actions event (T1, 6134806265), so none is declared.
         self.assertEqual(
             {
                 "pull_request",
                 "pull_request_review",
-                "pull_request_review_thread",
                 "pull_request_review_comment",
                 "issue_comment",
             },
@@ -138,10 +189,6 @@ class TriggerWorkflowTests(unittest.TestCase):
         self.assertLessEqual(
             {"submitted", "edited", "dismissed"},
             set(events["pull_request_review"]["types"]),
-        )
-        self.assertEqual(
-            {"resolved", "unresolved"},
-            set(events["pull_request_review_thread"]["types"]),
         )
         # A deleted or edited seal must wake the relay as a created one does.
         self.assertEqual(

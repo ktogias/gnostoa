@@ -58,7 +58,7 @@ jobs:
           || (github.event_name == 'workflow_run'
               && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
                    && github.event.workflow_run.conclusion == 'success'
-                   && contains(fromJSON('["pull_request","pull_request_review","pull_request_review_thread","pull_request_review_comment","issue_comment"]'), github.event.workflow_run.event))
+                   && contains(fromJSON('["pull_request","pull_request_review","pull_request_review_comment","issue_comment"]'), github.event.workflow_run.event))
                   || (github.event.workflow_run.path == '.github/workflows/verification.yml'
                       && github.event.workflow_run.event == 'pull_request'))))
     runs-on: ubuntu-latest

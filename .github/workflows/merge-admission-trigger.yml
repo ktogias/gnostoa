@@ -8,18 +8,22 @@ name: Merge admission trigger
 # from the provider.
 #
 # F1 (the Decisions Router on #426, 6130207025): the seal is a PR conversation comment,
-# and the threads are reviews' state, so both wake the relay too. A comment's run
-# executes from the default branch with no pull request of its own, so its event is
-# relayed unchanged, as `claude-mention-trigger.yml` relays a mention.
+# so it wakes the relay too. A comment's run executes from the default branch with no
+# pull request of its own, so its event is relayed unchanged, as
+# `claude-mention-trigger.yml` relays a mention.
+#
+# T1 (the Router on #426, 6134806265): resolving or reopening a review thread has no
+# Actions event. `pull_request_review_thread` is a webhook event only, and declaring
+# it here made this whole workflow invalid (Codex on #426). A thread's changed state
+# is acquired at the next supported event, the owner's review, the guard's own
+# dispatch or the sweep; until then the required check may show an earlier verdict.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft]
   pull_request_review:
     types: [submitted, edited, dismissed]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
-  # A thread's only comment, deleted, removes the thread, an unresolved one included,
-  # with no thread event (CodeAnt on #426).
+  # A thread's only comment, deleted, removes the thread, an unresolved one included
+  # (CodeAnt on #426).
   pull_request_review_comment:
     types: [created, deleted]
   issue_comment:
