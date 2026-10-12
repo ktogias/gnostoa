@@ -80,9 +80,22 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(comparable(value))).hexdigest()
 
 
+def matches(document: object, expected: Mapping[str, Any]) -> bool:
+    """Every expected field holds exactly the expected value, of the same type: a
+    provider's `true` never stands for an id or attempt of 1, as Python's
+    `True == 1` would let it (CodeAnt on #426)."""
+
+    return isinstance(document, Mapping) and all(
+        field in document
+        and type(document[field]) is type(value)
+        and document[field] == value
+        for field, value in expected.items()
+    )
+
+
 def ours(run: object, app_id: int) -> bool:
     app = run.get("app") if isinstance(run, Mapping) else None
-    return isinstance(app, Mapping) and app.get("id") == app_id
+    return matches(app, {"id": app_id})
 
 
 def run_id(run: object) -> int | None:

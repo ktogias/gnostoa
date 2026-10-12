@@ -789,10 +789,80 @@ class L1ModeTests(unittest.TestCase):
             ),
         )
 
+    def test_an_event_evaluates_one_subject_per_head(self) -> None:
+        """CodeAnt and Claude on #426: a check run belongs to a commit, so one
+        subject evaluates it for every pull request at that head, and H1's failure
+        names them all when it is shared. However many share a head, nothing aborts
+        before the head is evaluated; a hinted pull request is the one chosen."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(n, HEAD) for n in range(300, 312)], {})
+        replies[f"{API}/pulls/305"] = (self._open(305, HEAD), {})
+        self.assertEqual(
+            (0, [{"pull_number": 300, "head": HEAD}]),
+            self._subjects(replies, "--event", "--workflow-run-head-sha", HEAD),
+        )
+        self.assertEqual(
+            (0, [{"pull_number": 305, "head": HEAD}]),
+            self._subjects(
+                replies,
+                "--event",
+                "--pull-number",
+                "305",
+                "--workflow-run-head-sha",
+                HEAD,
+            ),
+        )
+
+    def test_a_hint_the_listing_does_not_show_yet_is_kept(self) -> None:
+        """A hinted pull request the open listing does not yet show keeps its own
+        place, and is re-read like every subject."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(300, HEAD)], {})
+        replies[f"{API}/pulls/307"] = (self._open(307, "c" * 40), {})
+        self.assertEqual(
+            (
+                0,
+                [
+                    {"pull_number": 307, "head": "c" * 40},
+                    {"pull_number": 300, "head": HEAD},
+                ],
+            ),
+            self._subjects(
+                replies,
+                "--event",
+                "--pull-number",
+                "307",
+                "--workflow-run-head-sha",
+                HEAD,
+            ),
+        )
+
     def test_an_event_s_subjects_stay_within_the_bounded_capacity(self) -> None:
         replies = _replies()
         listing = f"{API}/pulls?state=open&per_page=100"
-        replies[listing] = ([self._open(n, HEAD) for n in range(300, 309)], {})
+        heads = [f"{n:040x}" for n in range(300, 309)]
+        replies[listing] = (
+            [
+                self._open(n, head)
+                for n, head in zip(range(300, 309), heads, strict=True)
+            ],
+            {},
+        )
+        hints = [
+            argument for n in range(300, 309) for argument in ("--pull-number", str(n))
+        ]
+        code, written = self._subjects(replies, "--event", *hints)
+        self.assertNotEqual(0, code)
+        self.assertIsNone(written)
+
+    def test_an_unreadable_population_refuses_cleanly(self) -> None:
+        """Claude on #426: an event's population read that GitHub contradicts
+        refuses with the same clean message `open-heads` gives, never a traceback."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(300, HEAD), self._open(300, "c" * 40)], {})
         code, written = self._subjects(
             replies, "--event", "--workflow-run-head-sha", HEAD
         )

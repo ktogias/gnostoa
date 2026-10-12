@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -203,6 +204,24 @@ class PublicationPlanTests(unittest.TestCase):
         denied = _plan(evidence, copy.deepcopy(evidence), verdict, 1)
         self.assertNotEqual(first["external_id"], denied["external_id"])
 
+    def test_contributor_text_in_a_summary_is_inert(self) -> None:
+        """CodeAnt on #426: a denial's reasons, and an incomplete evaluation's
+        reason, can name contributor-controlled paths, and a check run's summary is
+        Markdown. They render inside a fence no line of them can close, so a crafted
+        name makes no link or image."""
+        crafted = "![x](https://example.invalid/i.png) [y](https://example.invalid) ```"
+        evidence = _evidence(_snapshot())
+        verdict = _verdict(evidence)
+        failing = [c for c in verdict["criteria"] if c["status"] == "FAIL"]
+        self.assertTrue(failing)
+        failing[0]["reasons"] = [crafted]
+        denied = _plan(evidence, copy.deepcopy(evidence), verdict, 1)["summary"]
+        incomplete = _relay().plan_incomplete(HEAD, crafted)["summary"]
+        for name, summary in (("a denial", denied), ("an incomplete run", incomplete)):
+            with self.subTest(name):
+                self.assertIn("example.invalid", summary)
+                self.assertTrue(_only_fenced(summary, "example.invalid"))
+
     def test_the_summary_is_bounded(self) -> None:
         evidence = _evidence(_snapshot())
         verdict = _verdict(evidence)
@@ -213,6 +232,37 @@ class PublicationPlanTests(unittest.TestCase):
         planned = _plan(evidence, copy.deepcopy(evidence), verdict, 1)
         self.assertLessEqual(len(planned["summary"]), 60_000)
         self.assertLessEqual(len(planned["title"]), 255)
+        # Cut before the fence is built, so the block still closes and the summary's
+        # own last line is never swallowed by it.
+        self.assertTrue(_closes_every_fence(planned["summary"]))
+
+
+def _closes_every_fence(markdown: str) -> bool:
+    fence: str | None = None
+    for line in markdown.split("\n"):
+        opening = re.fullmatch(r"(`{3,})text", line)
+        if fence is None and opening is not None:
+            fence = opening.group(1)
+        elif fence is not None and re.fullmatch(f"`{{{len(fence)},}}", line.strip()):
+            fence = None
+    return fence is None
+
+
+def _only_fenced(markdown: str, needle: str) -> bool:
+    """Whether every line holding `needle` lies inside a backtick fence, as
+    CommonMark reads one: closed only by a line of at least the opening's length."""
+    fence: str | None = None
+    for line in markdown.split("\n"):
+        opening = re.fullmatch(r"(`{3,})text", line)
+        if fence is None and opening is not None:
+            fence = opening.group(1)
+            continue
+        if fence is not None and re.fullmatch(f"`{{{len(fence)},}}", line.strip()):
+            fence = None
+            continue
+        if needle in line and fence is None:
+            return False
+    return True
 
 
 LATEST = (
@@ -878,6 +928,15 @@ class CompletionTests(unittest.TestCase):
                     _publish(provider, planned, record)
                 self.assertEqual("MISMATCH", raised.exception.kind)
                 self.assertEqual(1, len(provider.posts))
+
+    def test_an_id_that_is_not_an_integer_is_never_the_app_s(self) -> None:
+        """CodeAnt on #426: Python's `True == 1`, so a provider's `true` must never
+        stand for the App id 1; nor does a float."""
+        checks = _checks()
+        self.assertTrue(checks.ours({"app": {"id": 1}}, 1))
+        for value in (True, 1.0, "1"):
+            with self.subTest(value=value):
+                self.assertFalse(checks.ours({"app": {"id": value}}, 1))
 
     def test_another_app_s_runs_are_never_ours(self) -> None:
         planned = _planned("failure")

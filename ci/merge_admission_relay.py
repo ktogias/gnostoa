@@ -48,6 +48,7 @@ from typing import Any
 from tools import github_rest
 from tools.agent_review_admission import Refused, read_payload
 from tools.agent_review_github import DELIVERED_EVENT_BYTES
+from tools.agent_review_report import neutralise
 from tools.github_events import delivered_comment_pull_number
 from tools.merge_admission_checks import (
     CHECK_NAME,
@@ -58,6 +59,7 @@ from tools.merge_admission_checks import (
     comparable,
     correlation_text,
     digest,
+    matches,
     ours,
     read_run,
     run_id,
@@ -71,6 +73,8 @@ _SUBJECT_KIND = "github-pull-request"
 # GitHub's limits for a check run's output.
 _MAX_TITLE = 255
 _MAX_SUMMARY = 60_000
+# Room the summary keeps around an inert block: its lines, the fence and the cut marker.
+_SUMMARY_FRAME = 1_024
 _WORK = "gnostoa-merge-admission"
 _RELAYED = "gnostoa-merge-admission-relay"
 _DISPATCH_TYPE = "gnostoa-merge-admission"
@@ -103,12 +107,22 @@ def _denial(verdict: Mapping[str, Any]) -> tuple[str, str, list[str]]:
         if isinstance(criterion, Mapping) and criterion.get("status") == "FAIL"
     ]
     names = ", ".join(str(criterion.get("id")) for criterion in failing)
-    lines = [
-        f"- **{criterion.get('id')}**: "
+    reasons = "\n".join(
+        f"{criterion.get('id')}: "
         + "; ".join(str(reason) for reason in criterion.get("reasons") or [])
         for criterion in failing
-    ]
+    )
+    lines = ["The failing criteria and their reasons:", "", _inert(reasons)]
     return "failure", f"merge-admission: DENY ({names})", lines
+
+
+def _inert(text: str) -> str:
+    """Contributor-controlled text, such as the paths a reason names, in a fence no
+    line of it can close: a check run's summary is Markdown, so a crafted name makes
+    no link or image (CodeAnt on #426). Bounded first, so a cut never lands inside
+    the fence."""
+
+    return neutralise(_bounded(text, _MAX_SUMMARY - _SUMMARY_FRAME))
 
 
 def _verdict_state(
@@ -242,7 +256,7 @@ def plan_incomplete(head: str, reason: str) -> dict[str, Any]:
         "conclusion": "failure",
         "title": "merge-admission: the evaluation did not complete",
         "summary": _bounded(
-            f"No verdict is published for `{head}`: {reason}", _MAX_SUMMARY
+            f"No verdict is published for `{head}`:\n\n{_inert(reason)}", _MAX_SUMMARY
         ),
         "external_id": None,
     }
@@ -290,7 +304,7 @@ def _verified(
     if not ours(run, app_id):
         raise PublicationError("MISMATCH", "the check run is another App's")
     wanted = {"name": CHECK_NAME, "head_sha": head, **expected}
-    if any(run.get(field) != value for field, value in wanted.items()):
+    if not matches(run, wanted):
         raise PublicationError("MISMATCH", "the check run reads back otherwise")
     identifier = run_id(run)
     if identifier is None:

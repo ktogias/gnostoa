@@ -56,6 +56,7 @@ from tools.merge_admission_checks import (  # noqa: E402
     app_latest,
     correlation_of,
     digest,
+    matches,
     ours,
     read_run,
     run_id,
@@ -223,7 +224,7 @@ def _protected_run(
         "conclusion": "success",
     }
     wrong = sorted(
-        field for field, value in expected.items() if run.get(field) != value
+        field for field, value in expected.items() if not matches(run, {field: value})
     )
     if _mapping(run.get("repository")).get("full_name") != repository:
         wrong.append("repository")
@@ -261,9 +262,7 @@ def _admitted(
         "status": "completed",
         "conclusion": "success",
     }
-    if not ours(check, app_id) or any(
-        check.get(field) != value for field, value in expected.items()
-    ):
+    if not ours(check, app_id) or not matches(check, expected):
         raise Refused("the check is not the pinned App's completed success on the head")
     recorded = correlation_of(check)
     if recorded is None or any(recorded[field] != record[field] for field in _IDENTITY):

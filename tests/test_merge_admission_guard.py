@@ -417,6 +417,8 @@ class GuardTests(unittest.TestCase):
             ("another revision", {"head_sha": OTHER}),
             ("another repository", {"repository": {"full_name": "someone/else"}}),
             ("another attempt", {"run_attempt": 3}),
+            # CodeAnt on #426: `True == 1`, so an attempt that reads `true` is not 1.
+            ("an attempt that reads true", {"run_attempt": True}),
             ("a failed run", {"conclusion": "failure"}),
             ("a cancelled run", {"conclusion": "cancelled"}),
         ):

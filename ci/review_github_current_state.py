@@ -2075,20 +2075,35 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
     every open Pull Request at the trigger run's own head, which GitHub leaves out of
     a fork's run (CodeAnt on #426; github/docs#22501). An event run never falls back
     to the scheduled sweep."""
-    pulls = [
-        *args.pull_number,
-        *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
-    ]
+    hints = list(
+        dict.fromkeys(
+            [
+                *args.pull_number,
+                *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+            ]
+        )
+    )
     head = args.workflow_run_head_sha
-    if head is not None:
+    if head is None:
+        selected = hints
+    else:
         if _SHA40.fullmatch(head) is None:
             raise SystemExit("the trigger run's head is not an exact commit")
-        pulls.extend(
-            item["number"]
-            for item in _open_pulls(client, args.repository)
-            if item["head_sha"] == head
-        )
-    selected = list(dict.fromkeys(pulls))
+        try:
+            population = _open_pulls(client, args.repository)
+        except ProviderReadError as exc:
+            raise SystemExit(f"subjects: {exc}") from exc
+        heads = {item["number"]: item["head_sha"] for item in population}
+        at_head = sorted(number for number, at in heads.items() if at == head)
+        # A check run belongs to a commit: one subject evaluates it for every pull
+        # request at that head, and H1's failure names them all when it is shared, so
+        # however many share it nothing aborts before it is evaluated (CodeAnt and
+        # Claude on #426). A hinted pull request is the one chosen; a hint the
+        # listing does not show yet keeps its own place, and is re-read.
+        chosen: dict[str, int] = {}
+        for number in [*hints, *at_head]:
+            chosen.setdefault(heads.get(number, f"#{number}"), number)
+        selected = list(chosen.values())
     if len(selected) > _MAX_OPEN_PULLS:
         raise SystemExit(
             "selected Pull Request population exceeds bounded reconciliation capacity"
