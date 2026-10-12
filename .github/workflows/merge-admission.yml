@@ -22,15 +22,10 @@ on:
         required: true
         type: number
 
-# Every read is the workflow token's; the only write, the check run, is the
-# `gnostoa-ma0` App's, minted in the publishing job alone.
-permissions:
-  contents: read
-  pull-requests: read
-  issues: read
-  checks: read
-  statuses: read
-  actions: read
+# The workflow grants nothing; each job grants its own reads (SonarCloud S8264 on
+# #426). The only write, the check run, is the `gnostoa-ma0` App's, minted in the
+# publishing job alone.
+permissions: {}
 
 # Admissions queue, one at a time, and none is cancelled, as the readback's do.
 concurrency:
@@ -50,12 +45,16 @@ jobs:
           || github.event_name == 'workflow_dispatch'
           || (github.event_name == 'workflow_run'
               && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
+                   && github.event.workflow_run.conclusion == 'success'
                    && (github.event.workflow_run.event == 'pull_request'
                        || github.event.workflow_run.event == 'pull_request_review'))
                   || (github.event.workflow_run.path == '.github/workflows/verification.yml'
                       && github.event.workflow_run.event == 'pull_request'))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       subjects: ${{ steps.subjects.outputs.subjects }}
     steps:
@@ -108,7 +107,10 @@ jobs:
     # The admission point re-reads the inventory (Decision 0112), through the existing
     # main-only readback and its `analyzer-readback` environment, for the exact subject.
     needs: subjects
-    if: github.ref == 'refs/heads/main' && needs.subjects.outputs.subjects != '[]'
+    if: >-
+      github.ref == 'refs/heads/main'
+      && needs.subjects.result == 'success'
+      && needs.subjects.outputs.subjects != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -140,6 +142,13 @@ jobs:
     environment: gnostoa-ma0
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+      actions: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -209,12 +218,21 @@ jobs:
       - name: Publish the verdict on the exact head
         env:
           GNOSTOA_MA0_TOKEN: ${{ steps.token.outputs.token }}
+          GNOSTOA_MA0_APP_ID: ${{ vars.GNOSTOA_MA0_APP_ID }}
           VERDICT_EXIT: ${{ steps.evaluate.outputs.verdict_exit }}
+          EXPECTED_HEAD: ${{ matrix.subject.head }}
         run: |
           set -eu
           work="${RUNNER_TEMP}/gnostoa-merge-admission"
+          app=()
+          if [ -n "${GNOSTOA_MA0_APP_ID}" ]; then
+            app=(--app-id "${GNOSTOA_MA0_APP_ID}")
+          fi
           PYTHONPATH=. python ci/merge_admission_relay.py \
             --repository "${GITHUB_REPOSITORY}" \
+            --work-dir "${work}" \
+            --expected-head "${EXPECTED_HEAD}" \
+            "${app[@]}" \
             --evaluated "${work}/evaluated-evidence.json" \
             --current "${work}/current-evidence.json" \
             --verdict "${work}/verdict.json" \

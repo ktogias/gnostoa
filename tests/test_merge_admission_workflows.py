@@ -13,6 +13,7 @@ import copy
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -29,8 +30,9 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 TRIGGER = WORKFLOWS / "merge-admission-trigger.yml"
 ADMISSION = WORKFLOWS / "merge-admission.yml"
 READBACK = WORKFLOWS / "analyzer-readback.yml"
+RUNBOOK = ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md"
 # Selected in the MA0 package (#407, 6069729619): v3.2.0, MIT.
-APP_TOKEN_ACTION = (
+APP_MINT_ACTION = (
     "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
 )
 MAIN_ONLY = "github.ref == 'refs/heads/main'"
@@ -50,6 +52,13 @@ def _steps(job: dict[str, Any]) -> list[dict[str, Any]]:
     return list(job.get("steps", []))
 
 
+def _run_lines(step: dict[str, Any]) -> list[str]:
+    """The step's executable shell lines, stripped, with comments dropped."""
+
+    lines = (line.strip() for line in str(step.get("run", "")).splitlines())
+    return [line for line in lines if line and not line.startswith("#")]
+
+
 class TriggerWorkflowTests(unittest.TestCase):
     """Decision 0096 rule 2: the untrusted trigger has no permission, no secret
     and no checkout, and computes nothing."""
@@ -59,8 +68,17 @@ class TriggerWorkflowTests(unittest.TestCase):
         self.assertEqual("Merge admission trigger", workflow["name"])
         events = workflow["on"]
         self.assertEqual({"pull_request", "pull_request_review"}, set(events))
+        # cubic on #426: a draft is denied (M1), so turning one back into a draft
+        # changes the verdict.
         self.assertLessEqual(
-            {"opened", "edited", "reopened", "synchronize", "ready_for_review"},
+            {
+                "opened",
+                "edited",
+                "reopened",
+                "synchronize",
+                "ready_for_review",
+                "converted_to_draft",
+            },
             set(events["pull_request"]["types"]),
         )
         self.assertLessEqual(
@@ -130,6 +148,24 @@ class AdmissionWorkflowTests(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, conditions)
 
+    def test_a_failed_selection_starts_no_readback(self) -> None:
+        """Kilo on #426: a failed `subjects` job leaves no list to expand."""
+        condition = str(_load(ADMISSION)["jobs"]["readback"]["if"])
+        self.assertIn("needs.subjects.result == 'success'", condition)
+
+    def test_permissions_are_granted_per_job(self) -> None:
+        """SonarCloud S8264 on #426: the workflow grants nothing, and each job only
+        the reads it needs."""
+        workflow = _load(ADMISSION)
+        self.assertEqual({}, workflow["permissions"])
+        for name, job in workflow["jobs"].items():
+            with self.subTest(job=name):
+                self.assertTrue(job.get("permissions"))
+
+    def test_only_a_successful_trigger_run_counts(self) -> None:
+        conditions = str(_load(ADMISSION)["jobs"]["subjects"]["if"])
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", conditions)
+
     def test_the_inventory_is_re_read_through_the_existing_readback(self) -> None:
         jobs = _load(ADMISSION)["jobs"]
         callers = [
@@ -151,16 +187,18 @@ class AdmissionWorkflowTests(unittest.TestCase):
         }
         self.assertEqual(1, len(holders))
         (job,) = holders.values()
-        minting = [step for step in _steps(job) if step.get("uses") == APP_TOKEN_ACTION]
+        minting = [step for step in _steps(job) if step.get("uses") == APP_MINT_ACTION]
         self.assertEqual(1, len(minting))
         inputs = minting[0].get("with", {})
         permissions = {k: v for k, v in inputs.items() if k.startswith("permission-")}
         self.assertEqual({"permission-checks": "write"}, permissions)
+        # cubic on #426: without the App's id no token is minted (the shadow).
+        self.assertEqual("${{ vars.GNOSTOA_MA0_APP_ID != '' }}", minting[0].get("if"))
         for other_name, other in jobs.items():
             if other_name in holders:
                 continue
             with self.subTest(job=other_name):
-                self.assertNotIn(APP_TOKEN_ACTION, str(other))
+                self.assertNotIn(APP_MINT_ACTION, str(other))
 
     def test_checkouts_take_main_without_credentials(self) -> None:
         for name, job in _load(ADMISSION)["jobs"].items():
@@ -171,18 +209,63 @@ class AdmissionWorkflowTests(unittest.TestCase):
                         self.assertIs(False, step["with"]["persist-credentials"])
 
     def test_it_runs_main_s_own_commands(self) -> None:
-        text = ADMISSION.read_text(encoding="utf-8")
-        for command in (
-            "ci/review_github_current_state.py",
-            "--mode subjects",
-            "--mode merge-evidence",
-            "merge-evidence",
-            "merge-admission",
-            "ci/merge_admission_relay.py",
-        ):
-            with self.subTest(command=command):
-                self.assertIn(command, text)
-        self.assertNotIn("pull_request_target", text)
+        """cubic on #426: each exact invocation is an executable line of the step
+        that owns it, not a substring anywhere in the file."""
+        jobs = _load(ADMISSION)["jobs"]
+        expected = {
+            ("subjects", "Select the subjects"): (
+                "--mode subjects",
+                'PYTHONPATH=. python ci/review_github_current_state.py "${args[@]}"',
+            ),
+            ("admit", "Evaluate the exact subject"): (
+                "PYTHONPATH=. python ci/review_github_current_state.py"
+                " --mode merge-evidence \\",
+                "&& PYTHONPATH=. python -m tools.cli merge-evidence --project-root ."
+                ' "${bundle[@]}" \\',
+                "PYTHONPATH=. python -m tools.cli merge-admission --project-root . \\",
+            ),
+            ("admit", "Publish the verdict on the exact head"): (
+                "PYTHONPATH=. python ci/merge_admission_relay.py \\",
+            ),
+        }
+        for (job, name), lines in expected.items():
+            steps = [step for step in _steps(jobs[job]) if step.get("name") == name]
+            self.assertEqual(1, len(steps), name)
+            executable = _run_lines(steps[0])
+            for line in lines:
+                with self.subTest(step=name, line=line):
+                    self.assertIn(line, executable)
+        self.assertNotIn("pull_request_target", ADMISSION.read_text(encoding="utf-8"))
+
+
+class ActivationRunbookTests(unittest.TestCase):
+    """The owner's activation steps in the merge-gate runbook (#407, MA0 1b.4)."""
+
+    @staticmethod
+    def _steps() -> dict[str, str]:
+        text = RUNBOOK.read_text(encoding="utf-8")
+        section = text.split("### Merge admission (MA0 1b.4)", 1)[1]
+        section = section.split("\n### ", 1)[0].split("**Owner operations.**", 1)[1]
+        return {
+            match.group(1): line
+            for line in section.splitlines()
+            if (match := re.match(r"(\d+)\. ", line))
+        }
+
+    def test_the_credentials_are_the_environment_s(self) -> None:
+        """cubic on #426: a repository secret reaches every branch's workflows, the
+        `gnostoa-ma0` environment's only main's."""
+        step = self._steps()["3"]
+        self.assertIn("environment variable `GNOSTOA_MA0_APP_ID`", step)
+        self.assertIn("environment secret `GNOSTOA_MA0_PRIVATE_KEY`", step)
+
+    def test_routing_the_rerun_case_does_not_resolve_it(self) -> None:
+        """The PAO on #426 (6130135014). Added after round 1's change to step 5, as a
+        regression guard: it is not that change's pre-change evidence."""
+        step = self._steps()["5"]
+        self.assertNotIn("or explicitly routed", step)
+        self.assertIn("**the owner explicitly chooses**", step)
+        self.assertIn("activation stays pending", step)
 
 
 class ReadbackCallTests(unittest.TestCase):
@@ -262,7 +345,8 @@ class L1ModeTests(unittest.TestCase):
     """L1's command line exposes what it already owns: the subjects to admit, and
     one pull request's merge-evidence snapshot. Its acquisition is unchanged."""
 
-    def _run(self, module: Any, replies: dict[str, Any], *argv: str) -> int:
+    @staticmethod
+    def _run(module: Any, replies: dict[str, Any], *argv: str) -> int:
         fake = paged_fake_fixture(replies)
         with (
             mock.patch.object(module, "GitHubRestClient", return_value=fake),

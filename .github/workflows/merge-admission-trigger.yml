@@ -7,7 +7,7 @@ name: Merge admission trigger
 # as a hint, and re-reads everything else from the provider.
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronize, ready_for_review]
+    types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft]
   pull_request_review:
     types: [submitted, edited, dismissed]
 

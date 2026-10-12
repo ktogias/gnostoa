@@ -9,9 +9,12 @@ from it, and this command compares the two, observation times aside. A moved hea
 a changed description, relation, review, thread or check supersedes the verdict, so a
 stale check is never published; the next event or the sweep evaluates again.
 
-The check is posted once. Its outcome is read back, and an unknown outcome is found by
-its `external_id` rather than posted again. Without the App's token the run is a
-shadow: it records its plan and writes nothing.
+A verdict the dedicated App already published as the head's latest run is not posted
+again; otherwise the check is posted once and read back, and an unknown outcome is
+found by its `external_id` rather than posted again. A run counts as the App's only
+when the App's id says so. Every file the command reads or writes is confined to its
+work directory. Without the App's token the run is a shadow: it records its plan and
+writes nothing.
 """
 
 from __future__ import annotations
@@ -20,16 +23,18 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from tools import github_rest
-from tools.verdict_cli import MAX_INPUT_BYTES
+from tools.verdict_cli import confine, read_json_file
 
 CHECK_NAME = "merge-admission"
-_TOKEN_ENV = "GNOSTOA_MA0_TOKEN"  # nosec B105 -- environment variable name, not a credential
+_APP_CREDENTIAL_VARIABLE = "GNOSTOA_MA0_TOKEN"
+_SHA40 = re.compile(r"[0-9a-f]{40}")
 _VERDICT_SCHEMA = "gnostoa-merge-admission/v1"
 _SUBJECT_KIND = "github-pull-request"
 # GitHub's limits for a check run's output.
@@ -78,18 +83,37 @@ def _bounded(text: str, limit: int) -> str:
     return text[: limit - len(marker)] + marker
 
 
+def _malformed(verdict: object) -> bool:
+    return (
+        not isinstance(verdict, Mapping)
+        or verdict.get("schema") != _VERDICT_SCHEMA
+        or verdict.get("status") not in {"ALLOW", "DENY"}
+        or not isinstance(verdict.get("criteria"), list)
+    )
+
+
+def _denial(verdict: Mapping[str, Any]) -> tuple[str, str, list[str]]:
+    failing = [
+        criterion
+        for criterion in verdict["criteria"]
+        if isinstance(criterion, Mapping) and criterion.get("status") == "FAIL"
+    ]
+    names = ", ".join(str(criterion.get("id")) for criterion in failing)
+    lines = [
+        f"- **{criterion.get('id')}**: "
+        + "; ".join(str(reason) for reason in criterion.get("reasons") or [])
+        for criterion in failing
+    ]
+    return "failure", f"merge-admission: DENY ({names})", lines
+
+
 def _verdict_state(
     subject: Mapping[str, Any], verdict: object, verdict_exit: int
 ) -> tuple[str, str, list[str]]:
     """The conclusion, title and summary lines. Only a well-formed ALLOW for this
     exact subject, from a command that exited 0, is ever a success."""
 
-    if (
-        not isinstance(verdict, Mapping)
-        or verdict.get("schema") != _VERDICT_SCHEMA
-        or verdict.get("status") not in {"ALLOW", "DENY"}
-        or not isinstance(verdict.get("criteria"), list)
-    ):
+    if _malformed(verdict) or not isinstance(verdict, Mapping):
         return (
             "failure",
             "merge-admission: the evaluation produced no verdict",
@@ -108,18 +132,7 @@ def _verdict_state(
             ["Every applicable criterion holds for this exact head."],
         )
     if verdict["status"] == "DENY" and verdict_exit == 1:
-        failing = [
-            criterion
-            for criterion in verdict["criteria"]
-            if isinstance(criterion, Mapping) and criterion.get("status") == "FAIL"
-        ]
-        names = ", ".join(str(criterion.get("id")) for criterion in failing)
-        lines = [
-            f"- **{criterion.get('id')}**: "
-            + "; ".join(str(reason) for reason in criterion.get("reasons") or [])
-            for criterion in failing
-        ]
-        return "failure", f"merge-admission: DENY ({names})", lines
+        return _denial(verdict)
     return (
         "failure",
         "merge-admission: the verdict and the command's exit disagree",
@@ -132,8 +145,12 @@ def plan(
     current: Mapping[str, Any],
     verdict: object,
     verdict_exit: int,
+    *,
+    expected_head: str | None = None,
 ) -> dict[str, Any]:
-    """What to publish for the evaluated evidence, given the current evidence."""
+    """What to publish for the evaluated evidence, given the current evidence and
+    the head the run selected. An evaluation of another head than the selected one
+    is not this run's subject (Octopus on #426): it is superseded too."""
 
     subject = evaluated["subject"]
     head = subject["head_commit"]
@@ -147,7 +164,9 @@ def plan(
             }
         )
     ).hexdigest()
-    unchanged = _comparable(current) == _comparable(evaluated)
+    unchanged = _comparable(current) == _comparable(evaluated) and (
+        expected_head is None or expected_head == head
+    )
     summary = "\n".join(
         [
             f"Pull request {subject['change_request']['id']} at `{head}`.",
@@ -168,7 +187,12 @@ def plan(
     }
 
 
-def _verified(run: object, planned: Mapping[str, Any]) -> int:
+def _ours(run: object, app_id: int) -> bool:
+    app = run.get("app") if isinstance(run, Mapping) else None
+    return isinstance(app, Mapping) and app.get("id") == app_id
+
+
+def _verified(run: object, planned: Mapping[str, Any], app_id: int) -> int:
     expected = {
         "name": CHECK_NAME,
         "head_sha": planned["head_sha"],
@@ -180,44 +204,56 @@ def _verified(run: object, planned: Mapping[str, Any]) -> int:
         run.get(field) != value for field, value in expected.items()
     ):
         raise PublicationError("MISMATCH", "the check run reads back otherwise")
+    if not _ours(run, app_id):
+        raise PublicationError("MISMATCH", "the check run is another App's")
     identifier = run.get("id")
     if type(identifier) is not int:
         raise PublicationError("MISMATCH", "the check run reads back with no id")
     return identifier
 
 
-def _found(client: Any, repository: str, planned: Mapping[str, Any]) -> object:
-    """The posted run, after a write whose outcome is unknown, or None."""
+def _latest(
+    client: Any, repository: str, planned: Mapping[str, Any], app_id: int
+) -> object:
+    """The dedicated App's latest run of the check on the head with this external
+    id, or None. GitHub's latest view keeps one run per App and name, so a listing
+    longer than its page is refused rather than trusted."""
 
     url = client.url(
         f"repos/{repository}/commits/{planned['head_sha']}/check-runs"
-        f"?check_name={CHECK_NAME}&filter=all&per_page={_MAX_LISTED_RUNS}"
+        f"?check_name={CHECK_NAME}&filter=latest&per_page={_MAX_LISTED_RUNS}"
     )
     try:
         document, _ = client.get(url)
     except github_rest.GitHubError as exc:
-        raise PublicationError(
-            "UNKNOWN", "the check runs could not be read back"
-        ) from exc
+        raise PublicationError("UNKNOWN", "the check runs could not be read") from exc
     runs = document.get("check_runs") if isinstance(document, Mapping) else None
     total = document.get("total_count") if isinstance(document, Mapping) else None
-    if not isinstance(runs, list) or type(total) is not int or total > _MAX_LISTED_RUNS:
+    if not isinstance(runs, list) or type(total) is not int or total > len(runs):
         raise PublicationError("UNKNOWN", "the check runs read back incompletely")
     matches = [
         run
         for run in runs
-        if isinstance(run, Mapping) and run.get("external_id") == planned["external_id"]
+        if _ours(run, app_id) and run.get("external_id") == planned["external_id"]
     ]
     return matches[-1] if matches else None
 
 
 def publish(
-    client: Any, *, repository: str, planned: Mapping[str, Any]
+    client: Any, *, repository: str, planned: Mapping[str, Any], app_id: int
 ) -> dict[str, Any]:
-    """Post the planned check run once and read it back."""
+    """Publish the planned check run as the dedicated App, at most once: a verdict
+    already the App's latest run on the head is not posted again (Claude, Octopus
+    and CodeAnt on #426)."""
 
     if planned["action"] != "PUBLISH":
         return {"result": "SUPERSEDED"}
+    existing = _latest(client, repository, planned, app_id)
+    if existing is not None:
+        return {
+            "result": "PUBLISHED",
+            "check_run_id": _verified(existing, planned, app_id),
+        }
     payload = {
         "name": CHECK_NAME,
         "head_sha": planned["head_sha"],
@@ -231,12 +267,15 @@ def publish(
     except github_rest.GitHubWriteError as exc:
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
-        found = _found(client, repository, planned)
+        found = _latest(client, repository, planned, app_id)
         if found is None:
             raise PublicationError(
                 "UNKNOWN", "the write's outcome is unknown and no such run is listed"
             ) from exc
-        return {"result": "PUBLISHED", "check_run_id": _verified(found, planned)}
+        return {
+            "result": "PUBLISHED",
+            "check_run_id": _verified(found, planned, app_id),
+        }
     identifier = posted.get("id") if isinstance(posted, Mapping) else None
     if type(identifier) is not int:
         raise PublicationError("MISMATCH", "the provider's answer names no check run")
@@ -246,14 +285,15 @@ def publish(
         raise PublicationError(
             "UNKNOWN", "the check run could not be read back"
         ) from exc
-    return {"result": "PUBLISHED", "check_run_id": _verified(read, planned)}
+    return {"result": "PUBLISHED", "check_run_id": _verified(read, planned, app_id)}
 
 
-def _evidence(path: Path, label: str) -> dict[str, Any]:
-    raw = path.read_bytes()
-    if len(raw) > MAX_INPUT_BYTES:
-        raise ValueError(f"the {label} evidence exceeds its bound")
-    document: object = json.loads(raw.decode("utf-8"))
+def _evidence(path: Path, root: Path, label: str) -> dict[str, Any]:
+    """The evidence, read as every verdict command reads its input: confined to the
+    work directory, bounded before it is held, strictly decoded and depth-bounded
+    (cubic on #426)."""
+
+    document = read_json_file(path, f"{label} evidence", ValueError, project_root=root)
     if not isinstance(document, dict):
         raise ValueError(f"the {label} evidence is not an object")
     subject = document.get("subject")
@@ -262,22 +302,21 @@ def _evidence(path: Path, label: str) -> dict[str, Any]:
         or not isinstance(subject.get("change_request"), dict)
         or subject["change_request"].get("kind") != _SUBJECT_KIND
         or not isinstance(subject.get("head_commit"), str)
+        or _SHA40.fullmatch(subject["head_commit"]) is None
     ):
         raise ValueError(f"the {label} evidence names no pull-request subject")
     return document
 
 
-def _verdict(path: Path | None) -> object:
-    """The verdict, or None when the evaluation wrote none or wrote no JSON."""
+def _verdict(path: Path | None, root: Path) -> object:
+    """The verdict, or None when the evaluation wrote none, or wrote what the verdict
+    commands' own input rules refuse."""
 
-    if path is None or not path.is_file():
-        return None
-    raw = path.read_bytes()
-    if len(raw) > MAX_INPUT_BYTES:
+    if path is None:
         return None
     try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        return read_json_file(path, "verdict", ValueError, project_root=root)
+    except ValueError:
         return None
 
 
@@ -295,6 +334,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--verdict", type=Path)
     parser.add_argument("--verdict-exit", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--work-dir", type=Path, required=True)
+    parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--app-id", type=int)
     return parser
 
 
@@ -318,23 +360,49 @@ def _summary(result: Mapping[str, Any]) -> None:
         print("Gnostoa merge admission: STEP_SUMMARY_UNAVAILABLE")
 
 
+def _confined(path: Path, root: Path, label: str) -> Path:
+    """Every file under the work directory (SonarCloud S8707 on #426)."""
+
+    return confine(path, root, label=label, error=ValueError)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    token = os.environ.get(_APP_CREDENTIAL_VARIABLE, "")
     try:
-        evaluated = _evidence(args.evaluated, "evaluated")
-        current = _evidence(args.current, "current")
+        root = args.work_dir.resolve(strict=True)
+        evaluated = _evidence(args.evaluated, root, "evaluated")
+        current = _evidence(args.current, root, "current")
+        verdict_path = (
+            None if args.verdict is None else _confined(args.verdict, root, "verdict")
+        )
+        output = _confined(args.output, root, "result")
+        if _SHA40.fullmatch(args.expected_head) is None:
+            raise ValueError("the expected head is no exact SHA")
+        if token and (args.app_id is None or args.app_id <= 0):
+            raise ValueError("publishing needs the dedicated App's id")
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    planned = plan(evaluated, current, _verdict(args.verdict), args.verdict_exit)
-    token = os.environ.get(_TOKEN_ENV, "")
+    planned = plan(
+        evaluated,
+        current,
+        _verdict(verdict_path, root),
+        args.verdict_exit,
+        expected_head=args.expected_head,
+    )
     code = 0
     if not token:
         result: dict[str, Any] = {"result": "SHADOW", "planned": planned}
     else:
         try:
             result = {
-                **publish(_client(token), repository=args.repository, planned=planned),
+                **publish(
+                    _client(token),
+                    repository=args.repository,
+                    planned=planned,
+                    app_id=int(args.app_id),
+                ),
                 "planned": planned,
             }
         except PublicationError as exc:
@@ -345,9 +413,7 @@ def main(argv: list[str] | None = None) -> int:
                 "planned": planned,
             }
             code = 1
-    args.output.write_text(
-        json.dumps(result, sort_keys=True, indent=1), encoding="utf-8"
-    )
+    output.write_text(json.dumps(result, sort_keys=True, indent=1), encoding="utf-8")
     _summary(result)
     print(f"merge-admission: {result['result']} ({planned['conclusion']})")
     return code
