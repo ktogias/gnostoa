@@ -679,13 +679,13 @@ class CompletionTests(unittest.TestCase):
             [_run(91, conclusion="failure"), _run(701, conclusion="failure")]
         )
         record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
-        result = _publish(observed, _planned(), record)
+        result = _publish(observed, _planned(), record, SCHEDULED)
         self.assertEqual("OVERTAKEN", result["result"])
         self.assertEqual(([], []), (observed.posts, observed.patches))
 
     def test_a_success_without_its_record_is_never_written(self) -> None:
         provider = _Provider([_run(91, conclusion="failure")])
-        result = _publish(provider, _planned(), None)
+        result = _publish(provider, _planned(), None, SCHEDULED)
         self.assertEqual("OVERTAKEN", result["result"])
         self.assertEqual(([], []), (provider.posts, provider.patches))
 
@@ -768,6 +768,31 @@ class CompletionTests(unittest.TestCase):
             correlation={**CORRELATION, "nonce": None},
         )
         self.assertEqual(("SUPERSEDED", []), (result["result"], provider.posts))
+
+    def test_an_overtaken_dispatched_success_still_leaves_a_failure_record(
+        self,
+    ) -> None:
+        """CodeAnt on #426: a dispatched run whose success cannot be written, its
+        invalidation having failed or the latest run having moved, records a failure
+        carrying its nonce, so the guard refuses at once. The newer run's success,
+        if any, is invalidated: the cost is a fresh evaluation, never a merge."""
+        for name, runs, record in (
+            ("no record", [_run(91, conclusion="failure")], None),
+            (
+                "the latest moved",
+                [_run(91, conclusion="failure"), _run(701)],
+                {"result": "NOT_NEEDED", "pending": None, "observed": 91},
+            ),
+        ):
+            with self.subTest(name):
+                provider = _Provider(runs)
+                result = _publish(provider, _planned(), record)
+                self.assertEqual("RECORDED", result["result"])
+                self.assertEqual(1, len(provider.posts))
+                _, payload = provider.posts[0]
+                self.assertEqual("failure", payload["conclusion"])
+                found = _checks().correlation_of({"output": payload["output"]})
+                self.assertEqual(NONCE, (found or {}).get("nonce"))
 
     def test_an_unknown_completion_is_read_back_never_rewritten(self) -> None:
         provider = _Provider([_run(90)])
@@ -1113,8 +1138,9 @@ class CommandTests(unittest.TestCase):
 
     def test_an_unreadable_evidence_file_still_completes_as_incomplete(self) -> None:
         """A failed evaluation (cubic r4251147766 on #426) stops before any verdict is
-        planned on it, and the run's record says INCOMPLETE: a pending run is
-        completed as a failure, never left to look like an evaluation."""
+        planned on it: the command exits 2, and the run's record plans INCOMPLETE, a
+        failure. (How publication completes a pending run from that plan is
+        `CompletionTests`'.)"""
         relay = _relay()
         corruptions: dict[str, bytes | None] = {
             "missing": None,

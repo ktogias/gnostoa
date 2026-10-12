@@ -63,6 +63,8 @@ from tools.merge_admission_checks import (  # noqa: E402
 
 _WORKFLOW = ".github/workflows/merge-admission.yml"
 _DISPATCH_TYPE = "gnostoa-merge-admission"
+# What a record names of the run that wrote it.
+_IDENTITY = ("workflow_run_id", "run_attempt", "protected_revision", "nonce")
 _PROTECTED = "main"
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 # Git runs no program a configuration names: no file-system monitor, no hook.
@@ -264,13 +266,34 @@ def _admitted(
     ):
         raise Refused("the check is not the pinned App's completed success on the head")
     recorded = correlation_of(check)
-    identity = ("workflow_run_id", "run_attempt", "protected_revision", "nonce")
-    if recorded is None or any(recorded[field] != record[field] for field in identity):
+    if recorded is None or any(recorded[field] != record[field] for field in _IDENTITY):
         raise Refused("the check does not correlate with this dispatch's run")
     digest_recorded = recorded["unbundled_evidence_sha256"]
     if not isinstance(digest_recorded, str):
         raise Refused("the check records no evidence digest")
     return identifier, digest_recorded
+
+
+def _still_latest(
+    client: Any,
+    repository: str,
+    approved: str,
+    app_id: int,
+    record: Mapping[str, Any],
+    check: int,
+) -> None:
+    """The record read once more, after the evidence reads: still the same run, the
+    pinned App's latest on the head, carrying this dispatch's identity (CodeAnt on
+    #426)."""
+
+    latest, current = _latest_record(client, repository, approved, app_id)
+    if (
+        latest is None
+        or current is None
+        or run_id(latest) != check
+        or any(current[field] != record[field] for field in _IDENTITY)
+    ):
+        raise Refused("this dispatch's check is no longer the latest")
 
 
 def _unchanged(
@@ -363,6 +386,7 @@ def guard(
         raise Refused(f"the subject could not be re-read: {exc}") from exc
     _unchanged(rebuilt, recorded, repository, pull_number, approved)
     _alone(observed, pull_number, approved)
+    _still_latest(client, repository, approved, app_id, record, check)
     _pull(client, repository, pull_number, approved)
     if _main(client, repository) != revision:
         raise Refused(f"protected {_PROTECTED} moved during the guard")

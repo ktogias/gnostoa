@@ -328,17 +328,17 @@ written here.
   }
   ```
 - `guard_merge` launches the merge-admission guard (step 8, once `merge-admission`
-  is required) in the same fresh shell, run from a clean clone of protected `main`.
-  Before any credential exists, it reads the checkout with git, loading no global
-  or system configuration and running no monitor or hook the checkout's own
-  configuration names (Codex on #426), and that read must succeed: an unreadable checkout is not a clean one, and `env -i` drops the caller's
-  `GIT_*` routing, so git reads this checkout and no other. The read must show
-  nothing: no change, no untracked file and no ignored one, such as a
-  `sitecustomize.py` or a `*.pyc`. Only then is the token minted. The interpreter
-  starts isolated (`-I`), so no file of the checkout runs at its startup, and the
-  guard adds the checkout to its own path afterwards. It writes no bytecode, and
-  reads it only from the directory `mktemp` made (the PAO on #426, 6132349006; Codex
-  and CodeAnt):
+  is required) in the same fresh shell, and trusts nothing in the directory it is
+  started from or in any Git configuration. Before any credential exists, it clones
+  protected `main` afresh from the provider, one commit deep, loading no global or
+  system configuration and running no hook, into a repository with no configuration
+  of its own, and the clone must succeed. A checkout's own state cannot vouch for itself: its configuration can name
+  a monitor that runs programs, or a clean filter that makes modified bytes look
+  committed to `git status` (the PAO on #426, 6132349006; Codex and CodeAnt). Only
+  then is the token minted. The guard runs from that clone, its interpreter isolated
+  (`-I`), so no file runs at its startup; it adds the clone to its own path
+  afterwards, writes no bytecode, and checks the clone's revision against protected
+  `main` by the API:
   ```sh
   guard_merge() {
     /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
@@ -349,13 +349,14 @@ written here.
       trap "exit 129" HUP
       created=$(mktemp -d) || exit
       trap cleanup EXIT
-      state=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-        status --porcelain --untracked-files=all --ignored) || exit
-      test -z "$state" || exit
+      GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git -c core.hooksPath=/dev/null \
+        clone --quiet --depth 1 --branch main --single-branch --no-tags \
+        https://github.com/ktogias/gnostoa.git "$created/main" || exit
+      cd "$created/main" || exit
       GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
         && test -n "$GH_TOKEN" && export GH_TOKEN \
-        && python3 -I -B -X pycache_prefix="$created" ci/merge_admission_guard.py "$@"
+        && python3 -I -B -X pycache_prefix="$created/cache" ci/merge_admission_guard.py "$@"
     ' guard_merge "$@"
   }
   ```
@@ -442,10 +443,9 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```
    **After `merge-admission` is required** (MA0 1b.4 activated), the merge obtains
    an admission of its own first (F1 part 3, #426 6130207025). After the reads above,
-   the App runs the guard through `guard_merge` (Credentials), from a clean clone of
-   protected `main`, and merges only on its `PROCEED`, at once. `guard_merge`
-   refuses before minting the token unless git reads the checkout and it holds
-   nothing but its revision, ignored files included:
+   the App runs the guard through `guard_merge` (Credentials), from any directory,
+   and merges only on its `PROCEED`, at once. `guard_merge` clones protected `main`
+   afresh before minting the token, and runs the guard from that clone:
    ```sh
    guard_merge --repository ktogias/gnostoa --pull-number <N> \
      --approved <approved> --app-id <gnostoa-ma0's App ID>

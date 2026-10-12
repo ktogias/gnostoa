@@ -1,10 +1,11 @@
 """The guarded merge's own admission (#407, MA0 slice 1b.4; F1 part 3, the Decisions
 Router on #426, 6130207025).
 
-After the owner's exact-head approval and step 8's other reads, the guard dispatches
-the protected admission for the approved head and correlates the result through the
-workflow run the dispatch returns, never through time. It checks that run's identity,
-reads the pinned App's check natively and re-reads the subject, comparing it with
+After the owner's exact-head approval and step 8's other reads, the guard requests the
+protected admission for the approved head by `repository_dispatch` with a fresh nonce
+(G1, 6132395441). GitHub answers with an empty `204`, so the guard finds the run
+through the nonce in the pinned App's record, never through time. It checks that
+run's identity natively, re-reads the record and the subject, and compares them with
 what was evaluated. It never merges: step 8's `--match-head-commit` merge follows it.
 """
 
@@ -365,6 +366,18 @@ class GuardTests(unittest.TestCase):
                 github.timeline = [_check(CHECK), later]
                 self.assertRefused(github, "does not correlate")
 
+    def test_a_record_replaced_during_the_evidence_reads_refuses(self) -> None:
+        """CodeAnt on #426: the record is read once more after the subject and the
+        population, so a newer run that replaced it meanwhile refuses."""
+        github = _GitHub()
+        github.timeline = [
+            _check(CHECK, status="in_progress", conclusion=None),
+            _check(CHECK),
+            _check(CHECK),
+            _check(CHECK + 1, nonce=FOREIGN),
+        ]
+        self.assertRefused(github, "latest")
+
     def test_only_the_protected_admission_run_counts(self) -> None:
         for name, change in (
             ("another workflow", {"path": ".github/workflows/verification.yml"}),
@@ -697,7 +710,9 @@ class CheckoutRevisionTests(unittest.TestCase):
                 f"[core]\n\tfsmonitor = {monitor}\n", encoding="utf-8"
             )
             with mock.patch.dict(
-                os.environ, {**environment, "GH_TOKEN": "credential-1"}, clear=True
+                os.environ,
+                {**environment, GUARD_CREDENTIAL: "credential-1"},
+                clear=True,
             ):
                 self.assertRegex(
                     guard.read_checkout_revision(checkout), r"^[0-9a-f]{40}$"
@@ -733,19 +748,26 @@ _MINT = "#!/bin/sh\n: > \"$HOME/minted\"\nprintf 'credential-%s' 1\n"
 
 
 class GuardLaunchTests(unittest.TestCase):
-    """The PAO (6132349006), Codex and CodeAnt on #426: the runbook's launch checks
-    the checkout by a git read that must succeed, ignored files included, before any
-    credential exists, and starts the interpreter isolated, so no file of the
-    checkout runs at startup with the credential present. Run as the runbook writes
-    it, against real checkouts."""
+    """The PAO (6132349006) and Codex on #426: the runbook's launch trusts nothing in
+    the caller's directory or its Git configuration. Before any credential exists it
+    clones protected `main` afresh from the provider, with no global, system or local
+    configuration, and runs the guard from that clone, the interpreter isolated. Run
+    as the runbook writes it, with only the provider's URL pointed at a local copy."""
 
-    @staticmethod
-    def _launch() -> str:
+    PROVIDER = "https://github.com/ktogias/gnostoa.git"
+
+    @classmethod
+    def _launch(cls, source: Path) -> str:
         text = RUNBOOK.read_text(encoding="utf-8")
         found = re.search(r"\n  guard_merge\(\) \{\n.*?\n  \}\n", text, re.S)
         if found is None:
             raise AssertionError("the runbook defines no guard_merge launch")
-        return found.group(0)
+        launch = found.group(0)
+        if launch.count(cls.PROVIDER) != 1:
+            raise AssertionError(
+                "the launch does not clone protected main from the provider"
+            )
+        return launch.replace(cls.PROVIDER, f"file://{source}")
 
     @staticmethod
     def _git(directory: Path, *arguments: str) -> None:
@@ -754,30 +776,26 @@ class GuardLaunchTests(unittest.TestCase):
         subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             [git, "-c", "user.name=t", "-c", "user.email=t@t", *arguments],
             cwd=directory,
-            env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+            env={"PATH": _guard().TRUSTED_PATH, "GIT_CONFIG_GLOBAL": "/dev/null"},
             check=True,
             capture_output=True,
         )
 
-    def _checkout(self, root: Path, *, tracked_startup: bool = False) -> Path:
-        checkout = root / "checkout"
-        (checkout / "ci").mkdir(parents=True)
-        (checkout / "ci" / "merge_admission_guard.py").write_text(
+    def _source(self, root: Path, *, tracked_startup: bool = False) -> Path:
+        """Protected main, as the provider holds it: the guard committed on `main`."""
+        source = root / "source"
+        (source / "ci").mkdir(parents=True)
+        (source / "ci" / "merge_admission_guard.py").write_text(
             _STUB_GUARD, encoding="utf-8"
         )
-        (checkout / ".gitignore").write_text(
-            "ignored-startup/\n*.pyc\n", encoding="utf-8"
-        )
         if tracked_startup:
-            (checkout / "sitecustomize.py").write_text(
-                _STARTUP_MODULE, encoding="utf-8"
-            )
-        self._git(checkout, "init", "-q")
-        self._git(checkout, "add", ".")
-        self._git(checkout, "commit", "-q", "-m", "x")
-        return checkout
+            (source / "sitecustomize.py").write_text(_STARTUP_MODULE, encoding="utf-8")
+        self._git(source, "init", "-q", "-b", "main")
+        self._git(source, "add", ".")
+        self._git(source, "commit", "-q", "-m", "x")
+        return source
 
-    def _run(self, root: Path, cwd: Path, **environment: str) -> int:
+    def _run(self, root: Path, cwd: Path, source: Path, **environment: str) -> int:
         home = root / "home"
         helper = home / ".config" / "gnostoa-agent" / "bin"
         helper.mkdir(parents=True, exist_ok=True)
@@ -785,7 +803,7 @@ class GuardLaunchTests(unittest.TestCase):
         (helper / "agent-token.sh").chmod(0o700)
         shell = shutil.which("bash", path=_guard().TRUSTED_PATH)
         assert shell is not None  # nosec B101 -- a test precondition
-        script = self._launch() + "guard_merge --repository r --pull-number 1\n"
+        script = self._launch(source) + "guard_merge --repository r --pull-number 1\n"
         completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             [shell, "-c", script],
             cwd=cwd,
@@ -809,64 +827,167 @@ class GuardLaunchTests(unittest.TestCase):
             (home / "reached").exists(),
         )
 
-    def test_a_clean_checkout_runs_the_guard_with_its_credential(self) -> None:
+    @staticmethod
+    def _hostile(directory: Path) -> None:
+        """A caller's directory holding everything a launch must never run."""
+        (directory / "ci").mkdir(parents=True, exist_ok=True)
+        (directory / "ci" / "merge_admission_guard.py").write_text(
+            _STARTUP_MODULE, encoding="utf-8"
+        )
+        for name in ("sitecustomize.py", "usercustomize.py"):
+            (directory / name).write_text(_STARTUP_MODULE, encoding="utf-8")
+
+    def test_the_guard_runs_from_a_fresh_clone_with_its_credential(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            checkout = self._checkout(root)
-            self.assertEqual(0, self._run(root, checkout))
+            source = self._source(root)
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
             ran = (root / "home" / "guard-ran").read_text(encoding="utf-8")
             self.assertTrue(ran.startswith("credential-1 "))
 
-    def test_no_startup_module_runs_beside_the_credential(self) -> None:
-        """Neither protected main's own `sitecustomize.py`, which the caller's
-        `PYTHONPATH` would reach, nor a `usercustomize.py` in the user site of the
-        `HOME` the fresh shell keeps: the interpreter is isolated, and the checkout
-        joins its path only after startup."""
+    def test_nothing_in_the_caller_s_directory_runs(self) -> None:
+        """A replaced guard and startup modules where the launch is started from:
+        none of them runs; the guard that runs is protected main's."""
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            checkout = self._checkout(root, tracked_startup=True)
+            source = self._source(root)
+            caller = root / "caller"
+            caller.mkdir()
+            self._hostile(caller)
+            self.assertEqual(0, self._run(root, caller, source))
+            self.assertEqual((True, True, False), self._results(root))
+
+    def test_only_protected_main_is_cloned(self) -> None:
+        """The clone names `main`, not whatever the provider's default branch is."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            self._git(source, "checkout", "-q", "-b", "elsewhere")
+            (source / "ci" / "merge_admission_guard.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+            self._git(source, "commit", "-q", "-am", "elsewhere")
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
+            self.assertEqual((True, True, False), self._results(root))
+
+    def test_a_filter_cannot_pass_modified_bytes_off_as_committed(self) -> None:
+        """Codex on #426: a clean filter in a checkout's own configuration makes a
+        modified guard look committed to `git status`. The launch never reads the
+        caller's checkout: it runs the committed guard, from a fresh clone."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            original = root / "original.py"
+            original.write_text(_STUB_GUARD, encoding="utf-8")
+            self._git(source, "config", "filter.canon.clean", f"cat {original}")
+            info = source / ".git" / "info"
+            info.mkdir(parents=True, exist_ok=True)
+            (info / "attributes").write_text(
+                "ci/merge_admission_guard.py filter=canon\n", encoding="utf-8"
+            )
+            (source / "ci" / "merge_admission_guard.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+            self.assertEqual(0, self._run(root, source, source))
+            self.assertEqual((True, True, False), self._results(root))
+
+    def test_no_startup_module_runs_beside_the_credential(self) -> None:
+        """Neither protected main's own `sitecustomize.py` nor a `usercustomize.py`
+        in the user site of the `HOME` the fresh shell keeps."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root, tracked_startup=True)
             version = f"python{sys.version_info.major}.{sys.version_info.minor}"
             user_site = root / "home" / ".local" / "lib" / version / "site-packages"
             user_site.mkdir(parents=True)
             (user_site / "usercustomize.py").write_text(
                 _STARTUP_MODULE, encoding="utf-8"
             )
-            self.assertEqual(0, self._run(root, checkout))
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
 
-    def test_a_checkout_that_is_not_exactly_its_revision_stops_before_the_credential(
-        self,
-    ) -> None:
-        for name, plant in (
-            ("an untracked startup module", "sitecustomize.py"),
-            ("an ignored startup module", "ignored-startup/sitecustomize.py"),
-            ("an ignored bytecode file", "sitecustomize.pyc"),
-        ):
-            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
-                root = Path(raw)
-                checkout = self._checkout(root)
-                target = checkout / plant
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(_STARTUP_MODULE, encoding="utf-8")
-                self.assertNotEqual(0, self._run(root, checkout))
-                self.assertEqual((False, False, False), self._results(root))
-
-    def test_the_launch_s_git_read_runs_no_configured_program(self) -> None:
-        """Codex on #426: the read before the mint loads no global or system
-        configuration and disables the checkout's `core.fsmonitor`, so no program
-        the configuration names runs at all."""
+    def test_no_configured_program_runs(self) -> None:
+        """Codex on #426: a monitor and a smudge filter in the user's Git
+        configuration, the filter named by protected main's own attributes, never run:
+        the clone loads no global or system configuration."""
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            checkout = self._checkout(root)
-            marker = root / "monitor-ran"
-            monitor = root / "monitor.sh"
-            monitor.write_text(f"#!/bin/sh\n: > {marker}\n", encoding="utf-8")
-            monitor.chmod(0o700)
-            self._git(checkout, "config", "core.fsmonitor", str(monitor))
-            self.assertEqual(0, self._run(root, checkout))
+            marker = root / "program-ran"
+            program = root / "program.sh"
+            program.write_text(f"#!/bin/sh\n: > {marker}\ncat\n", encoding="utf-8")
+            program.chmod(0o700)
+            source = self._source(root)
+            (source / ".gitattributes").write_text(
+                "*.py filter=evil\n", encoding="utf-8"
+            )
+            self._git(source, "add", ".gitattributes")
+            self._git(source, "commit", "-q", "-m", "attributes")
+            home = root / "home"
+            home.mkdir()
+            (home / ".gitconfig").write_text(
+                f"[core]\n\tfsmonitor = {program}\n"
+                f'[filter "evil"]\n\tsmudge = {program}\n\tclean = {program}\n',
+                encoding="utf-8",
+            )
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
             self.assertFalse(marker.exists())
+
+    def test_the_caller_s_git_environment_cannot_redirect_the_clone(self) -> None:
+        """Git configuration a caller's environment injects, such as a `url.insteadOf`
+        that would fetch another repository in protected main's place, never
+        reaches the clone: the fresh shell starts with an empty environment."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            impostor = root / "impostor"
+            (impostor / "ci").mkdir(parents=True)
+            (impostor / "ci" / "merge_admission_guard.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+            self._git(impostor, "init", "-q", "-b", "main")
+            self._git(impostor, "add", ".")
+            self._git(impostor, "commit", "-q", "-m", "x")
+            caller = root / "caller"
+            caller.mkdir()
+            code = self._run(
+                root,
+                caller,
+                source,
+                GIT_CONFIG_COUNT="1",
+                GIT_CONFIG_KEY_0=f"url.file://{impostor}.insteadOf",
+                GIT_CONFIG_VALUE_0=f"file://{source}",
+            )
+            self.assertEqual(0, code)
+            self.assertEqual((True, True, False), self._results(root))
+
+    def test_a_failed_clone_stops_before_the_credential(self) -> None:
+        """The PAO's falsifier, recast: when protected main cannot be read, nothing
+        starts, whatever the caller's Git routing names."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            elsewhere = self._source(root)
+            caller = root / "caller"
+            caller.mkdir()
+            self._hostile(caller)
+            code = self._run(
+                root,
+                caller,
+                root / "absent",
+                GIT_DIR=str(elsewhere / ".git"),
+                GIT_WORK_TREE=str(elsewhere),
+            )
+            self.assertNotEqual(0, code)
+            self.assertEqual((False, False, False), self._results(root))
 
     def test_the_guard_imports_under_an_isolated_interpreter(self) -> None:
         """Run as `guard_merge` runs it: `python3 -I`, no `PYTHONPATH`. The guard adds
@@ -881,28 +1002,6 @@ class GuardLaunchTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-
-    def test_a_failed_git_read_stops_before_the_credential(self) -> None:
-        """The PAO's falsifier: no checkout to read, and the caller's Git routing
-        pointing at another, clean one. The read fails, so nothing starts."""
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            elsewhere = self._checkout(root)
-            plain = root / "plain"
-            plain.mkdir()
-            (plain / "sitecustomize.py").write_text(_STARTUP_MODULE, encoding="utf-8")
-            (plain / "ci").mkdir()
-            (plain / "ci" / "merge_admission_guard.py").write_text(
-                _STUB_GUARD, encoding="utf-8"
-            )
-            code = self._run(
-                root,
-                plain,
-                GIT_DIR=str(elsewhere / ".git"),
-                GIT_WORK_TREE=str(elsewhere),
-            )
-            self.assertNotEqual(0, code)
-            self.assertEqual((False, False, False), self._results(root))
 
 
 class GuardCommandTests(unittest.TestCase):

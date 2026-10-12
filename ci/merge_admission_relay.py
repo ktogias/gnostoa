@@ -461,26 +461,100 @@ def publish(
             return {"result": "OVERTAKEN"}
         identifier = _complete(client, repository, head, app_id, pending, final)
         return {"result": "COMPLETED", "check_run_id": identifier}
+    # A guarded merge's run always leaves the record its nonce is found by, so the
+    # guard refuses at once rather than at its deadline (Octopus on #426).
+    dispatched = correlation.get("nonce") is not None
     succeeding = planned["action"] == "PUBLISH" and planned["conclusion"] == "success"
     current = record is not None and run_id(latest) == record.get("observed")
     if succeeding and not current:
         # An older worker never restores a success over a newer run, nor without the
         # record of what it observed.
-        return {"result": "OVERTAKEN"}
-    # A guarded merge's run always leaves the record its nonce is found by, so the
-    # guard refuses at once rather than at its deadline (Octopus on #426).
-    dispatched = correlation.get("nonce") is not None
+        return _overtaken(client, repository, head, app_id, correlation, dispatched)
     if planned["action"] != "PUBLISH":
-        standing = _standing_success(latest)
-        if not standing and not dispatched:
-            return {"result": planned["action"]}
-        identifier = _post(
-            client, repository, head, app_id, {"status": "completed", **final}
+        return _without_verdict(
+            client,
+            repository,
+            head,
+            app_id,
+            latest,
+            final,
+            planned["action"],
+            dispatched,
         )
-        return {
-            "result": "INVALIDATED" if standing else "RECORDED",
-            "check_run_id": identifier,
-        }
+    return _with_verdict(client, repository, head, app_id, latest, final, dispatched)
+
+
+def _overtaken(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    correlation: Mapping[str, Any],
+    dispatched: bool,
+) -> dict[str, Any]:
+    """A success this run may not write. A scheduled run writes nothing; a dispatched
+    run records a failure carrying its nonce, so the guard refuses at once (CodeAnt on
+    #426): the cost is a fresh evaluation, never a merge."""
+
+    if not dispatched:
+        return {"result": "OVERTAKEN"}
+    final = {
+        "conclusion": "failure",
+        "external_id": f"overtaken:{_identity(correlation)}",
+        "output": {
+            "title": "merge-admission: overtaken; re-evaluating",
+            "summary": (
+                "This run's success could not be written over the App's latest run on "
+                "the head, so nothing is admitted until the next evaluation completes."
+            ),
+            "text": correlation_text(
+                {"unbundled_evidence_sha256": None, **correlation}
+            ),
+        },
+    }
+    identifier = _post(
+        client, repository, head, app_id, {"status": "completed", **final}
+    )
+    return {"result": "RECORDED", "check_run_id": identifier}
+
+
+def _without_verdict(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    latest: Mapping[str, Any] | None,
+    final: Mapping[str, Any],
+    action: str,
+    dispatched: bool,
+) -> dict[str, Any]:
+    """A superseded or incomplete evaluation: it invalidates a standing success, and a
+    dispatched run records its failure; otherwise nothing is written."""
+
+    standing = _standing_success(latest)
+    if not standing and not dispatched:
+        return {"result": action}
+    identifier = _post(
+        client, repository, head, app_id, {"status": "completed", **final}
+    )
+    return {
+        "result": "INVALIDATED" if standing else "RECORDED",
+        "check_run_id": identifier,
+    }
+
+
+def _with_verdict(
+    client: Any,
+    repository: str,
+    head: str,
+    app_id: int,
+    latest: Mapping[str, Any] | None,
+    final: Mapping[str, Any],
+    dispatched: bool,
+) -> dict[str, Any]:
+    """The verdict, posted once. A scheduled run's verdict already the latest is not
+    posted again; a dispatched run always leaves its own record."""
+
     if not dispatched and latest is not None and _already_latest(latest, final):
         expected = {
             "external_id": final["external_id"],
