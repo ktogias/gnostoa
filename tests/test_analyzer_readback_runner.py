@@ -1519,9 +1519,11 @@ class _SequencedGitHub(_GitHubFake):
         return value, {}
 
 
-def _bracketed(*collections: dict[str, Any]) -> tuple[dict[str, Any], _SequencedGitHub]:
+def _bracketed(
+    *collections: dict[str, Any] | BaseException,
+) -> tuple[dict[str, Any], _SequencedGitHub]:
     """SonarCloud's readback when the exact head's SonarCloud runs read as
-    ``collections``, in order."""
+    ``collections``, in order; an exception among them is raised by that read."""
 
     urls = _github_urls()
     github = _SequencedGitHub(
@@ -1642,7 +1644,7 @@ class SonarCloudReportBracketTests(unittest.TestCase):
             with self.subTest(name):
                 failure = runner.RunnerError(str(cause))
                 failure.__cause__ = cause
-                readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
+                readback, _ = _bracketed(_runs(_sonar_run()), failure)
                 self.assertEqual(
                     "AUTH_UNAVAILABLE"
                     if reason == "AUTH_UNAVAILABLE"
@@ -1702,7 +1704,7 @@ class SonarCloudReportBracketTests(unittest.TestCase):
                 self.assertEqual(kind, analyzer_sonarcloud.failure_kind(cause))
                 failure = runner.RunnerError(str(cause))
                 failure.__cause__ = cause
-                readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
+                readback, _ = _bracketed(_runs(_sonar_run()), failure)
                 actual = (
                     readback["coverage"]["status"],
                     readback["coverage"]["reason"],
