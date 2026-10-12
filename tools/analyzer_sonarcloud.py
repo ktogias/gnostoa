@@ -19,8 +19,10 @@ Whether those sources can show a newer, unfinished analysis of the same head is
 not established. Before SonarCloud submits an analysis there is no task to see
 (#424's took 28 s to submit), and a calibration sampled every 5 s missed its
 3-second processing. So their silence is never what proves an analysis
-finished, and under the current contract (R4) a fully read, bound inventory is
-`PARTIAL`, with `UNFINISHED_ANALYSIS_UNOBSERVABLE`, and never `COMPLETE`.
+finished. Under the owner's selection (R1), a fully read, bound inventory is
+`COMPLETE` as the latest observed published report's, over the reads' own
+interval, and its provenance keeps `unfinished_analysis: "UNOBSERVABLE"`, how it
+was bound, and that the issue index is not versioned by analysis.
 
 A task naming the pull request, with an analysis id, can be read in the project's
 `current` task, but its association with the exact head's report is not
@@ -77,14 +79,19 @@ CHECK_APP_ID = 12526
 CHECK_NAME = "SonarCloud Code Analysis"
 # A finished analysis has a gate result; any other conclusion is no report.
 _PUBLISHED = frozenset({"success", "failure"})
-# R4, the current contract (the PAO's escalation on #424, 6120941468): no source
-# read here is established to show a newer, unfinished analysis of the same head
-# -- SonarCloud posts its check run only once finished, no task exists before an
-# analysis is submitted, and #424's 3-second processing went unobserved by
-# 5-second samples -- so a stable published report's inventory is read in full
-# and is PARTIAL, never COMPLETE. Whether COMPLETE may cover the latest published
-# report instead (R1) is the owner's selection (PAO 6121032452).
+# Whether a newer, unfinished analysis of the same head can be observed: no source
+# read here is established to show one -- SonarCloud posts its check run only once
+# finished, no task exists before an analysis is submitted, and only a task's
+# seconds of processing showed in the queue (#424's own) -- so it cannot, and the
+# provenance says UNOBSERVABLE (the PAO's escalation on #424, 6120941468).
 _UNFINISHED_ANALYSIS_OBSERVABLE = False
+# R1, the owner's selection (6122025441 on #424): COMPLETE covers the fully
+# enumerated, PR-scoped inventory of the latest observed published report of this
+# repository, pull request and head, over the reads' own interval. It does not
+# make unfinished work observable -- that stays False above, and UNOBSERVABLE in
+# the provenance -- claims no snapshot versioned by an analysis id, and is no
+# freshness lease.
+_COMPLETE_FOR_LATEST_PUBLISHED_REPORT = True
 
 
 class ProviderReadFailure(RuntimeError):
@@ -449,15 +456,17 @@ def _inventory(
     analysis: _Analysis,
     report: Mapping[str, Any],
     pages: _Pages,
-    reads: int,
+    acquisition: tuple[str, str, int],
 ) -> dict[str, Any]:
     """The pages' inventory, once its report stayed bound: never more than PARTIAL
-    unless its unique issues are exactly the provider's total, and, under the
-    current contract (R4), PARTIAL even then, with every finding kept."""
+    unless its unique issues are exactly the provider's total. Then it is COMPLETE
+    as the latest observed published report's (R1), with how it was bound, what it
+    does not claim, and when it was read; without R1 it would be PARTIAL (R4)."""
 
+    first_read_at, last_read_at, reads = acquisition
     retained = deduplicate_findings(pages.findings)
     total = pages.total if pages.total is not None else 0
-    native = {
+    native: dict[str, Any] = {
         "pull_request_id": analysis.pull_request_id,
         "analysis_date": analysis.date,
         "check_run": {
@@ -466,14 +475,21 @@ def _inventory(
             "conclusion": report.get("conclusion"),
         },
     }
+    if not _UNFINISHED_ANALYSIS_OBSERVABLE:
+        native["unfinished_analysis"] = "UNOBSERVABLE"
     if total > _WINDOW:
         status, reason = "PARTIAL", "PROVIDER_WINDOW_EXCEEDED"
     elif len(retained) != total:
         status, reason = "ERROR", "COUNT_TOTAL_MISMATCH"
-    elif not _UNFINISHED_ANALYSIS_OBSERVABLE:
+    elif not (_UNFINISHED_ANALYSIS_OBSERVABLE or _COMPLETE_FOR_LATEST_PUBLISHED_REPORT):
         status, reason = "PARTIAL", "UNFINISHED_ANALYSIS_UNOBSERVABLE"
-        native["unfinished_analysis"] = "UNOBSERVABLE"
     else:
+        native["binding"] = "listing+pr-qualified-check-run"
+        native["source_limitation"] = "issue-index-not-analysis-versioned"
+        native["acquisition"] = {
+            "first_read_at": first_read_at,
+            "last_read_at": last_read_at,
+        }
         return _document(
             read,
             completeness="FULL_RUN",
@@ -601,6 +617,15 @@ def _report(
     return latest[0]
 
 
+def _identity(value: object) -> str | None:
+    """A task's pull request or branch, or None when it names none: an empty or
+    blank value names nothing (cubic on #424)."""
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return str(value)
+
+
 def _unfinished(document: Mapping[str, Any], subject: _Subject) -> str | None:
     """Why the project's tasks say this pull request's newest analysis may not be
     its published report, or None. A queued task may be its own, or name neither a
@@ -614,17 +639,15 @@ def _unfinished(document: Mapping[str, Any], subject: _Subject) -> str | None:
         raise ProviderReadFailure("ERROR", "SonarCloud task queue is malformed")
     for item in queue:
         task = _mapping(item, "queued task")
-        pull, branch = task.get("pullRequest"), task.get("branch")
-        if (pull is not None and str(pull) == subject.pull) or (
-            pull is None and branch is None
-        ):
+        pull, branch = _identity(task.get("pullRequest")), _identity(task.get("branch"))
+        if pull == subject.pull or (pull is None and branch is None):
             return "ANALYSIS_IN_PROGRESS"
     current = document.get("current")
     if current is None:
         return None
     task = _mapping(current, "current task")
-    pull = task.get("pullRequest")
-    if pull is None or str(pull) != subject.pull or task.get("status") == "SUCCESS":
+    pull = _identity(task.get("pullRequest"))
+    if pull != subject.pull or task.get("status") == "SUCCESS":
         return None
     if task.get("status") in {"PENDING", "IN_PROGRESS"}:
         return "ANALYSIS_IN_PROGRESS"
@@ -643,6 +666,8 @@ def _bound(
 
     subject = _subject(read.repository, read.pull_number)
     listing, queue = _listing_url(subject), _queue_url(subject)
+    # The reads' own interval, before the first and after the last (R1).
+    first_read_at = _now()
     before = _analysis(reader.get(listing), subject)
     if before is None:
         return _ambiguous(
@@ -687,7 +712,10 @@ def _bound(
         return _ambiguous(
             read, unfinished, pages=reader.reads, observed_head=before.head
         )
-    return _inventory(read, before, report, pages, reader.reads)
+    last_read_at = _now()
+    return _inventory(
+        read, before, report, pages, (first_read_at, last_read_at, reader.reads)
+    )
 
 
 def read_pull_request(

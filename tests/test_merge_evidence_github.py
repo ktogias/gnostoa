@@ -78,6 +78,11 @@ REQUIRED_CHECKS = {
             name: {"app_id": ACTIONS, "name": name} for name in REQUIRED
         },
         "codeql": {"codeql": {"app_id": CODEQL, "name": "CodeQL"}},
+        # Each declared item has one producer, so the gate is here and the
+        # inventory is the readback's (G1).
+        "sonarcloud": {
+            "quality-gate": {"app_id": 12526, "name": "SonarCloud Code Analysis"}
+        },
     },
 }
 CHECK_RUNS = f"{API}/commits/{HEAD}/check-runs?per_page=100"
@@ -1901,7 +1906,11 @@ def _project(directory: Path, *, authorities: bool = True) -> Path:
     (project / "policy").mkdir(parents=True)
     (project / "core").mkdir()
     (project / ".github").mkdir()
-    for name in ("policy/change-control.yaml", "core/change-control.yaml"):
+    for name in (
+        "policy/change-control.yaml",
+        "core/change-control.yaml",
+        "policy/assurance-evidence.yaml",
+    ):
         shutil.copyfile(ROOT / name, project / name)
     shutil.copytree(
         ROOT / "knowledge" / "decisions", project / "knowledge" / "decisions"
@@ -1950,6 +1959,34 @@ class CommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             missing = _project(Path(directory), authorities=False)
             self.assertEqual(2, _run(missing, json.dumps(_snapshot()))[0])
+
+    def test_the_command_refuses_inconsistent_producer_routes(self) -> None:
+        """cubic on #424: the one-producer rule (G1) is the command's, not only the
+        tests'. Against the protected target's declaration, a manifest that also
+        claims a readback item, one that leaves a declared item without a
+        producer, or no declaration at all, fails the run."""
+        overlap = copy.deepcopy(REQUIRED_CHECKS)
+        overlap["requirements"]["sonarcloud"]["issue-inventory"] = {
+            "app_id": 12526,
+            "name": "SonarCloud Inventory",
+        }
+        gap = copy.deepcopy(REQUIRED_CHECKS)
+        del gap["requirements"]["sonarcloud"]
+        for name, manifest, declaration, message in (
+            ("an overlap", overlap, True, "has two producers"),
+            ("a gap", gap, True, "has no producer"),
+            ("no declaration", REQUIRED_CHECKS, False, "assurance"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                project = _project(Path(directory))
+                (project / "policy" / "merge-required-checks.yaml").write_text(
+                    yaml.safe_dump(manifest), encoding="utf-8"
+                )
+                if not declaration:
+                    (project / "policy" / "assurance-evidence.yaml").unlink()
+                code, _, err = _run(project, json.dumps(_snapshot()))
+                self.assertEqual(2, code, err)
+                self.assertIn(message, err)
 
     def test_the_knowledge_cli_routes_merge_evidence(self) -> None:
         from tools import cli
@@ -2079,7 +2116,8 @@ class CheckReceiptTests(unittest.TestCase):
             }
         )
         statuses = _receipt_statuses(_command_evidence(replies))
-        self.assertEqual(5, len(statuses))
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses))
         self.assertTrue(all(s != "COMPLETE" for s in statuses.values()), statuses)
 
     def test_gnostoa_s_declared_items_each_have_one_producer(self) -> None:
@@ -2218,7 +2256,8 @@ class CheckReceiptTests(unittest.TestCase):
         statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
         evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
         statuses_by_item = _receipt_statuses(evidence)
-        self.assertEqual(5, len(statuses_by_item))
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses_by_item))
         self.assertTrue(
             all(s != "COMPLETE" for s in statuses_by_item.values()), statuses_by_item
         )
@@ -2792,10 +2831,26 @@ class SonarCloudInventoryTests(unittest.TestCase):
             _readback("codacy", "DIFF"),
             _readback(*SONAR, *issues),
         )
-        evidence = _evidence(analyzer=bundle)
-        self.assertEqual(
-            {("sonarcloud", "issue-inventory"): "COMPLETE"}, self._inventory(bundle)
+        # The gate passed on the exact head, through the protected manifest, beside
+        # the inventory (cubic on #424).
+        gate = _check_run(60, "SonarCloud Code Analysis", 12526)
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
         )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+            analyzer_readback=bundle,
+        )
+        statuses = _receipt_statuses(evidence)
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "quality-gate")])
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "issue-inventory")])
         listed = evidence["analyzer_findings"]
         self.assertEqual("COMPLETE", listed["coverage"])
         self.assertEqual(

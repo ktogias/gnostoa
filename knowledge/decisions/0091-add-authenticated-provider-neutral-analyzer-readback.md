@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Add authenticated provider-neutral analyzer readback before critical Q0 activation
-description: Normalize authenticated DeepSource and Codacy readback behind one exact-subject, completeness and secret-hygiene contract without granting analyzer write, review or merge authority.
+description: Normalize authenticated DeepSource, Codacy and SonarCloud readback behind one exact-subject, completeness and secret-hygiene contract without granting analyzer write, review or merge authority.
 status: draft
 generated:
   by: openai/gpt-5.6-sol
@@ -134,8 +134,8 @@ the project's task queue, read before the issue pages and again after them. When
 they cannot prove that binding, the result is `AMBIGUOUS` with `INCOMPLETE`
 coverage. Because no source it reads is established to show a newer, unfinished
 analysis of the same head, a fully read, bound inventory is
-`PARTIAL` under the current contract, never `COMPLETE`, until the owner selects
-otherwise (#424, 6120941468). Its transport is the shared GitHub REST client on SonarCloud's origin
+`COMPLETE` only as the latest observed published report's (the owner's selection
+R1, #424 6122025441), with that limit in its provenance. Its transport is the shared GitHub REST client on SonarCloud's origin
 (Decision 0100), and its credential is the `analyzer-readback` environment's
 `SONAR_TOKEN`.
 

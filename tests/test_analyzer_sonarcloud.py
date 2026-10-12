@@ -264,20 +264,21 @@ class SonarCloudReadbackTests(unittest.TestCase):
     inventory for one pull request's exact head."""
 
     def assertBound(self, document: Mapping[str, Any]) -> None:
-        """Every observable fact bound the published report and every page was
-        read. Under the current contract (R4, PAO 6120941468 on #424) that is
-        `PARTIAL`, never `COMPLETE`, while a newer same-head analysis is
-        unobservable."""
-        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
-        self.assertEqual("PARTIAL", document["coverage"]["status"])
-        self.assertEqual(
-            "UNFINISHED_ANALYSIS_UNOBSERVABLE", document["coverage"]["reason"]
-        )
+        """Every observable fact bound the latest observed published report and
+        every page was read: COMPLETE under the owner's selection (R1, 6122025441
+        on #424), with the unobservable dimension kept in the provenance."""
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
         self.assertEqual(document["coverage"]["total"], document["coverage"]["count"])
+        self.assertEqual("UNOBSERVABLE", document["native"]["unfinished_analysis"])
+        self.assertEqual(
+            "listing+pr-qualified-check-run", document["native"]["binding"]
+        )
 
-    def test_an_exact_head_inventory_is_complete(self) -> None:
+    def test_an_exact_head_inventory_is_bound_and_complete(self) -> None:
         """C3, C4, C5, C6: the head bound before and after the pages, every page
-        read, and each issue normalized."""
+        read, and each issue normalized: COMPLETE as the latest observed published
+        report's (R1), never as an absence of unpublished work."""
         client = _SonarFake(
             [_listing(_entry()), _listing(_entry())],
             {1: _page([_issue("AaEDxiUuswWGEwq5tyXk", 396)], total=1)},
@@ -288,7 +289,7 @@ class SonarCloudReadbackTests(unittest.TestCase):
         self.assertEqual("DIFF", document["scope"])
         self.assertEqual("PULL_REQUEST", document["native_mode"])
         self.assertBound(document)
-        self.assertEqual("OBSERVED", document["run_state"])
+        self.assertEqual("COMPLETE", document["run_state"])
         self.assertEqual(HEAD, document["observed_head"])
         # No provider-issued analysis or task id is readable with Browse rights,
         # so none is claimed; the inputs that bound the report are kept.
@@ -303,17 +304,16 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     "conclusion": "success",
                 },
                 "unfinished_analysis": "UNOBSERVABLE",
+                "binding": "listing+pr-qualified-check-run",
+                "source_limitation": "issue-index-not-analysis-versioned",
             },
-            document["native"],
+            {k: v for k, v in document["native"].items() if k != "acquisition"},
         )
         self.assertEqual(
-            {
-                "status": "PARTIAL",
-                "pages": 5,
-                "count": 1,
-                "total": 1,
-                "reason": "UNFINISHED_ANALYSIS_UNOBSERVABLE",
-            },
+            {"first_read_at", "last_read_at"}, set(document["native"]["acquisition"])
+        )
+        self.assertEqual(
+            {"status": "COMPLETE", "pages": 5, "count": 1, "total": 1},
             document["coverage"],
         )
         self.assertEqual(
@@ -347,39 +347,90 @@ class SonarCloudReadbackTests(unittest.TestCase):
         self.assertEqual({"500"}, {q["ps"] for q in client.queries})
         analyzer_readback.parse_readback(document)
 
-    def test_a_stable_report_is_partial_while_a_newer_analysis_is_unobservable(
-        self,
-    ) -> None:
-        """R4, the current contract (PAO 6120941468 on #424). Every observable fact
-        binds the published report, but nothing readable shows whether a newer
-        analysis of the same head is unfinished: SonarCloud posts its check run
-        only once finished, and its task queue showed none of #424's own analysis.
-        So the inventory is read in full, its findings kept, and it is `PARTIAL`,
-        never `COMPLETE`, until the owner selects otherwise."""
+    def test_r1_a_bound_inventory_is_complete_with_its_limits(self) -> None:
+        """R1, the owner's selection (6122025441 on #424): the fully enumerated
+        PR-scoped inventory of the latest observed published report of this
+        repository, pull request and head is COMPLETE. Its provenance says how it
+        was bound, what it does not claim, and when it was read."""
         client = _SonarFake(
             [_listing(_entry()), _listing(_entry())],
             {1: _page(_issues("open", 3), total=3)},
         )
-        document = _read(client)
-        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        times = iter(["2026-10-12T10:00:01Z", "2026-10-12T10:00:04Z"])
+        with mock.patch.object(analyzer_sonarcloud, "_now", lambda: next(times)):
+            document = _read(client)
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["run_state"])
         self.assertEqual(
-            {
-                "status": "PARTIAL",
-                "pages": 5,
-                "count": 3,
-                "total": 3,
-                "reason": "UNFINISHED_ANALYSIS_UNOBSERVABLE",
-            },
+            {"status": "COMPLETE", "pages": 5, "count": 3, "total": 3},
             document["coverage"],
         )
         self.assertEqual(3, len(document["findings"]))
-        self.assertEqual(HEAD, document["observed_head"])
+        self.assertNotIn("analysis_id", document)
+        self.assertEqual(
+            {
+                "pull_request_id": PULL_ID,
+                "analysis_date": ANALYSED,
+                "check_run": {
+                    "id": CHECK_ID,
+                    "started_at": "2026-10-11T23:57:56Z",
+                    "conclusion": "success",
+                },
+                "unfinished_analysis": "UNOBSERVABLE",
+                "binding": "listing+pr-qualified-check-run",
+                "source_limitation": "issue-index-not-analysis-versioned",
+                # The reads' own times, before the first and after the last, never
+                # the analysis date or the check's start.
+                "acquisition": {
+                    "first_read_at": "2026-10-12T10:00:01Z",
+                    "last_read_at": "2026-10-12T10:00:04Z",
+                },
+            },
+            document["native"],
+        )
+
+    def test_r1_the_clean_zero_case_is_complete(self) -> None:
+        """R1: a bound, authenticated first page with no issues and a total of 0
+        terminates the pagination: COMPLETE, with nothing to deny on."""
+        client = _SonarFake(
+            [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
+        )
+        document = _read(client)
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual(
+            {"status": "COMPLETE", "pages": 5, "count": 0, "total": 0},
+            document["coverage"],
+        )
+        self.assertEqual([], document["findings"])
         self.assertEqual("UNOBSERVABLE", document["native"]["unfinished_analysis"])
-        self.assertEqual(CHECK_ID, document["native"]["check_run"]["id"])
+
+    def test_r1_the_acquisition_spans_every_read(self) -> None:
+        """R1: the first time is taken before the listing's first read and the last
+        after the final queue read, so the interval covers every bracket read."""
+        client = _SonarFake(
+            [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
+        )
+        calls: list[int] = []
+
+        def clock() -> str:
+            calls.append(len(client.calls))
+            return f"2026-10-12T10:00:0{len(calls)}Z"
+
+        with mock.patch.object(analyzer_sonarcloud, "_now", clock):
+            document = _read(client)
+        # Before any read, and after all five.
+        self.assertEqual([0, 5], calls)
+        self.assertEqual(
+            {
+                "first_read_at": "2026-10-12T10:00:01Z",
+                "last_read_at": "2026-10-12T10:00:02Z",
+            },
+            document["native"]["acquisition"],
+        )
 
     def test_an_observable_unfinished_analysis_is_not_that_case(self) -> None:
-        """R4: an unfinished analysis that is observed stays `AMBIGUOUS`, as
-        before; only the unobservable one is the `PARTIAL` above."""
+        """R1 and R4 alike: an unfinished analysis that is observed stays
+        `AMBIGUOUS`; R1 changes only the unobservable case."""
         for name, queues, checks in (
             ("a queued task", [_queue(_task(pullRequest="312"))], [_check()]),
             (
@@ -552,6 +603,30 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     else "PROVIDER_ERROR",
                     document["coverage"]["reason"],
                 )
+
+    def test_one_issue_told_two_ways_is_a_normalization_error(self) -> None:
+        """cubic on #424: two pages give one issue key with different content. The
+        conflict is never resolved by choosing one, and nothing is kept."""
+        conflicting = {**_issue("dup", 1), "message": "Another message"}
+        client = _SonarFake(
+            [_listing(_entry()), _listing(_entry())],
+            {
+                1: _page([*_issues("first", 499), _issue("dup", 1)], total=1000),
+                2: _page([*_issues("second", 499), conflicting], total=1000, index=2),
+            },
+        )
+        document = _read(client)
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual(
+            {
+                "status": "ERROR",
+                "pages": 0,
+                "count": 0,
+                "reason": "NORMALIZATION_ERROR",
+            },
+            document["coverage"],
+        )
+        self.assertEqual([], document["findings"])
 
     def test_an_inventory_past_the_provider_window_is_partial(self) -> None:
         """C5: SonarCloud returns at most 10,000 results (a 400 past them,
@@ -924,6 +999,17 @@ class SonarCloudReadbackTests(unittest.TestCase):
                 True,
             ),
             ("a task of unknown identity", [_queue(_task())], False),
+            # An empty or blank identity names nothing (cubic on #424).
+            (
+                "a task of empty identity",
+                [_queue(_task(pullRequest="", branch=""))],
+                False,
+            ),
+            (
+                "a task of blank identity",
+                [_queue(_task(pullRequest=" ", branch="\t"))],
+                False,
+            ),
         ):
             with self.subTest(name):
                 client = _SonarFake(

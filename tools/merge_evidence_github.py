@@ -38,6 +38,7 @@ from .assurance_completeness import (
     RECEIPT_SCHEMA,
     RECEIPT_STATUSES,
     AssuranceCompletenessError,
+    load_declaration,
     require_closed_keys,
     require_identifier,
     require_mapping,
@@ -58,6 +59,7 @@ from .verdict_cli import confine, read_json_file, read_json_input, run
 
 DEFAULT_AUTHORITIES = Path("policy") / "merge-authorities.yaml"
 DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
+DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 DEFAULT_SUPPRESSION_MARKERS = Path("policy") / "merge-suppression-markers.yaml"
 DEFAULT_TRUST_ROOTS = Path("policy") / "merge-trust-roots.yaml"
 _REQUIRED_CHECKS_LABEL = "required checks"
@@ -1699,6 +1701,15 @@ def _parser() -> argparse.ArgumentParser:
         help=f"the required-check manifest (default: {DEFAULT_REQUIRED_CHECKS})",
     )
     parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=DEFAULT_DECLARATION,
+        help=(
+            f"the required-evidence declaration (default: {DEFAULT_DECLARATION}); "
+            "each of its items must have exactly one producer"
+        ),
+    )
+    parser.add_argument(
         "--suppression-markers",
         type=Path,
         default=DEFAULT_SUPPRESSION_MARKERS,
@@ -1748,6 +1759,12 @@ def main(argv: list[str] | None = None) -> int:
         codeowners = load_codeowners(root)
         required_checks = load_required_checks(
             inside(args.required_checks), project_root=root
+        )
+        # The one-producer rule is the command's own, against the protected
+        # target's declaration, not only its tests' (G1; cubic on #424).
+        producer_routes(
+            load_declaration(inside(args.declaration), project_root=root),
+            required_checks,
         )
         bundle = None
         if args.analyzer_readback is not None:

@@ -1265,16 +1265,16 @@ class SonarCloudRunnerTests(unittest.TestCase):
         self.assertEqual(4, len(bundle["readbacks"]))
         readback = bundle["readbacks"][-1]
         self.assertEqual("sonarcloud-web-api/v1", readback["adapter"])
-        # Read in full and bound; PARTIAL under the current contract (R4).
-        self.assertEqual(
-            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
-        )
+        # Read in full and bound: the latest published report's, COMPLETE (R1).
+        self.assertEqual("COMPLETE", readback["coverage"]["status"])
         self.assertEqual(114609123587, readback["native"]["check_run"]["id"])
         self.assertIn(urls["sonar_checks"], events)
+        # Both halves of the report binding, SonarCloud's reads and the head's
+        # SonarCloud runs on GitHub, inside the head bracket (cubic on #424).
         sonar = [
             n
             for n, url in enumerate(events)
-            if urlsplit(url).hostname == "sonarcloud.io"
+            if urlsplit(url).hostname == "sonarcloud.io" or url == urls["sonar_checks"]
         ]
         heads = [n for n, url in enumerate(events) if url == urls["pr"]]
         self.assertEqual(2, len(heads))
@@ -1552,16 +1552,13 @@ class SonarCloudReportBracketTests(unittest.TestCase):
     completely, before the issue pages and again after them, and the published
     report must be the same both times."""
 
-    def test_a_stable_report_is_partial_under_the_current_contract(self) -> None:
-        """R4 (PAO 6120941468 on #424): the stable bracket reads the whole
-        inventory, and it is `PARTIAL` while a newer same-head analysis is
-        unobservable."""
+    def test_r1_a_stable_published_report_is_complete(self) -> None:
+        """R1 (owner 6122025441 on #424): the stable bracket, read completely,
+        gives the latest observed published report's inventory, COMPLETE."""
         readback, github = _bracketed(_runs(_sonar_run()), _runs(_sonar_run()))
-        self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
-        self.assertEqual("PARTIAL", readback["coverage"]["status"])
-        self.assertEqual(
-            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
-        )
+        self.assertEqual("FULL_RUN", readback["completeness"])
+        self.assertEqual("COMPLETE", readback["coverage"]["status"])
+        self.assertEqual("UNOBSERVABLE", readback["native"]["unfinished_analysis"])
         self.assertEqual(2, github.calls.count(_github_urls()["sonar_checks"]))
 
     def test_a_run_that_starts_between_the_reads_holds_the_inventory(self) -> None:
@@ -1600,9 +1597,7 @@ class SonarCloudReportBracketTests(unittest.TestCase):
         """#394 and #395 share `5ef97e5`: another one's later run is not this one's."""
         other = _sonar_run(run_id=2, pull="311", started="2026-10-12T00:10:00Z")
         readback, _ = _bracketed(_runs(_sonar_run(), other), _runs(_sonar_run(), other))
-        self.assertEqual(
-            "UNFINISHED_ANALYSIS_UNOBSERVABLE", readback["coverage"]["reason"]
-        )
+        self.assertEqual("COMPLETE", readback["coverage"]["status"])
 
     def test_a_github_failure_keeps_its_kind(self) -> None:
         """Claude on #424: a failed read of the head's SonarCloud runs keeps its
@@ -1629,12 +1624,31 @@ class SonarCloudReportBracketTests(unittest.TestCase):
                 "ERROR",
                 "PROVIDER_ERROR",
             ),
+            # A refused GitHub credential is an authentication failure (cubic on
+            # #424); a rate-limited 403 is already reported as 429.
+            (
+                "unauthorized",
+                github_rest.GitHubReadError("GitHub API HTTP 401", status=401),
+                "UNAVAILABLE",
+                "AUTH_UNAVAILABLE",
+            ),
+            (
+                "forbidden",
+                github_rest.GitHubReadError("GitHub API HTTP 403", status=403),
+                "UNAVAILABLE",
+                "AUTH_UNAVAILABLE",
+            ),
         ):
             with self.subTest(name):
                 failure = runner.RunnerError(str(cause))
                 failure.__cause__ = cause
                 readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
-                self.assertEqual("READBACK_UNAVAILABLE", readback["completeness"])
+                self.assertEqual(
+                    "AUTH_UNAVAILABLE"
+                    if reason == "AUTH_UNAVAILABLE"
+                    else "READBACK_UNAVAILABLE",
+                    readback["completeness"],
+                )
                 self.assertEqual(status, readback["coverage"]["status"])
                 self.assertEqual(reason, readback["coverage"]["reason"])
 
