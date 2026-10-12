@@ -8,6 +8,7 @@ import unittest
 import urllib.error
 import urllib.parse
 from collections.abc import Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -413,16 +414,16 @@ class SonarCloudReadbackTests(unittest.TestCase):
         client = _SonarFake(
             [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
         )
-        calls: list[int] = []
+        calls: list[tuple[int, bool]] = []
 
-        def clock() -> str:
-            calls.append(len(client.calls))
+        def clock(*, after: bool = False) -> str:
+            calls.append((len(client.calls), after))
             return f"2026-10-12T10:00:0{len(calls)}Z"
 
         with mock.patch.object(analyzer_sonarcloud, "_now", clock):
             document = _read(client)
-        # Before any read, and after all five.
-        self.assertEqual([0, 5], calls)
+        # Before any read, and after all five, as the second that ends that instant.
+        self.assertEqual([(0, False), (5, True)], calls)
         self.assertEqual(
             {
                 "first_read_at": "2026-10-12T10:00:01Z",
@@ -430,6 +431,37 @@ class SonarCloudReadbackTests(unittest.TestCase):
             },
             document["native"]["acquisition"],
         )
+
+    def test_r1_the_acquisition_ends_after_the_last_read(self) -> None:
+        """CodeAnt on #424: the clock is read to the second, so the interval ends
+        with the second that ends the final read's instant, never the one that
+        starts it, and begins with the second before the first read."""
+        for name, instant, first, last in (
+            (
+                "a fraction",
+                datetime(2026, 10, 12, 15, 0, 0, 700000, tzinfo=UTC),
+                "2026-10-12T15:00:00Z",
+                "2026-10-12T15:00:01Z",
+            ),
+            (
+                "a whole second",
+                datetime(2026, 10, 12, 15, 0, 0, tzinfo=UTC),
+                "2026-10-12T15:00:00Z",
+                "2026-10-12T15:00:00Z",
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
+                )
+                clock = mock.Mock(wraps=datetime)
+                clock.now.return_value = instant
+                with mock.patch.object(analyzer_sonarcloud, "datetime", clock):
+                    document = _read(client)
+                self.assertEqual(
+                    {"first_read_at": first, "last_read_at": last},
+                    document["native"]["acquisition"],
+                )
 
     def test_an_observable_unfinished_analysis_is_not_that_case(self) -> None:
         """R1 and R4 alike: an unfinished analysis that is observed stays

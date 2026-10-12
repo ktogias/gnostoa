@@ -382,11 +382,11 @@ provider-neutral public change-governance contract of
       items' rules. It is never evidence of the inventory. A commit carries every
       analysed pull request's runs, so the item is qualified by its pull request
       (`pull_request: details_url`, Q-a on #424): only runs whose `details_url`
-      names this project's pull request count, filtered before the reduction; a
-      foreign pull request, project or branch is excluded, a malformed or missing
-      association, a blank identity (6123979691) or one that cannot be decoded as
-      written included, makes the item `PARTIAL`, and with no own run there is no
-      receipt (`MISSING`), as when L1's latest view hides it. The helper that
+      names this project's pull request count, filtered before the reduction. A
+      foreign pull request, project or branch is excluded. A run whose association
+      is malformed, missing, blank (6123979691) or undecodable makes the item
+      `PARTIAL`. With no own run there is no receipt (`MISSING`), as when L1's
+      latest view hides it. The helper that
       reads the association, `tools/sonarcloud_scope.py`, is the adapter's too.
       The reduction qualifies the item because it is SonarCloud's check, so a key
       that arrives as plain text keeps its qualification; the manifest must still

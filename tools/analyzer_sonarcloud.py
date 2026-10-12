@@ -47,7 +47,7 @@ import os
 import re
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple, Protocol
 
 from . import github_rest, sonarcloud_scope
@@ -106,8 +106,16 @@ class JsonReader(Protocol):
     def get(self, url: str) -> Mapping[str, Any]: ...
 
 
-def _now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def _now(*, after: bool = False) -> str:
+    """The current UTC second. With ``after``, the second that ends the current
+    instant, so an interval recorded to the second still ends after its last read
+    (CodeAnt on #424)."""
+
+    now = datetime.now(UTC)
+    second = now.replace(microsecond=0)
+    if after and second != now:
+        second += timedelta(seconds=1)
+    return second.isoformat().replace("+00:00", "Z")
 
 
 _UNUSABLE = (
@@ -709,7 +717,7 @@ def _bound(
         return _ambiguous(
             read, unfinished, pages=reader.reads, observed_head=before.head
         )
-    last_read_at = _now()
+    last_read_at = _now(after=True)
     return _inventory(
         read, before, report, pages, (first_read_at, last_read_at, reader.reads)
     )

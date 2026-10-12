@@ -1699,14 +1699,15 @@ class SonarCloudReportBracketTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 # The intended kind, then the runner's agreement with the adapter.
-                self.assertEqual(kind, analyzer_sonarcloud._failure(cause).kind)
+                self.assertEqual(kind, analyzer_sonarcloud.failure_kind(cause))
                 failure = runner.RunnerError(str(cause))
                 failure.__cause__ = cause
                 readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
-                self.assertEqual(
-                    readback_of[kind],
-                    (readback["coverage"]["status"], readback["coverage"]["reason"]),
+                actual = (
+                    readback["coverage"]["status"],
+                    readback["coverage"]["reason"],
                 )
+                self.assertEqual(readback_of[kind], actual)
 
     def test_a_run_total_that_is_no_count_is_never_complete(self) -> None:
         """F6 (CodeAnt on #424): GitHub's `total_count` must be a count. A list
