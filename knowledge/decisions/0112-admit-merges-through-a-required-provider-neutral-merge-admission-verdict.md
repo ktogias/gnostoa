@@ -384,10 +384,13 @@ provider-neutral public change-governance contract of
       (`pull_request: details_url`, Q-a on #424): only runs whose `details_url`
       names this project's pull request count, filtered before the reduction; a
       foreign pull request, project or branch is excluded, a malformed or missing
-      association, a blank identity included (6123979691), makes the item
-      `PARTIAL`, and with no own run there is no
+      association, a blank identity (6123979691) or one that cannot be decoded as
+      written included, makes the item `PARTIAL`, and with no own run there is no
       receipt (`MISSING`), as when L1's latest view hides it. The helper that
       reads the association, `tools/sonarcloud_scope.py`, is the adapter's too.
+      The reduction qualifies the item because it is SonarCloud's check, so a key
+      that arrives as plain text keeps its qualification; the manifest must still
+      declare it.
     - **The issue inventory** is the authenticated readback's. Its adapter binds
       it to a published report of the exact head before any issue is read, and
       again after the last page:

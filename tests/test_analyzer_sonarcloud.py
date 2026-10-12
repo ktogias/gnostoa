@@ -992,6 +992,30 @@ class SonarCloudReadbackTests(unittest.TestCase):
                     "REPORT_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"]
                 )
 
+    def test_an_unreadable_escape_cannot_be_passed_over(self) -> None:
+        """CodeAnt on #424: beside this pull request's own run, a run whose details
+        hold an escape that cannot be read is not another analysis's, so the
+        association stays ambiguous."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        for name, details in (
+            ("a cut escape", f"{dashboard}?id=ktogias_gnostoa&pullRequest=31%2"),
+            (
+                "an escape that is not UTF-8",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%FF",
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
+                )
+                document = _read(
+                    client, [_check(), {**_check(check_id=2), "details_url": details}]
+                )
+                self.assertEqual("AMBIGUOUS", document["completeness"])
+                self.assertEqual(
+                    "REPORT_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"]
+                )
+
     def test_a_branch_or_another_project_s_run_is_not_the_pull_request_s(self) -> None:
         for name, details in (
             (

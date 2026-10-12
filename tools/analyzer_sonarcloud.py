@@ -110,35 +110,45 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _failure(error: github_rest.GitHubError) -> ProviderReadFailure:
-    """The shared client's failure, as SonarCloud's kind of failure."""
+_UNUSABLE = (
+    github_rest.MalformedAnswer,
+    github_rest.ResponseTooLarge,
+    github_rest.OutsideOrigin,
+    github_rest.UnsafeRedirect,
+)
+_MESSAGES = {
+    "AUTH": "SonarCloud authentication unavailable",
+    "RATE_LIMIT": "SonarCloud API rate limited",
+    "ERROR": "SonarCloud API answer is unusable",
+    "UNAVAILABLE": "SonarCloud API unavailable",
+}
+
+
+def failure_kind(error: github_rest.GitHubError) -> str:
+    """The kind of an exchange the shared client could not use. It is the one
+    classification for the adapter's reads and for the runner's read of the head's
+    SonarCloud runs, so the two cannot drift (Octopus on #424)."""
+
     status = error.status
     if status in {401, 403}:
-        return ProviderReadFailure(
-            "AUTH", "SonarCloud authentication unavailable", status=status
-        )
+        return "AUTH"
     if status == 429:
-        return ProviderReadFailure(
-            "RATE_LIMIT", "SonarCloud API rate limited", status=status
-        )
+        return "RATE_LIMIT"
     if status is not None:
-        return ProviderReadFailure(
-            "UNAVAILABLE", f"SonarCloud API HTTP {status}", status=status
-        )
-    if (
-        isinstance(
-            error,
-            (
-                github_rest.MalformedAnswer,
-                github_rest.ResponseTooLarge,
-                github_rest.OutsideOrigin,
-                github_rest.UnsafeRedirect,
-            ),
-        )
-        or str(error) == "GitHub request failed validation"
-    ):
-        return ProviderReadFailure("ERROR", "SonarCloud API answer is unusable")
-    return ProviderReadFailure("UNAVAILABLE", "SonarCloud API unavailable")
+        return "UNAVAILABLE"
+    if isinstance(error, _UNUSABLE) or str(error) == "GitHub request failed validation":
+        return "ERROR"
+    return "UNAVAILABLE"
+
+
+def _failure(error: github_rest.GitHubError) -> ProviderReadFailure:
+    """The shared client's failure, as SonarCloud's kind of failure."""
+    kind = failure_kind(error)
+    if kind == "UNAVAILABLE" and error.status is not None:
+        message = f"SonarCloud API HTTP {error.status}"
+    else:
+        message = _MESSAGES[kind]
+    return ProviderReadFailure(kind, message, status=error.status)
 
 
 class SonarCloudRestClient:

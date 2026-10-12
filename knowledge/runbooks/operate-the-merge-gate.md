@@ -166,8 +166,8 @@ each pull-request head, titled "Quality Gate passed" when it succeeds. Its
 adapter's `sonarcloud/quality-gate` receipt reads only the runs whose `details_url`
 names this pull request (the manifest's `pull_request: details_url`). Another pull
 request's, project's or branch's run is excluded, and a run whose `details_url` is
-malformed or missing, or names an empty or blank identity, makes the receipt `PARTIAL`,
-never ignored. A test keeps the
+malformed or missing, or names an empty, blank or undecodable identity, makes the
+receipt `PARTIAL`, never ignored. A test keeps the
 manifest's app id and name equal to this record's. The gate is never evidence of the issue inventory, which the
 authenticated readback gives (1b.3c). The authenticated readback also binds its
 inventory to the latest such run for the pull request, which must start at

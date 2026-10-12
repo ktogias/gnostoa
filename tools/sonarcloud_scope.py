@@ -9,6 +9,7 @@ merge-evidence gate alike (the PAO's Q-a on #424, 6123049205): no second parser.
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 # SonarCloud's GitHub check run.
@@ -16,6 +17,8 @@ CHECK_APP_ID = 12526
 CHECK_NAME = "SonarCloud Code Analysis"
 _DASHBOARD = ("https", "sonarcloud.io", "/dashboard")
 _SCOPES = (["id", "pullRequest"], ["branch", "id"])
+# A percent sign that does not begin a two-digit hexadecimal escape.
+_BARE_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
 
 def project_key(repository: str) -> str:
@@ -38,7 +41,17 @@ def details_scope(details: object, *, project: str, pull: str) -> str:
     except ValueError:
         # An unparsable host, such as an unclosed IPv6 bracket (CodeAnt on #424).
         return "malformed"
-    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    # An identity that cannot be decoded as written is unread, so it names no
+    # analysis: a percent sign beginning no escape, or an escape that is not UTF-8
+    # (CodeAnt on #424). A well-formed escape is decoded, then matched exactly.
+    if _BARE_PERCENT.search(parsed.query):
+        return "malformed"
+    try:
+        query = urllib.parse.parse_qs(
+            parsed.query, keep_blank_values=True, errors="strict"
+        )
+    except UnicodeDecodeError:
+        return "malformed"
     if (parsed.scheme, parsed.netloc, parsed.path) != _DASHBOARD or sorted(
         query
     ) not in _SCOPES:

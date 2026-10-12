@@ -362,20 +362,13 @@ def parse_trust_roots(document: object) -> TrustRoots:
     return TrustRoots(tuple(_rule(pattern) for pattern in patterns))
 
 
-class CheckKey(str):
-    """A manifest item's L1 check key, carrying the item's declared qualification:
-    `details_url` for a check whose runs must name this pull request, else None.
-    It compares, hashes and serializes as its key."""
-
-    pull_request: str | None
-
-    def __new__(cls, key: str, pull_request: str | None = None) -> CheckKey:
-        value = super().__new__(cls, key)
-        value.pull_request = pull_request
-        return value
+# SonarCloud's gate, the one check qualified by its pull request (Q-a, #424).
+_QUALIFIED_KEY = (
+    f"github-check-run:{sonarcloud_scope.CHECK_APP_ID}:{sonarcloud_scope.CHECK_NAME}"
+)
 
 
-def _check_key(value: object, label: str) -> CheckKey:
+def _check_key(value: object, label: str) -> str:
     check = require_mapping(value, label)
     require_closed_keys(check, label, _CHECK_KEYS, frozenset({_PULL_REQUEST}))
     app_id = check["app_id"]
@@ -397,7 +390,7 @@ def _check_key(value: object, label: str) -> CheckKey:
         raise MergeEvidenceError(
             f"{label} is SonarCloud's check, which must be qualified by its pull request"
         )
-    return CheckKey(f"github-check-run:{app_id}:{name}", qualification)
+    return f"github-check-run:{app_id}:{name}"
 
 
 def load_required_checks(
@@ -510,7 +503,10 @@ class _CheckView(NamedTuple):
 
 
 def _qualified(key: str) -> bool:
-    return getattr(key, "pull_request", None) == _DETAILS_URL
+    """A key is qualified by being SonarCloud's check, so a key that arrives as
+    plain text keeps its qualification (Octopus on #424). The manifest must still
+    declare it, and `_check_key` refuses it on any other check."""
+    return key == _QUALIFIED_KEY
 
 
 def _item_state(

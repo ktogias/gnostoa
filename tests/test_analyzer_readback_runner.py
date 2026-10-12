@@ -1652,6 +1652,62 @@ class SonarCloudReportBracketTests(unittest.TestCase):
                 self.assertEqual(status, readback["coverage"]["status"])
                 self.assertEqual(reason, readback["coverage"]["reason"])
 
+    def test_a_client_failure_has_the_adapter_s_kind(self) -> None:
+        """Octopus on #424: the runner's read of the head's SonarCloud runs and the
+        adapter's own reads fail through the same shared client, so each failure
+        has the one kind the adapter gives it."""
+        from tools import analyzer_sonarcloud, github_rest
+
+        readback_of = {
+            "AUTH": ("UNAVAILABLE", "AUTH_UNAVAILABLE"),
+            "RATE_LIMIT": ("RATE_LIMITED", "RATE_LIMITED"),
+            "UNAVAILABLE": ("UNAVAILABLE", "READBACK_UNAVAILABLE"),
+            "ERROR": ("ERROR", "PROVIDER_ERROR"),
+        }
+        for name, cause, kind in (
+            (
+                "a refused redirect",
+                github_rest.UnsafeRedirect("GitHub redirect refused"),
+                "ERROR",
+            ),
+            (
+                "a request that failed validation",
+                github_rest.GitHubError("GitHub request failed validation"),
+                "ERROR",
+            ),
+            (
+                "outside the origin",
+                github_rest.OutsideOrigin("GitHub URL outside origin"),
+                "ERROR",
+            ),
+            (
+                "too large",
+                github_rest.ResponseTooLarge("GitHub response too large"),
+                "ERROR",
+            ),
+            ("not sent", github_rest.NotSent("GitHub request not sent"), "UNAVAILABLE"),
+            (
+                "past the deadline",
+                github_rest.DeadlineReached("GitHub deadline reached"),
+                "UNAVAILABLE",
+            ),
+            (
+                "a server error",
+                github_rest.GitHubReadError("GitHub API HTTP 503", status=503),
+                "UNAVAILABLE",
+            ),
+        ):
+            with self.subTest(name):
+                # The intended kind, then the runner's agreement with the adapter.
+                self.assertEqual(kind, analyzer_sonarcloud._failure(cause).kind)
+                failure = runner.RunnerError(str(cause))
+                failure.__cause__ = cause
+                readback, _ = _bracketed(_runs(_sonar_run()), failure)  # type: ignore[arg-type]
+                self.assertEqual(
+                    readback_of[kind],
+                    (readback["coverage"]["status"], readback["coverage"]["reason"]),
+                )
+
     def test_a_run_total_that_is_no_count_is_never_complete(self) -> None:
         """F6 (CodeAnt on #424): GitHub's `total_count` must be a count. A list
         must not escape the readback, and a boolean is not 1."""

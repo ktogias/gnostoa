@@ -120,6 +120,61 @@ class DetailsScopeTests(unittest.TestCase):
                     ),
                 )
 
+    def test_an_identity_not_faithfully_encoded_names_no_analysis(self) -> None:
+        """CodeAnt on #424: a percent sign that begins no escape, or an escape that
+        is not UTF-8, leaves the identity unread, so the run is malformed, never
+        another analysis's. A well-formed escape is decoded and matched exactly."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        for name, details, scope in (
+            (
+                "a cut escape",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=31%2",
+                "malformed",
+            ),
+            (
+                "a non-hex escape",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%ZZ312",
+                "malformed",
+            ),
+            (
+                "a bare percent in the project",
+                f"{dashboard}?id=ktogias%gnostoa&pullRequest=312",
+                "malformed",
+            ),
+            (
+                "an escape that is not UTF-8",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%FF",
+                "malformed",
+            ),
+            (
+                "a bare percent in a branch",
+                f"{dashboard}?id=ktogias_gnostoa&branch=ma%in",
+                "malformed",
+            ),
+            (
+                "escaped digits of this pull request",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%33%31%32",
+                "ours",
+            ),
+            (
+                "an escaped underscore in the project",
+                f"{dashboard}?id=ktogias%5Fgnostoa&pullRequest=312",
+                "ours",
+            ),
+            (
+                "escaped digits of another pull request",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%33%31%31",
+                "foreign",
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    scope,
+                    sonarcloud_scope.details_scope(
+                        details, project="ktogias_gnostoa", pull="312"
+                    ),
+                )
+
     def test_the_project_key_is_owner_and_name(self) -> None:
         self.assertEqual(
             "ktogias_gnostoa", sonarcloud_scope.project_key("ktogias/gnostoa")

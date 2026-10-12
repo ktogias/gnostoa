@@ -296,19 +296,11 @@ def _failure_kind(error: RunnerError) -> str:
     collection that does not add up, is an error (Claude and cubic on #424)."""
 
     cause = error.__cause__
-    if not isinstance(cause, github_rest.GitHubError) or isinstance(
-        cause,
-        (
-            github_rest.MalformedAnswer,
-            github_rest.ResponseTooLarge,
-            github_rest.OutsideOrigin,
-        ),
-    ):
+    if not isinstance(cause, github_rest.GitHubError):
         return "ERROR"
-    if cause.status in {401, 403}:
-        # A refused credential; a rate-limited 403 arrives as 429 (cubic on #424).
-        return "AUTH"
-    return "RATE_LIMIT" if cause.status == 429 else "UNAVAILABLE"
+    # The adapter's one classification of the shared client's failures (Octopus
+    # on #424); a rate-limited 403 arrives as 429 (cubic on #424).
+    return analyzer_sonarcloud.failure_kind(cause)
 
 
 def _sonarcloud_readback(

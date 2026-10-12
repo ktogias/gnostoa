@@ -3160,6 +3160,56 @@ class SonarCloudGateTests(unittest.TestCase):
                     "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
                 )
 
+    def test_an_unreadable_escape_is_not_a_foreign_association(self) -> None:
+        """CodeAnt on #424: beside this pull request's own success, a run whose
+        details hold an escape that cannot be read might be anyone's."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("a cut escape", f"{dashboard}?id=ktogias_gnostoa&pullRequest=30%3"),
+            (
+                "an escape that is not UTF-8",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%FF",
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
+    def test_the_gate_s_qualification_follows_its_identity(self) -> None:
+        """Octopus on #424: SonarCloud's gate is qualified because it is SonarCloud's
+        check, not because its key kept a type. Keys that arrive as plain text, as
+        after a JSON round trip, still count only this pull request's runs."""
+        parsed = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        plain = json.loads(json.dumps(parsed))
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(299)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=plain,
+        )
+        self.assertNotIn(("sonarcloud", "quality-gate"), _receipt_statuses(evidence))
+
     def test_the_gate_qualifies_a_pull_request_only(self) -> None:
         """Q-a: a pull request's id is what the qualification matches, so a change
         request of another kind with the same id is not one."""
