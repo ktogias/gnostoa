@@ -825,6 +825,41 @@ class SonarCloudReadbackTests(unittest.TestCase):
                 )
                 self.assertEqual([], client.queries)
 
+    def test_rfc3339_times_with_fractions_are_read(self) -> None:
+        """CodeAnt on #424: a valid RFC 3339 time may carry fractional seconds, on
+        GitHub's run or SonarCloud's listing; it is read, not an error. The start
+        and the analysis date must still be the same instant."""
+        for name, started, analysed, bound in (
+            ("a fraction on the run", "2026-10-11T23:57:56.000Z", ANALYSED, True),
+            (
+                "a fraction on both",
+                "2026-10-11T23:57:56.250Z",
+                "2026-10-11T23:57:56.250+0000",
+                True,
+            ),
+            (
+                "a fraction on the run only, a later instant",
+                "2026-10-11T23:57:56.250Z",
+                ANALYSED,
+                False,
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [
+                        _listing(_entry(analysed=analysed)),
+                        _listing(_entry(analysed=analysed)),
+                    ],
+                    {1: _page([], total=0)},
+                )
+                document = _read(client, [_check(started=started)])
+                if bound:
+                    self.assertBound(document)
+                else:
+                    self.assertEqual(
+                        "REPORT_ASSOCIATION_MISMATCH", document["coverage"]["reason"]
+                    )
+
     def test_a_tie_on_the_latest_start_is_ambiguous(self) -> None:
         """C4b (PAO 6119999041): two runs for the pull request starting at the same
         instant leave the latest publication unknown; neither id decides."""
@@ -868,6 +903,45 @@ class SonarCloudReadbackTests(unittest.TestCase):
                 document = _read(
                     client, [_check(), {**_check(check_id=2), "details_url": details}]
                 )
+                self.assertEqual("AMBIGUOUS", document["completeness"])
+                self.assertEqual(
+                    "REPORT_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"]
+                )
+
+    def test_a_blank_association_cannot_be_passed_over(self) -> None:
+        """The PAO on #424 (6123979691): a run whose details name an empty project,
+        pull request or branch is not another analysis's, so beside this pull
+        request's own run it leaves the association ambiguous, finished or not."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        for name, details, unfinished in (
+            (
+                "an empty pull request",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=",
+                False,
+            ),
+            (
+                "a blank pull request",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%20",
+                False,
+            ),
+            ("an empty project", f"{dashboard}?id=&pullRequest=312", False),
+            ("an empty branch", f"{dashboard}?id=ktogias_gnostoa&branch=", False),
+            (
+                "an unfinished run, empty pull request",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=",
+                True,
+            ),
+        ):
+            with self.subTest(name):
+                client = _SonarFake(
+                    [_listing(_entry()), _listing(_entry())], {1: _page([], total=0)}
+                )
+                other = (
+                    _check(check_id=2, status="in_progress", conclusion=None)
+                    if unfinished
+                    else _check(check_id=2)
+                )
+                document = _read(client, [_check(), {**other, "details_url": details}])
                 self.assertEqual("AMBIGUOUS", document["completeness"])
                 self.assertEqual(
                     "REPORT_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"]

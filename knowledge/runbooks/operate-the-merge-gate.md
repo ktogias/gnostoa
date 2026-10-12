@@ -164,8 +164,11 @@ record. It was observed on #413's `3fe8e95` and #415's `381e8a6` on 2026-10-10:
 each pull-request head, titled "Quality Gate passed" when it succeeds. Its
 `details_url` names the pull request it was analysed for. The merge-evidence
 adapter's `sonarcloud/quality-gate` receipt reads only the runs whose `details_url`
-names this pull request (the manifest's `pull_request: details_url`), and a test keeps
-the manifest's app id and name equal to this record's. The gate is never evidence of the issue inventory, which the
+names this pull request (the manifest's `pull_request: details_url`). Another pull
+request's, project's or branch's run is excluded, and a run whose `details_url` is
+malformed or missing, or names an empty or blank identity, makes the receipt `PARTIAL`,
+never ignored. A test keeps the
+manifest's app id and name equal to this record's. The gate is never evidence of the issue inventory, which the
 authenticated readback gives (1b.3c). The authenticated readback also binds its
 inventory to the latest such run for the pull request, which must start at
 SonarCloud's listed analysis date. It was observed on #423's `0457f3c` (check

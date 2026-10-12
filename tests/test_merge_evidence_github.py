@@ -3113,6 +3113,24 @@ class SonarCloudGateTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(expected, self._gate(*runs))
 
+    def test_a_blank_association_is_not_a_foreign_one(self) -> None:
+        """The PAO on #424 (6123979691): beside this pull request's own success, a
+        run on the head whose details name an empty project, pull request or
+        branch might be anyone's, so the gate stays PARTIAL."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("an empty pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest="),
+            ("a blank pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest=%20"),
+            ("an empty project", f"{dashboard}?id=&pullRequest=300"),
+            ("a blank project", f"{dashboard}?id=%20&pullRequest=300"),
+            ("an empty branch", f"{dashboard}?id=ktogias_gnostoa&branch="),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
     def test_the_gate_qualifies_a_pull_request_only(self) -> None:
         """Q-a: a pull request's id is what the qualification matches, so a change
         request of another kind with the same id is not one."""

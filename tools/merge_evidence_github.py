@@ -495,17 +495,18 @@ def _check_receipts(
             qualified = getattr(key, "pull_request", None) == _DETAILS_URL
             if coverage != "COMPLETE":
                 status = coverage if coverage in RECEIPT_STATUSES else "ERROR"
-                conclusion, observed_at = None, snapshot["observed_at"]
+                state: tuple[str, str | None, str] | None = (
+                    status,
+                    None,
+                    snapshot["observed_at"],
+                )
             elif qualified:
                 state = _qualified_state(checks, key, subject, snapshot["observed_at"])
-                if state is None:
-                    continue
-                status, conclusion, observed_at = state
-            elif key in latest:
-                status, conclusion = _item_status(latest[key]["states"], runs[key])
-                observed_at = latest[key]["observed_at"]
             else:
+                state = _unqualified_state(key, latest, runs)
+            if state is None:
                 continue
+            status, conclusion, observed_at = state
             provenance: dict[str, Any] = {"check": key, "conclusion": conclusion}
             if qualified:
                 provenance[_PULL_REQUEST] = _DETAILS_URL
@@ -522,6 +523,20 @@ def _check_receipts(
                 }
             )
     return receipts
+
+
+def _unqualified_state(
+    key: str,
+    latest: Mapping[str, Mapping[str, Any]],
+    runs: Mapping[str, Sequence[tuple[str, str | None]]],
+) -> tuple[str, str | None, str] | None:
+    """An unqualified item's status, conclusion and observation time from every
+    run of its key on the head, or None when it has none (MISSING)."""
+
+    if key not in latest:
+        return None
+    status, conclusion = _item_status(latest[key]["states"], runs[key])
+    return status, conclusion, latest[key]["observed_at"]
 
 
 def _qualified_state(

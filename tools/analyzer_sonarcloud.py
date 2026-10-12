@@ -532,11 +532,18 @@ def _queue_url(subject: _Subject) -> str:
     return f"{_API_ROOT}/api/ce/component?{query}"
 
 
+# An RFC 3339 time may carry fractional seconds (CodeAnt on #424).
+_INSTANT_LAYOUTS = ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z")
+
+
 def _instant(value: object, label: str) -> datetime:
-    try:
-        return datetime.strptime(_text(value, label), "%Y-%m-%dT%H:%M:%S%z")
-    except ValueError as exc:
-        raise ProviderReadFailure("ERROR", f"SonarCloud {label} is malformed") from exc
+    text = _text(value, label)
+    for layout in _INSTANT_LAYOUTS:
+        try:
+            return datetime.strptime(text, layout)
+        except ValueError:
+            continue
+    raise ProviderReadFailure("ERROR", f"SonarCloud {label} is malformed")
 
 
 def _scope(run: Mapping[str, Any], subject: _Subject) -> str | None:

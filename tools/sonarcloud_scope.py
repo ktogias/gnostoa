@@ -28,7 +28,8 @@ def project_key(repository: str) -> str:
 def details_scope(details: object, *, project: str, pull: str) -> str:
     """ "ours" when ``details`` names this project's pull request; "foreign" when
     it names another pull request, a branch, or another project; "malformed"
-    when it names no single analysis of a project, so the run might be anyone's."""
+    when it names no single analysis of a project, or a blank identity, so the run
+    might be anyone's."""
 
     if not isinstance(details, str):
         return "malformed"
@@ -43,6 +44,11 @@ def details_scope(details: object, *, project: str, pull: str) -> str:
     ) not in _SCOPES:
         return "malformed"
     if any(len(values) != 1 for values in query.values()):
+        return "malformed"
+    # An empty or whitespace-only identity names no analysis, so the run might be
+    # anyone's (the PAO on #424, 6123979691). Matching stays exact: nothing is
+    # trimmed.
+    if any(not values[0].strip() for values in query.values()):
         return "malformed"
     if query == {"id": [project], "pullRequest": [pull]}:
         return "ours"
