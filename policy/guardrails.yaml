@@ -906,6 +906,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_suites_that_move_between_passes_are_not_complete
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_completed_suites_keep_their_successful_runs_complete
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_every_suite_behind_an_item_gates_it
+      - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_gated_receipt_is_dated_by_its_suite_read
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_failure_in_another_completed_suite_still_denies
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_the_observed_native_rerun_and_split_suites
       - tests/test_merge_evidence_github.py::CommandTests.test_the_command_writes_the_evidence_document

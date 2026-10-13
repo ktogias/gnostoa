@@ -2912,6 +2912,56 @@ class SuiteStateGateTests(unittest.TestCase):
                 ]
                 self.assertEqual("INCOMPLETE", self._fast(both, suites))
 
+    def test_a_gated_receipt_is_dated_by_its_suite_read(self) -> None:
+        """Synthetic: a receipt the suite gate lowers is decided by the suite's state
+        at the snapshot's cut, so it carries that time, as a receipt an incomplete
+        read marks does; a COMPLETE one keeps its run's (CodeAnt on #428)."""
+        queued = _green_suites()
+        queued[0].update({"status": "queued", "conclusion": None})
+        cases = {
+            "a queued suite": (_green_checks(), queued, "INCOMPLETE", None),
+            "an unlisted suite": (
+                self._with_fast_in(9100),
+                _green_suites(),
+                "PARTIAL",
+                None,
+            ),
+            "a completed suite": (
+                _green_checks(),
+                _green_suites(),
+                "COMPLETE",
+                "2026-09-19T16:40:30Z",
+            ),
+        }
+        for name, (runs, suites, status, run_time) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            CHECK_RUNS: ({"check_runs": runs}, {}),
+                            CHECK_SUITES: _suites(suites),
+                        }
+                    )
+                )
+                evidence = merge_evidence_github.evidence_from_snapshot(
+                    snapshot,
+                    authorities=_authorities(),
+                    change_policy=_policy(),
+                    codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+                    decisions=merge_evidence_github.load_decisions(ROOT),
+                    required_checks=merge_evidence_github.load_required_checks(
+                        ROOT / "policy" / "merge-required-checks.yaml",
+                        project_root=ROOT,
+                    ),
+                )
+                [receipt] = [
+                    r for r in evidence["receipts"] if r["coverage"] == ["fast"]
+                ]
+                self.assertEqual(status, receipt["status"])
+                self.assertEqual(
+                    run_time or snapshot["observed_at"], receipt["observed_at"]
+                )
+
     def test_a_failure_in_another_completed_suite_still_denies(self) -> None:
         """Control: suites never weaken the all-must-pass rule across suites (Codex
         on #415)."""

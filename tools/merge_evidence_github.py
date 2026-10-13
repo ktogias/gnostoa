@@ -538,7 +538,7 @@ def _item_state(
         behind = _on_head(view.checks, key, head)
     if state is None or state[0] != "COMPLETE":
         return state
-    return _suite_gated(state, behind, view.suites, head)
+    return _suite_gated(state, behind, view.suites, head, view.observed_at)
 
 
 _SUITE_KEYS = frozenset({"id", "app_id", "head_commit", "status"})
@@ -572,6 +572,7 @@ def _suite_gated(
     runs: Sequence[Mapping[str, Any]],
     suites: Sequence[Mapping[str, Any]],
     head: str,
+    read_at: str,
 ) -> tuple[str, str | None, str]:
     """A COMPLETE item stays COMPLETE only while every run behind it names one
     listed suite, on the exact head and of the run's own App, that has completed
@@ -580,7 +581,8 @@ def _suite_gated(
     the suite's state gates; its conclusion never does, since a suite concludes
     from all its runs. A run whose suite is not proven, its id not exactly a listed
     suite's, is PARTIAL; a suite not yet completed is INCOMPLETE, and the run's own
-    conclusion is kept."""
+    conclusion is kept. Either is decided by the suites read at the snapshot's
+    cut, `read_at`, so it carries that time (CodeAnt on #428)."""
 
     status, conclusion, observed_at = state
     for check in runs:
@@ -595,9 +597,9 @@ def _suite_gated(
                 f"github-check-run:{listed[0].get('app_id')}:"
             )
         ):
-            return "PARTIAL", None, observed_at
+            return "PARTIAL", None, read_at
         if listed[0].get("status") != "completed":
-            status = "INCOMPLETE"
+            status, observed_at = "INCOMPLETE", read_at
     return status, conclusion, observed_at
 
 

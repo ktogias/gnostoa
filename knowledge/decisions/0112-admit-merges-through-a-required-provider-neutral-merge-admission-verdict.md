@@ -334,7 +334,8 @@ provider-neutral public change-governance contract of
     status gates and its conclusion never does, since a suite concludes from
     all its runs. A suite not yet completed gives `INCOMPLETE`. A run without
     a suite, or whose suite is unlisted, listed twice, on another head or
-    another App's, gives `PARTIAL`. An App that never runs leaves a queued
+    another App's, gives `PARTIAL`. Either is decided by the suites read, so it
+    carries the snapshot's cut as its observation time. An App that never runs leaves a queued
     suite with no run on every push; it gates nothing, since no required run
     names it. L1 reads the head's suites with merge evidence only, and the
     read is `COMPLETE` only when every page is read, each counts as many
