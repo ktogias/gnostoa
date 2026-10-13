@@ -1,0 +1,1453 @@
+{
+  "check_runs": [
+    {
+      "app": {
+        "id": 1220912
+      },
+      "check_suite": {
+        "id": 101983209168
+      },
+      "completed_at": "2026-10-07T16:17:58Z",
+      "conclusion": "success",
+      "details_url": "https://aws.amazon.com/q/developer/",
+      "id": 112893383487,
+      "name": "Amazon Q Developer",
+      "started_at": "2026-10-07T16:17:11Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:48:19Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112879987022",
+      "id": 112879987022,
+      "name": "regression",
+      "started_at": "2026-10-07T15:48:16Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 56611
+      },
+      "check_suite": {
+        "id": 101983206620
+      },
+      "completed_at": "2026-10-07T15:42:11Z",
+      "conclusion": "success",
+      "details_url": "https://app.codacy.com/gh/ktogias/gnostoa/pull-requests/388",
+      "id": 112877067264,
+      "name": "Codacy Static Code Analysis",
+      "started_at": "2026-10-07T15:42:11Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:18Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949220",
+      "id": 112876949220,
+      "name": "regression-suite",
+      "started_at": "2026-10-07T15:42:00Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:48:14Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949112",
+      "id": 112876949112,
+      "name": "extended",
+      "started_at": "2026-10-07T15:41:59Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:24Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949101",
+      "id": 112876949101,
+      "name": "smoke",
+      "started_at": "2026-10-07T15:42:00Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 12526
+      },
+      "check_suite": {
+        "id": 101983204827
+      },
+      "completed_at": "2026-10-07T15:41:41Z",
+      "conclusion": "cancelled",
+      "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=388",
+      "id": 112876819888,
+      "name": "SonarCloud Code Analysis",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 57789
+      },
+      "check_suite": {
+        "id": 101983403743
+      },
+      "completed_at": "2026-10-07T15:41:29Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/runs/112876691436",
+      "id": 112876691436,
+      "name": "CodeQL",
+      "started_at": "2026-10-07T15:41:27Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 1082092
+      },
+      "check_suite": {
+        "id": 101983201930
+      },
+      "completed_at": "2026-10-07T15:41:22Z",
+      "conclusion": "neutral",
+      "details_url": "https://www.cubic.dev/pr/ktogias/gnostoa/pull/388",
+      "id": 112876626036,
+      "name": "cubic \u00b7 AI code reviewer",
+      "started_at": "2026-10-07T15:41:20Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:41:20Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570930",
+      "id": 112876570930,
+      "name": "extended-route",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:41:57Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570799",
+      "id": 112876570799,
+      "name": "policy",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:42:04Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570761",
+      "id": 112876570761,
+      "name": "security-fast",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:43:25Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570670",
+      "id": 112876570670,
+      "name": "python-compatibility (3.11)",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:44:13Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570569",
+      "id": 112876570569,
+      "name": "python-compatibility (3.12)",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:28Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570347",
+      "id": 112876570347,
+      "name": "fast",
+      "started_at": "2026-10-07T15:41:51Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 5222247
+      },
+      "check_suite": {
+        "id": 101983209732
+      },
+      "completed_at": "2026-10-07T15:43:55Z",
+      "conclusion": "success",
+      "details_url": "https://semgrep.dev/orgs/utech/projects/6834533/scans/241634317",
+      "id": 112876569792,
+      "name": "semgrep-cloud-platform/scan",
+      "started_at": "2026-10-07T15:41:12Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524531",
+      "id": 112876524531,
+      "name": "smoke",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524410",
+      "id": 112876524410,
+      "name": "regression-suite",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524111",
+      "id": 112876524111,
+      "name": "extended",
+      "started_at": "2026-10-07T15:41:07Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983263094
+      },
+      "completed_at": "2026-10-07T15:45:20Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645921680/job/112876523857",
+      "id": 112876523857,
+      "name": "protected-current-advisory-consumer",
+      "started_at": "2026-10-07T15:41:10Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:12Z",
+      "conclusion": "failure",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876523263",
+      "id": 112876523263,
+      "name": "regression",
+      "started_at": "2026-10-07T15:41:09Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505896",
+      "id": 112876505896,
+      "name": "python-compatibility (3.12)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505840",
+      "id": 112876505840,
+      "name": "python-compatibility (3.11)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505816",
+      "id": 112876505816,
+      "name": "security-fast",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505689",
+      "id": 112876505689,
+      "name": "policy",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505682",
+      "id": 112876505682,
+      "name": "extended-route",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254545
+      },
+      "completed_at": "2026-10-07T15:41:06Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918561/job/112876505373",
+      "id": 112876505373,
+      "name": "protected-current-advisory-consumer",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505241",
+      "id": 112876505241,
+      "name": "fast",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 413034
+      },
+      "check_suite": {
+        "id": 101983210127
+      },
+      "completed_at": "2026-10-07T15:50:52Z",
+      "conclusion": "success",
+      "details_url": "https://kodus.io",
+      "id": 112876495367,
+      "name": "Kody Code Review",
+      "started_at": "2026-10-07T15:41:04Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 48477
+      },
+      "check_suite": {
+        "id": 101983201401
+      },
+      "completed_at": "2026-10-07T15:41:03Z",
+      "conclusion": "skipped",
+      "details_url": "https://sourcery.ai",
+      "id": 112876487646,
+      "name": "Sourcery review",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983223561
+      },
+      "completed_at": "2026-10-07T15:42:05Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645907616/job/112876475501",
+      "id": 112876475501,
+      "name": "Analyze (python)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983223561
+      },
+      "completed_at": "2026-10-07T15:41:37Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645907616/job/112876474860",
+      "id": 112876474860,
+      "name": "Analyze (actions)",
+      "started_at": "2026-10-07T15:41:04Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983220953
+      },
+      "completed_at": "2026-10-07T15:42:03Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645906438/job/112876470127",
+      "id": 112876470127,
+      "name": "Analyze (actions)",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983220953
+      },
+      "completed_at": "2026-10-07T15:42:08Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645906438/job/112876469711",
+      "id": 112876469711,
+      "name": "Analyze (python)",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983213062
+      },
+      "completed_at": "2026-10-07T15:41:35Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645903760/job/112876458956",
+      "id": 112876458956,
+      "name": "branch-advisory-policy",
+      "started_at": "2026-10-07T15:41:02Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983213062
+      },
+      "completed_at": "2026-10-07T15:44:38Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645903760/job/112876458543",
+      "id": 112876458543,
+      "name": "branch-advisory-fast",
+      "started_at": "2026-10-07T15:41:02Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983209452
+      },
+      "completed_at": "2026-10-07T15:40:59Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645902549/job/112876447541",
+      "id": 112876447541,
+      "name": "branch-advisory-fast",
+      "started_at": "2026-10-07T15:40:58Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983209452
+      },
+      "completed_at": "2026-10-07T15:40:59Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645902549/job/112876447070",
+      "id": 112876447070,
+      "name": "branch-advisory-policy",
+      "started_at": "2026-10-07T15:40:58Z",
+      "status": "completed"
+    }
+  ],
+  "check_runs_all": [
+    {
+      "app": {
+        "id": 1220912
+      },
+      "check_suite": {
+        "id": 101983209168
+      },
+      "completed_at": "2026-10-07T16:17:58Z",
+      "conclusion": "success",
+      "details_url": "https://aws.amazon.com/q/developer/",
+      "id": 112893383487,
+      "name": "Amazon Q Developer",
+      "started_at": "2026-10-07T16:17:11Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:48:19Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112879987022",
+      "id": 112879987022,
+      "name": "regression",
+      "started_at": "2026-10-07T15:48:16Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 56611
+      },
+      "check_suite": {
+        "id": 101983206620
+      },
+      "completed_at": "2026-10-07T15:42:11Z",
+      "conclusion": "success",
+      "details_url": "https://app.codacy.com/gh/ktogias/gnostoa/pull-requests/388",
+      "id": 112877067264,
+      "name": "Codacy Static Code Analysis",
+      "started_at": "2026-10-07T15:42:11Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:18Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949220",
+      "id": 112876949220,
+      "name": "regression-suite",
+      "started_at": "2026-10-07T15:42:00Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:48:14Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949112",
+      "id": 112876949112,
+      "name": "extended",
+      "started_at": "2026-10-07T15:41:59Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:24Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876949101",
+      "id": 112876949101,
+      "name": "smoke",
+      "started_at": "2026-10-07T15:42:00Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 12526
+      },
+      "check_suite": {
+        "id": 101983204827
+      },
+      "completed_at": "2026-10-07T15:41:41Z",
+      "conclusion": "cancelled",
+      "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=388",
+      "id": 112876819888,
+      "name": "SonarCloud Code Analysis",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 12526
+      },
+      "check_suite": {
+        "id": 101983204827
+      },
+      "completed_at": "2026-10-07T15:41:36Z",
+      "conclusion": "success",
+      "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=388",
+      "id": 112876776830,
+      "name": "SonarCloud Code Analysis",
+      "started_at": "2026-10-07T15:41:11Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 57789
+      },
+      "check_suite": {
+        "id": 101983403743
+      },
+      "completed_at": "2026-10-07T15:41:29Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/runs/112876691436",
+      "id": 112876691436,
+      "name": "CodeQL",
+      "started_at": "2026-10-07T15:41:27Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 1082092
+      },
+      "check_suite": {
+        "id": 101983201930
+      },
+      "completed_at": "2026-10-07T15:41:22Z",
+      "conclusion": "neutral",
+      "details_url": "https://www.cubic.dev/pr/ktogias/gnostoa/pull/388",
+      "id": 112876626036,
+      "name": "cubic \u00b7 AI code reviewer",
+      "started_at": "2026-10-07T15:41:20Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:41:20Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570930",
+      "id": 112876570930,
+      "name": "extended-route",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:41:57Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570799",
+      "id": 112876570799,
+      "name": "policy",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:42:04Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570761",
+      "id": 112876570761,
+      "name": "security-fast",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:43:25Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570670",
+      "id": 112876570670,
+      "name": "python-compatibility (3.11)",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:44:13Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570569",
+      "id": 112876570569,
+      "name": "python-compatibility (3.12)",
+      "started_at": "2026-10-07T15:41:15Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983264272
+      },
+      "completed_at": "2026-10-07T15:45:28Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645922079/job/112876570347",
+      "id": 112876570347,
+      "name": "fast",
+      "started_at": "2026-10-07T15:41:51Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 5222247
+      },
+      "check_suite": {
+        "id": 101983209732
+      },
+      "completed_at": "2026-10-07T15:43:55Z",
+      "conclusion": "success",
+      "details_url": "https://semgrep.dev/orgs/utech/projects/6834533/scans/241634317",
+      "id": 112876569792,
+      "name": "semgrep-cloud-platform/scan",
+      "started_at": "2026-10-07T15:41:12Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 1082092
+      },
+      "check_suite": {
+        "id": 101983201930
+      },
+      "completed_at": "2026-10-07T15:41:16Z",
+      "conclusion": "neutral",
+      "details_url": "https://www.cubic.dev/pr/ktogias/gnostoa/pull/388",
+      "id": 112876568396,
+      "name": "cubic \u00b7 AI code reviewer",
+      "started_at": "2026-10-07T15:41:13Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524531",
+      "id": 112876524531,
+      "name": "smoke",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524410",
+      "id": 112876524410,
+      "name": "regression-suite",
+      "started_at": "2026-10-07T15:41:08Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876524111",
+      "id": 112876524111,
+      "name": "extended",
+      "started_at": "2026-10-07T15:41:07Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983263094
+      },
+      "completed_at": "2026-10-07T15:45:20Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645921680/job/112876523857",
+      "id": 112876523857,
+      "name": "protected-current-advisory-consumer",
+      "started_at": "2026-10-07T15:41:10Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:12Z",
+      "conclusion": "failure",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876523263",
+      "id": 112876523263,
+      "name": "regression",
+      "started_at": "2026-10-07T15:41:09Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 56611
+      },
+      "check_suite": {
+        "id": 101983206620
+      },
+      "completed_at": null,
+      "conclusion": null,
+      "details_url": "https://app.codacy.com/gh/ktogias/gnostoa/pull-requests/388",
+      "id": 112876519521,
+      "name": "Codacy Static Code Analysis",
+      "started_at": "2026-10-07T15:41:07Z",
+      "status": "in_progress"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505896",
+      "id": 112876505896,
+      "name": "python-compatibility (3.12)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505840",
+      "id": 112876505840,
+      "name": "python-compatibility (3.11)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505816",
+      "id": 112876505816,
+      "name": "security-fast",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505689",
+      "id": 112876505689,
+      "name": "policy",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505682",
+      "id": 112876505682,
+      "name": "extended-route",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254545
+      },
+      "completed_at": "2026-10-07T15:41:06Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918561/job/112876505373",
+      "id": 112876505373,
+      "name": "protected-current-advisory-consumer",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983254106
+      },
+      "completed_at": "2026-10-07T15:41:07Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645918360/job/112876505241",
+      "id": 112876505241,
+      "name": "fast",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 413034
+      },
+      "check_suite": {
+        "id": 101983210127
+      },
+      "completed_at": "2026-10-07T15:50:52Z",
+      "conclusion": "success",
+      "details_url": "https://kodus.io",
+      "id": 112876495367,
+      "name": "Kody Code Review",
+      "started_at": "2026-10-07T15:41:04Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 48477
+      },
+      "check_suite": {
+        "id": 101983201401
+      },
+      "completed_at": "2026-10-07T15:41:03Z",
+      "conclusion": "skipped",
+      "details_url": "https://sourcery.ai",
+      "id": 112876487646,
+      "name": "Sourcery review",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 5222247
+      },
+      "check_suite": {
+        "id": 101983209732
+      },
+      "completed_at": "2026-10-07T15:43:35Z",
+      "conclusion": "success",
+      "details_url": "https://semgrep.dev/orgs/utech/projects/6834533/scans/241634164",
+      "id": 112876476698,
+      "name": "semgrep-cloud-platform/scan",
+      "started_at": "2026-10-07T15:41:00Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983223561
+      },
+      "completed_at": "2026-10-07T15:42:05Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645907616/job/112876475501",
+      "id": 112876475501,
+      "name": "Analyze (python)",
+      "started_at": "2026-10-07T15:41:05Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983223561
+      },
+      "completed_at": "2026-10-07T15:41:37Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645907616/job/112876474860",
+      "id": 112876474860,
+      "name": "Analyze (actions)",
+      "started_at": "2026-10-07T15:41:04Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983220953
+      },
+      "completed_at": "2026-10-07T15:42:03Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645906438/job/112876470127",
+      "id": 112876470127,
+      "name": "Analyze (actions)",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983220953
+      },
+      "completed_at": "2026-10-07T15:42:08Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645906438/job/112876469711",
+      "id": 112876469711,
+      "name": "Analyze (python)",
+      "started_at": "2026-10-07T15:41:03Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983213062
+      },
+      "completed_at": "2026-10-07T15:41:35Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645903760/job/112876458956",
+      "id": 112876458956,
+      "name": "branch-advisory-policy",
+      "started_at": "2026-10-07T15:41:02Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983213062
+      },
+      "completed_at": "2026-10-07T15:44:38Z",
+      "conclusion": "success",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645903760/job/112876458543",
+      "id": 112876458543,
+      "name": "branch-advisory-fast",
+      "started_at": "2026-10-07T15:41:02Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983209452
+      },
+      "completed_at": "2026-10-07T15:40:59Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645902549/job/112876447541",
+      "id": 112876447541,
+      "name": "branch-advisory-fast",
+      "started_at": "2026-10-07T15:40:58Z",
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "check_suite": {
+        "id": 101983209452
+      },
+      "completed_at": "2026-10-07T15:40:59Z",
+      "conclusion": "cancelled",
+      "details_url": "https://github.com/ktogias/gnostoa/actions/runs/37645902549/job/112876447070",
+      "id": 112876447070,
+      "name": "branch-advisory-policy",
+      "started_at": "2026-10-07T15:40:58Z",
+      "status": "completed"
+    }
+  ],
+  "check_suites": [
+    {
+      "app": {
+        "id": 811515
+      },
+      "conclusion": null,
+      "id": 101983200054,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 347564
+      },
+      "conclusion": null,
+      "id": 101983200863,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 48477
+      },
+      "conclusion": "skipped",
+      "id": 101983201401,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 1082092
+      },
+      "conclusion": "neutral",
+      "id": 101983201930,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 646884
+      },
+      "conclusion": null,
+      "id": 101983202821,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 1236702
+      },
+      "conclusion": null,
+      "id": 101983203472,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 1061978
+      },
+      "conclusion": null,
+      "id": 101983204122,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 12526
+      },
+      "conclusion": "cancelled",
+      "id": 101983204827,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 827041
+      },
+      "conclusion": null,
+      "id": 101983205320,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 976424
+      },
+      "conclusion": null,
+      "id": 101983205774,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 158384
+      },
+      "conclusion": null,
+      "id": 101983206273,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 56611
+      },
+      "conclusion": "success",
+      "id": 101983206620,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 16372
+      },
+      "conclusion": null,
+      "id": 101983207275,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 2622614
+      },
+      "conclusion": null,
+      "id": 101983207849,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 867647
+      },
+      "conclusion": null,
+      "id": 101983208301,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 1210556
+      },
+      "conclusion": null,
+      "id": 101983208766,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 1220912
+      },
+      "conclusion": "success",
+      "id": 101983209168,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "cancelled",
+      "id": 101983209452,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 5222247
+      },
+      "conclusion": "success",
+      "id": 101983209732,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 413034
+      },
+      "conclusion": "success",
+      "id": 101983210127,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 4215521
+      },
+      "conclusion": null,
+      "id": 101983210634,
+      "status": "queued"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "success",
+      "id": 101983213062,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "success",
+      "id": 101983220953,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "success",
+      "id": 101983223561,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "cancelled",
+      "id": 101983254106,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "cancelled",
+      "id": 101983254545,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "success",
+      "id": 101983263094,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 15368
+      },
+      "conclusion": "success",
+      "id": 101983264272,
+      "status": "completed"
+    },
+    {
+      "app": {
+        "id": 57789
+      },
+      "conclusion": "success",
+      "id": 101983403743,
+      "status": "completed"
+    }
+  ],
+  "check_suites_total_count": 29,
+  "provenance": {
+    "head": "each source URL names the observed head; every entry's head_sha is left out, since a bare commit id reads as a secret candidate",
+    "kind": "observed native",
+    "note": "Two Gnostoa verification runs on one head: 37645918360 (suite 101983254106, cancelled, regression failed) and 37645922079 (suite 101983264272, succeeded). The default view lists both suites' runs.",
+    "read_on": "2026-10-13",
+    "sources": {
+      "https://api.github.com/repos/ktogias/gnostoa/commits/4893270fb5fe7e8eb012e27c3bddad4ac5c3ae46/check-runs?per_page=100": "sha256:edc1ba46c2e6e09b65de3f54fb09963be328f47583d31e828346791282dc5348",
+      "https://api.github.com/repos/ktogias/gnostoa/commits/4893270fb5fe7e8eb012e27c3bddad4ac5c3ae46/check-runs?per_page=100&filter=all": "sha256:6fdb6d455f337cbf36e4cd863dc71318f00442651bed0a1ebd7b9d33c4d9cf95",
+      "https://api.github.com/repos/ktogias/gnostoa/commits/4893270fb5fe7e8eb012e27c3bddad4ac5c3ae46/check-suites?per_page=100": "sha256:593d0f5d2b7fce1953514ed53d28e94f63eea3900525a4bbb2e71504f8238df2"
+    },
+    "trimmed_to": "the fields L1 reads"
+  }
+}

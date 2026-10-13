@@ -680,7 +680,7 @@ class ActivationRunbookTests(unittest.TestCase):
         regression guard: it is not that change's pre-change evidence."""
         step = self._steps()["5"]
         self.assertNotIn("or explicitly routed", step)
-        self.assertIn("**the owner explicitly chooses**", step)
+        self.assertIn("**It is resolved only when its live proof is recorded", step)
         self.assertIn("activation stays pending", step)
 
     def test_activation_waits_for_the_live_proofs_f1_names(self) -> None:
