@@ -487,12 +487,20 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      population shows `<N>` alone at `<approved>`;
    - neither the pull request nor `main` moved.
 
-   It never merges itself. What is left is the window from its last reads to the
-   merge, and an analyzer change after the run's readback (Decision 0112).
+   It never merges itself. On its `PROCEED`, the App reads the head, the title and
+   the body once more and compares them as above, since the guard can wait up to an
+   hour and an edit in that time moves no head (CodeAnt on #426):
+   ```sh
+   as_app pr view <N> --json headRefOid --jq .headRefOid
+   as_app pr view <N> --json title --jq .title > <current-subject> && cmp -s <current-subject> <checked-subject>
+   as_app pr view <N> --json body --jq .body > <current-body> && cmp -s <current-body> <checked-body>
+   ```
+   What is left is the window from those last reads to the merge, and an analyzer
+   change after the run's readback (Decision 0112).
 
    Stop unless `<approved>`, the PR's head and the seal are one SHA, and both
    comparisons succeed; once `merge-admission` is required, stop too unless the
-   guard printed `PROCEED`. GitHub closes an issue that a closing keyword in the
+   guard printed `PROCEED` and the head and both comparisons still hold after it. GitHub closes an issue that a closing keyword in the
    description names when the PR merges, whatever the squash message says. Only then
    does the App merge:
    ```sh

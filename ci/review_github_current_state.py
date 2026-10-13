@@ -2088,7 +2088,7 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
     else:
         if _SHA40.fullmatch(head) is None:
             raise SystemExit("the trigger run's head is not an exact commit")
-        # An unreadable population refuses through subjects' one clean refusal.
+        # An unreadable population refuses through L1's one clean refusal.
         population = _open_pulls(client, args.repository)
         heads = {item["number"]: item["head_sha"] for item in population}
         at_head = sorted(number for number, at in heads.items() if at == head)
@@ -2114,26 +2114,17 @@ def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     hints only: each is re-read, and a closed one is no subject."""
     if args.output is None:
         raise SystemExit("--output is required for subjects")
+    selected = (
+        _event_pulls(args, client) if args.event else _selected_pulls(args, client)
+    )
     subjects = []
-    try:
-        selected = (
-            _event_pulls(args, client) if args.event else _selected_pulls(args, client)
-        )
-        for number in selected:
-            document, _ = client.get(
-                f"{_API_ROOT}/repos/{args.repository}/pulls/{number}"
-            )
-            pull = _normalize_pull(document)
-            if pull["number"] != number:
-                raise ProviderReadError(
-                    "the pull request read is not the one asked for"
-                )
-            if pull["state"] == "open":
-                subjects.append({"pull_number": number, "head": pull["head_sha"]})
-    except ProviderReadError as exc:
-        # A clean refusal, as open-heads gives, whether the selection's listing or a
-        # subject's own read is what GitHub contradicts (Claude and CodeAnt on #426).
-        raise SystemExit(f"subjects: {exc}") from exc
+    for number in selected:
+        document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
+        pull = _normalize_pull(document)
+        if pull["number"] != number:
+            raise ProviderReadError("the pull request read is not the one asked for")
+        if pull["state"] == "open":
+            subjects.append({"pull_number": number, "head": pull["head_sha"]})
     args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
     return 0
 
@@ -2144,10 +2135,7 @@ def _open_heads_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     the enumeration is incomplete."""
     if args.output is None:
         raise SystemExit("--output is required for open-heads")
-    try:
-        pulls = _open_pulls(client, args.repository)
-    except ProviderReadError as exc:
-        raise SystemExit(f"open-heads: {exc}") from exc
+    pulls = _open_pulls(client, args.repository)
     population = {
         "coverage": "COMPLETE",
         "pulls": [
@@ -2166,16 +2154,13 @@ def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> 
         raise SystemExit("--output is required for merge-evidence")
     if len(args.pull_number) != 1 or args.workflow_run_pulls_json:
         raise SystemExit("merge-evidence reads exactly one --pull-number")
-    try:
-        snapshot = collect_snapshot(
-            client,
-            repository=args.repository,
-            pull_number=args.pull_number[0],
-            observed_at=None,
-            merge_evidence=True,
-        )
-    except ProviderReadError as exc:
-        raise SystemExit(f"merge-evidence: {exc}") from exc
+    snapshot = collect_snapshot(
+        client,
+        repository=args.repository,
+        pull_number=args.pull_number[0],
+        observed_at=None,
+        merge_evidence=True,
+    )
     # Imported here, not at module level: `knowledge merge-evidence`'s bound pulls in
     # PyYAML and jsonschema, which L1's own `publish` job does not install, while
     # this mode runs only where the runtime lock is installed (CodeAnt on #426).
@@ -2224,7 +2209,13 @@ def main(argv: list[str] | None = None) -> int:
         "merge-evidence": _merge_evidence_mode,
         "open-heads": _open_heads_mode,
     }
-    return modes.get(args.mode, _publish_mode)(args, client)
+    try:
+        return modes.get(args.mode, _publish_mode)(args, client)
+    except ProviderReadError as exc:
+        # One clean refusal for every mode: a read GitHub contradicts stops the mode
+        # with its reason, never a traceback, and nothing is written (Claude and
+        # CodeAnt on #426).
+        raise SystemExit(f"{args.mode}: {exc}") from exc
 
 
 if __name__ == "__main__":

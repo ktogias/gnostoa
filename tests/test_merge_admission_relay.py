@@ -1201,19 +1201,28 @@ class CommandTests(unittest.TestCase):
     def test_no_option_takes_a_path(self) -> None:
         """The shape, not the instance: no command accepts a path at all."""
         relay = _relay()
-        for argv in (
-            ["publish", "--work-dir", "/x"],
-            ["publish", "--evaluated", "/x"],
-            ["publish", "--output", "/x"],
-        ):
-            parsing = relay.parser()
+        # CodeAnt on #426: each case carries every required option, so the refusal is
+        # the path option's own, never a missing option's.
+        complete = [
+            "publish",
+            "--repository",
+            REPOSITORY,
+            "--expected-head",
+            HEAD,
+            "--verdict-exit",
+            "0",
+        ]
+        relay.parser().parse_args(complete)
+        for option in ("--work-dir", "--evaluated", "--output"):
+            errors = io.StringIO()
             with (
-                self.subTest(argv=argv),
-                redirect_stderr(io.StringIO()),
+                self.subTest(option=option),
+                redirect_stderr(errors),
                 self.assertRaises(SystemExit) as raised,
             ):
-                parsing.parse_args(argv)
+                relay.parser().parse_args([*complete, option, "/x"])
             self.assertEqual(2, raised.exception.code)
+            self.assertIn(f"unrecognized arguments: {option}", errors.getvalue())
         # Every command, given every option it takes, holds no path in what it parsed.
         for argv in (
             ["hint"],

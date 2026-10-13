@@ -709,6 +709,16 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertIn("guard_merge --repository", step8)
         guard = step8.index("guard_merge --repository")
         self.assertLess(guard, step8.rindex("--match-head-commit"))
+        # CodeAnt on #426: the guard can wait up to an hour, so the head, title and
+        # body are read and compared again after its PROCEED, before the merge.
+        for read in (
+            "cmp -s <current-subject> <checked-subject>",
+            "cmp -s <current-body> <checked-body>",
+            "--json headRefOid",
+        ):
+            with self.subTest(read=read):
+                self.assertLess(guard, step8.rindex(read))
+                self.assertLess(step8.rindex(read), step8.rindex("--match-head-commit"))
         # The launch it names runs the guard (Credentials; the PAO on #426).
         launch = text.split("  guard_merge() {", 1)[1].split("\n  }\n", 1)[0]
         self.assertIn('"$created/venv/bin/python" -I -B', launch)
@@ -959,6 +969,34 @@ class L1ModeTests(unittest.TestCase):
         code, written = self._subjects(replies)
         self.assertNotEqual(0, code)
         self.assertIsNone(written)
+
+    def test_every_mode_refuses_an_unreadable_provider_cleanly(self) -> None:
+        """Claude on #426: L1's collect sweep, given a listing GitHub contradicts,
+        refuses with a clean message like every other mode: one refusal in L1's
+        dispatcher, never a traceback."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        broken = self._open(300, HEAD)
+        broken["head"] = {"sha": "short"}
+        replies[listing] = ([broken], {})
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "out.json"
+            code = self._run(
+                adapter_fixture(),
+                replies,
+                "--mode",
+                "collect",
+                "--repository",
+                "ktogias/gnostoa",
+                "--run-id",
+                "1",
+                "--run-attempt",
+                "1",
+                "--output",
+                str(output),
+            )
+            self.assertNotEqual(0, code)
+            self.assertFalse(output.exists())
 
     def test_l1_imports_without_the_runtime_dependencies(self) -> None:
         """CodeAnt on #426: L1's `publish` job installs no runtime lock, so L1 imports
