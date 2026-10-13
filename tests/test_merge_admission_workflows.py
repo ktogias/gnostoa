@@ -981,11 +981,35 @@ class ReadbackCallTests(unittest.TestCase):
             ),
             "an undeclared read": (caller, reading),
         }
+        # Each variant raises exactly its own problem, so none passes for another.
+        forwards, declares = "the call forwards", "the callee declares"
+        requires, acquires = "the callee does not require", "the acquisition reads"
+        strays = "the callee reads"
+        raised = {
+            "a bracket read": acquires,
+            "the whole context read": acquires,
+            "a differently cased read": acquires,
+            "a workflow-level read": strays,
+            "a read beside the acquisition": strays,
+            "no secrets": forwards,
+            "inherit": forwards,
+            "one missing": forwards,
+            "a wrong selector": forwards,
+            "an extra secret": forwards,
+            "no declaration": declares,
+            "one undeclared": declares,
+            "an extra declaration": declares,
+            "an optional one": requires,
+            "a requirement unset": requires,
+            "a requirement as text": requires,
+            "an undeclared read": strays,
+        }
+        self.assertEqual(set(raised), set(variants))
         for label, (variant_caller, variant_callee) in variants.items():
             with self.subTest(variant=label):
-                self.assertNotEqual(
-                    [], _forwarding_problems(variant_caller, variant_callee)
-                )
+                problems = _forwarding_problems(variant_caller, variant_callee)
+                prefix = raised[label]
+                self.assertEqual([prefix], [p[: len(prefix)] for p in problems])
 
 
 def _readback_resolver() -> Any:
