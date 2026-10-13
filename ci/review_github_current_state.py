@@ -2120,13 +2120,21 @@ def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
         _event_pulls(args, client) if args.event else _selected_pulls(args, client)
     )
     subjects = []
-    for number in selected:
-        document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
-        pull = _normalize_pull(document)
-        if pull["number"] != number:
-            raise ProviderReadError("the pull request read is not the one asked for")
-        if pull["state"] == "open":
-            subjects.append({"pull_number": number, "head": pull["head_sha"]})
+    try:
+        for number in selected:
+            document, _ = client.get(
+                f"{_API_ROOT}/repos/{args.repository}/pulls/{number}"
+            )
+            pull = _normalize_pull(document)
+            if pull["number"] != number:
+                raise ProviderReadError(
+                    "the pull request read is not the one asked for"
+                )
+            if pull["state"] == "open":
+                subjects.append({"pull_number": number, "head": pull["head_sha"]})
+    except ProviderReadError as exc:
+        # A clean refusal, as open-heads gives (Claude and CodeAnt on #426).
+        raise SystemExit(f"subjects: {exc}") from exc
     args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
     return 0
 
@@ -2159,13 +2167,16 @@ def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> 
         raise SystemExit("--output is required for merge-evidence")
     if len(args.pull_number) != 1 or args.workflow_run_pulls_json:
         raise SystemExit("merge-evidence reads exactly one --pull-number")
-    snapshot = collect_snapshot(
-        client,
-        repository=args.repository,
-        pull_number=args.pull_number[0],
-        observed_at=None,
-        merge_evidence=True,
-    )
+    try:
+        snapshot = collect_snapshot(
+            client,
+            repository=args.repository,
+            pull_number=args.pull_number[0],
+            observed_at=None,
+            merge_evidence=True,
+        )
+    except ProviderReadError as exc:
+        raise SystemExit(f"merge-evidence: {exc}") from exc
     # Imported here, not at module level: `knowledge merge-evidence`'s bound pulls in
     # PyYAML and jsonschema, which L1's own `publish` job does not install, while
     # this mode runs only where the runtime lock is installed (CodeAnt on #426).

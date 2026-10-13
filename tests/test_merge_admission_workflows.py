@@ -922,6 +922,32 @@ class L1ModeTests(unittest.TestCase):
             )
         return code, written
 
+    def test_an_unreadable_pull_request_refuses_cleanly(self) -> None:
+        """Claude and CodeAnt on #426: a pull request that reads back malformed
+        refuses `subjects` and `merge-evidence` with a clean message, as
+        `open-heads` does, never a traceback; nothing is written."""
+        replies = _replies()
+        broken = copy.deepcopy(replies[f"{API}/pulls/300"][0])
+        broken["head"] = {"sha": "short"}
+        replies[f"{API}/pulls/300"] = (broken, {})
+        for mode in ("subjects", "merge-evidence"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as raw:
+                output = Path(raw) / "out.json"
+                code = self._run(
+                    adapter_fixture(),
+                    replies,
+                    "--mode",
+                    mode,
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--pull-number",
+                    "300",
+                    "--output",
+                    str(output),
+                )
+                self.assertNotEqual(0, code)
+                self.assertFalse(output.exists())
+
     def test_l1_imports_without_the_runtime_dependencies(self) -> None:
         """CodeAnt on #426: L1's `publish` job installs no runtime lock, so L1 imports
         nothing that needs PyYAML or jsonschema at module level; the merge-evidence

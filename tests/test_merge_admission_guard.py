@@ -990,6 +990,39 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual((False, False, False), self._results(root))
 
     @_needs_host_venv
+    def test_the_caller_s_repository_cannot_redirect_the_clone(self) -> None:
+        """CodeAnt on #426: the clone starts in the caller's directory. When that
+        directory is a Git repository whose own configuration redirects protected
+        main's URL to another repository, the clone still takes protected main:
+        `git clone` reads no configuration of the repository it is started in."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            impostor = root / "impostor"
+            (impostor / "ci").mkdir(parents=True)
+            (impostor / "ci" / "merge_admission_guard.py").write_text(
+                _STARTUP_MODULE, encoding="utf-8"
+            )
+            (impostor / "requirements").mkdir()
+            (impostor / "requirements" / "runtime.lock").write_text(
+                _LOCK, encoding="utf-8"
+            )
+            self._git(impostor, "init", "-q", "-b", "main")
+            self._git(impostor, "add", ".")
+            self._git(impostor, "commit", "-q", "-m", "x")
+            caller = root / "caller"
+            caller.mkdir()
+            self._git(caller, "init", "-q")
+            self._git(
+                caller,
+                "config",
+                f"url.file://{impostor}.insteadOf",
+                f"file://{source}",
+            )
+            self.assertEqual(0, self._run(root, caller, source))
+            self.assertEqual((True, True, False), self._results(root))
+
+    @_needs_host_venv
     def test_a_failed_install_stops_before_the_credential(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
