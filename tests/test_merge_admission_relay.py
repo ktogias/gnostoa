@@ -222,6 +222,23 @@ class PublicationPlanTests(unittest.TestCase):
                 self.assertIn("example.invalid", summary)
                 self.assertTrue(_only_fenced(summary, "example.invalid"))
 
+    def test_a_fence_as_long_as_the_text_still_fits(self) -> None:
+        """Kilo on #426: a fence is one backtick longer than the longest run of
+        backticks the text holds, so contributor text made of backticks can make the
+        block several times longer than the text. The whole block, fences included,
+        fits the summary, and every fence closes."""
+        evidence = _evidence(_snapshot())
+        verdict = _verdict(evidence)
+        failing = [c for c in verdict["criteria"] if c["status"] == "FAIL"]
+        self.assertTrue(failing)
+        failing[0]["reasons"] = ["`" * 100_000]
+        denied = _plan(evidence, copy.deepcopy(evidence), verdict, 1)["summary"]
+        incomplete = _relay().plan_incomplete(HEAD, "`" * 100_000)["summary"]
+        for name, summary in (("a denial", denied), ("an incomplete run", incomplete)):
+            with self.subTest(name):
+                self.assertLessEqual(len(summary), 60_000)
+                self.assertTrue(_closes_every_fence(summary))
+
     def test_the_summary_is_bounded(self) -> None:
         evidence = _evidence(_snapshot())
         verdict = _verdict(evidence)
@@ -235,6 +252,9 @@ class PublicationPlanTests(unittest.TestCase):
         # Cut before the fence is built, so the block still closes and the summary's
         # own last line is never swallowed by it.
         self.assertTrue(_closes_every_fence(planned["summary"]))
+        # Ordinary text is cut at the limit, not to the third a fence of backticks
+        # needs: the summary keeps nearly the whole budget.
+        self.assertGreater(len(planned["summary"]), 55_000)
 
 
 def _closes_every_fence(markdown: str) -> bool:

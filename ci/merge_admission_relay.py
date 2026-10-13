@@ -119,10 +119,21 @@ def _denial(verdict: Mapping[str, Any]) -> tuple[str, str, list[str]]:
 def _inert(text: str) -> str:
     """Contributor-controlled text, such as the paths a reason names, in a fence no
     line of it can close: a check run's summary is Markdown, so a crafted name makes
-    no link or image (CodeAnt on #426). Bounded first, so a cut never lands inside
-    the fence."""
+    no link or image (CodeAnt on #426).
 
-    return neutralise(_bounded(text, _MAX_SUMMARY - _SUMMARY_FRAME))
+    The block is bounded whole, fences included, so the summary's own bound never
+    cuts inside it. A fence is one backtick longer than the longest run the text
+    holds, so a block can be several times its text (Kilo on #426): if the text cut
+    to the budget, less the shortest fences, does not fit, the text cut to a third of
+    it always does, as a block is at most three times its text and a few
+    characters."""
+
+    budget = _MAX_SUMMARY - _SUMMARY_FRAME
+    # The shortest fences and the info string take 12 characters: room for them.
+    block = neutralise(_bounded(text, budget - 16))
+    if len(block) <= budget:
+        return block
+    return neutralise(_bounded(text, (budget - 16) // 3))
 
 
 def _verdict_state(

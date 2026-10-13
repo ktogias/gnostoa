@@ -450,7 +450,23 @@ class AdmissionWorkflowTests(unittest.TestCase):
             if other_name in holders:
                 continue
             with self.subTest(job=other_name):
-                self.assertNotIn(APP_MINT_ACTION, str(other))
+                text = str(other)
+                self.assertNotIn(APP_MINT_ACTION, text)
+                # CodeAnt on #426: nor the App's key, id or token by any other route.
+                self.assertNotIn("secrets.", text)
+                self.assertNotIn("GNOSTOA_MA0", text)
+                self.assertNotIn("steps.token", text)
+        relays = {
+            "invalidate": "Invalidate a standing success on the exact head",
+            "admit": "Publish the verdict on the exact head",
+        }
+        for name, job in holders.items():
+            for step in _steps(job):
+                with self.subTest(job=name, step=step.get("name")):
+                    if "secrets." in str(step):
+                        self.assertEqual(APP_MINT_ACTION, step.get("uses"))
+                    if "steps.token" in str(step):
+                        self.assertEqual(relays[name], step.get("name"))
 
     def test_checkouts_take_main_without_credentials(self) -> None:
         for name, job in _load(ADMISSION)["jobs"].items():
