@@ -47,7 +47,7 @@ RUN = 9001
 CHECK = 77
 MA0_APP = 4242
 OTHER_APP = 15368
-EVIDENCE = {
+EVIDENCE: dict[str, Any] = {
     "subject": {
         "repository": f"https://github.com/{REPOSITORY}",
         "change_request": {"kind": "github-pull-request", "id": str(PULL)},
@@ -825,6 +825,32 @@ def _probe_lock(root: Path, *, recorded: str | None = None) -> str:
 _MINT = "#!/bin/sh\n: > \"$HOME/minted\"\nprintf 'credential-%s' 1\n"
 
 
+def _host_venv() -> bool:
+    """Whether the launch's own `python3`, on its fixed path, provides `venv` with its
+    bundled `pip`: a host prerequisite the runbook names. The runtime image removes
+    `ensurepip` and `pip`, so the tests that reach the install skip there, and run
+    natively and in the development image (python-compatibility and extended)."""
+    launch_path = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+    python = shutil.which("python3", path=launch_path)
+    if python is None:
+        return False
+    probe = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        [python, "-I", "-c", "import ensurepip, venv"],
+        env={"PATH": launch_path},
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+_HOST_VENV = _host_venv()
+_needs_host_venv = unittest.skipUnless(
+    _HOST_VENV,
+    "the launch's python3 provides no venv with its bundled pip, a host "
+    "prerequisite the runbook names",
+)
+
+
 class GuardLaunchTests(unittest.TestCase):
     """The PAO (6132349006) and Codex on #426: the runbook's launch trusts nothing in
     the caller's directory or its Git configuration. Before any credential exists it
@@ -925,6 +951,7 @@ class GuardLaunchTests(unittest.TestCase):
         for name in ("sitecustomize.py", "usercustomize.py"):
             (directory / name).write_text(_STARTUP_MODULE, encoding="utf-8")
 
+    @_needs_host_venv
     def test_the_guard_runs_from_a_fresh_clone_with_its_credential(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -936,6 +963,7 @@ class GuardLaunchTests(unittest.TestCase):
             ran = (root / "home" / "guard-ran").read_text(encoding="utf-8")
             self.assertTrue(ran.startswith("credential-1 "))
 
+    @_needs_host_venv
     def test_the_guard_runs_in_the_environment_main_s_lock_pins(self) -> None:
         """Codex on #426: the guard's dependencies are the ones protected main's
         runtime lock pins, installed from that lock into an environment of the
@@ -949,6 +977,7 @@ class GuardLaunchTests(unittest.TestCase):
             environment = root / "home" / "guard-environment"
             self.assertEqual("pinned 1.0", environment.read_text(encoding="utf-8"))
 
+    @_needs_host_venv
     def test_a_pin_whose_hash_does_not_match_stops_before_the_credential(
         self,
     ) -> None:
@@ -960,6 +989,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertNotEqual(0, self._run(root, caller, source))
             self.assertEqual((False, False, False), self._results(root))
 
+    @_needs_host_venv
     def test_a_failed_install_stops_before_the_credential(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -969,6 +999,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertNotEqual(0, self._run(root, caller, source))
             self.assertEqual((False, False, False), self._results(root))
 
+    @_needs_host_venv
     def test_the_user_s_installer_configuration_never_reaches_the_install(
         self,
     ) -> None:
@@ -988,6 +1019,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
 
+    @_needs_host_venv
     def test_nothing_in_the_caller_s_directory_runs(self) -> None:
         """A replaced guard and startup modules where the launch is started from:
         none of them runs; the guard that runs is protected main's."""
@@ -1000,6 +1032,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
 
+    @_needs_host_venv
     def test_only_protected_main_is_cloned(self) -> None:
         """The clone names `main`, not whatever the provider's default branch is."""
         with tempfile.TemporaryDirectory() as raw:
@@ -1015,6 +1048,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
 
+    @_needs_host_venv
     def test_a_filter_cannot_pass_modified_bytes_off_as_committed(self) -> None:
         """Codex on #426: a clean filter in a checkout's own configuration makes a
         modified guard look committed to `git status`. The launch never reads the
@@ -1036,6 +1070,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, self._run(root, source, source))
             self.assertEqual((True, True, False), self._results(root))
 
+    @_needs_host_venv
     def test_no_startup_module_runs_beside_the_credential(self) -> None:
         """Neither protected main's own `sitecustomize.py` nor a `usercustomize.py`
         in the user site of the `HOME` the fresh shell keeps."""
@@ -1053,6 +1088,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, self._run(root, caller, source))
             self.assertEqual((True, True, False), self._results(root))
 
+    @_needs_host_venv
     def test_no_configured_program_runs(self) -> None:
         """Codex on #426: a monitor and a smudge filter in the user's Git
         configuration, the filter named by protected main's own attributes, never run:
@@ -1082,6 +1118,7 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual((True, True, False), self._results(root))
             self.assertFalse(marker.exists())
 
+    @_needs_host_venv
     def test_the_caller_s_git_environment_cannot_redirect_the_clone(self) -> None:
         """Git configuration a caller's environment injects, such as a `url.insteadOf`
         that would fetch another repository in protected main's place, never
@@ -1109,6 +1146,18 @@ class GuardLaunchTests(unittest.TestCase):
             )
             self.assertEqual(0, code)
             self.assertEqual((True, True, False), self._results(root))
+
+    @unittest.skipIf(_HOST_VENV, "the launch's python3 provides the prerequisite here")
+    def test_without_the_host_prerequisite_nothing_is_minted(self) -> None:
+        """Where the launch's python3 provides no venv with its bundled pip, as in the
+        runtime image, the launch stops at the environment, before the credential."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source(root)
+            caller = root / "caller"
+            caller.mkdir()
+            self.assertNotEqual(0, self._run(root, caller, source))
+            self.assertEqual((False, False, False), self._results(root))
 
     def test_a_failed_clone_stops_before_the_credential(self) -> None:
         """The PAO's falsifier, recast: when protected main cannot be read, nothing
