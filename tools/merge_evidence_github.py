@@ -578,13 +578,16 @@ def _suite_gated(
     (#407, Option S, owner 6143702096). A rerequested run's suite is queued again
     while the run itself stands unchanged (GitHub's "Rerequest a check run"), so
     the suite's state gates; its conclusion never does, since a suite concludes
-    from all its runs. A run whose suite is not proven is PARTIAL; a suite not yet
-    completed is INCOMPLETE, and the run's own conclusion is kept."""
+    from all its runs. A run whose suite is not proven, its id not exactly a listed
+    suite's, is PARTIAL; a suite not yet completed is INCOMPLETE, and the run's own
+    conclusion is kept."""
 
     status, conclusion, observed_at = state
     for check in runs:
         suite = check.get("suite")
-        listed = [s for s in suites if s.get("id") == suite]
+        # Exactly an integer: 9001.0 and True compare equal to an id, and a run
+        # read from a file may carry either (the PAO on #428, 6144886026).
+        listed = [s for s in suites if type(suite) is int and s.get("id") == suite]
         if (
             len(listed) != 1
             or listed[0].get("head_commit") != head

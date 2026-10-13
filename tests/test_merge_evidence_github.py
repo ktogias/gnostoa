@@ -2680,6 +2680,39 @@ class SuiteStateGateTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual("PARTIAL", self._fast(runs, suites))
 
+    def test_a_serialized_run_s_suite_must_be_an_exact_suite_id(self) -> None:
+        """Synthetic serialized input (the PAO on #428, 6144886026): the adapter also
+        reads a snapshot from a file, so a run's suite must be the exact integer id of
+        a listed suite. A missing id on both sides, or one that only compares equal,
+        as 9001.0 and True do, never makes the item COMPLETE; refusing the snapshot is
+        as good."""
+
+        def outcome(snapshot: dict[str, Any]) -> str:
+            try:
+                return _manifest_statuses(snapshot)[("verification-checks", "fast")]
+            except merge_evidence_github.MergeEvidenceError:
+                return "REFUSED"
+
+        cases: dict[str, tuple[object, object]] = {
+            "no suite on the run, a null id on the entry": (None, None),
+            "no suite on the run, no id on the entry": (None, "drop"),
+            "a fractional suite on the run": (9001.0, SUITE_OF[ACTIONS]),
+            "a boolean suite on the run": (True, 1),
+        }
+        for name, (run_suite, entry_id) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                fast["suite"] = run_suite
+                [entry] = [
+                    s for s in snapshot["check_suites"] if s["id"] == SUITE_OF[ACTIONS]
+                ]
+                if entry_id == "drop":
+                    del entry["id"]
+                else:
+                    entry["id"] = entry_id
+                self.assertNotEqual("COMPLETE", outcome(snapshot))
+
     def test_a_malformed_suite_reference_is_a_source_error(self) -> None:
         """Synthetic: a run whose suite reference is not a suite id is malformed
         provider data, so the checks read is not complete."""

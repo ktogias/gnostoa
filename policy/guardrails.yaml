@@ -898,6 +898,7 @@ guardrails:
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_sonarcloud_s_queued_suite_withholds_its_passed_gate
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_suite_whose_newer_attempt_is_pending_is_not_complete
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_run_whose_suite_is_not_proven_is_partial
+      - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_serialized_run_s_suite_must_be_an_exact_suite_id
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_a_malformed_suite_reference_is_a_source_error
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_an_incomplete_suites_read_marks_every_item
       - tests/test_merge_evidence_github.py::SuiteStateGateTests.test_exactly_the_provider_s_bound_is_complete
