@@ -478,7 +478,11 @@ def _check_receipts(
     checks, coverage = _source(snapshot, "checks")
     # Each required run is gated by its own suite, so a suites read that is not
     # COMPLETE marks every item as a checks read does (#407, Option S).
-    suites, suite_coverage = _source(snapshot, "check_suites")
+    entries, suite_coverage = _source(snapshot, "check_suites")
+    try:
+        suites = [_suite_entry(entry) for entry in entries]
+    except (AssuranceCompletenessError, MergeEvidenceError) as exc:
+        raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
     if coverage == "COMPLETE":
         coverage = suite_coverage
     # The reconciler normalizes each check; a malformed one is an invalid snapshot
@@ -535,6 +539,25 @@ def _item_state(
     if state is None or state[0] != "COMPLETE":
         return state
     return _suite_gated(state, behind, view.suites, head)
+
+
+_SUITE_KEYS = frozenset({"id", "app_id", "head_commit", "status"})
+
+
+def _suite_entry(item: object) -> Mapping[str, Any]:
+    """One check suite, in L1's closed shape (#407, Option S). `validate_snapshot`
+    does not normalize this merge-evidence source, so a malformed entry is refused
+    here, as a malformed check is (CodeAnt on #428)."""
+
+    label = "check_suites entry"
+    suite = require_mapping(item, label)
+    require_closed_keys(suite, label, _SUITE_KEYS)
+    for key in ("id", "app_id"):
+        if type(suite[key]) is not int or suite[key] <= 0:
+            raise MergeEvidenceError(f"{label} has an {key} that is not one L1 records")
+    require_text(suite["head_commit"], f"{label} head_commit")
+    require_text(suite["status"], f"{label} status")
+    return suite
 
 
 def _on_head(

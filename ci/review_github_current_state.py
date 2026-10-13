@@ -763,9 +763,9 @@ def _normalize_suite(value: Any) -> dict[str, Any]:
     }
 
 
-# GitHub lists a reference's check runs from its 1,000 most recent check suites
-# only ("List check runs for a Git reference"), so a head with that many suites is
-# not proven complete (#407, Option S).
+# Past 1,000 check suites on a reference, GitHub lists its check runs from the
+# 1,000 most recent suites only ("List check runs for a Git reference"), so a head
+# with more suites than that is not proven complete (#407, Option S; Codex on #428).
 _MAX_CHECK_SUITES = 1_000
 
 
@@ -773,7 +773,7 @@ def _check_suites(
     client: JsonReader, root: str, head: str
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The head's check suites, and whether their read is complete: every page
-    read, each page counting as many suites as were listed, and fewer of them than
+    read, each page counting as many suites as were listed, and no more of them than
     the bound past which the head's check runs go unlisted."""
 
     counted: set[int] = set()
@@ -804,7 +804,7 @@ def _check_suites(
             "status": "PARTIAL",
             "reason": "check_suite_count_mismatch",
         }
-    if len(suites) >= _MAX_CHECK_SUITES:
+    if len(suites) > _MAX_CHECK_SUITES:
         return suites, {**coverage, "status": "PARTIAL", "reason": "check_suite_limit"}
     return suites, coverage
 

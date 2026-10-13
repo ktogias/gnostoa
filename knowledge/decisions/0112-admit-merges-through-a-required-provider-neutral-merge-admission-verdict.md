@@ -338,8 +338,9 @@ provider-neutral public change-governance contract of
     suite with no run on every push; it gates nothing, since no required run
     names it. L1 reads the head's suites with merge evidence only, and the
     read is `COMPLETE` only when every page is read, each counts as many
-    suites as were listed, and there are fewer than 1,000: GitHub lists a
-    reference's check runs from its 1,000 most recent suites only. Checks data
+    suites as were listed, and there are no more than 1,000: past that, GitHub
+    lists a reference's check runs from its 1,000 most recent suites only. A
+    suite entry not in L1's shape makes the snapshot invalid. Checks data
     GitHub has archived, after 400 days, is not listed, so its item is
     `MISSING` or its suite unlisted, and either denies. Whether a newer pending
     Actions attempt can stand beside a `completed` suite is proved natively

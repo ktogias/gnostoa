@@ -2695,9 +2695,9 @@ class SuiteStateGateTests(unittest.TestCase):
                 )
 
     def test_an_incomplete_suites_read_marks_every_item(self) -> None:
-        """Synthetic, and GitHub's documented bound: check runs are listed only from
-        the 1,000 most recent suites of a reference, so a head at that count is not
-        proven complete."""
+        """Synthetic, and GitHub's documented bound: with more than 1,000 suites on a
+        reference, check runs are listed only from its 1,000 most recent, so a head
+        past that count is not proven complete."""
         page_error = {
             CHECK_SUITES: (
                 {"total_count": 4, "check_suites": _green_suites()},
@@ -2720,7 +2720,7 @@ class SuiteStateGateTests(unittest.TestCase):
             },
             "a page that is not an object": {CHECK_SUITES: (_green_suites(), {})},
             "a page without its list": {CHECK_SUITES: ({"total_count": 3}, {})},
-            "at the provider's bound": self._thousand_suites(),
+            "past the provider's bound": self._listed_suites(1001),
         }
         for name, changes in cases.items():
             with self.subTest(name):
@@ -2737,24 +2737,66 @@ class SuiteStateGateTests(unittest.TestCase):
                 self.assertTrue(all(s != "COMPLETE" for s in checks.values()), checks)
 
     @staticmethod
-    def _thousand_suites() -> dict[str, Any]:
-        """1,000 suites over ten pages, every one completed, the head's own among
-        them."""
-        suites = [*_green_suites(), *(_suite(20000 + i, 1001) for i in range(997))]
+    def _listed_suites(count: int) -> dict[str, Any]:
+        """`count` suites over pages of 100, every one completed, the head's own
+        among them."""
+        suites = [
+            *_green_suites(),
+            *(_suite(20000 + i, 1001) for i in range(count - 3)),
+        ]
+        pages = [suites[start : start + 100] for start in range(0, count, 100)]
         replies: dict[str, Any] = {}
         url = CHECK_SUITES
-        for page in range(10):
-            following = f"https://api.github.com/page{page + 2}/check-suites"
-            headers = {"link": f'<{following}>; rel="next"'} if page < 9 else {}
-            replies[url] = (
-                {
-                    "total_count": 1000,
-                    "check_suites": suites[page * 100 : page * 100 + 100],
-                },
-                headers,
-            )
+        for number, listed in enumerate(pages):
+            following = f"https://api.github.com/page{number + 2}/check-suites"
+            last = number == len(pages) - 1
+            headers = {} if last else {"link": f'<{following}>; rel="next"'}
+            replies[url] = ({"total_count": count, "check_suites": listed}, headers)
             url = following
         return replies
+
+    def test_exactly_the_provider_s_bound_is_complete(self) -> None:
+        """Documented: check runs go unlisted only past 1,000 suites, so a head
+        with exactly 1,000, all listed and counted, is complete (Codex on #428)."""
+        snapshot = _snapshot(_replies(**self._listed_suites(1000)))
+        self.assertEqual("COMPLETE", snapshot["coverage"]["check_suites"]["status"])
+        self.assertEqual(
+            "COMPLETE", _manifest_statuses(snapshot)[("verification-checks", "fast")]
+        )
+
+    def test_a_malformed_suite_entry_is_an_invalid_snapshot(self) -> None:
+        """Synthetic: a snapshot whose suite entry is not as L1 records one is
+        refused as invalid, as a malformed check is (CodeAnt on #428)."""
+        cases: dict[str, Any] = {
+            "a null entry": None,
+            "a text id": {
+                "id": "9001",
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": "completed",
+            },
+            "no status": {"id": 9001, "app_id": ACTIONS, "head_commit": HEAD},
+            "a null status": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": None,
+            },
+            "a null head": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": None,
+                "status": "completed",
+            },
+        }
+        for name, entry in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                snapshot["check_suites"][0] = entry
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, "the snapshot is invalid"
+                ):
+                    _manifest_statuses(snapshot)
 
     def test_suites_that_move_between_passes_are_not_complete(self) -> None:
         """Synthetic: a suite read whose state changes between L1's passes is not a
