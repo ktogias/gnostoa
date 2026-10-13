@@ -2088,10 +2088,8 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
     else:
         if _SHA40.fullmatch(head) is None:
             raise SystemExit("the trigger run's head is not an exact commit")
-        try:
-            population = _open_pulls(client, args.repository)
-        except ProviderReadError as exc:
-            raise SystemExit(f"subjects: {exc}") from exc
+        # An unreadable population refuses through subjects' one clean refusal.
+        population = _open_pulls(client, args.repository)
         heads = {item["number"]: item["head_sha"] for item in population}
         at_head = sorted(number for number, at in heads.items() if at == head)
         # A check run belongs to a commit: one subject evaluates it for every pull
@@ -2116,11 +2114,11 @@ def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     hints only: each is re-read, and a closed one is no subject."""
     if args.output is None:
         raise SystemExit("--output is required for subjects")
-    selected = (
-        _event_pulls(args, client) if args.event else _selected_pulls(args, client)
-    )
     subjects = []
     try:
+        selected = (
+            _event_pulls(args, client) if args.event else _selected_pulls(args, client)
+        )
         for number in selected:
             document, _ = client.get(
                 f"{_API_ROOT}/repos/{args.repository}/pulls/{number}"
@@ -2133,7 +2131,8 @@ def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
             if pull["state"] == "open":
                 subjects.append({"pull_number": number, "head": pull["head_sha"]})
     except ProviderReadError as exc:
-        # A clean refusal, as open-heads gives (Claude and CodeAnt on #426).
+        # A clean refusal, as open-heads gives, whether the selection's listing or a
+        # subject's own read is what GitHub contradicts (Claude and CodeAnt on #426).
         raise SystemExit(f"subjects: {exc}") from exc
     args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
     return 0

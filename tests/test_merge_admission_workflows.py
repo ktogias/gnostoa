@@ -948,6 +948,18 @@ class L1ModeTests(unittest.TestCase):
                 self.assertNotEqual(0, code)
                 self.assertFalse(output.exists())
 
+    def test_an_unreadable_open_listing_refuses_the_sweep_cleanly(self) -> None:
+        """CodeAnt on #426: the scheduled sweep's listing, read back malformed,
+        refuses `subjects` with a clean message too; nothing is written."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        broken = self._open(300, HEAD)
+        broken["head"] = {"sha": "short"}
+        replies[listing] = ([broken], {})
+        code, written = self._subjects(replies)
+        self.assertNotEqual(0, code)
+        self.assertIsNone(written)
+
     def test_l1_imports_without_the_runtime_dependencies(self) -> None:
         """CodeAnt on #426: L1's `publish` job installs no runtime lock, so L1 imports
         nothing that needs PyYAML or jsonschema at module level; the merge-evidence
