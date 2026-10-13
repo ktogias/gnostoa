@@ -17,13 +17,13 @@ import re
 import sys
 import tempfile
 import unittest
-from collections.abc import Iterator
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import yaml
+from test_claude_actions_workflows import _expression_secrets
 from test_merge_evidence_github import API, HEAD, _replies
 from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
@@ -148,8 +148,6 @@ READBACK_CALL = "./.github/workflows/analyzer-readback.yml"
 ANALYZER_SECRETS = frozenset(
     {"DEEPSOURCE_API_TOKEN", "CODACY_API_TOKEN", "SONAR_TOKEN"}
 )
-_SECRETS_CONTEXT = re.compile(r"\bsecrets\b", re.IGNORECASE)
-_SECRET_NAME = re.compile(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def _selector(name: str) -> str:
@@ -598,6 +596,8 @@ class AdmissionWorkflowTests(unittest.TestCase):
                 if job.get("uses") == READBACK_CALL:
                     self.assertEqual(ANALYZER_FORWARDING, job.get("secrets"))
                     rest = {k: v for k, v in job.items() if k != "secrets"}
+                # Nor `secrets: inherit`, which names none (Decision 0097's rule).
+                self.assertNotIn("secrets", rest)
                 self.assertEqual(set(), _secret_references(rest))
                 self.assertNotIn("GNOSTOA_MA0", text)
                 self.assertNotIn("steps.token", text)
@@ -777,32 +777,13 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertIn("ci/merge_admission_guard.py", launch)
 
 
-def _strings(node: object) -> Iterator[str]:
-    """Every string in a loaded document, its keys included."""
+def _secret_references(node: object) -> set[str | None]:
+    """The secret each expression in a loaded document names, read by the Claude
+    workflows' detector (Decision 0097), not by a copy of it (Claude on #430): a
+    single secret's name, or None for a reference that names none, such as the
+    whole context, which reaches every secret."""
 
-    if isinstance(node, dict):
-        for key, value in node.items():
-            yield from _strings(key)
-            yield from _strings(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _strings(value)
-    elif isinstance(node, str):
-        yield node
-
-
-def _secret_references(node: object) -> set[str]:
-    """Every reference to the `secrets` context in a loaded document: a secret's name
-    for `secrets.<name>`, and the text itself for any other form, such as an index,
-    the whole context or another case, which no set of names admits (CodeAnt on
-    #430)."""
-
-    references = set()
-    for text in _strings(node):
-        for match in _SECRETS_CONTEXT.finditer(text):
-            named = _SECRET_NAME.match(text, match.start())
-            references.add(named.group(1) if named else text[match.start() :])
-    return references
+    return set(_expression_secrets(json.dumps(node, default=str)))
 
 
 def _forwarding_problems(caller: dict[str, Any], callee: dict[str, Any]) -> list[str]:
@@ -832,10 +813,10 @@ def _forwarding_problems(caller: dict[str, Any], callee: dict[str, Any]) -> list
     ]
     read = _secret_references(acquired)
     if len(acquired) != 1 or read != ANALYZER_SECRETS:
-        problems.append(f"the acquisition reads {sorted(read)!r}")
+        problems.append(f"the acquisition reads {sorted(read, key=str)!r}")
     stray = _secret_references(elsewhere)
     if stray:
-        problems.append(f"the callee reads {sorted(stray)!r} elsewhere")
+        problems.append(f"the callee reads {sorted(stray, key=str)!r} elsewhere")
     return problems
 
 
