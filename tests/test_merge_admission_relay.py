@@ -1215,12 +1215,14 @@ class CommandTests(unittest.TestCase):
         relay.parser().parse_args(complete)
         for option in ("--work-dir", "--evaluated", "--output"):
             errors = io.StringIO()
+            parsing = relay.parser()
+            argv = [*complete, option, "/x"]
             with (
                 self.subTest(option=option),
                 redirect_stderr(errors),
                 self.assertRaises(SystemExit) as raised,
             ):
-                relay.parser().parse_args([*complete, option, "/x"])
+                parsing.parse_args(argv)
             self.assertEqual(2, raised.exception.code)
             self.assertIn(f"unrecognized arguments: {option}", errors.getvalue())
         # Every command, given every option it takes, holds no path in what it parsed.
