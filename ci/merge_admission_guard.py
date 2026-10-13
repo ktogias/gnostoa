@@ -318,7 +318,10 @@ def guard(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     poll_seconds: float = 15.0,
-    deadline_seconds: float = 1800.0,
+    # The admission's critical path, each job's own limit, 55 minutes, and a margin:
+    # a deadline refusal means the run did not finish within its limits (CodeAnt on
+    # #426).
+    deadline_seconds: float = 3600.0,
 ) -> dict[str, Any]:
     """PROCEED only for a current, correlated admission of the approved head."""
 

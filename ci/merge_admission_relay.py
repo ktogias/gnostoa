@@ -57,6 +57,7 @@ from tools.merge_admission_checks import (
     app_latest,
     canonical,
     comparable,
+    correlation_of,
     correlation_text,
     digest,
     matches,
@@ -129,7 +130,7 @@ def _inert(text: str) -> str:
     characters."""
 
     budget = _MAX_SUMMARY - _SUMMARY_FRAME
-    # The shortest fences and the info string take 12 characters: room for them.
+    # The shortest fences and the info string take 12 characters; 16 leaves a margin.
     block = neutralise(_bounded(text, budget - 16))
     if len(block) <= budget:
         return block
@@ -249,7 +250,9 @@ def plan(
     return {
         "action": "PUBLISH" if unchanged else "SUPERSEDED",
         "subject": subject,
-        "head_sha": head,
+        # The selected head, where the invalidation's pending run is: an evaluation
+        # of another head is superseded there, never written to it (CodeAnt on #426).
+        "head_sha": head if expected_head is None else expected_head,
         "conclusion": conclusion,
         "title": _bounded(title, _MAX_TITLE),
         "summary": _bounded(summary, _MAX_SUMMARY),
@@ -349,7 +352,16 @@ def _post(
             raise PublicationError(
                 "UNKNOWN", "the write's outcome is unknown and no such run is listed"
             ) from exc
-        return _verified(found, head, app_id, expected)
+        # Unchanged evidence gives an older run the same external id, so the run
+        # listed is this one only if it carries this run's correlation too, read
+        # natively by its id (CodeAnt on #426).
+        listed = read_run(client, repository, int(run_id(found) or 0))
+        if correlation_of(listed) != correlation_of({"output": payload.get("output")}):
+            raise PublicationError(
+                "UNKNOWN",
+                "the write's outcome is unknown and the run listed is another's",
+            ) from exc
+        return _verified(listed, head, app_id, expected)
     identifier = run_id(posted)
     if identifier is None:
         raise PublicationError("MISMATCH", "the provider's answer names no check run")

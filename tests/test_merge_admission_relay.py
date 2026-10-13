@@ -406,6 +406,18 @@ class SharedHeadTests(unittest.TestCase):
         same = _plan(evidence, copy.deepcopy(evidence), verdict, 0, expected_head=HEAD)
         self.assertEqual("PUBLISH", same["action"])
 
+    def test_a_superseded_evaluation_is_written_on_the_selected_head(self) -> None:
+        """CodeAnt on #426: the invalidation's pending run is on the head the run
+        selected, so the plan's writes go there too, never to the head the snapshots
+        moved to."""
+        evidence, verdict = _allowing()
+        planned = _plan(
+            evidence, copy.deepcopy(evidence), verdict, 0, expected_head=OTHER
+        )
+        self.assertEqual(
+            ("SUPERSEDED", OTHER), (planned["action"], planned["head_sha"])
+        )
+
     def test_a_population_that_changes_between_the_snapshots_supersedes(self) -> None:
         evidence, verdict = _allowing()
         for name, current in (
@@ -636,6 +648,37 @@ class InvalidationTests(unittest.TestCase):
             self._invalidate(provider)
         self.assertEqual("UNKNOWN", raised.exception.kind)
         self.assertEqual(1, len(provider.posts))
+
+    def test_a_lost_write_is_never_an_older_run_with_the_same_evidence(self) -> None:
+        """CodeAnt on #426: a dispatched denial over unchanged evidence shares its
+        external id with an older run. When its write's outcome is unknown, the older
+        run is not this one: without this run's correlation, nothing is claimed."""
+        relay = _relay()
+        planned = _planned("failure")
+        provider = _Provider(
+            [_run(91, conclusion="failure", external_id=planned["external_id"])]
+        )
+        provider.drop_write = True
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        with self.assertRaises(relay.PublicationError) as raised:
+            _publish(provider, planned, record)
+        self.assertEqual("UNKNOWN", raised.exception.kind)
+
+    def test_a_lost_write_is_never_another_post_of_this_run(self) -> None:
+        """The run listed after an unknown outcome is this write only if both its
+        external id and its correlation are this write's: a run carrying this run's
+        correlation under another external id is not it, and the outcome stays
+        unknown."""
+        relay = _relay()
+        planned = _planned("failure")
+        listed = _run(91, conclusion="failure", external_id="f" * 64)
+        listed["output"]["text"] = _checks().correlation_text(CORRELATION)
+        provider = _Provider([listed])
+        provider.drop_write = True
+        record = {"result": "NOT_NEEDED", "pending": None, "observed": 91}
+        with self.assertRaises(relay.PublicationError) as raised:
+            _publish(provider, planned, record)
+        self.assertEqual("UNKNOWN", raised.exception.kind)
 
     def test_a_refused_or_unread_invalidation_fails(self) -> None:
         relay = _relay()

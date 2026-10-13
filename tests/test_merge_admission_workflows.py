@@ -416,7 +416,7 @@ class AdmissionWorkflowTests(unittest.TestCase):
             if step.get("id") == "subject"
         ]
         self.assertEqual("${{ github.run_attempt }}", resolve["env"]["RUN_ATTEMPT"])
-        resolver = ReadbackSubjectTests._resolver()
+        resolver = _readback_resolver()
         subject = {"pull_number": "300", "head": HEAD}
         self.assertEqual(
             f"gnostoa-analyzer-readback-300-{HEAD}-2",
@@ -440,6 +440,29 @@ class AdmissionWorkflowTests(unittest.TestCase):
             "-${{ matrix.subject.head }}-${{ github.run_attempt }}",
             handoffs,
         )
+
+    def test_the_guard_waits_as_long_as_the_admission_may_run(self) -> None:
+        """CodeAnt on #426: the guard's deadline covers the admission's critical path,
+        each job's own limit, so a deadline refusal means the run did not complete
+        within its limits, never that a valid run was still finishing."""
+        import importlib.util
+        import inspect
+
+        jobs = _load(ADMISSION)["jobs"]
+        (call,) = _load(READBACK)["jobs"].values()
+        path = sum(
+            int(jobs[name]["timeout-minutes"])
+            for name in ("subjects", "invalidate", "admit")
+        ) + int(call["timeout-minutes"])
+        spec = importlib.util.spec_from_file_location(
+            "gnostoa_guard_deadline", ROOT / "ci" / "merge_admission_guard.py"
+        )
+        if spec is None or spec.loader is None:
+            raise AssertionError("the guard is unavailable")
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        default = inspect.signature(guard.guard).parameters["deadline_seconds"].default
+        self.assertGreaterEqual(default, path * 60)
 
     def test_invalidation_precedes_every_acquisition(self) -> None:
         jobs = _load(ADMISSION)["jobs"]
@@ -709,24 +732,25 @@ class ReadbackCallTests(unittest.TestCase):
         self.assertIn("inputs.admission", condition)
 
 
+def _readback_resolver() -> Any:
+    """The readback's secret-free subject resolver, loaded from its file."""
+    import importlib.util
+
+    path = ROOT / "ci" / "analyzer_readback_subject.py"
+    spec = importlib.util.spec_from_file_location("gnostoa_readback_subject", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("readback subject resolver is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class ReadbackSubjectTests(unittest.TestCase):
     """The admission run's call names its subject through the inputs, as an owner's
     dispatch does; the runner still re-reads the Pull Request."""
 
-    @staticmethod
-    def _resolver() -> Any:
-        import importlib.util
-
-        path = ROOT / "ci" / "analyzer_readback_subject.py"
-        spec = importlib.util.spec_from_file_location("gnostoa_readback_subject", path)
-        if spec is None or spec.loader is None:
-            raise AssertionError("readback subject resolver is unavailable")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
     def test_a_call_resolves_its_inputs(self) -> None:
-        resolver = self._resolver()
+        resolver = _readback_resolver()
         self.assertEqual(
             {"pull_number": "300", "head": HEAD},
             resolver.resolve(
@@ -739,7 +763,7 @@ class ReadbackSubjectTests(unittest.TestCase):
         )
 
     def test_a_call_without_an_exact_subject_binds_none(self) -> None:
-        resolver = self._resolver()
+        resolver = _readback_resolver()
         for name, environ in (
             ("no head", {"EVENT_NAME": "workflow_call", "DISPATCH_PULL": "300"}),
             (
