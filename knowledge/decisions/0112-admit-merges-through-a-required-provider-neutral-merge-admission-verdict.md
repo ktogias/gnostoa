@@ -153,7 +153,7 @@ provider-neutral public change-governance contract of
 
     No atomic provider guarantee follows from event coverage, the sweep, timestamps or a digest.
   - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
-  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case below. It also waits for two native read-backs: a pending run blocking R-main's App-pinned required check over an older success, and one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively.
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case below. It also waits for one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively. A pending run blocking R-main's App-pinned required check over an older success can be read only once the requirement exists, so it is proved after the entry is added, on an otherwise eligible pull request that is not a draft, and **before activation is declared complete** or any merge relies on MA0; until then Phase-1a governs (P2, #426 6138724140).
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no receipt, the reducer reports it `MISSING`.** So once the

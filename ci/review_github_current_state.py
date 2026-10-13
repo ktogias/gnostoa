@@ -2087,7 +2087,7 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
         selected = hints
     else:
         if _SHA40.fullmatch(head) is None:
-            raise SystemExit("the trigger run's head is not an exact commit")
+            raise SystemExit("subjects: the trigger run's head is not an exact commit")
         # An unreadable population refuses through L1's one clean refusal.
         population = _open_pulls(client, args.repository)
         heads = {item["number"]: item["head_sha"] for item in population}
@@ -2103,7 +2103,7 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
         selected = list(chosen.values())
     if len(selected) > _MAX_OPEN_PULLS:
         raise SystemExit(
-            "selected Pull Request population exceeds bounded reconciliation capacity"
+            "subjects: selected Pull Request population exceeds bounded reconciliation capacity"
         )
     return selected
 

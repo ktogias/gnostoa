@@ -1110,8 +1110,20 @@ class GuardLaunchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source = self._source(root, tracked_startup=True)
-            version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-            user_site = root / "home" / ".local" / "lib" / version / "site-packages"
+            # The user site of the launch's own python3, which may not be the test
+            # runner's version (CodeAnt on #426).
+            python = shutil.which("python3", path=_guard().TRUSTED_PATH)
+            assert python is not None  # nosec B101 -- _needs_host_venv found it
+            user_site = Path(
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [python, "-c", "import site; print(site.getusersitepackages())"],
+                    env={"PATH": _guard().TRUSTED_PATH, "HOME": str(root / "home")},
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+            )
+            self.assertTrue(user_site.is_relative_to(root / "home"))
             user_site.mkdir(parents=True)
             (user_site / "usercustomize.py").write_text(
                 _STARTUP_MODULE, encoding="utf-8"

@@ -2024,7 +2024,9 @@ class CommandTests(unittest.TestCase):
     def test_the_command_s_evidence_is_the_shared_function_s(self) -> None:
         """#426 round 2: the guarded merge rebuilds the evidence through the function
         the command calls, from the same protected inputs. A factor, not a copy."""
-        for analyzer in (None, {"schema": "not a bundle"}):
+        # Each case's exit is exact (CodeAnt on #426): an unrelated failure of the
+        # command never passes for the malformed bundle's.
+        for analyzer, expected in ((None, 0), ({"schema": "not a bundle"}, 2)):
             with (
                 self.subTest(analyzer=analyzer),
                 tempfile.TemporaryDirectory() as directory,
@@ -2037,7 +2039,8 @@ class CommandTests(unittest.TestCase):
                         json.dumps(analyzer), encoding="utf-8"
                     )
                     options = ["--analyzer-readback", "bundle.json"]
-                code, out, _ = _run(project, json.dumps(snapshot), *options)
+                code, out, err = _run(project, json.dumps(snapshot), *options)
+                self.assertEqual(expected, code, err)
                 if code != 0:
                     with self.assertRaises(merge_evidence_github.MergeEvidenceError):
                         merge_evidence_github.evidence_for(

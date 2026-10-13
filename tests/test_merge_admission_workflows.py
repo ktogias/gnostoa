@@ -688,11 +688,32 @@ class ActivationRunbookTests(unittest.TestCase):
         GitHub stopped using an older success, and the dispatch's run id is not yet
         exercised here. Both are read back natively before activation."""
         step = self._steps()["4"]
-        self.assertIn("a pending run over an older success", step)
-        self.assertIn("App-pinned", step)
         # G1: the dispatch names no run; its nonce, in the run's record, does.
         self.assertIn("nonce", step)
         self.assertIn("`repository_dispatch`", step)
+        # P2 (the Router on #426, 6138724140): a required check can block only once
+        # it is required, so the pending proof is step 6's own verification, never
+        # step 4's.
+        self.assertNotIn("a pending run over an older success", step)
+        activation = self._steps()["6"]
+        for part in (
+            "a pending run over an older success",
+            "App-pinned",
+            "pre-operation",
+            "otherwise eligible",
+            "not a draft",
+            "every other blocker",
+            "never merged",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, activation)
+        decision = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("before activation is declared complete", decision)
 
     def test_the_launch_says_what_runs_at_the_guard_s_startup(self) -> None:
         """CodeAnt on #426: `-I` still runs the environment's `.pth` startup hooks, such
