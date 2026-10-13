@@ -175,6 +175,9 @@ class TriggerWorkflowTests(unittest.TestCase):
         )
         # cubic on #426: a draft is denied (M1), so turning one back into a draft
         # changes the verdict.
+        # Codex and CodeAnt on #426: closing one of two pull requests at a head ends
+        # H1's shared-head failure, so its event wakes the relay, which evaluates the
+        # open pull requests left at that head.
         self.assertLessEqual(
             {
                 "opened",
@@ -183,6 +186,7 @@ class TriggerWorkflowTests(unittest.TestCase):
                 "synchronize",
                 "ready_for_review",
                 "converted_to_draft",
+                "closed",
             },
             set(events["pull_request"]["types"]),
         )
@@ -210,7 +214,9 @@ class TriggerWorkflowTests(unittest.TestCase):
         (step,) = _steps(job)
         self.assertEqual(UPLOAD_ACTION, step["uses"])
         self.assertEqual("${{ github.event_path }}", step["with"]["path"])
-        self.assertEqual("merge-admission-event", step["with"]["name"])
+        self.assertEqual(
+            "merge-admission-event-${{ github.run_attempt }}", step["with"]["name"]
+        )
         self.assertEqual("error", step["with"]["if-no-files-found"])
 
     def test_the_wake_job_leaves_comments_to_the_relay(self) -> None:
@@ -353,13 +359,86 @@ class AdmissionWorkflowTests(unittest.TestCase):
             " && github.event.workflow_run.event == 'issue_comment'",
             _normalized(download["if"]),
         )
-        self.assertEqual("merge-admission-event", download["with"]["name"])
+        self.assertEqual(
+            "merge-admission-event-${{ github.event.workflow_run.run_attempt }}",
+            download["with"]["name"],
+        )
         self.assertEqual(
             "${{ github.event.workflow_run.id }}", download["with"]["run-id"]
         )
         self.assertEqual("${{ github.token }}", download["with"]["github-token"])
         self.assertEqual(
             "${{ runner.temp }}/gnostoa-merge-admission-relay", download["with"]["path"]
+        )
+
+    def test_every_handoff_is_scoped_to_its_run_attempt(self) -> None:
+        """Codex on #426: a re-run keeps the workflow run and increments its attempt,
+        and an artifact's name cannot be reused within the run. Every handoff names its
+        attempt, so no upload collides with an earlier attempt's, and no attempt reads
+        another's invalidation record, readback or comment event."""
+        jobs = _load(ADMISSION)["jobs"]
+        handoffs = [
+            str(step["with"]["name"])
+            for job in jobs.values()
+            for step in _steps(job)
+            if step.get("uses") in (UPLOAD_ACTION, DOWNLOAD_ACTION)
+        ]
+        self.assertEqual(5, len(handoffs))
+        for name in handoffs:
+            with self.subTest(name=name):
+                attempt = (
+                    "-${{ github.event.workflow_run.run_attempt }}"
+                    if name.startswith("merge-admission-event")
+                    else "-${{ github.run_attempt }}"
+                )
+                self.assertTrue(name.endswith(attempt), name)
+        (relayed,) = [
+            step
+            for step in _steps(_load(TRIGGER)["jobs"]["relay-comment"])
+            if step.get("uses") == UPLOAD_ACTION
+        ]
+        self.assertEqual(
+            "merge-admission-event-${{ github.run_attempt }}", relayed["with"]["name"]
+        )
+        (readback,) = [
+            step
+            for step in _steps(_load(READBACK)["jobs"]["readback"])
+            if step.get("name") == "Upload non-secret analyzer readback"
+        ]
+        # The readback's secret-free resolver names it: the admission point's call
+        # names its attempt; a readback of its own keeps the name its readers use.
+        self.assertEqual(
+            "${{ steps.subject.outputs.artifact }}", readback["with"]["name"]
+        )
+        (resolve,) = [
+            step
+            for step in _steps(_load(READBACK)["jobs"]["readback"])
+            if step.get("id") == "subject"
+        ]
+        self.assertEqual("${{ github.run_attempt }}", resolve["env"]["RUN_ATTEMPT"])
+        resolver = ReadbackSubjectTests._resolver()
+        subject = {"pull_number": "300", "head": HEAD}
+        self.assertEqual(
+            f"gnostoa-analyzer-readback-300-{HEAD}-2",
+            resolver.artifact(
+                {"EVENT_NAME": "workflow_call", "RUN_ATTEMPT": "2"}, subject
+            ),
+        )
+        self.assertEqual(
+            f"gnostoa-analyzer-readback-300-{HEAD}",
+            resolver.artifact(
+                {"EVENT_NAME": "workflow_run", "RUN_ATTEMPT": "2"}, subject
+            ),
+        )
+        for attempt in ("", "0", "02", "2\n", "two"):
+            with self.subTest(attempt=attempt), self.assertRaises(ValueError):
+                resolver.artifact(
+                    {"EVENT_NAME": "workflow_call", "RUN_ATTEMPT": attempt}, subject
+                )
+        self.assertIn(
+            "gnostoa-analyzer-readback-${{ matrix.subject.pull_number }}"
+            "-${{ matrix.subject.head }}-${{ github.run_attempt }}",
+            handoffs,
         )
 
     def test_invalidation_precedes_every_acquisition(self) -> None:
@@ -373,7 +452,7 @@ class AdmissionWorkflowTests(unittest.TestCase):
         self.assertEqual(1, len(record))
         self.assertEqual(
             "gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}"
-            "-${{ matrix.subject.head }}",
+            "-${{ matrix.subject.head }}-${{ github.run_attempt }}",
             record[0]["with"]["name"],
         )
         fetched = [
@@ -897,6 +976,27 @@ class L1ModeTests(unittest.TestCase):
                 "--event",
                 "--pull-number",
                 "307",
+                "--workflow-run-head-sha",
+                HEAD,
+            ),
+        )
+
+    def test_a_closed_peer_s_event_evaluates_the_survivor_at_its_head(self) -> None:
+        """A `closed` event names the closed pull request, which L1 drops, and the
+        trigger run's head, where the survivor is: the survivor is the subject."""
+        replies = _replies()
+        listing = f"{API}/pulls?state=open&per_page=100"
+        replies[listing] = ([self._open(300, HEAD)], {})
+        closed = self._open(301, HEAD)
+        closed["state"] = "closed"
+        replies[f"{API}/pulls/301"] = (closed, {})
+        self.assertEqual(
+            (0, [{"pull_number": 300, "head": HEAD}]),
+            self._subjects(
+                replies,
+                "--event",
+                "--workflow-run-pulls-json",
+                json.dumps([{"number": 301, "head": {"sha": HEAD}}]),
                 "--workflow-run-head-sha",
                 HEAD,
             ),

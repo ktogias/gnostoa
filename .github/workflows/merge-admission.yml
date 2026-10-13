@@ -38,6 +38,13 @@ on:
 permissions: {}
 
 # Admissions queue, one at a time, and none is cancelled, as the readback's do.
+#
+# Every artifact handoff names its run attempt (Codex on #426): a re-run keeps the
+# workflow run and increments the attempt, and a name cannot be reused within a run,
+# so no upload collides with an earlier attempt's and no attempt reads another's
+# record or readback. A re-run of failed jobs alone finds no record of its own: the
+# relay then writes nothing for a scheduled run, or records a dispatched run's
+# failure, and the next run recovers.
 concurrency:
   group: gnostoa-merge-admission
   cancel-in-progress: false
@@ -100,7 +107,7 @@ jobs:
         if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'issue_comment'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: merge-admission-event
+          name: merge-admission-event-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/gnostoa-merge-admission-relay
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
@@ -220,7 +227,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gnostoa-merge-admission/pending.json
           if-no-files-found: warn
 
@@ -299,14 +306,14 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: gnostoa-analyzer-readback-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          name: gnostoa-analyzer-readback-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gnostoa-merge-admission-readback
       # This run's own invalidation record; data, never executed.
       - name: Download the invalidation record
         continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          name: gnostoa-merge-admission-pending-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gnostoa-merge-admission
       # Evaluate, then read the subject and the open population again and rebuild the
       # evidence: the relay publishes only if the two agree, observation times aside.
@@ -378,7 +385,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-merge-admission-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}
+          name: gnostoa-merge-admission-${{ matrix.subject.pull_number }}-${{ matrix.subject.head }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/gnostoa-merge-admission/*-evidence.json
             ${{ runner.temp }}/gnostoa-merge-admission/*-population.json

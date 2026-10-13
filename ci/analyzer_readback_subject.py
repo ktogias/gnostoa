@@ -16,6 +16,11 @@ value is validated before it is printed, so no field can add an output of its ow
 - `repository_dispatch`: `REQUEST_PULL`, `REQUEST_HEAD`, from the request's payload.
 - `workflow_run`: `RUN_PULLS`, the run's `pull_requests` as JSON, and `RUN_HEAD`. A
   run with no Pull Request, as a fork's, or with more than one binds none.
+
+It also prints the artifact's name, `artifact`: Decision 0107's
+`gnostoa-analyzer-readback-<pull>-<head>`, and for the merge-admission run's call its
+run attempt too (`RUN_ATTEMPT`), since a re-run keeps the run and an artifact's name
+cannot be reused within it (Codex on #426).
 """
 
 from __future__ import annotations
@@ -61,13 +66,27 @@ def resolve(environ: Mapping[str, str]) -> dict[str, str]:
     return {"pull_number": str(pull), "head": head}
 
 
+def artifact(environ: Mapping[str, str], subject: Mapping[str, str]) -> str:
+    """The readback artifact's name for ``subject``: the merge-admission run's call
+    names its run attempt, so a re-run's upload never collides with an earlier
+    attempt's, and the admission reads only its own attempt's readback."""
+    name = f"gnostoa-analyzer-readback-{subject['pull_number']}-{subject['head']}"
+    if environ.get("EVENT_NAME", "") != "workflow_call":
+        return name
+    attempt = environ.get("RUN_ATTEMPT", "")
+    if _PULL_NUMBER.fullmatch(attempt) is None:
+        raise ValueError("the call's run attempt must be a positive decimal integer")
+    return f"{name}-{attempt}"
+
+
 def main() -> int:
     try:
         subject = resolve(os.environ)
+        outputs = {**subject, "artifact": artifact(os.environ, subject)}
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    for key, value in subject.items():
+    for key, value in outputs.items():
         print(f"{key}={value}")
     return 0
 

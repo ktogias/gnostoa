@@ -18,8 +18,11 @@ name: Merge admission trigger
 # is acquired at the next supported event, the owner's review, the guard's own
 # dispatch or the sweep; until then the required check may show an earlier verdict.
 on:
+  # `closed`: closing one of two pull requests at a head ends H1's shared-head failure;
+  # the relay evaluates the open pull requests left at that head (Codex and CodeAnt
+  # on #426).
   pull_request:
-    types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft]
+    types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft, closed]
   pull_request_review:
     types: [submitted, edited, dismissed]
   # A thread's only comment, deleted, removes the thread, an unresolved one included
@@ -57,7 +60,7 @@ jobs:
       - name: Relay the event GitHub delivered
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: merge-admission-event
+          name: merge-admission-event-${{ github.run_attempt }}
           path: ${{ github.event_path }}
           if-no-files-found: error
           retention-days: 1

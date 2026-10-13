@@ -1158,8 +1158,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             steps[upload]["uses"],
         )
         self.assertEqual(
-            "gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}"
-            "-${{ steps.subject.outputs.head }}",
+            "${{ steps.subject.outputs.artifact }}",
             steps[upload]["with"]["name"],
         )
         # An event's own fields reach no step but the secret-free resolver.
@@ -1861,8 +1860,30 @@ class SubjectResolutionTests(unittest.TestCase):
                     "REQUEST_PULL": "384",
                     "REQUEST_HEAD": HEAD,
                 },
-                f"pull_number=384\nhead={HEAD}\n",
+                f"pull_number=384\nhead={HEAD}\n"
+                f"artifact=gnostoa-analyzer-readback-384-{HEAD}\n",
                 0,
+            ),
+            (
+                {
+                    "EVENT_NAME": "workflow_call",
+                    "DISPATCH_PULL": "384",
+                    "DISPATCH_HEAD": HEAD,
+                    "RUN_ATTEMPT": "3",
+                },
+                f"pull_number=384\nhead={HEAD}\n"
+                f"artifact=gnostoa-analyzer-readback-384-{HEAD}-3\n",
+                0,
+            ),
+            (
+                {
+                    "EVENT_NAME": "workflow_call",
+                    "DISPATCH_PULL": "384",
+                    "DISPATCH_HEAD": HEAD,
+                    "RUN_ATTEMPT": "3\nhead=x",
+                },
+                "",
+                2,
             ),
             (
                 {"EVENT_NAME": "workflow_run", "RUN_PULLS": "[]", "RUN_HEAD": HEAD},

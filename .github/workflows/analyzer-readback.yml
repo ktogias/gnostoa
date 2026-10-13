@@ -101,6 +101,7 @@ jobs:
           REQUEST_HEAD: ${{ github.event.client_payload.head }}
           RUN_PULLS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -eu
           PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
@@ -136,6 +137,8 @@ jobs:
         if: ${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}
+          # Named by the secret-free resolver: Decision 0107's name, and for the
+          # admission point's call its run attempt too (Codex on #426).
+          name: ${{ steps.subject.outputs.artifact }}
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
           if-no-files-found: error
