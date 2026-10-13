@@ -215,10 +215,11 @@ class GitHubRestClient(github_rest.GitHubRestClient):
         payload: dict[str, Any] | None = None,
         *,
         read: bool = False,
+        empty: bool = False,
     ) -> tuple[Any, dict[str, str]]:
         """Make one attempt, failing under this adapter's error names."""
         try:
-            return super()._request(method, url, payload, read=read)
+            return super()._request(method, url, payload, read=read, empty=empty)
         except github_rest.GitHubError as error:
             raise _translated(error) from error
 
@@ -1694,19 +1695,48 @@ def _workflow_run_pull_numbers(raw: str) -> list[int]:
         raise ProviderReadError(str(exc)) from exc
 
 
-def _open_pull_numbers(
+def _open_pull_listing(
     client: JsonReader,
     repository: str,
-) -> list[int]:
+) -> list[dict[str, Any]]:
+    """Every open Pull Request of the repository with its head, from one complete
+    enumeration, whatever its author, fork or target. An enumeration that is not
+    COMPLETE is refused."""
     root = f"{_API_ROOT}/repos/{repository}"
     pulls, coverage = _collect_pages(
         client,
         f"{root}/pulls?state=open&per_page=100",
-        normalize=lambda item: {"number": _normalize_pull(item)["number"]},
+        normalize=lambda item: {
+            key: _normalize_pull(item)[key] for key in ("number", "head_sha")
+        },
     )
     if coverage["status"] != "COMPLETE":
         raise ProviderReadError("open Pull Request enumeration is incomplete")
-    return sorted({item["number"] for item in pulls})
+    return pulls
+
+
+def _open_pulls(
+    client: JsonReader,
+    repository: str,
+) -> list[dict[str, Any]]:
+    """The open population, each Pull Request once with its head (H1 on #426). A
+    number listed at two heads contradicts itself, so it is refused rather than
+    reconciled; one listed twice at one head, as an overlapping page lists it, is
+    kept once."""
+    heads: dict[int, str] = {}
+    for item in _open_pull_listing(client, repository):
+        if heads.setdefault(item["number"], item["head_sha"]) != item["head_sha"]:
+            raise ProviderReadError(
+                "open Pull Request enumeration lists a number at two heads"
+            )
+    return [{"number": number, "head_sha": heads[number]} for number in sorted(heads)]
+
+
+def _open_pull_numbers(
+    client: JsonReader,
+    repository: str,
+) -> list[int]:
+    return sorted({item["number"] for item in _open_pull_listing(client, repository)})
 
 
 def _select_scheduled_pull_batch(
@@ -1938,10 +1968,16 @@ def _emit_publication_results(results: list[dict[str, Any]]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("collect", "publish"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("collect", "publish", "subjects", "merge-evidence", "open-heads"),
+        required=True,
+    )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pull-number", type=int, action="append", default=[])
     parser.add_argument("--workflow-run-pulls-json", default="")
+    parser.add_argument("--event", action="store_true")
+    parser.add_argument("--workflow-run-head-sha", default=None)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--run-id", type=int, default=0)
@@ -1964,12 +2000,9 @@ def _collection_summary(lines: list[str]) -> None:
         )
 
 
-def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
-    """Collect a projection for each selected Pull Request and write the payload."""
-    if args.output is None:
-        raise SystemExit("--output is required for collect")
-    if args.run_id <= 0 or args.run_attempt <= 0:
-        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+def _selected_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """The Pull Requests a run reconciles: the event's hints, else the scheduled
+    batch of the open population, within the bounded capacity."""
     pulls = list(
         dict.fromkeys(
             [
@@ -1987,6 +2020,16 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
         raise SystemExit(
             "selected Pull Request population exceeds bounded reconciliation capacity"
         )
+    return pulls
+
+
+def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Collect a projection for each selected Pull Request and write the payload."""
+    if args.output is None:
+        raise SystemExit("--output is required for collect")
+    if args.run_id <= 0 or args.run_attempt <= 0:
+        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+    pulls = _selected_pulls(args, client)
     entries = []
     for number in pulls:
         try:
@@ -2026,6 +2069,113 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     return 0
 
 
+def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """An event run's subjects: the event's hints and, for a pull request's event,
+    every open Pull Request at the trigger run's own head, which GitHub leaves out of
+    a fork's run (CodeAnt on #426; github/docs#22501). An event run never falls back
+    to the scheduled sweep."""
+    hints = list(
+        dict.fromkeys(
+            [
+                *args.pull_number,
+                *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+            ]
+        )
+    )
+    head = args.workflow_run_head_sha
+    if head is None:
+        selected = hints
+    else:
+        if _SHA40.fullmatch(head) is None:
+            raise SystemExit("subjects: the trigger run's head is not an exact commit")
+        # An unreadable population refuses through L1's one clean refusal.
+        population = _open_pulls(client, args.repository)
+        heads = {item["number"]: item["head_sha"] for item in population}
+        at_head = sorted(number for number, at in heads.items() if at == head)
+        # A check run belongs to a commit: one subject evaluates it for every pull
+        # request at that head, and H1's failure names them all when it is shared, so
+        # however many share it nothing aborts before it is evaluated (CodeAnt and
+        # Claude on #426). A hinted pull request is the one chosen; a hint the
+        # listing does not show yet keeps its own place, and is re-read.
+        chosen: dict[str, int] = {}
+        for number in [*hints, *at_head]:
+            chosen.setdefault(heads.get(number, f"#{number}"), number)
+        selected = list(chosen.values())
+    if len(selected) > _MAX_OPEN_PULLS:
+        raise SystemExit(
+            "subjects: selected Pull Request population exceeds bounded reconciliation capacity"
+        )
+    return selected
+
+
+def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the open Pull Requests the merge-admission relay evaluates, each with
+    its head as GitHub reports it now (#407, slice 1b.4). An event's numbers are
+    hints only: each is re-read, and a closed one is no subject."""
+    if args.output is None:
+        raise SystemExit("--output is required for subjects")
+    selected = (
+        _event_pulls(args, client) if args.event else _selected_pulls(args, client)
+    )
+    subjects = []
+    for number in selected:
+        document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
+        pull = _normalize_pull(document)
+        if pull["number"] != number:
+            raise ProviderReadError("the pull request read is not the one asked for")
+        if pull["state"] == "open":
+            subjects.append({"pull_number": number, "head": pull["head_sha"]})
+    args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def _open_heads_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the complete open population with each head, the population the
+    merge-admission relay binds a success to (H1 on #426). Nothing is written when
+    the enumeration is incomplete."""
+    if args.output is None:
+        raise SystemExit("--output is required for open-heads")
+    pulls = _open_pulls(client, args.repository)
+    population = {
+        "coverage": "COMPLETE",
+        "pulls": [
+            {"pull_number": item["number"], "head": item["head_sha"]} for item in pulls
+        ],
+    }
+    args.output.write_text(json.dumps(population, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write one Pull Request's merge-evidence snapshot, the document `knowledge
+    merge-evidence` reads (#407, slice 1b.4), bounded as that command bounds its
+    input. Nothing is written when the read fails."""
+    if args.output is None:
+        raise SystemExit("--output is required for merge-evidence")
+    if len(args.pull_number) != 1 or args.workflow_run_pulls_json:
+        raise SystemExit("merge-evidence reads exactly one --pull-number")
+    snapshot = collect_snapshot(
+        client,
+        repository=args.repository,
+        pull_number=args.pull_number[0],
+        observed_at=None,
+        merge_evidence=True,
+    )
+    # Imported here, not at module level: `knowledge merge-evidence`'s bound pulls in
+    # PyYAML and jsonschema, which L1's own `publish` job does not install, while
+    # this mode runs only where the runtime lock is installed (CodeAnt on #426).
+    from tools.verdict_cli import MAX_INPUT_BYTES
+
+    encoded = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    if len(encoded) > MAX_INPUT_BYTES:
+        raise SystemExit("the merge-evidence snapshot exceeds its bounded size")
+    with args.output.open("xb") as handle:
+        handle.write(encoded)
+    return 0
+
+
 def _publish_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Publish each collected projection, isolating one entry's failure."""
     if args.payload is None:
@@ -2053,9 +2203,19 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     client = GitHubRestClient(token)
-    if args.mode == "collect":
-        return _collect_mode(args, client)
-    return _publish_mode(args, client)
+    modes = {
+        "collect": _collect_mode,
+        "subjects": _subjects_mode,
+        "merge-evidence": _merge_evidence_mode,
+        "open-heads": _open_heads_mode,
+    }
+    try:
+        return modes.get(args.mode, _publish_mode)(args, client)
+    except ProviderReadError as exc:
+        # One clean refusal for every mode: a read GitHub contradicts stops the mode
+        # with its reason, never a traceback, and nothing is written (Claude and
+        # CodeAnt on #426).
+        raise SystemExit(f"{args.mode}: {exc}") from exc
 
 
 if __name__ == "__main__":

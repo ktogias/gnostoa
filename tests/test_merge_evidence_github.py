@@ -2021,6 +2021,45 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual(2, code, err)
                 self.assertIn(message, err)
 
+    def test_the_command_s_evidence_is_the_shared_function_s(self) -> None:
+        """#426 round 2: the guarded merge rebuilds the evidence through the function
+        the command calls, from the same protected inputs. A factor, not a copy."""
+        # Each case's exit is exact (CodeAnt on #426): an unrelated failure of the
+        # command never passes for the malformed bundle's.
+        for analyzer, expected in ((None, 0), ({"schema": "not a bundle"}, 2)):
+            with (
+                self.subTest(analyzer=analyzer),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                project = _project(Path(directory))
+                snapshot = _snapshot()
+                options: list[str] = []
+                if analyzer is not None:
+                    (project / "bundle.json").write_text(
+                        json.dumps(analyzer), encoding="utf-8"
+                    )
+                    options = ["--analyzer-readback", "bundle.json"]
+                code, out, err = _run(project, json.dumps(snapshot), *options)
+                self.assertEqual(expected, code, err)
+                if code != 0:
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        merge_evidence_github.evidence_for(
+                            snapshot, project_root=project, analyzer_readback=analyzer
+                        )
+                    continue
+                self.assertEqual(
+                    json.loads(out),
+                    json.loads(
+                        json.dumps(
+                            merge_evidence_github.evidence_for(
+                                snapshot,
+                                project_root=project,
+                                analyzer_readback=analyzer,
+                            )
+                        )
+                    ),
+                )
+
     def test_the_knowledge_cli_routes_merge_evidence(self) -> None:
         from tools import cli
 

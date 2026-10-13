@@ -255,7 +255,8 @@ owner.
 
 The procedure needs `gh`, `git`, `jq`, `curl`, `openssl`, `python3`, `cat`, `cmp`, `rm` and
 `mktemp` on the fixed system path below, besides the system's `/usr/bin/env` and
-`/bin/sh`. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
+`/bin/sh`. `python3` must provide `venv` with its bundled `pip`; the guard's own
+dependencies are installed by `guard_merge`, never taken from the host. `jq` runs in the calling shell, from the host's trusted `PATH`, and reads
 the list of reviews outside the guarded body, so it never holds a token.
 
 **Temporary debt.** `as_app`, `as_machine_user`, break glass's isolated shell and the
@@ -325,6 +326,58 @@ written here.
         && GH_TOKEN=$(cat ~/.config/gnostoa-agent/machine-user-token) \
         && test -n "$GH_TOKEN" && export GH_TOKEN && gh "$@"
     ' as_machine_user "$@"
+  }
+  ```
+- `guard_merge` launches the merge-admission guard (step 8, once `merge-admission`
+  is required) in the same fresh shell, and trusts nothing in the directory it is
+  started from or in any Git configuration. Before any credential exists, it clones
+  protected `main` afresh from the provider, one commit deep, loading no global or
+  system configuration and running no hook, into a repository with no configuration
+  of its own, and the clone must succeed. A checkout's own state cannot vouch for itself: its configuration can name
+  a monitor that runs programs, or a clean filter that makes modified bytes look
+  committed to `git status` (the PAO on #426, 6132349006; Codex and CodeAnt). Only
+  the guard's dependencies installed, still before the token: exactly what the
+  clone's `requirements/runtime.lock` pins, wheels only and every hash checked, as
+  the runtime image installs them, into a virtual environment of the launch's own
+  that nothing else uses, and the install reads no configuration: `--isolated` skips
+  the user's and the `PIP_*` variables, and `PIP_CONFIG_FILE=/dev/null` the global
+  and the environment's own `pip.conf`, which `--isolated` still reads (CodeAnt on
+  #426); the install
+  must succeed (Codex on #426). Only then is the token minted. The guard runs from
+  that clone with that environment's interpreter, isolated (`-I`), so nothing from
+  the caller's directory, the user's site packages or the environment's `PYTHON*`
+  variables runs at its startup. The environment's own `.pth` startup hooks do run:
+  they come only from the packages the lock pins by hash, into an environment the
+  launch created, such as the pinned coverage package's, which acts only when
+  `COVERAGE_PROCESS_START` or `COVERAGE_PROCESS_CONFIG` is set, and the launch's
+  `env -i` sets neither (CodeAnt on #426). The guard adds the clone to its own path
+  afterwards, writes no bytecode, and checks the clone's revision against protected
+  `main` by the API:
+  ```sh
+  guard_merge() {
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
+      HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" /bin/sh -c '
+      cleanup() { unset GH_TOKEN; rm -rf -- "$created"; }
+      trap "exit 130" INT
+      trap "exit 143" TERM
+      trap "exit 129" HUP
+      created=$(mktemp -d) || exit
+      trap cleanup EXIT
+      GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git -c core.hooksPath=/dev/null \
+        clone --quiet --depth 1 --branch main --single-branch --no-tags \
+        https://github.com/ktogias/gnostoa.git "$created/main" || exit
+      cd "$created/main" || exit
+      python3 -I -m venv "$created/venv" \
+        && PIP_CONFIG_FILE=/dev/null "$created/venv/bin/python" -I -m pip --isolated \
+        --disable-pip-version-check \
+        install --quiet --no-cache-dir --only-binary=:all: --require-hashes \
+        -r requirements/runtime.lock || exit
+      GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \
+        && test -n "$GH_TOKEN" && export GH_TOKEN \
+        && "$created/venv/bin/python" -I -B -X pycache_prefix="$created/cache" \
+        ci/merge_admission_guard.py "$@"
+    ' guard_merge "$@"
   }
   ```
 - Every helper and the token file are named by their full path, so they work from
@@ -408,8 +461,46 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    as_app pr view <N> --json title --jq .title > <current-subject> && cmp -s <current-subject> <checked-subject>
    as_app pr view <N> --json body --jq .body > <current-body> && cmp -s <current-body> <checked-body>
    ```
+   **After `merge-admission` is required** (MA0 1b.4 activated), the merge obtains
+   an admission of its own first (F1 part 3, #426 6130207025). After the reads above,
+   the App runs the guard through `guard_merge` (Credentials), from any directory,
+   and merges only on its `PROCEED`, at once. `guard_merge` clones protected `main`
+   afresh before minting the token, and runs the guard from that clone:
+   ```sh
+   guard_merge --repository ktogias/gnostoa --pull-number <N> \
+     --approved <approved> --app-id <gnostoa-ma0's App ID>
+   ```
+   It requests `merge-admission.yml` for `<N>` by `repository_dispatch`
+   (`gnostoa-merge-admission`), with the App's own `contents: write` and a fresh
+   128-bit nonce (G1, #426 6132395441). GitHub accepts it with an empty `204` and names
+   no run, so the guard finds the run through the nonce in the pinned App's record,
+   never through time; a lost answer is reconciled by the same nonce, never sent
+   again. It refuses unless:
+   - `gnostoa-ma0`'s latest check on `<approved>` carries this nonce, and no newer
+     record without it has overtaken it;
+   - the run it names is the protected workflow's, by `repository_dispatch`, on
+     `main` at the revision the checkout holds, at the attempt the record names, and
+     succeeded;
+   - re-read, that check is a completed success naming that run, its attempt, that
+     revision and this nonce, with the evaluation's digest;
+   - the subject re-read now rebuilds the digest the run recorded, and the open
+     population shows `<N>` alone at `<approved>`;
+   - neither the pull request nor `main` moved.
+
+   It never merges itself. On its `PROCEED`, the App reads the head, the title and
+   the body once more and compares them as above, since the guard can wait up to an
+   hour and an edit in that time moves no head (CodeAnt on #426):
+   ```sh
+   as_app pr view <N> --json headRefOid --jq .headRefOid
+   as_app pr view <N> --json title --jq .title > <current-subject> && cmp -s <current-subject> <checked-subject>
+   as_app pr view <N> --json body --jq .body > <current-body> && cmp -s <current-body> <checked-body>
+   ```
+   What is left is the window from those last reads to the merge, and an analyzer
+   change after the run's readback (Decision 0112).
+
    Stop unless `<approved>`, the PR's head and the seal are one SHA, and both
-   comparisons succeed. GitHub closes an issue that a closing keyword in the
+   comparisons succeed; once `merge-admission` is required, stop too unless the
+   guard printed `PROCEED` and the head and both comparisons still hold after it. GitHub closes an issue that a closing keyword in the
    description names when the PR merges, whatever the squash message says. Only then
    does the App merge:
    ```sh
@@ -440,6 +531,52 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    ```
    It records the outcome on the Work Item. A Work Item that
    survives the merge was only referenced (`Refs`, never a closing keyword).
+
+### Merge admission (MA0 1b.4): shadow until activation
+
+**What runs.** Decision 0112 item 5's publication, from protected `main` only:
+- `merge-admission-trigger.yml` wakes the relay on a pull request's `opened`, `edited`, `reopened`, `synchronize`, `ready_for_review`, `converted_to_draft` and `closed`, since closing one of two pull requests at a head ends H1's shared-head failure and the relay evaluates the open pull requests left there; on a review's `submitted`, `edited` and `dismissed`; on an inline review comment's `created` and `deleted`, since deleting a thread's only comment removes the thread; and on the declarer's PR conversation comment `created`, `edited` or `deleted` (F1, #426 6130207025). The comment filter is its author, `policy/merge-authorities.yaml`'s `declarer`, never its body, so removing the seal's prefix or deleting it wakes the relay too. A comment's event is relayed unchanged as an artifact, and the relay derives the pull request from it in protected code (`hint`). It holds no permission, secret or checkout (Decision 0096 rule 2).
+  - **A review thread's resolution or reopening wakes nothing (T1, #426 6134806265).** Actions has no event for it: `pull_request_review_thread` is a webhook event only, and declaring it made the whole trigger invalid from round 2 to round 9 (Codex on #426). The thread's changed state is acquired at the next relevant supported event, the owner's native review, the guard's own dispatch or the hourly sweep. Until then the displayed required check may retain an earlier verdict, and it is not evidence of current thread state. The guarded merge never relies on it: it obtains its own fresh, correlated evaluation and refuses incomplete or changed required evidence.
+- `merge-admission.yml` runs on the trigger's and verification's completed runs, on an hourly sweep at minute 41, by hand for one pull request, and on a guarded merge's `repository_dispatch` of type `gnostoa-merge-admission`, whose payload must be exactly a pull request and a 128-bit nonce, or the selection fails:
+  1. L1's `--mode subjects` re-reads each hinted pull request's head, and drops a closed one. A pull request's event also names the trigger run's head, and every open pull request there is a subject: GitHub lists no pull request for a fork's run (github/docs#22501; CodeAnt on #426). An event run never falls back to the sweep; only the schedule takes L1's scheduled batch of the open population, since a manual run names its pull request (CodeAnt on #426).
+  2. **Invalidation first** (`invalidate`, in `gnostoa-ma0`). Before anything is acquired again, a success that `gnostoa-ma0`'s latest run on the head stands on is replaced by a pending run of the App. The record of what was observed passes to step 5 inside the same run.
+  3. The admission point re-reads the inventory: the job calls `analyzer-readback.yml` for the exact subject, in its `analyzer-readback` environment.
+  4. In the `gnostoa-ma0` environment, L1's `--mode merge-evidence` snapshot goes through `knowledge merge-evidence`, then `knowledge merge-admission`. L1's `--mode open-heads` reads the complete open population beside it. A second snapshot and population rebuild the evidence, once more without the analyzer bundle for the guarded merge's comparison.
+  5. `ci/merge_admission_relay.py publish` completes the run, **a success only if both evidence documents and both populations agree**, observation times aside, and only if the population shows this pull request **alone at its head** (H1, #426 6131149850). A check run belongs to a commit, so a head another open pull request shares is a failure naming them, whatever the verdict: both stay denied until one closes or moves and a fresh evaluation recovers. A close wakes the relay, which evaluates the open pull requests left at that head. A move to another head names only the new head, so the survivor recovers at its next event, the owner's review, the guard's own dispatch or the sweep.
+  6. The pending run is completed while it is the App's latest; without one, a success is written only while the latest run is still the one observed at step 2. A superseded, incomplete or denied evaluation ends as a failure, never `neutral` or `skipped`, and an older success is invalidated, never left standing. An interrupted run stays pending, which blocks. A failure verdict already the head's latest is not posted again, and an unknown outcome is read back, never written twice. A run counts only when `gnostoa-ma0`'s App id is its publisher's.
+  7. Each run's text records the workflow run, attempt and protected revision that wrote it, and the digest of the evidence rebuilt without the bundle: the guarded merge reads it (step 8 of the procedure).
+- **Shadow.** Without the variable `GNOSTOA_MA0_APP_ID`, no token is minted: the run writes its plan to its summary and its artifact, and publishes nothing.
+
+**Owner operations.** Each is the owner's, done in this order and read back after it:
+1. **Create the App `gnostoa-ma0`** at <https://github.com/settings/apps/new>:
+   - Webhook inactive.
+   - Repository permissions: **Checks: Read and write**, and the mandatory Metadata: Read. Nothing else.
+   - Installable only on this account; installed on `ktogias/gnostoa` only.
+2. **Protect the `gnostoa-ma0` environment before it holds anything.** Set its deployment branches to `main` alone. The first run of `merge-admission.yml` after its merge creates the environment without protection, as GitHub does for a named environment.
+3. **Add its credentials to the `gnostoa-ma0` environment, never to the repository.** The environment variable `GNOSTOA_MA0_APP_ID` (the App's ID) and the environment secret `GNOSTOA_MA0_PRIVATE_KEY`: a repository secret reaches every branch's workflows, the environment's only `main`'s (step 2). The token is minted with `permission-checks: write` alone, by `actions/create-github-app-token` pinned to `bcd2ba49218906704ab6c1aa796996da409d3eb1` (v3.2.0).
+4. **Shadow with publication.** The check now appears on pull-request heads without being required. Before activation, record on #407:
+   - an `ALLOW` on a converged head, and a `DENY` naming its criteria;
+   - a superseded verdict after a push, or after an edit with the head unchanged;
+   - the check's publisher, `gnostoa-ma0`;
+   - one guarded `repository_dispatch` (`guard_merge`), its nonce read back in the pinned App's record of the run it published, and that workflow run read back natively: `event: repository_dispatch`, on `main` at the protected revision;
+   - the residual, measured on that dispatch: the seconds from the guard's last reads to the merge.
+5. **The rerun-successor case** (Decision 0112, the check receipts; #407 6129661615) is resolved before the owner's configuration, with every prerequisite above. Either it is **accepted**, through its own separately admitted L1 extension, or **the owner explicitly chooses** to keep today's cost (a failed attempt beside its successful re-run denies until a new commit). Routing it is not resolving it: while it is only routed, activation stays pending (the PAO on #426, 6130135014).
+6. **Activate and verify, one owner-controlled transition** (P2, the Router on #426, 6138724140). Adding the entry alone does not complete it. First keep the **pre-operation** read-back of R-main. Then R-main's `required_status_checks` gains only this entry, beside the four above:
+   ```json
+   {"context": "merge-admission", "integration_id": <gnostoa-ma0's App ID>}
+   ```
+   - It is **never** app 15368: a same-named check from GitHub Actions or any other App must not satisfy it.
+   - Read the ruleset back, and record it on #407.
+   - **Then prove that a pending run over an older success blocks the App-pinned requirement.** A required check can block only once it is required, so this is activation's own verification, not step 4's (the PAO on #426, 6138656803):
+     - Take one unchanged, uniquely owned pull request head that is **otherwise eligible**, and **not a draft**: a draft blocks merging by itself, and M1 denies it.
+     - Bind the older success and the newer incomplete run to the active requirement, with their check-run ids, statuses and publisher, `gnostoa-ma0`.
+     - Read natively that the requirement is unmet because of that check: the ruleset read-back naming the entry, and the pull request's status rollup marking that App's `merge-admission` run required and incomplete.
+     - Then read the success control on the same head: the run completed as a success, and the requirement satisfied.
+     - Record **every other blocker** (draft state, the review decision, the threads, the other required checks) and the bypass state, held unchanged across both observations. Preserve the read-backs on #407.
+     - On failure, ambiguity or attribution that is unavailable, activation stays pending and the rollback below applies. No `ALLOW` is manufactured, no bypass is used, and the calibration pull request is **never merged**.
+   - Until this verification is recorded, Decision 0110's Phase-1a procedure governs every merge.
+
+**Rollback.** Remove the `merge-admission` entry from R-main, and Phase-1a resumes. Revoke the App's key or uninstall the App to stop publication. Existing check runs stay as history.
 
 ### Break glass
 

@@ -493,6 +493,46 @@ class SharedGitHubClientTests(unittest.TestCase):
             [(m, p, json.loads(b)) for m, p, b in provider.received],
         )
 
+    def test_a_body_less_write_is_acceptance_not_a_document(self) -> None:
+        """G1 (#426 6132395441): an endpoint that answers a write with no body, such as
+        a repository dispatch's `204`, is the provider's acceptance. The JSON write
+        reads that empty answer as an unknown outcome, so a body-less write says so
+        explicitly. A body where none belongs, or a refusal, is still reported."""
+
+        def empty(status: int) -> Route:
+            def route(handler: http.server.BaseHTTPRequestHandler) -> None:
+                handler.send_response(status)
+                handler.send_header("Content-Length", "0")
+                handler.end_headers()
+
+            return route
+
+        provider = self._provider(
+            {
+                "/dispatches": empty(204),
+                "/bodied": _json(200, {"unexpected": True}),
+                "/refused": _json(403, {"message": "Resource not accessible"}),
+            }
+        )
+        client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        self.assertIsNone(
+            client.post_accepted(f"{provider.root}/dispatches", {"event_type": "x"})
+        )
+        self.assertEqual(
+            [("POST", "/dispatches", {"event_type": "x"})],
+            [(m, p, json.loads(b)) for m, p, b in provider.received],
+        )
+        with self.assertRaises(github_rest.GitHubWriteError) as unknown:
+            client.post(f"{provider.root}/dispatches", {"event_type": "x"})
+        self.assertTrue(unknown.exception.outcome_unknown)
+        with self.assertRaises(github_rest.GitHubWriteError) as bodied:
+            client.post_accepted(f"{provider.root}/bodied", {"event_type": "x"})
+        self.assertTrue(bodied.exception.outcome_unknown)
+        with self.assertRaises(github_rest.GitHubWriteError) as refused:
+            client.post_accepted(f"{provider.root}/refused", {"event_type": "x"})
+        self.assertFalse(refused.exception.outcome_unknown)
+        self.assertEqual(403, refused.exception.status)
+
     def test_a_followed_page_keeps_its_query(self) -> None:
         """The next page is the URL the provider named, query and all: a client that
         dropped it would read the first page again."""

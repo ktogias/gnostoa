@@ -1033,13 +1033,20 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
 
     def test_workflow_runs_after_verification_on_request_and_by_hand(self) -> None:
         """The readback runs for every Pull Request head once Gnostoa verification
-        completes, on a repository_dispatch request, and by hand (#387). The secret
-        step reads only a subject the secret-free step has validated."""
+        completes, on a repository_dispatch request, by hand (#387), and when the
+        merge-admission run calls it at the admission point (#407, slice 1b.4). The
+        secret step reads only a subject the secret-free step has validated."""
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         loaded = yaml.safe_load(workflow)
         triggers = loaded.get("on", loaded.get(True))
         self.assertEqual(
-            {"workflow_dispatch", "workflow_run", "repository_dispatch"}, set(triggers)
+            {
+                "workflow_dispatch",
+                "workflow_run",
+                "repository_dispatch",
+                "workflow_call",
+            },
+            set(triggers),
         )
         self.assertEqual(
             ["Gnostoa verification"], triggers["workflow_run"]["workflows"]
@@ -1081,10 +1088,13 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         # - a run that a later push superseded is cancelled, and its head is no
         #   longer the Pull Request's, so it reads nothing (Kody on #388). A run that
         #   failed or timed out leaves its head the Pull Request's, so it is still
-        #   read (CodeAnt on #388). Each admitted conclusion is named.
+        #   read (CodeAnt on #388). Each admitted conclusion is named;
+        # - a call is the merge-admission run's (#407, slice 1b.4), admitted from
+        #   protected main only, like every other entry.
         self.assertEqual(
             "github.ref == 'refs/heads/main'"
-            " && (github.event_name == 'workflow_dispatch'"
+            " && (inputs.admission == true"
+            " || github.event_name == 'workflow_dispatch'"
             " || github.event_name == 'repository_dispatch'"
             " || (github.event_name == 'workflow_run'"
             " && (github.event.workflow_run.conclusion == 'success'"
@@ -1148,8 +1158,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             steps[upload]["uses"],
         )
         self.assertEqual(
-            "gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}"
-            "-${{ steps.subject.outputs.head }}",
+            "${{ steps.subject.outputs.artifact }}",
             steps[upload]["with"]["name"],
         )
         # An event's own fields reach no step but the secret-free resolver.
@@ -1851,8 +1860,30 @@ class SubjectResolutionTests(unittest.TestCase):
                     "REQUEST_PULL": "384",
                     "REQUEST_HEAD": HEAD,
                 },
-                f"pull_number=384\nhead={HEAD}\n",
+                f"pull_number=384\nhead={HEAD}\n"
+                f"artifact=gnostoa-analyzer-readback-384-{HEAD}\n",
                 0,
+            ),
+            (
+                {
+                    "EVENT_NAME": "workflow_call",
+                    "DISPATCH_PULL": "384",
+                    "DISPATCH_HEAD": HEAD,
+                    "RUN_ATTEMPT": "3",
+                },
+                f"pull_number=384\nhead={HEAD}\n"
+                f"artifact=gnostoa-analyzer-readback-384-{HEAD}-3\n",
+                0,
+            ),
+            (
+                {
+                    "EVENT_NAME": "workflow_call",
+                    "DISPATCH_PULL": "384",
+                    "DISPATCH_HEAD": HEAD,
+                    "RUN_ATTEMPT": "3\nhead=x",
+                },
+                "",
+                2,
             ),
             (
                 {"EVENT_NAME": "workflow_run", "RUN_PULLS": "[]", "RUN_HEAD": HEAD},

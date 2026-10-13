@@ -130,9 +130,30 @@ provider-neutral public change-governance contract of
   | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
   | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 merged (#423) |
   | 1b.3c | SonarCloud's readback (#359) | admitted in the owner's sequence (#325, 6113092417), continued after 1b.3b-4's integration (#407, 6119460225) |
-  | 1b.4 | publication and activation | conditionally admitted in that sequence, after 1b.3c is integrated |
+  | 1b.4 | publication and activation | continued after 1b.3c's integration (#407, 6129370606); publication implemented, in shadow until the owner's activation |
   | 1b.5 | the post-merge audit | not yet admitted |
 
+- **Publication (1b.4)** follows item 5 and runbook "Merge admission":
+  - `merge-admission-trigger.yml` holds nothing and wakes `merge-admission.yml`, which runs from protected `main` only, with an hourly sweep.
+  - L1 re-reads each subject; event numbers are hints. The admission point re-reads the inventory by calling the existing `analyzer-readback.yml` for the exact subject, so the bundle the evidence reads is that run's own, which authenticates it.
+  - The relay publishes `merge-admission` on the exact evaluated head, and only while the evidence rebuilt from a second snapshot equals the evaluated one, observation times aside. A moved head (invariant d), or an edited description, relation, review, thread or check, supersedes the verdict.
+  - The check is written at most once and read back. An unknown outcome is found or read back, never written again.
+  - Only a well-formed `ALLOW` for the exact subject, from a command that exited 0, is ever a success.
+  - **Freshness (F1, the Decisions Router on #426, 6130207025).**
+    - The seal's comments, created, edited or deleted, wake the relay too. The comment filter is the declarer's identity, never the body.
+    - A review thread's resolution or reopening has no Actions event (T1, #426 6134806265): `pull_request_review_thread` is a webhook event only. Its changed state is acquired at the next supported event, the owner's review, the guard's own dispatch or the sweep, and until then the required check may show an earlier verdict, which is no evidence of current thread state.
+    - Before anything is acquired again, a success the App's latest run stands on is replaced by a pending run of the App. The run completes it, or, without one, writes a success only while the latest run is still the one it observed. A superseded, incomplete or denied evaluation ends as a failure and invalidates an older success. An interrupted run stays pending, which blocks.
+    - After activation, the guarded merge obtains its own admission (`ci/merge_admission_guard.py`). It requests the protected workflow for the approved head by `repository_dispatch`, with the App's existing `contents: write` and a fresh 128-bit nonce (G1, #426 6132395441). It finds that run through the pinned App's record carrying the nonce beside the run's own identity, never through time, and reads the workflow run natively. It reads the pinned App's check natively, re-reads the subject, compares it with the evaluation's digest, and does not merge itself.
+  - **One pull request per head (H1, 6131149850).** A check run belongs to a commit, so a success needs this pull request alone at its exact head in the complete open population, read beside both snapshots and again by the guard. A shared head is a failure naming the pull requests, whatever the neutral verdict, which is unchanged. The cost is liveness: both stay denied until one closes or moves and a fresh evaluation recovers. A close wakes the relay, which evaluates the open pull requests left at that head; a move to another head names only the new head, so the survivor recovers at its next event, the owner's review, the guard's own dispatch or the sweep.
+  - **The residual,** bounded and recorded rather than accepted:
+    - the window from the guard's last reads to the provider's merge, measured before activation;
+    - an analyzer inventory change after the run's readback, which the guard cannot re-read;
+    - a change no event names, until the sweep revisits the pull request;
+    - an open-population change that no event names, between the reads.
+
+    No atomic provider guarantee follows from event coverage, the sweep, timestamps or a digest.
+  - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case below. It also waits for one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively. A pending run blocking R-main's App-pinned required check over an older success can be read only once the requirement exists, so it is proved after the entry is added, on an otherwise eligible pull request that is not a draft, and **before activation is declared complete** or any merge relies on MA0; until then Phase-1a governs (P2, #426 6138724140).
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no receipt, the reducer reports it `MISSING`.** So once the

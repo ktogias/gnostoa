@@ -2,7 +2,8 @@ name: Authenticated analyzer readback
 
 # Decision 0107: the readback runs for every Pull Request head once Gnostoa
 # verification completes, again on a `gnostoa-analyzer-readback` repository_dispatch
-# request, and by hand. Every run executes main's code in the `analyzer-readback`
+# request, by hand, and when the merge-admission run calls it to re-read the
+# inventory at the admission point (#407, slice 1b.4). Every run executes main's code in the `analyzer-readback`
 # environment, which admits only main. An event's fields are identifiers only: the
 # runner re-reads the Pull Request and refuses a head that does not match.
 on:
@@ -21,6 +22,20 @@ on:
         description: Exact 40-character Pull Request head SHA
         required: true
         type: string
+  workflow_call:
+    inputs:
+      pull_number:
+        description: Pull Request number to read
+        required: true
+        type: number
+      head:
+        description: Exact 40-character Pull Request head SHA
+        required: true
+        type: string
+      admission:
+        description: True for the merge-admission run's call
+        required: true
+        type: boolean
 
 permissions:
   contents: read
@@ -40,10 +55,12 @@ jobs:
   readback:
     # Each admitted event is named. `workflow_run` matches the triggering workflow
     # by name, so a same-named workflow on any branch could start this job: only a
-    # pull_request run of verification.yml counts (Decision 0096 rule 7).
+    # pull_request run of verification.yml counts (Decision 0096 rule 7). A call is
+    # the merge-admission run's, from protected main like every other entry.
     if: >-
       github.ref == 'refs/heads/main'
-      && (github.event_name == 'workflow_dispatch'
+      && (inputs.admission == true
+          || github.event_name == 'workflow_dispatch'
           || github.event_name == 'repository_dispatch'
           || (github.event_name == 'workflow_run'
               && (github.event.workflow_run.conclusion == 'success'
@@ -77,13 +94,14 @@ jobs:
       - name: Resolve the readback subject
         id: subject
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          EVENT_NAME: ${{ inputs.admission == true && 'workflow_call' || github.event_name }}
           DISPATCH_PULL: ${{ inputs.pull_number }}
           DISPATCH_HEAD: ${{ inputs.head }}
           REQUEST_PULL: ${{ github.event.client_payload.pull_number }}
           REQUEST_HEAD: ${{ github.event.client_payload.head }}
           RUN_PULLS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -eu
           PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
@@ -119,6 +137,8 @@ jobs:
         if: ${{ !cancelled() && steps.readback.outputs.receipt == 'written' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gnostoa-analyzer-readback-${{ steps.subject.outputs.pull_number }}-${{ steps.subject.outputs.head }}
+          # Named by the secret-free resolver: Decision 0107's name, and for the
+          # admission point's call its run attempt too (Codex on #426).
+          name: ${{ steps.subject.outputs.artifact }}
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
           if-no-files-found: error

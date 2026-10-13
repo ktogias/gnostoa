@@ -845,7 +845,8 @@ class MergeGateRecordTests(unittest.TestCase):
             "as_app pr view <N> --json title --jq .title > <current-subject> "
             "&& cmp -s <current-subject> <checked-subject>"
         )
-        self.assertEqual([write, compare], lines)
+        # Compared once before the guard and once after its PROCEED (CodeAnt on #426).
+        self.assertEqual([write, compare, compare], lines)
         self.assertIn(write, rounds)
         self.assertIn(
             "as_app pr view <N> --json body --jq .body > <checked-body>", rounds

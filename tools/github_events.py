@@ -1,9 +1,10 @@
 """Fields of a GitHub event that a workflow hands a script (#387).
 
-A workflow passes an event's fields to a script through its environment. They are
-identifiers only, never authority: a caller re-reads whatever they name from the
-provider. The useful-L1 reconciler (Decision 0086) and the analyzer readback
-(Decision 0107) share this module, so `workflow_run.pull_requests` is parsed once.
+A workflow passes an event's fields to a script through its environment, or relays
+the event GitHub delivered. They are identifiers only, never authority: a caller
+re-reads whatever they name from the provider. The useful-L1 reconciler (Decision
+0086), the analyzer readback (Decision 0107) and the merge-admission relay (#407,
+1b.4) share this module, so each field is parsed once.
 """
 
 from __future__ import annotations
@@ -58,4 +59,25 @@ def _pull_number(item: object) -> int:
         raise ValueError(
             "workflow_run.pull_requests contains an invalid Pull Request number"
         )
+    return number
+
+
+def delivered_comment_pull_number(event: object) -> int | None:
+    """The pull request a relayed `issue_comment` event names, or None for an
+    issue's comment. GitHub delivers a pull request's conversation comment on its
+    issue, marked by a `pull_request` object (#426, F1 part 1). Anything else is
+    refused with ``ValueError``; a boolean is no number."""
+    if not isinstance(event, dict):
+        raise ValueError("the delivered event is not an object")
+    issue = event.get("issue")
+    if not isinstance(issue, dict):
+        raise ValueError("the delivered event names no issue")
+    number = issue.get("number")
+    if type(number) is not int or number <= 0:
+        raise ValueError("the delivered event's issue number is invalid")
+    marker = issue.get("pull_request")
+    if marker is None:
+        return None
+    if not isinstance(marker, dict):
+        raise ValueError("the delivered event's pull request marker is invalid")
     return number
