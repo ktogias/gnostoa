@@ -882,7 +882,10 @@ class ReadbackCallTests(unittest.TestCase):
         callee["on"]["workflow_call"]["secrets"] = {
             name: {"required": True} for name in ANALYZER_SECRETS
         }
-        caller = {"uses": READBACK_CALL, "secrets": dict(ANALYZER_FORWARDING)}
+        caller: dict[str, Any] = {
+            "uses": READBACK_CALL,
+            "secrets": dict(ANALYZER_FORWARDING),
+        }
         self.assertEqual([], _forwarding_problems(caller, callee))
 
         def forwarding(**changes: str | None) -> dict[str, Any]:
@@ -923,7 +926,7 @@ class ReadbackCallTests(unittest.TestCase):
             return changed
 
         # CodeAnt on #430: every form of the context counts, wherever it is read.
-        variants = {
+        variants: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
             "a bracket read": (
                 caller,
                 reading_in("readback", "${{ secrets['ANOTHER'] }}"),
