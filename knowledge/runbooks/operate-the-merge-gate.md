@@ -339,11 +339,20 @@ written here.
   the guard's dependencies installed, still before the token: exactly what the
   clone's `requirements/runtime.lock` pins, wheels only and every hash checked, as
   the runtime image installs them, into a virtual environment of the launch's own
-  that nothing else uses (`pip --isolated` reads no configuration), and the install
+  that nothing else uses, and the install reads no configuration: `--isolated` skips
+  the user's and the `PIP_*` variables, and `PIP_CONFIG_FILE=/dev/null` the global
+  and the environment's own `pip.conf`, which `--isolated` still reads (CodeAnt on
+  #426); the install
   must succeed (Codex on #426). Only then is the token minted. The guard runs from
-  that clone with that environment's interpreter, isolated (`-I`), so no file runs
-  at its startup; it adds the clone to its own path afterwards, writes no bytecode,
-  and checks the clone's revision against protected `main` by the API:
+  that clone with that environment's interpreter, isolated (`-I`), so nothing from
+  the caller's directory, the user's site packages or the environment's `PYTHON*`
+  variables runs at its startup. The environment's own `.pth` startup hooks do run:
+  they come only from the packages the lock pins by hash, into an environment the
+  launch created, such as the pinned coverage package's, which acts only when
+  `COVERAGE_PROCESS_START` or `COVERAGE_PROCESS_CONFIG` is set, and the launch's
+  `env -i` sets neither (CodeAnt on #426). The guard adds the clone to its own path
+  afterwards, writes no bytecode, and checks the clone's revision against protected
+  `main` by the API:
   ```sh
   guard_merge() {
     /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin \
@@ -360,7 +369,8 @@ written here.
         https://github.com/ktogias/gnostoa.git "$created/main" || exit
       cd "$created/main" || exit
       python3 -I -m venv "$created/venv" \
-        && "$created/venv/bin/python" -I -m pip --isolated --disable-pip-version-check \
+        && PIP_CONFIG_FILE=/dev/null "$created/venv/bin/python" -I -m pip --isolated \
+        --disable-pip-version-check \
         install --quiet --no-cache-dir --only-binary=:all: --require-hashes \
         -r requirements/runtime.lock || exit
       GH_TOKEN=$(cd / && ~/.config/gnostoa-agent/bin/agent-token.sh) \

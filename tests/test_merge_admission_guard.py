@@ -1147,6 +1147,64 @@ class GuardLaunchTests(unittest.TestCase):
             self.assertEqual(0, code)
             self.assertEqual((True, True, False), self._results(root))
 
+    def test_the_install_reads_no_configuration_file(self) -> None:
+        """CodeAnt on #426: `--isolated` skips the user's configuration and `PIP_*`
+        variables, but still reads the global and the environment's own `pip.conf`.
+        The launch's install also names `PIP_CONFIG_FILE=/dev/null`, with which pip
+        reads no configuration file at all."""
+        with tempfile.TemporaryDirectory() as raw:
+            launch = self._launch(Path(raw))
+        self.assertIn(
+            'PIP_CONFIG_FILE=/dev/null "$created/venv/bin/python" -I -m pip --isolated',
+            launch,
+        )
+
+    @_needs_host_venv
+    def test_pip_reads_no_global_configuration_with_a_null_config_file(self) -> None:
+        """The behavior the launch relies on, measured on the launch's own pip: a
+        global `pip.conf` naming a constraint that cannot be read fails an
+        `--isolated` install, and does not reach one with `PIP_CONFIG_FILE=/dev/null`."""
+        python = shutil.which("python3", path=_guard().TRUSTED_PATH)
+        assert python is not None  # nosec B101 -- _needs_host_venv found it
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [python, "-I", "-m", "venv", str(root / "venv")],
+                check=True,
+                capture_output=True,
+            )
+            (root / "global" / "pip").mkdir(parents=True)
+            (root / "global" / "pip" / "pip.conf").write_text(
+                "[install]\nconstraint = /nonexistent/constraints.txt\n",
+                encoding="utf-8",
+            )
+            (root / "runtime.lock").write_text(_LOCK, encoding="utf-8")
+            base = {
+                "PATH": _guard().TRUSTED_PATH,
+                "XDG_CONFIG_DIRS": str(root / "global"),
+            }
+            command = [
+                str(root / "venv" / "bin" / "python"),
+                "-I",
+                "-m",
+                "pip",
+                "--isolated",
+                "--disable-pip-version-check",
+                "install",
+                "--quiet",
+                "--no-cache-dir",
+                "-r",
+                str(root / "runtime.lock"),
+            ]
+            outcomes = [
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    command, env=environment, capture_output=True, check=False
+                ).returncode
+                for environment in (base, {**base, "PIP_CONFIG_FILE": "/dev/null"})
+            ]
+        self.assertNotEqual(0, outcomes[0])
+        self.assertEqual(0, outcomes[1])
+
     @unittest.skipIf(_HOST_VENV, "the launch's python3 provides the prerequisite here")
     def test_without_the_host_prerequisite_nothing_is_minted(self) -> None:
         """Where the launch's python3 provides no venv with its bundled pip, as in the

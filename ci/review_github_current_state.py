@@ -17,7 +17,6 @@ from tools.review_reconcile import (
     parse_projection_comment,
     render_projection,
 )
-from tools.verdict_cli import MAX_INPUT_BYTES
 
 _API_ROOT = "https://api.github.com"
 _REVIEW_THREADS_QUERY = """
@@ -2167,6 +2166,11 @@ def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> 
         observed_at=None,
         merge_evidence=True,
     )
+    # Imported here, not at module level: `knowledge merge-evidence`'s bound pulls in
+    # PyYAML and jsonschema, which L1's own `publish` job does not install, while
+    # this mode runs only where the runtime lock is installed (CodeAnt on #426).
+    from tools.verdict_cli import MAX_INPUT_BYTES
+
     encoded = json.dumps(
         snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")

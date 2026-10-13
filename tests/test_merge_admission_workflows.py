@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -693,6 +694,14 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertIn("nonce", step)
         self.assertIn("`repository_dispatch`", step)
 
+    def test_the_launch_says_what_runs_at_the_guard_s_startup(self) -> None:
+        """CodeAnt on #426: `-I` still runs the environment's `.pth` startup hooks, such
+        as the pinned coverage package's, so the launch's text names them rather than
+        claiming nothing runs."""
+        text = RUNBOOK.read_text(encoding="utf-8")
+        self.assertNotIn("so no file runs\n  at its startup", text)
+        self.assertIn("`.pth` startup hooks", text)
+
     def test_the_merge_after_activation_obtains_its_own_admission(self) -> None:
         text = RUNBOOK.read_text(encoding="utf-8")
         procedure = text.split("## Procedure", 1)[1]
@@ -912,6 +921,27 @@ class L1ModeTests(unittest.TestCase):
                 else None
             )
         return code, written
+
+    def test_l1_imports_without_the_runtime_dependencies(self) -> None:
+        """CodeAnt on #426: L1's `publish` job installs no runtime lock, so L1 imports
+        nothing that needs PyYAML or jsonschema at module level; the merge-evidence
+        mode, which runs where the lock is installed, imports its bound itself."""
+        import subprocess  # nosec B404 -- the test's own interpreter
+
+        probe = (
+            "import sys\n"
+            "sys.modules['yaml'] = None\n"
+            "sys.modules['jsonschema'] = None\n"
+            f"sys.path.insert(0, {str(ROOT)!r})\n"
+            "import ci.review_github_current_state\n"
+        )
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            [sys.executable, "-I", "-c", probe],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr[-500:])
 
     def test_a_fork_s_event_selects_the_open_pull_requests_at_its_head(self) -> None:
         """CodeAnt on #426: GitHub leaves a fork's pull request out of the trigger
