@@ -472,9 +472,19 @@ def _check_receipts(
     is not COMPLETE, commit statuses included, gives every item its status: it can
     only deny (#407, 6097059408). With several runs of one key, as when two check
     suites post the same name, the item is COMPLETE only if every run succeeded,
-    so a later success cannot hide another current run (Codex on #415)."""
+    so a later success cannot hide another current run (Codex on #415), and each
+    run's own suite has completed (Option S)."""
 
     checks, coverage = _source(snapshot, "checks")
+    # Each required run is gated by its own suite, so a suites read that is not
+    # COMPLETE marks every item as a checks read does (#407, Option S).
+    entries, suite_coverage = _source(snapshot, "check_suites")
+    try:
+        suites = [_suite_entry(entry) for entry in entries]
+    except (AssuranceCompletenessError, MergeEvidenceError) as exc:
+        raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
+    if coverage == "COMPLETE":
+        coverage = suite_coverage
     # The reconciler normalizes each check; a malformed one is an invalid snapshot
     # (#15, 6100292562).
     try:
@@ -482,7 +492,7 @@ def _check_receipts(
         runs = check_runs_by_key(checks, subject["head_commit"])
     except ReconciliationInputError as exc:
         raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
-    view = _CheckView(checks, coverage, latest, runs, snapshot["observed_at"])
+    view = _CheckView(checks, coverage, latest, runs, suites, snapshot["observed_at"])
     receipts = []
     for requirement, items in required_checks.items():
         for item, key in items.items():
@@ -499,6 +509,7 @@ class _CheckView(NamedTuple):
     coverage: str
     latest: Mapping[str, Mapping[str, Any]]
     runs: Mapping[str, Sequence[tuple[str, str | None]]]
+    suites: Sequence[Mapping[str, Any]]
     observed_at: str
 
 
@@ -513,14 +524,83 @@ def _item_state(
     view: _CheckView, key: str, subject: Mapping[str, Any]
 ) -> tuple[str, str | None, str] | None:
     """An item's status, conclusion and observation time, or None when it has no
-    run (MISSING). A checks read that is not COMPLETE gives every item its own."""
+    run (MISSING). A checks read that is not COMPLETE gives every item its own,
+    and an item its runs make COMPLETE still answers to their suites."""
 
     if view.coverage != "COMPLETE":
         status = view.coverage if view.coverage in RECEIPT_STATUSES else "ERROR"
         return status, None, view.observed_at
+    head = subject["head_commit"]
     if _qualified(key):
-        return _qualified_state(view.checks, key, subject, view.observed_at)
-    return _unqualified_state(key, view.latest, view.runs)
+        state, behind = _qualified_state(view.checks, key, subject, view.observed_at)
+    else:
+        state = _unqualified_state(key, view.latest, view.runs)
+        behind = _on_head(view.checks, key, head)
+    if state is None or state[0] != "COMPLETE":
+        return state
+    return _suite_gated(state, behind, view.suites, head, view.observed_at)
+
+
+_SUITE_KEYS = frozenset({"id", "app_id", "head_commit", "status"})
+
+
+def _suite_entry(item: object) -> Mapping[str, Any]:
+    """One check suite, in L1's closed shape (#407, Option S). `validate_snapshot`
+    does not normalize this merge-evidence source, so a malformed entry is refused
+    here, as a malformed check is (CodeAnt on #428)."""
+
+    label = "check_suites entry"
+    suite = require_mapping(item, label)
+    require_closed_keys(suite, label, _SUITE_KEYS)
+    for key in ("id", "app_id"):
+        if type(suite[key]) is not int or suite[key] <= 0:
+            raise MergeEvidenceError(f"{label} has an {key} that is not one L1 records")
+    require_text(suite["head_commit"], f"{label} head_commit")
+    require_text(suite["status"], f"{label} status")
+    return suite
+
+
+def _on_head(
+    checks: Sequence[Mapping[str, Any]], key: str, head: str
+) -> list[Mapping[str, Any]]:
+    """The runs of one check key on the exact head."""
+    return [c for c in checks if c.get("key") == key and c.get("head_commit") == head]
+
+
+def _suite_gated(
+    state: tuple[str, str | None, str],
+    runs: Sequence[Mapping[str, Any]],
+    suites: Sequence[Mapping[str, Any]],
+    head: str,
+    read_at: str,
+) -> tuple[str, str | None, str]:
+    """A COMPLETE item stays COMPLETE only while every run behind it names one
+    listed suite, on the exact head and of the run's own App, that has completed
+    (#407, Option S, owner 6143702096). A rerequested run's suite is queued again
+    while the run itself stands unchanged (GitHub's "Rerequest a check run"), so
+    the suite's state gates; its conclusion never does, since a suite concludes
+    from all its runs. A run whose suite is not proven, its id not exactly a listed
+    suite's, is PARTIAL; a suite not yet completed is INCOMPLETE, and the run's own
+    conclusion is kept. Either is decided by the suites read at the snapshot's
+    cut, `read_at`, so it carries that time (CodeAnt on #428)."""
+
+    status, conclusion, observed_at = state
+    for check in runs:
+        suite = check.get("suite")
+        # Exactly an integer: 9001.0 and True compare equal to an id, and a run
+        # read from a file may carry either (the PAO on #428, 6144886026).
+        listed = [s for s in suites if type(suite) is int and s.get("id") == suite]
+        if (
+            len(listed) != 1
+            or listed[0].get("head_commit") != head
+            or not str(check.get("key")).startswith(
+                f"github-check-run:{listed[0].get('app_id')}:"
+            )
+        ):
+            return "PARTIAL", None, read_at
+        if listed[0].get("status") != "completed":
+            status, observed_at = "INCOMPLETE", read_at
+    return status, conclusion, observed_at
 
 
 def _check_receipt(
@@ -565,39 +645,37 @@ def _qualified_state(
     key: str,
     subject: Mapping[str, Any],
     observed_at: str,
-) -> tuple[str, str | None, str] | None:
+) -> tuple[tuple[str, str | None, str] | None, list[Mapping[str, Any]]]:
     """A pull-request-qualified item's status, conclusion and observation time
     from this pull request's own runs, filtered before the existing reduction, or
-    None when it has none (MISSING). A foreign pull request, project or branch is
-    excluded; a run whose association is malformed or missing might be this pull
-    request's, so the item is PARTIAL even beside a qualifying success (Q-a, the
-    PAO on #424)."""
+    None when it has none (MISSING), with the runs it stands on. A foreign pull
+    request, project or branch is excluded; a run whose association is malformed
+    or missing might be this pull request's, so the item is PARTIAL even beside a
+    qualifying success (Q-a, the PAO on #424)."""
 
     head = subject["head_commit"]
     change = subject["change_request"]
     if change["kind"] != "github-pull-request":
-        return "PARTIAL", None, observed_at
+        return ("PARTIAL", None, observed_at), []
     project = sonarcloud_scope.project_key(subject["repository"].removeprefix(_GITHUB))
     own = []
-    for check in checks:
-        if check.get("key") != key or check.get("head_commit") != head:
-            continue
+    for check in _on_head(checks, key, head):
         scope = sonarcloud_scope.details_scope(
             check.get("source_url"), project=project, pull=change["id"]
         )
         if scope == "malformed":
-            return "PARTIAL", None, observed_at
+            return ("PARTIAL", None, observed_at), []
         if scope == "ours":
             own.append(check)
     if not own:
-        return None
+        return None, []
     try:
         latest = latest_checks(own, head)[key]
         runs = check_runs_by_key(own, head)[key]
     except ReconciliationInputError as exc:
         raise MergeEvidenceError(f"the snapshot is invalid: {exc}") from exc
     status, conclusion = _item_status(latest["states"], runs)
-    return status, conclusion, latest["observed_at"]
+    return (status, conclusion, latest["observed_at"]), own
 
 
 def _glob(text: str) -> str:

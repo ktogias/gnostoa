@@ -734,7 +734,79 @@ def _normalize_check(
         "status": _text(item.get("status"), "check_run.status"),
         "conclusion": _optional_text(item.get("conclusion")),
         "source_url": _optional_text(item.get("details_url")),
+        "suite": _suite_id(item.get("check_suite")),
     }
+
+
+def _suite_id(value: Any) -> int | None:
+    """A check run's suite, or None when the provider names none, which leaves
+    the run unbound to any suite's state (#407, Option S)."""
+
+    if value is None:
+        return None
+    return _integer(
+        _mapping(value, "check_run.check_suite").get("id"), "check_run.check_suite.id"
+    )
+
+
+def _normalize_suite(value: Any) -> dict[str, Any]:
+    """A check suite's identity and state. Its conclusion is not kept: a suite
+    concludes from all its runs, so it never stands for one of them."""
+
+    item = _mapping(value, "check suite")
+    app = _mapping(item.get("app"), "check_suite.app")
+    return {
+        "id": _integer(item.get("id"), "check_suite.id"),
+        "app_id": _integer(app.get("id"), "check_suite.app.id"),
+        "head_commit": _sha(item.get("head_sha"), "check_suite.head_sha"),
+        "status": _text(item.get("status"), "check_suite.status"),
+    }
+
+
+# Past 1,000 check suites on a reference, GitHub lists its check runs from the
+# 1,000 most recent suites only ("List check runs for a Git reference"), so a head
+# with more suites than that is not proven complete (#407, Option S; Codex on #428).
+_MAX_CHECK_SUITES = 1_000
+
+
+def _check_suites(
+    client: JsonReader, root: str, head: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The head's check suites, and whether their read is complete: every page
+    read, each page counting as many suites as were listed, and no more of them than
+    the bound past which the head's check runs go unlisted."""
+
+    counted: set[int] = set()
+
+    def page(payload: Any) -> list[Any]:
+        if not isinstance(payload, dict):
+            raise ProviderReadError("GitHub check-suites source has invalid shape")
+        suites = payload.get("check_suites")
+        total = payload.get("total_count")
+        if not isinstance(suites, list):
+            raise ProviderReadError("GitHub check-suites source has invalid shape")
+        if type(total) is not int or total < 0:
+            raise ProviderReadError("GitHub check-suites source has no count")
+        counted.add(total)
+        return suites
+
+    suites, coverage = _collect_pages(
+        client,
+        f"{root}/commits/{head}/check-suites?per_page=100",
+        page_items=page,
+        normalize=_normalize_suite,
+    )
+    if coverage["status"] != "COMPLETE":
+        return suites, coverage
+    if counted != {len(suites)}:
+        return suites, {
+            **coverage,
+            "status": "PARTIAL",
+            "reason": "check_suite_count_mismatch",
+        }
+    if len(suites) > _MAX_CHECK_SUITES:
+        return suites, {**coverage, "status": "PARTIAL", "reason": "check_suite_limit"}
+    return suites, coverage
 
 
 def _normalize_commit_status(
@@ -1292,6 +1364,10 @@ def _collect_merge_evidence_once(
     )
     snapshot["work_items"], snapshot["coverage"]["work_items"] = _work_items(
         client, root, repository, snapshot["subject"]
+    )
+    # Each required run's own suite gates it (#407, Option S, owner 6143702096).
+    snapshot["check_suites"], snapshot["coverage"]["check_suites"] = _check_suites(
+        client, root, subject["head_commit"]
     )
     return snapshot
 

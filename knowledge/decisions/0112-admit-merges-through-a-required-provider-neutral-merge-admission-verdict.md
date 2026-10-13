@@ -153,7 +153,7 @@ provider-neutral public change-governance contract of
 
     No atomic provider guarantee follows from event coverage, the sweep, timestamps or a digest.
   - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
-  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case below. It also waits for one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively. A pending run blocking R-main's App-pinned required check over an older success can be read only once the requirement exists, so it is proved after the entry is added, on an otherwise eligible pull request that is not a draft, and **before activation is declared complete** or any merge relies on MA0; until then Phase-1a governs (P2, #426 6138724140).
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case's live proof below. It also waits for one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively. A pending run blocking R-main's App-pinned required check over an older success can be read only once the requirement exists, so it is proved after the entry is added, on an otherwise eligible pull request that is not a draft, and **before activation is declared complete** or any merge relies on MA0; until then Phase-1a governs (P2, #426 6138724140).
 - **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
   procedure and the convergence report still govern them.
 - **While an item has no receipt, the reducer reports it `MISSING`.** So once the
@@ -321,13 +321,32 @@ provider-neutral public change-governance contract of
     when several runs carry an item's key, as when two check suites post the
     same name, the item is `COMPLETE` only if every one succeeded, and
     `PARTIAL` if any did not, so a later success cannot hide another current run
-    (#407, 6097059408). The owner accepted the possible cost: if the provider
-    lists a failed attempt beside its successful re-run, the item denies until
-    a new commit (#407, 6097259307 and 6097251980). Whether it does is not yet
-    shown. Recovery by re-run within one check suite, with distinct suites
-    still unable to mask a failure, is a successor acceptance case before 1b.4
-    activates MA0; any L1 extension it needs is admitted separately. For a
-    single run, `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
+    (#407, 6097059408). GitHub's default view lists the latest run of each
+    name per check suite, and a re-run stays in its suite, so a failed attempt
+    beside its successful re-run within one suite is not listed, while distinct
+    suites stay listed side by side (#407, 6143035811: natively on #404's
+    `6e8ed826` and on `4893270f`). **Each run is also gated by its own check
+    suite** (Option S, the owner's 6143702096): an item its runs make
+    `COMPLETE` stays so only while every one of them names one suite, listed
+    on the exact head and of the run's own App, whose status is `completed`. A
+    rerequested run's suite is queued again while the run stands unchanged
+    (GitHub's "Rerequest a check run"; the PAO, 6143194424), so the suite's
+    status gates and its conclusion never does, since a suite concludes from
+    all its runs. A suite not yet completed gives `INCOMPLETE`. A run without
+    a suite, or whose suite is unlisted, listed twice, on another head or
+    another App's, gives `PARTIAL`. Either is decided by the suites read, so it
+    carries the snapshot's cut as its observation time. An App that never runs leaves a queued
+    suite with no run on every push; it gates nothing, since no required run
+    names it. L1 reads the head's suites with merge evidence only, and the
+    read is `COMPLETE` only when every page is read, each counts as many
+    suites as were listed, and there are no more than 1,000: past that, GitHub
+    lists a reference's check runs from its 1,000 most recent suites only. A
+    suite entry not in L1's shape makes the snapshot invalid. Checks data
+    GitHub has archived, after 400 days, is not listed, so its item is
+    `MISSING` or its suite unlisted, and either denies. Whether a newer pending
+    Actions attempt can stand beside a `completed` suite is proved natively
+    before activation; if it can, Option B, a per-run attempt identity, goes to
+    the owner. For a single run, `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
     that did not run is not evidence (I10). Pending or any other conclusion is
     `INCOMPLETE`, and an ambiguous latest state is `PARTIAL`. An item with no
     run has no receipt, so the reducer makes it `MISSING`, and a checks read

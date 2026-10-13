@@ -92,6 +92,13 @@ REQUIRED_CHECKS: dict[str, Any] = {
 CHECK_RUNS = f"{API}/commits/{HEAD}/check-runs?per_page=100"
 
 
+CHECK_SUITES = f"{API}/commits/{HEAD}/check-suites?per_page=100"
+# Each producer's check suite on the head (Option S, #407 6143702096): one per App
+# here, as GitHub keeps for every App but Actions, which has one per workflow run.
+SUITE_OF = {ACTIONS: 9001, CODEQL: 9002, 12526: 9003}
+_DEFAULT_SUITE = object()
+
+
 def _check_run(
     identifier: int,
     name: str,
@@ -101,8 +108,12 @@ def _check_run(
     status: str = "completed",
     completed_at: str | None = "2026-09-19T16:40:30Z",
     started_at: str = "2026-09-19T16:40:20Z",
+    suite: object = _DEFAULT_SUITE,
 ) -> dict[str, Any]:
-    return {
+    """A check run on the head, in its App's suite unless `suite` names another,
+    or omits it when None, as a run without suite metadata would."""
+
+    run: dict[str, Any] = {
         "id": identifier,
         "name": name,
         "app": {"id": app_id},
@@ -112,11 +123,49 @@ def _check_run(
         "status": status,
         "conclusion": conclusion,
     }
+    if suite is _DEFAULT_SUITE:
+        suite = SUITE_OF.get(app_id, 9009)
+    if suite is not None:
+        run["check_suite"] = {"id": suite}
+    return run
 
 
 def _green_checks() -> list[dict[str, Any]]:
     runs = [_check_run(40 + i, name, ACTIONS) for i, name in enumerate(REQUIRED)]
     return [*runs, _check_run(50, "CodeQL", CODEQL)]
+
+
+def _suite(
+    identifier: int,
+    app_id: int,
+    *,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    head_sha: str = HEAD,
+) -> dict[str, Any]:
+    """A check suite on the head as GitHub lists it."""
+
+    return {
+        "id": identifier,
+        "app": {"id": app_id},
+        "head_sha": head_sha,
+        "status": status,
+        "conclusion": conclusion,
+    }
+
+
+def _green_suites() -> list[dict[str, Any]]:
+    return [_suite(suite, app) for app, suite in SUITE_OF.items()]
+
+
+def _suites(
+    suites: list[dict[str, Any]], *, total: int | None = None
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """One page of the head's check suites, counting them unless `total` says
+    otherwise."""
+
+    count = len(suites) if total is None else total
+    return {"total_count": count, "check_suites": suites}, {}
 
 
 FILES = [
@@ -228,6 +277,7 @@ def _replies(**changes: Any) -> dict[str, tuple[Any, dict[str, str]]]:
     replies[EDITS] = _edits((1, None))
     replies[CHECK_RUNS] = ({"check_runs": _green_checks()}, {})
     replies.pop("https://api.github.com/page2/check-runs", None)
+    replies[CHECK_SUITES] = _suites(_green_suites())
     replies[CLOSING] = _closing()
     # BODY's Work Items (1b.3b-3).
     replies[f"{API}/issues/407"] = _issue(407)
@@ -2446,6 +2496,504 @@ class CheckReceiptTests(unittest.TestCase):
             code, _, err = _run(_project(Path(directory)), json.dumps(snapshot))
         self.assertEqual(2, code)
         self.assertIn("github", err)
+
+
+class _Shifting:
+    """The fake provider, except that each read of one URL answers the next of
+    its replies, as a provider whose state moves between L1's passes would."""
+
+    def __init__(
+        self,
+        replies: dict[str, tuple[Any, dict[str, str]]],
+        url: str,
+        answers: list[tuple[Any, dict[str, str]]],
+    ) -> None:
+        self._inner = paged_fake_fixture(replies)
+        self._url = url
+        self._answers = answers
+        self.calls = self._inner.calls
+
+    def get(self, url: str) -> tuple[Any, dict[str, str]]:
+        if url != self._url:
+            return self._inner.get(url)
+        self.calls.append(url)
+        return self._answers[min(self.calls.count(url), len(self._answers)) - 1]
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        return self._inner.graphql(query, variables)
+
+
+def _manifest_statuses(snapshot: dict[str, Any]) -> dict[tuple[str, str], str]:
+    """Every receipt status the protected target's manifest gives a snapshot."""
+
+    evidence = merge_evidence_github.evidence_from_snapshot(
+        snapshot,
+        authorities=_authorities(),
+        change_policy=_policy(),
+        codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+        decisions=merge_evidence_github.load_decisions(ROOT),
+        required_checks=merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        ),
+    )
+    return _receipt_statuses(evidence)
+
+
+def _native(name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """An observed native fixture's default check-run view and check suites, on
+    this frame's head. The fixture leaves each entry's head out, since a bare
+    commit id reads as a secret candidate; its source URLs name the observed one.
+    The head is the only field added."""
+
+    document = json.loads(
+        (ROOT / "tests" / "fixtures" / "check_suites" / name).read_text(
+            encoding="utf-8"
+        )
+    )
+    if document["provenance"]["kind"] != "observed native":
+        raise AssertionError(f"{name} is not an observed native fixture")
+    runs = [{**run, "head_sha": HEAD} for run in document["check_runs"]]
+    suites = [{**suite, "head_sha": HEAD} for suite in document["check_suites"]]
+    return runs, suites, document["check_suites_total_count"]
+
+
+class SuiteStateGateTests(unittest.TestCase):
+    """Option S (#407, owner 6143702096, handoff 6143841830): a required run counts
+    only when it succeeded and its own check suite, read on the exact head, is
+    completed. Each case says whether its state was observed natively, is
+    documented by GitHub, or is synthetic."""
+
+    @staticmethod
+    def _fast(
+        runs: list[dict[str, Any]] | None = None,
+        suites: list[dict[str, Any]] | None = None,
+    ) -> str:
+        replies = _replies(
+            **{
+                CHECK_RUNS: (
+                    {"check_runs": _green_checks() if runs is None else runs},
+                    {},
+                ),
+                CHECK_SUITES: _suites(_green_suites() if suites is None else suites),
+            }
+        )
+        return _receipt_statuses(_command_evidence(replies))[
+            ("verification-checks", "fast")
+        ]
+
+    @staticmethod
+    def _with_fast_in(suite: int | None) -> list[dict[str, Any]]:
+        runs = [run for run in _green_checks() if run["name"] != "fast"]
+        return [*runs, _check_run(41, "fast", ACTIONS, suite=suite)]
+
+    def test_merge_evidence_reads_the_head_s_check_suites(self) -> None:
+        """Synthetic: L1 records each suite's identity and state, and each check
+        run's suite."""
+        snapshot = _snapshot()
+        self.assertIn("check_suites", snapshot)
+        self.assertEqual(
+            [
+                {"id": suite, "app_id": app, "head_commit": HEAD, "status": "completed"}
+                for app, suite in SUITE_OF.items()
+            ],
+            snapshot["check_suites"],
+        )
+        self.assertEqual("COMPLETE", snapshot["coverage"]["check_suites"]["status"])
+        for check in snapshot["checks"]:
+            if check["key"].startswith(f"github-check-run:{ACTIONS}:"):
+                with self.subTest(check=check["name"]):
+                    self.assertEqual(SUITE_OF[ACTIONS], check["suite"])
+
+    def test_the_advisory_snapshot_reads_no_check_suites(self) -> None:
+        """L1's current-state advisory keeps its reads (#407, 1b.3a)."""
+        fake = paged_fake_fixture(_replies())
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        self.assertNotIn("check_suites", snapshot)
+        self.assertNotIn(CHECK_SUITES, fake.calls)
+
+    def test_a_queued_suite_beside_its_unchanged_success_is_not_complete(
+        self,
+    ) -> None:
+        """Documented: a rerequested run's suite is reset to queued and its
+        conclusion cleared, while the run itself is not updated (GitHub's
+        "Rerequest a check run"; the PAO, 6143194424)."""
+        suites = _green_suites()
+        suites[0].update({"status": "queued", "conclusion": None})
+        self.assertEqual("INCOMPLETE", self._fast(suites=suites))
+
+    def test_sonarcloud_s_queued_suite_withholds_its_passed_gate(self) -> None:
+        """Documented, for the producer whose runs are rerequestable (native flags on
+        `63fc652`'s suite 103916552807): the passed gate stands unchanged while its
+        suite is queued."""
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        runs = [*_green_checks(), gate]
+        for status, expected in (("completed", "COMPLETE"), ("queued", "INCOMPLETE")):
+            with self.subTest(status):
+                suites = _green_suites()
+                suites[2]["status"] = status
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            CHECK_RUNS: ({"check_runs": runs}, {}),
+                            CHECK_SUITES: _suites(suites),
+                        }
+                    )
+                )
+                self.assertEqual(
+                    expected,
+                    _manifest_statuses(snapshot)[("sonarcloud", "quality-gate")],
+                )
+
+    def test_a_suite_whose_newer_attempt_is_pending_is_not_complete(self) -> None:
+        """Synthetic: the default view still shows the completed earlier attempt
+        while its suite runs a newer one. Whether GitHub ever shows this is the
+        live Actions proof the handoff requires before readiness."""
+        suites = _green_suites()
+        suites[0].update({"status": "in_progress", "conclusion": None})
+        self.assertEqual("INCOMPLETE", self._fast(suites=suites))
+
+    def test_a_run_whose_suite_is_not_proven_is_partial(self) -> None:
+        """Synthetic: a run whose suite is missing, unlisted, listed twice, on
+        another head or another App's is not bound to a completed suite of its
+        own."""
+        on_another_head = [*_green_suites(), _suite(9101, ACTIONS, head_sha=PREVIOUS)]
+        listed_twice = [*_green_suites(), _suite(SUITE_OF[ACTIONS], ACTIONS)]
+        cases: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {
+            "no suite metadata": (self._with_fast_in(None), _green_suites()),
+            "a suite that is not listed": (self._with_fast_in(9100), _green_suites()),
+            "a suite listed twice": (_green_checks(), listed_twice),
+            "a suite on another head": (self._with_fast_in(9101), on_another_head),
+            "another App's suite": (
+                self._with_fast_in(SUITE_OF[CODEQL]),
+                _green_suites(),
+            ),
+        }
+        for name, (runs, suites) in cases.items():
+            with self.subTest(name):
+                self.assertEqual("PARTIAL", self._fast(runs, suites))
+
+    def test_a_serialized_run_s_suite_must_be_an_exact_suite_id(self) -> None:
+        """Synthetic serialized input (the PAO on #428, 6144886026): the adapter also
+        reads a snapshot from a file, so a run's suite must be the exact integer id of
+        a listed suite. A missing id on both sides, or one that only compares equal,
+        as 9001.0 and True do, never makes the item COMPLETE; refusing the snapshot is
+        as good."""
+
+        def outcome(snapshot: dict[str, Any]) -> str:
+            try:
+                return _manifest_statuses(snapshot)[("verification-checks", "fast")]
+            except merge_evidence_github.MergeEvidenceError:
+                return "REFUSED"
+
+        cases: dict[str, tuple[object, object]] = {
+            "no suite on the run, a null id on the entry": (None, None),
+            "no suite on the run, no id on the entry": (None, "drop"),
+            "a fractional suite on the run": (9001.0, SUITE_OF[ACTIONS]),
+            "a boolean suite on the run": (True, 1),
+        }
+        for name, (run_suite, entry_id) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                fast["suite"] = run_suite
+                [entry] = [
+                    s for s in snapshot["check_suites"] if s["id"] == SUITE_OF[ACTIONS]
+                ]
+                if entry_id == "drop":
+                    del entry["id"]
+                else:
+                    entry["id"] = entry_id
+                self.assertNotEqual("COMPLETE", outcome(snapshot))
+
+    def test_a_malformed_suite_reference_is_a_source_error(self) -> None:
+        """Synthetic: a run whose suite reference is not a suite id is malformed
+        provider data, so the checks read is not complete."""
+        for name, value in (("a text id", {"id": "9001"}), ("not an object", 9001)):
+            with self.subTest(name):
+                runs = _green_checks()
+                runs[1]["check_suite"] = value
+                snapshot = _snapshot(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertNotEqual(
+                    "COMPLETE", snapshot["coverage"]["checks"]["status"]
+                )
+
+    def test_an_incomplete_suites_read_marks_every_item(self) -> None:
+        """Synthetic, and GitHub's documented bound: with more than 1,000 suites on a
+        reference, check runs are listed only from its 1,000 most recent, so a head
+        past that count is not proven complete."""
+        page_error = {
+            CHECK_SUITES: (
+                {"total_count": 4, "check_suites": _green_suites()},
+                {"link": '<https://api.github.com/page9/check-suites>; rel="next"'},
+            ),
+            "https://api.github.com/page9/check-suites": ({"message": "x"}, {}),
+        }
+        cases: dict[str, dict[str, Any]] = {
+            "a page that fails": page_error,
+            "fewer listed than counted": {
+                CHECK_SUITES: _suites(_green_suites(), total=4)
+            },
+            "no count": {CHECK_SUITES: ({"check_suites": _green_suites()}, {})},
+            # 3.0 == 3, so only the count's type refuses it.
+            "a count that is not an integer": {
+                CHECK_SUITES: (
+                    {"total_count": 3.0, "check_suites": _green_suites()},
+                    {},
+                )
+            },
+            "a page that is not an object": {CHECK_SUITES: (_green_suites(), {})},
+            "a page without its list": {CHECK_SUITES: ({"total_count": 3}, {})},
+            "past the provider's bound": self._listed_suites(1001),
+        }
+        for name, changes in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot(_replies(**changes))
+                self.assertNotEqual(
+                    "COMPLETE",
+                    snapshot["coverage"].get("check_suites", {}).get("status"),
+                )
+                statuses = _manifest_statuses(snapshot)
+                checks = {
+                    k: s for k, s in statuses.items() if k[0] != "analyzer-readback"
+                }
+                self.assertTrue(checks)
+                self.assertTrue(all(s != "COMPLETE" for s in checks.values()), checks)
+
+    @staticmethod
+    def _listed_suites(count: int) -> dict[str, Any]:
+        """`count` suites over pages of 100, every one completed, the head's own
+        among them."""
+        suites = [
+            *_green_suites(),
+            *(_suite(20000 + i, 1001) for i in range(count - 3)),
+        ]
+        pages = [suites[start : start + 100] for start in range(0, count, 100)]
+        replies: dict[str, Any] = {}
+        url = CHECK_SUITES
+        for number, listed in enumerate(pages):
+            following = f"https://api.github.com/page{number + 2}/check-suites"
+            last = number == len(pages) - 1
+            headers = {} if last else {"link": f'<{following}>; rel="next"'}
+            replies[url] = ({"total_count": count, "check_suites": listed}, headers)
+            url = following
+        return replies
+
+    def test_exactly_the_provider_s_bound_is_complete(self) -> None:
+        """Documented: check runs go unlisted only past 1,000 suites, so a head
+        with exactly 1,000, all listed and counted, is complete (Codex on #428)."""
+        snapshot = _snapshot(_replies(**self._listed_suites(1000)))
+        self.assertEqual("COMPLETE", snapshot["coverage"]["check_suites"]["status"])
+        self.assertEqual(
+            "COMPLETE", _manifest_statuses(snapshot)[("verification-checks", "fast")]
+        )
+
+    def test_a_malformed_suite_entry_is_an_invalid_snapshot(self) -> None:
+        """Synthetic: a snapshot whose suite entry is not as L1 records one is
+        refused as invalid, as a malformed check is (CodeAnt on #428)."""
+        cases: dict[str, Any] = {
+            "a null entry": None,
+            "a text id": {
+                "id": "9001",
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": "completed",
+            },
+            "no status": {"id": 9001, "app_id": ACTIONS, "head_commit": HEAD},
+            "a null status": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": None,
+            },
+            "a null head": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": None,
+                "status": "completed",
+            },
+        }
+        for name, entry in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                snapshot["check_suites"][0] = entry
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, "the snapshot is invalid"
+                ):
+                    _manifest_statuses(snapshot)
+
+    def test_suites_that_move_between_passes_are_not_complete(self) -> None:
+        """Synthetic: a suite read whose state changes between L1's passes is not a
+        stable observation, so L1 certifies nothing and the adapter gives no
+        evidence at all."""
+        moving = _green_suites()
+        moving[0].update({"status": "in_progress", "conclusion": None})
+        fake = _Shifting(
+            _replies(),
+            CHECK_SUITES,
+            [_suites(_green_suites()), _suites(moving), _suites(_green_suites())],
+        )
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertIn(CHECK_SUITES, fake.calls)
+        self.assertEqual("UNSTABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual(
+            {"status": "PARTIAL", "reason": "unstable_observation_cut"},
+            {
+                key: snapshot["coverage"]["check_suites"][key]
+                for key in ("status", "reason")
+            },
+        )
+        with self.assertRaisesRegex(
+            merge_evidence_github.MergeEvidenceError, "not COMPLETE"
+        ):
+            _manifest_statuses(snapshot)
+
+    def test_completed_suites_keep_their_successful_runs_complete(self) -> None:
+        """Controls: a completed suite of the run's own App on the head keeps a
+        success COMPLETE, whatever the suite concluded from its other runs, and a
+        re-run that recovered within its suite counts."""
+        failed_elsewhere = _green_suites()
+        failed_elsewhere[0]["conclusion"] = "failure"
+        recovered = [run for run in _green_checks() if run["name"] != "fast"]
+        recovered.append(
+            _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z")
+        )
+        # Observed native: GitHub creates a suite on every push for each installed
+        # App, and one that never runs stays queued with no run (`63fc652`: 16 such).
+        idle = [
+            *_green_suites(),
+            _suite(9500, 811515, status="queued", conclusion=None),
+        ]
+        for name, (runs, suites) in {
+            "a completed suite": (None, None),
+            "a suite that concluded in failure from another run": (
+                None,
+                failed_elsewhere,
+            ),
+            "a re-run that recovered within its suite": (recovered, None),
+            "another App's queued suite without runs": (None, idle),
+        }.items():
+            with self.subTest(name):
+                self.assertEqual("COMPLETE", self._fast(runs, suites))
+
+    def test_every_suite_behind_an_item_gates_it(self) -> None:
+        """Synthetic: two workflow runs on one head each post a successful run of
+        the check, and one of their suites is queued again. Every run's suite gates
+        the item, in whichever order the provider lists them."""
+        runs = [run for run in _green_checks() if run["name"] != "fast"]
+        for name, order in (
+            ("queued first", (9001, 9201)),
+            ("queued last", (9201, 9001)),
+        ):
+            with self.subTest(name):
+                suites = [_suite(9201, ACTIONS), *_green_suites()]
+                suites[1].update({"status": "queued", "conclusion": None})
+                both = [
+                    *runs,
+                    *(
+                        _check_run(41 + i, "fast", ACTIONS, suite=s)
+                        for i, s in enumerate(order)
+                    ),
+                ]
+                self.assertEqual("INCOMPLETE", self._fast(both, suites))
+
+    def test_a_gated_receipt_is_dated_by_its_suite_read(self) -> None:
+        """Synthetic: a receipt the suite gate lowers is decided by the suite's state
+        at the snapshot's cut, so it carries that time, as a receipt an incomplete
+        read marks does; a COMPLETE one keeps its run's (CodeAnt on #428)."""
+        queued = _green_suites()
+        queued[0].update({"status": "queued", "conclusion": None})
+        cases = {
+            "a queued suite": (_green_checks(), queued, "INCOMPLETE", None),
+            "an unlisted suite": (
+                self._with_fast_in(9100),
+                _green_suites(),
+                "PARTIAL",
+                None,
+            ),
+            "a completed suite": (
+                _green_checks(),
+                _green_suites(),
+                "COMPLETE",
+                "2026-09-19T16:40:30Z",
+            ),
+        }
+        for name, (runs, suites, status, run_time) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            CHECK_RUNS: ({"check_runs": runs}, {}),
+                            CHECK_SUITES: _suites(suites),
+                        }
+                    )
+                )
+                evidence = merge_evidence_github.evidence_from_snapshot(
+                    snapshot,
+                    authorities=_authorities(),
+                    change_policy=_policy(),
+                    codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+                    decisions=merge_evidence_github.load_decisions(ROOT),
+                    required_checks=merge_evidence_github.load_required_checks(
+                        ROOT / "policy" / "merge-required-checks.yaml",
+                        project_root=ROOT,
+                    ),
+                )
+                [receipt] = [
+                    r for r in evidence["receipts"] if r["coverage"] == ["fast"]
+                ]
+                self.assertEqual(status, receipt["status"])
+                self.assertEqual(
+                    run_time or snapshot["observed_at"], receipt["observed_at"]
+                )
+
+    def test_a_failure_in_another_completed_suite_still_denies(self) -> None:
+        """Control: suites never weaken the all-must-pass rule across suites (Codex
+        on #415)."""
+        runs = [
+            *_green_checks(),
+            _check_run(61, "fast", ACTIONS, conclusion="failure", suite=9201),
+        ]
+        suites = [*_green_suites(), _suite(9201, ACTIONS, conclusion="failure")]
+        self.assertEqual("PARTIAL", self._fast(runs, suites))
+
+    def test_the_observed_native_rerun_and_split_suites(self) -> None:
+        """Observed native (`tests/fixtures/check_suites/`): #404's run
+        37835021142 re-ran within suite 102509822157, and `4893270f` holds a
+        cancelled suite with a failed `regression` beside a successful one."""
+        for name, expected in (
+            ("rerun-in-one-suite.json", "COMPLETE"),
+            ("failure-in-another-suite.json", "PARTIAL"),
+        ):
+            with self.subTest(name):
+                runs, suites, total = _native(name)
+                statuses = _receipt_statuses(
+                    _command_evidence(
+                        _replies(
+                            **{
+                                CHECK_RUNS: ({"check_runs": runs}, {}),
+                                CHECK_SUITES: _suites(suites, total=total),
+                            }
+                        )
+                    )
+                )
+                for item in REQUIRED:
+                    self.assertEqual(expected, statuses[("verification-checks", item)])
 
 
 class AuthoritiesTests(unittest.TestCase):

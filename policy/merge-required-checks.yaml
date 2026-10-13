@@ -5,8 +5,9 @@
 # reads the check runs with that app id and name on the exact head. A single run
 # gives the status: success is COMPLETE; skipped or neutral is SKIPPED, since a
 # check that did not run is not evidence; anything else is INCOMPLETE. Several runs
-# are COMPLETE only if every one succeeded, and PARTIAL otherwise. A check of the
-# same name from another app does not count. The verification checks are R-main's required status checks, and
+# are COMPLETE only if every one succeeded, and PARTIAL otherwise. Each run also
+# needs its own check suite, read on the exact head, to be completed (Option S,
+# Decision 0112). A check of the same name from another app does not count. The verification checks are R-main's required status checks, and
 # a test keeps them equal to the ruleset recorded in operate-the-merge-gate.md.
 schema_version: "1.0"
 id: gnostoa.merge-required-checks
