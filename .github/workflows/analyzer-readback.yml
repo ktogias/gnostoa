@@ -36,6 +36,16 @@ on:
         description: True for the merge-admission run's call
         required: true
         type: boolean
+    # The call's tokens, which the environment holds: a caller must pass each by
+    # name (#407 6151068319). Required checks only that it is passed, not that it
+    # has a value, so a missing token still reads AUTH_UNAVAILABLE and denies.
+    secrets:
+      DEEPSOURCE_API_TOKEN:
+        required: true
+      CODACY_API_TOKEN:
+        required: true
+      SONAR_TOKEN:
+        required: true
 
 permissions:
   contents: read

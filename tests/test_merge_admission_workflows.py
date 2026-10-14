@@ -23,6 +23,7 @@ from typing import Any
 from unittest import mock
 
 import yaml
+from test_claude_actions_workflows import _expression_secrets
 from test_merge_evidence_github import API, HEAD, _replies
 from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
@@ -138,6 +139,22 @@ ACTIONS_EVENTS = frozenset(
 )
 UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD_ACTION = "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0"
+READBACK_CALL = "./.github/workflows/analyzer-readback.yml"
+# The tokens the readback's acquisition step reads (Decision 0107). A called
+# workflow's environment secrets resolve to an empty string unless its caller passes
+# each by name (GitHub, "Reuse workflows", read 2026-10-13; #407 6151068319), so the
+# call forwards exactly these, each by its own name, and never `inherit` (#407
+# 6154772083).
+ANALYZER_SECRETS = frozenset(
+    {"DEEPSOURCE_API_TOKEN", "CODACY_API_TOKEN", "SONAR_TOKEN"}
+)
+
+
+def _selector(name: str) -> str:
+    return f"${{{{ secrets.{name} }}}}"
+
+
+ANALYZER_FORWARDING = {name: _selector(name) for name in ANALYZER_SECRETS}
 
 
 class TriggerWorkflowTests(unittest.TestCase):
@@ -516,11 +533,7 @@ class AdmissionWorkflowTests(unittest.TestCase):
 
     def test_the_inventory_is_re_read_through_the_existing_readback(self) -> None:
         jobs = _load(ADMISSION)["jobs"]
-        callers = [
-            job
-            for job in jobs.values()
-            if job.get("uses") == "./.github/workflows/analyzer-readback.yml"
-        ]
+        callers = [job for job in jobs.values() if job.get("uses") == READBACK_CALL]
         self.assertEqual(1, len(callers))
         self.assertIs(True, callers[0]["with"]["admission"])
         self.assertIn("pull_number", callers[0]["with"])
@@ -549,27 +562,45 @@ class AdmissionWorkflowTests(unittest.TestCase):
                 }
                 self.assertEqual({"permission-checks": "write"}, permissions)
                 self.assertEqual(gates[name], minting[0].get("if"))
-        for other_name, other in jobs.items():
-            if other_name in holders:
-                continue
-            with self.subTest(job=other_name):
-                text = str(other)
-                self.assertNotIn(APP_MINT_ACTION, text)
-                # CodeAnt on #426: nor the App's key, id or token by any other route.
-                self.assertNotIn("secrets.", text)
-                self.assertNotIn("GNOSTOA_MA0", text)
-                self.assertNotIn("steps.token", text)
         relays = {
             "invalidate": "Invalidate a standing success on the exact head",
             "admit": "Publish the verdict on the exact head",
         }
         for name, job in holders.items():
+            with self.subTest(job=name):
+                # CodeAnt on #430: nor at the job's own level.
+                outside = {k: v for k, v in job.items() if k != "steps"}
+                self.assertEqual(set(), _secret_references(outside))
             for step in _steps(job):
                 with self.subTest(job=name, step=step.get("name")):
-                    if "secrets." in str(step):
+                    if _secret_references(step):
                         self.assertEqual(APP_MINT_ACTION, step.get("uses"))
                     if "steps.token" in str(step):
                         self.assertEqual(relays[name], step.get("name"))
+
+    def test_no_other_job_holds_a_secret(self) -> None:
+        """CodeAnt on #426: nor the App's key, id or token by any other route. The
+        readback's call forwards exactly the analyzer tokens (#407 6154772083), and
+        no other secret reaches a job that is not a holder, from the job itself or
+        from the workflow's own level (CodeAnt on #430)."""
+        document = _load(ADMISSION)
+        workflow = {k: v for k, v in document.items() if k != "jobs"}
+        self.assertEqual(set(), _secret_references(workflow))
+        for name, job in document["jobs"].items():
+            if job.get("environment") == "gnostoa-ma0":
+                continue
+            with self.subTest(job=name):
+                text = str(job)
+                self.assertNotIn(APP_MINT_ACTION, text)
+                rest = job
+                if job.get("uses") == READBACK_CALL:
+                    self.assertEqual(ANALYZER_FORWARDING, job.get("secrets"))
+                    rest = {k: v for k, v in job.items() if k != "secrets"}
+                # Nor `secrets: inherit`, which names none (Decision 0097's rule).
+                self.assertNotIn("secrets", rest)
+                self.assertEqual(set(), _secret_references(rest))
+                self.assertNotIn("GNOSTOA_MA0", text)
+                self.assertNotIn("steps.token", text)
 
     def test_checkouts_take_main_without_credentials(self) -> None:
         for name, job in _load(ADMISSION)["jobs"].items():
@@ -746,6 +777,49 @@ class ActivationRunbookTests(unittest.TestCase):
         self.assertIn("ci/merge_admission_guard.py", launch)
 
 
+def _secret_references(node: object) -> set[str | None]:
+    """The secret each expression in a loaded document names, read by the Claude
+    workflows' detector (Decision 0097), not by a copy of it (Claude on #430): a
+    single secret's name, or None for a reference that names none, such as the
+    whole context, which reaches every secret."""
+
+    return set(_expression_secrets(json.dumps(node, default=str)))
+
+
+def _forwarding_problems(caller: dict[str, Any], callee: dict[str, Any]) -> list[str]:
+    """Why the readback's call would not receive exactly the analyzer tokens: each
+    forwarded by its own name, each declared required, and each read by name in the
+    acquisition step's environment alone, as its comment says."""
+
+    problems = []
+    forwarded = caller.get("secrets")
+    if forwarded != ANALYZER_FORWARDING:
+        problems.append(f"the call forwards {forwarded!r}")
+    declared = callee["on"]["workflow_call"].get("secrets")
+    if not isinstance(declared, dict) or set(declared) != ANALYZER_SECRETS:
+        problems.append(f"the callee declares {declared!r}")
+    else:
+        for name, declaration in sorted(declared.items()):
+            if (
+                not isinstance(declaration, dict)
+                or declaration.get("required") is not True
+            ):
+                problems.append(f"the callee does not require {name}: {declaration!r}")
+    elsewhere = copy.deepcopy({k: v for k, v in callee.items() if k != "on"})
+    acquired = [
+        step.pop("env", {})
+        for step in elsewhere["jobs"]["readback"]["steps"]
+        if step.get("id") == "readback"
+    ]
+    read = _secret_references(acquired)
+    if len(acquired) != 1 or read != ANALYZER_SECRETS:
+        problems.append(f"the acquisition reads {sorted(read, key=str)!r}")
+    stray = _secret_references(elsewhere)
+    if stray:
+        problems.append(f"the callee reads {sorted(stray, key=str)!r} elsewhere")
+    return problems
+
+
 class ReadbackCallTests(unittest.TestCase):
     """`analyzer-readback.yml` gains one entry: a call from the admission run."""
 
@@ -770,6 +844,153 @@ class ReadbackCallTests(unittest.TestCase):
         condition = str(_load(READBACK)["jobs"]["readback"]["if"])
         self.assertTrue(condition.strip().startswith(MAIN_ONLY))
         self.assertIn("inputs.admission", condition)
+
+    def test_a_call_receives_exactly_the_analyzer_tokens(self) -> None:
+        """#407 6151068319: the call passed no secret, so each token resolved to an
+        empty string in the called job, and every shadow verdict denied M2-M8 and
+        M17 as AUTH_UNAVAILABLE. `required: true` only checks that the caller
+        passes the secret, not that it has a value: the live readback stays the
+        proof."""
+        (caller,) = [
+            job
+            for job in _load(ADMISSION)["jobs"].values()
+            if job.get("uses") == READBACK_CALL
+        ]
+        self.assertEqual([], _forwarding_problems(caller, _load(READBACK)))
+
+    def test_a_call_that_forwards_otherwise_is_refused(self) -> None:
+        callee = _load(READBACK)
+        callee["on"]["workflow_call"]["secrets"] = {
+            name: {"required": True} for name in ANALYZER_SECRETS
+        }
+        caller: dict[str, Any] = {
+            "uses": READBACK_CALL,
+            "secrets": dict(ANALYZER_FORWARDING),
+        }
+        self.assertEqual([], _forwarding_problems(caller, callee))
+
+        def forwarding(**changes: str | None) -> dict[str, Any]:
+            secrets = {**ANALYZER_FORWARDING, **changes}
+            return {
+                "uses": READBACK_CALL,
+                "secrets": {k: v for k, v in secrets.items() if v is not None},
+            }
+
+        def declaring(**changes: object) -> dict[str, Any]:
+            changed = copy.deepcopy(callee)
+            declared = changed["on"]["workflow_call"]["secrets"]
+            for name, declaration in changes.items():
+                if declaration is None:
+                    del declared[name]
+                else:
+                    declared[name] = declaration
+            return changed
+
+        reading = copy.deepcopy(callee)
+        reading["jobs"]["readback"]["steps"].append(
+            {"env": {"EXTRA": _selector("ANOTHER")}}
+        )
+        undeclared = copy.deepcopy(callee)
+        del undeclared["on"]["workflow_call"]["secrets"]
+
+        def reading_in(where: str, expression: str) -> dict[str, Any]:
+            changed = copy.deepcopy(callee)
+            if where == "workflow":
+                changed.setdefault("env", {})["EXTRA"] = expression
+                return changed
+            (step,) = [
+                step
+                for step in changed["jobs"]["readback"]["steps"]
+                if step.get("id") == where
+            ]
+            step.setdefault("env", {})["EXTRA"] = expression
+            return changed
+
+        # CodeAnt on #430: every form of the context counts, wherever it is read.
+        variants: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+            "a bracket read": (
+                caller,
+                reading_in("readback", "${{ secrets['ANOTHER'] }}"),
+            ),
+            "the whole context read": (
+                caller,
+                reading_in("readback", "${{ toJSON(secrets) }}"),
+            ),
+            "a differently cased read": (
+                caller,
+                reading_in("readback", "${{ SECRETS.ANOTHER }}"),
+            ),
+            "a workflow-level read": (
+                caller,
+                reading_in("workflow", _selector("SONAR_TOKEN")),
+            ),
+            "a read beside the acquisition": (
+                caller,
+                reading_in("subject", _selector("SONAR_TOKEN")),
+            ),
+            "no secrets": ({"uses": READBACK_CALL}, callee),
+            "inherit": (
+                {
+                    "uses": READBACK_CALL,
+                    "secrets": "inherit",  # pragma: allowlist secret -- GitHub keyword
+                },
+                callee,
+            ),
+            "one missing": (forwarding(SONAR_TOKEN=None), callee),
+            "a wrong selector": (
+                forwarding(DEEPSOURCE_API_TOKEN=_selector("CODACY_API_TOKEN")),
+                callee,
+            ),
+            "an extra secret": (
+                forwarding(ANOTHER=_selector("ANOTHER")),
+                callee,
+            ),
+            "no declaration": (caller, undeclared),
+            "one undeclared": (caller, declaring(CODACY_API_TOKEN=None)),
+            "an extra declaration": (
+                caller,
+                declaring(ANOTHER={"required": True}),
+            ),
+            "an optional one": (
+                caller,
+                declaring(SONAR_TOKEN={"required": False}),
+            ),
+            "a requirement unset": (caller, declaring(SONAR_TOKEN={})),
+            "a requirement as text": (
+                caller,
+                declaring(DEEPSOURCE_API_TOKEN={"required": "true"}),
+            ),
+            "an undeclared read": (caller, reading),
+        }
+        # Each variant raises exactly its own problem, so none passes for another.
+        forwards, declares = "the call forwards", "the callee declares"
+        requires, acquires = "the callee does not require", "the acquisition reads"
+        strays = "the callee reads"
+        raised = {
+            "a bracket read": acquires,
+            "the whole context read": acquires,
+            "a differently cased read": acquires,
+            "a workflow-level read": strays,
+            "a read beside the acquisition": strays,
+            "no secrets": forwards,
+            "inherit": forwards,
+            "one missing": forwards,
+            "a wrong selector": forwards,
+            "an extra secret": forwards,
+            "no declaration": declares,
+            "one undeclared": declares,
+            "an extra declaration": declares,
+            "an optional one": requires,
+            "a requirement unset": requires,
+            "a requirement as text": requires,
+            "an undeclared read": strays,
+        }
+        self.assertEqual(set(raised), set(variants))
+        for label, (variant_caller, variant_callee) in variants.items():
+            with self.subTest(variant=label):
+                problems = _forwarding_problems(variant_caller, variant_callee)
+                prefix = raised[label]
+                self.assertEqual([prefix], [p[: len(prefix)] for p in problems])
 
 
 def _readback_resolver() -> Any:
