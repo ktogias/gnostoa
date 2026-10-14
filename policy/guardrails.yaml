@@ -696,18 +696,29 @@ guardrails:
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r2_one_vendor_s_two_reads_are_one_domain
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r3_a_critical_change_needs_its_independent_domains
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r4_only_a_complete_current_receipt_supports_a_claim
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_every_item_that_is_not_complete_is_listed_as_degraded
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r9_items_that_share_a_domain_count_once
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r10_a_claim_is_supported_only_by_its_own_evidence
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r11_classes_differ_only_by_the_declared_minimums
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_no_applicable_claim_is_incomplete
       - tests/test_assurance_completeness.py::ClaimPolicyTests.test_the_claims_verdict_names_its_claims_and_nothing_more
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_valid_claims_declaration_parses
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_1_1_declaration_needs_claims_and_domains
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_every_item_has_exactly_one_domain
       - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_claim_cannot_require_more_domains_than_its_evidence_has
       - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_every_applicable_item_supports_a_claim
       - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_claim_names_declared_evidence
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_minimum_is_a_positive_integer
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_claim_applies_only_where_its_evidence_does
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_claim_ids_and_evidence_are_unique
       - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_claim_keys_are_closed
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_the_command_reduces_a_claims_declaration
       - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_today_a_vendor_that_cannot_analyse_holds_gnostoa
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_1_0_declaration_holds_whenever_a_declared_item_is_not_complete
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_claims_belong_to_schema_1_1_only
       - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_receipt_cannot_name_its_own_domain_or_claim
       - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_1_0_verdict_keeps_its_schema
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_gnostoa_s_declaration_keeps_its_935ea6c_verdict_for_every_status
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
   - id: merge-admission-verdict

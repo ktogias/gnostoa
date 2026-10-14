@@ -844,12 +844,11 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
             assurance_completeness.AssuranceCompletenessError, "unknown key"
         ):
             assurance_completeness.parse_declaration(document)
+        document = _with(domains={"fast": "ci", "smoke": "ci"})
         with self.assertRaisesRegex(
             assurance_completeness.AssuranceCompletenessError, "unknown key"
         ):
-            assurance_completeness.parse_declaration(
-                _with(domains={"fast": "ci", "smoke": "ci"})
-            )
+            assurance_completeness.parse_declaration(document)
 
     def test_a_1_0_verdict_keeps_its_schema(self) -> None:
         """R6: a 1.0 declaration's verdict is unchanged by #389 F1."""

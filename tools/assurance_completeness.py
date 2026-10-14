@@ -243,6 +243,7 @@ def _claim_evidence(
     if not isinstance(value, list) or not value:
         raise AssuranceCompletenessError(f"{label} evidence must be a non-empty list")
     evidence: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for index, item in enumerate(value):
         entry_label = f"{label} evidence {index}"
         entry = require_mapping(item, entry_label)
@@ -257,10 +258,10 @@ def _claim_evidence(
                 f"{entry_label}: requirement {requirement!r} item {name!r} "
                 "is not declared"
             )
-        pair = {"requirement": requirement, "item": name}
-        if pair in evidence:
+        if (requirement, name) in seen:
             raise AssuranceCompletenessError(f"{label} has duplicate evidence")
-        evidence.append(pair)
+        seen.add((requirement, name))
+        evidence.append({"requirement": requirement, "item": name})
     return evidence
 
 
@@ -538,6 +539,11 @@ def _claims_reduction(
     listed as degraded.
     """
 
+    # `results` holds only the requirements that apply to `change_class`. Every
+    # item a claim of this class names has a status here all the same: `_claim`
+    # refuses a claim whose evidence names a requirement that does not apply to
+    # each of its classes, and `evaluate` selects the applicable requirements by
+    # that same class.
     statuses = {
         (result["id"], entry["item"]): entry["status"]
         for result in results
