@@ -691,6 +691,23 @@ guardrails:
       - tests/test_assurance_completeness.py::CommandTests.test_incomplete_exits_one_with_the_verdict
       - tests/test_assurance_completeness.py::CommandTests.test_invalid_input_exits_two
       - tests/test_assurance_completeness.py::GnostoaDeclarationTests.test_gnostoa_declares_the_merge_evidence_for_every_merging_class
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r1_a_qualified_substitute_covers_an_unavailable_vendor
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r1_without_a_qualified_substitute_the_same_receipts_deny
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r2_one_vendor_s_two_reads_are_one_domain
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r3_a_critical_change_needs_its_independent_domains
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r4_only_a_complete_current_receipt_supports_a_claim
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r9_items_that_share_a_domain_count_once
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r10_a_claim_is_supported_only_by_its_own_evidence
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_r11_classes_differ_only_by_the_declared_minimums
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_no_applicable_claim_is_incomplete
+      - tests/test_assurance_completeness.py::ClaimPolicyTests.test_the_claims_verdict_names_its_claims_and_nothing_more
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_claim_cannot_require_more_domains_than_its_evidence_has
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_every_applicable_item_supports_a_claim
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_a_claim_names_declared_evidence
+      - tests/test_assurance_completeness.py::ClaimDeclarationTests.test_claim_keys_are_closed
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_today_a_vendor_that_cannot_analyse_holds_gnostoa
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_receipt_cannot_name_its_own_domain_or_claim
+      - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_1_0_verdict_keeps_its_schema
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
 
   - id: merge-admission-verdict

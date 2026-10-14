@@ -91,6 +91,18 @@ provider-neutral public change-governance contract of
    - The receipt statuses are Decision 0091's coverage statuses, which contain
      Decision 0086's, plus `SKIPPED`.
    - The reducer fetches nothing and grants nothing.
+   - A declaration of schema `1.1` (#389 F1) also gives each coverage item its
+     failure domain. Items sharing a vendor, backend, credential or imported result
+     share one domain. It names claims: each lists the items qualified to support it
+     and, for each change class it applies to, how many distinct domains must
+     support it with a current `COMPLETE` item. The verdict is then `COMPLETE` only
+     when every applicable claim is. Item statuses are computed as above and never
+     upgraded: an item that is not complete is listed as degraded, never as clean.
+     Findings are not read here; M17 still denies on any of them.
+   - A `1.0` declaration keeps its form and its verdict. Gnostoa's own declaration
+     stays `1.0` until its consumers migrate with it (#389 F2). A substitute becomes
+     eligible only through a reviewed change to the declaration, after its
+     qualification (#389 F3).
 3. **The owner's native approval of the exact head is the only per-merge human act.**
    - What the approval rests on:
      - reviewer convergence: item 4's subset is criteria of the verdict, and the
