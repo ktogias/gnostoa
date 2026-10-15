@@ -911,8 +911,11 @@ class EvidenceDocumentTests(unittest.TestCase):
         Without the analyzer readback its findings are unavailable too (M17)."""
         evidence = _evidence()
         self.assertEqual({"M2-M8", "M13", "M15", "M17"}, set(_failed(evidence)))
+        # The default snapshot has no SonarCloud gate, so the claims are not met
+        # and M17 says so beside M2-M8 (#389 F2, the Router's 6192443314).
         self.assertEqual(
-            {"M2-M8", "M13", "M15"}, set(_failed(_evidence(analyzer=_bundle())))
+            {"M2-M8", "M13", "M15", "M17"},
+            set(_failed(_evidence(analyzer=_bundle()))),
         )
         self.assertEqual(
             {
@@ -3117,7 +3120,16 @@ class AnalyzerReceiptTests(unittest.TestCase):
             },
             evidence["analyzer_findings"],
         )
-        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
 
     def test_a_finding_keeps_its_normalized_disposition_fields(self) -> None:
         """The owner's re-admission (#417 6107601240): a finding keeps the tool,
@@ -3155,7 +3167,16 @@ class AnalyzerReceiptTests(unittest.TestCase):
             ],
             evidence["analyzer_findings"]["findings"],
         )
-        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
 
     def test_a_bundle_not_bound_to_the_subject_gives_incomplete_receipts(self) -> None:
         incomplete = _bundle(
@@ -3582,7 +3603,16 @@ class SonarCloudInventoryTests(unittest.TestCase):
             ["sonar-accepted", "sonar-false-positive"],
             [f["id"] for f in evidence["analyzer_findings"]["findings"]],
         )
-        self.assertEqual(["2 unresolved analyzer findings"], _failed(evidence)["M17"])
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
 
 
 SONAR_CHECK = 12526
@@ -3913,6 +3943,249 @@ class SonarCloudGateTests(unittest.TestCase):
         """#353: a passing gate is no evidence that the inventory is empty."""
         statuses = self._statuses(self._run(60, self._for(300)))
         self.assertNotIn(("sonarcloud", "issue-inventory"), statuses)
+
+
+# #389 F2 (the Router's exact-base continuation, 6192443314): M17's positive
+# coverage is the completeness verdict over every applicable claim of the
+# protected declaration, computed once by the admission; the adapter keeps each
+# source's raw coverage, and every obtained finding still vetoes. The substitute
+# claims are a test-only qualification, never a live one (F3 owns qualification).
+_F2_SUBSTITUTES = (
+    (("analyzer-readback", "deepsource-diff"), ("analyzer-readback", "codacy")),
+    (("analyzer-readback", "deepsource-full"), ("sonarcloud", "issue-inventory")),
+)
+_F2_CLASSES = ("critical", "mechanical", "normal", "normative")
+
+
+def _f2_declaration(
+    groups: tuple[tuple[tuple[str, str], ...], ...] = (), minimum: int = 1
+) -> dict[str, Any]:
+    """Gnostoa's own 1.1 declaration, its requirements and their domains as they
+    are, with its claims replaced: each group is one claim with the minimum given,
+    and every other item is its own claim (minimum 1). Taking the domains from the
+    declaration keeps a requirement it gains covered (Amazon Q on #435)."""
+
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
+    )
+    grouped = {pair for group in groups for pair in group}
+    claims = [
+        (((requirement["id"], item),), 1)
+        for requirement in document["requirements"]
+        for item in requirement["coverage"]
+        if (requirement["id"], item) not in grouped
+    ] + [(group, minimum) for group in groups]
+    document["claims"] = [
+        {
+            "id": "-".join(item for _, item in group),
+            "title": "A test-only claim",
+            "evidence": [{"requirement": r, "item": i} for r, i in group],
+            "independent_domains": dict.fromkeys(_F2_CLASSES, count),
+        }
+        for group, count in claims
+    ]
+    return document
+
+
+def _f2_partial(scope: str, *findings: dict[str, Any]) -> dict[str, Any]:
+    """A partial DeepSource read that still obtained findings."""
+
+    return analyzer_readback.build_readback(
+        provider="deepsource",
+        adapter="deepsource-fake/v1",
+        repository="ktogias/gnostoa",
+        pull_number=300,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id=None,
+        scope=scope,
+        completeness="READBACK_UNAVAILABLE",
+        native_mode="DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN",
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="UNKNOWN",
+        coverage_record={
+            "status": "PARTIAL",
+            "pages": 1,
+            "count": len(findings),
+            "reason": "PAGE_LIMIT",
+        },
+        findings=findings,
+    )
+
+
+_F2_DEEPSOURCE_DOWN = (
+    _readback("deepsource", "DIFF", status="UNAVAILABLE"),
+    _readback("deepsource", "FULL", status="UNAVAILABLE"),
+    _readback("codacy", "DIFF"),
+    _readback(*SONAR),
+)
+
+
+class AnalyzerClaimsCoverageTests(unittest.TestCase):
+    """#389 F2, end to end through `evidence_for` and `merge_admission.evaluate`:
+    a qualified alternative meets M17 only through the verdict, a down vendor's
+    items and the adapter's raw coverage stay what they are (R1), and every
+    obtained finding still vetoes (R5). The project declares no suppression
+    markers or trust roots, so M13 and M15 hold as they always did here."""
+
+    @staticmethod
+    def _admit(
+        declaration: dict[str, Any], bundle: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            path = project / "policy" / "assurance-evidence.yaml"
+            path.write_text(
+                yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8"
+            )
+            # The gate passed on the exact head, so every check item is
+            # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
+            gate = {
+                **_check_run(60, "SonarCloud Code Analysis", 12526),
+                "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+            }
+            snapshot = _snapshot(
+                _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
+            )
+            evidence = merge_evidence_github.evidence_for(
+                snapshot, project_root=project, analyzer_readback=bundle
+            )
+            loaded = assurance_completeness.load_declaration(path, project_root=project)
+        verdict = merge_admission.evaluate(
+            evidence, declaration=loaded, change_policy=_policy()
+        )
+        failed = {
+            c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
+        }
+        return evidence, failed
+
+    def test_a_qualified_alternative_meets_m17_through_the_verdict(self) -> None:
+        """RED: today M17 counts all four readbacks, whatever the claims say."""
+        evidence, failed = self._admit(
+            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DEEPSOURCE_DOWN)
+        )
+        statuses = _receipt_statuses(evidence)
+        self.assertEqual(
+            ("UNAVAILABLE", "UNAVAILABLE"),
+            (
+                statuses[("analyzer-readback", "deepsource-diff")],
+                statuses[("analyzer-readback", "deepsource-full")],
+            ),
+        )
+        self.assertEqual(
+            {"coverage": "INCOMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+        self.assertEqual({"M13", "M15"}, set(failed))
+
+    def test_any_obtained_finding_still_denies(self) -> None:
+        """RED for the reasons: under met claims, a finding from a partial,
+        unselected or selected source, suppressed or not, is M17's only reason."""
+        suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
+        for name, readbacks, item in (
+            (
+                "partial unselected diff",
+                (_f2_partial("DIFF", FINDING), *_F2_DEEPSOURCE_DOWN[1:]),
+                "deepsource-diff",
+            ),
+            (
+                "partial unselected full",
+                (
+                    _F2_DEEPSOURCE_DOWN[0],
+                    _f2_partial("FULL", FINDING),
+                    *_F2_DEEPSOURCE_DOWN[2:],
+                ),
+                "deepsource-full",
+            ),
+            (
+                "suppressed on the selected source",
+                (
+                    *_F2_DEEPSOURCE_DOWN[:2],
+                    _readback("codacy", "DIFF", suppressed),
+                    _F2_DEEPSOURCE_DOWN[3],
+                ),
+                "codacy",
+            ),
+        ):
+            with self.subTest(name):
+                evidence, failed = self._admit(
+                    _f2_declaration(_F2_SUBSTITUTES), _bundle(*readbacks)
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual(item, listed["item"])
+                self.assertEqual(
+                    "INCOMPLETE", evidence["analyzer_findings"]["coverage"]
+                )
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_f1_already_meets_m2_m8_under_the_alternative(self) -> None:
+        """Characterization: F1's claims give M2-M8 today, beside M17."""
+        _, failed = self._admit(
+            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DEEPSOURCE_DOWN)
+        )
+        self.assertNotIn("M2-M8", failed)
+
+    def test_without_proof_deepsource_still_holds(self) -> None:
+        """Characterization: singleton claims, an unbound or another subject's
+        bundle, a missing alternative and one vendor's two reads all leave M2-M8
+        and M17 failing."""
+        diff_only = (_F2_SUBSTITUTES[0],)
+        for name, declaration, bundle in (
+            ("singleton claims", _f2_declaration(), _bundle(*_F2_DEEPSOURCE_DOWN)),
+            (
+                "another head",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle_for(head=PREVIOUS),
+            ),
+            (
+                "another pull request",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle_for(pull=301),
+            ),
+            (
+                "the alternative is missing",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle(*_F2_DEEPSOURCE_DOWN[:2], _F2_DEEPSOURCE_DOWN[3]),
+            ),
+            (
+                "one vendor's two reads",
+                _f2_declaration(
+                    (
+                        (
+                            ("analyzer-readback", "deepsource-diff"),
+                            ("analyzer-readback", "deepsource-full"),
+                        ),
+                    )
+                ),
+                _bundle(*_F2_DEEPSOURCE_DOWN),
+            ),
+            (
+                "fewer domains than the minimum",
+                _f2_declaration(diff_only, minimum=2),
+                _bundle(*_F2_DEEPSOURCE_DOWN),
+            ),
+        ):
+            with self.subTest(name):
+                _, failed = self._admit(declaration, bundle)
+                self.assertIn("M2-M8", failed)
+                self.assertIn("M17", failed)
+
+    def test_neither_the_bundle_nor_the_evidence_can_supply_the_policy(self) -> None:
+        """Characterization: a readback cannot name a claim or a domain, and an
+        evidence document cannot carry its own completeness verdict."""
+        readback = {**_readback("codacy", "DIFF"), "claims": ["diff-findings"]}
+        declaration = _f2_declaration(_F2_SUBSTITUTES)
+        bundle = _bundle(*_F2_DEEPSOURCE_DOWN[:2], readback, _F2_DEEPSOURCE_DOWN[3])
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            self._admit(declaration, bundle)
+        evidence = _evidence(analyzer=_bundle())
+        evidence["completeness"] = {"status": "COMPLETE"}
+        loaded = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        policy = _policy()
+        with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
+            merge_admission.evaluate(evidence, declaration=loaded, change_policy=policy)
 
 
 if __name__ == "__main__":

@@ -4,23 +4,75 @@
 # requirement is COMPLETE only when a current COMPLETE receipt covers each of its
 # coverage items. Producers' adapters name the same items (#407, slice 1b.3);
 # until an item has a producer, it stays MISSING and the verdict INCOMPLETE.
-schema_version: "1.0"
+#
+# Schema 1.1 (#389 F2): each item has its failure domain, and each claim is one
+# item with a minimum of one domain in every merging class, so every 1.0
+# obligation stays and no item stands in for another. GitHub's checks and CodeQL
+# share GitHub, and DeepSource's diff and full reads are one domain (R2, R9). A
+# substitute becomes eligible only through a reviewed change here, after its
+# qualification (#389 F3).
+schema_version: "1.1"
 id: gnostoa.required-evidence
-version: "0.1.0"
+version: "0.2.0"
 requirements:
   - id: verification-checks
     title: The status checks R-main requires ran on the exact head
     applies_to: [mechanical, normal, normative, critical]
     coverage: [policy, fast, regression, smoke]
+    domains: {policy: github, fast: github, regression: github, smoke: github}
   - id: codeql
     title: CodeQL analysed the exact head
     applies_to: [mechanical, normal, normative, critical]
     coverage: [codeql]
+    domains: {codeql: github}
   - id: analyzer-readback
     title: The authenticated analyzer readback is bound to the exact head (Decision 0107)
     applies_to: [mechanical, normal, normative, critical]
     coverage: [deepsource-diff, deepsource-full, codacy]
+    domains: {deepsource-diff: deepsource, deepsource-full: deepsource, codacy: codacy}
   - id: sonarcloud
     title: SonarCloud's quality gate and its issue inventory for the exact head (#359)
     applies_to: [mechanical, normal, normative, critical]
     coverage: [quality-gate, issue-inventory]
+    domains: {quality-gate: sonarcloud, issue-inventory: sonarcloud}
+claims:
+  - id: policy-check
+    title: The policy check ran on the exact head
+    evidence: [{requirement: verification-checks, item: policy}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: fast-check
+    title: The fast check ran on the exact head
+    evidence: [{requirement: verification-checks, item: fast}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: regression-check
+    title: The regression check ran on the exact head
+    evidence: [{requirement: verification-checks, item: regression}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: smoke-check
+    title: The smoke check ran on the exact head
+    evidence: [{requirement: verification-checks, item: smoke}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: codeql-analysis
+    title: CodeQL analysed the exact head
+    evidence: [{requirement: codeql, item: codeql}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: deepsource-diff-findings
+    title: DeepSource's diff read of the exact head is complete
+    evidence: [{requirement: analyzer-readback, item: deepsource-diff}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: deepsource-full-findings
+    title: DeepSource's full read of the exact head is complete
+    evidence: [{requirement: analyzer-readback, item: deepsource-full}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: codacy-findings
+    title: Codacy's read of the exact head is complete
+    evidence: [{requirement: analyzer-readback, item: codacy}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: sonarcloud-gate
+    title: SonarCloud's quality gate passed on the exact head
+    evidence: [{requirement: sonarcloud, item: quality-gate}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: sonarcloud-inventory
+    title: SonarCloud's issue inventory of the exact head is complete
+    evidence: [{requirement: sonarcloud, item: issue-inventory}]
+    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}

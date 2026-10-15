@@ -341,11 +341,18 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
 
 
 def _analyzer_findings(
-    evidence: Mapping[str, Any],
+    evidence: Mapping[str, Any], claims_status: str | None
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
-    pass (the owner's rule, #407 6096770145 and 6101607240)."""
+    pass (the owner's rule, #407 6096770145 and 6101607240).
+
+    Under a 1.1 declaration the read is complete when the claims are:
+    `claims_status` is the status of the completeness verdict this admission
+    already computed, over every applicable claim (#389 F2, the Router's
+    6192443314). It is `None` under 1.0, where the findings' own coverage still
+    decides; under 1.1 that coverage stays in the evidence as the readback
+    reported it, degraded sources included."""
 
     record = _coverage(
         evidence["analyzer_findings"], "analyzer_findings", frozenset({"findings"})
@@ -360,8 +367,16 @@ def _analyzer_findings(
         require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
         findings.append(_listed_finding(finding, label))
     reasons = []
-    if record["coverage"] != "COMPLETE":
-        reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    if claims_status is None:
+        if record["coverage"] != "COMPLETE":
+            reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    elif claims_status != "COMPLETE":
+        # The verdict spans every applicable claim, so the reason names it rather
+        # than the analyzers (Octopus and CodeAnt on #435).
+        reasons.append(
+            "analyzer finding coverage follows the required evidence, which is "
+            f"{claims_status}"
+        )
     if findings:
         plural = "" if len(findings) == 1 else "s"
         reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
@@ -522,7 +537,12 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
-    analyzer_criterion, analyzer_findings = _analyzer_findings(document)
+    analyzer_criterion, analyzer_findings = _analyzer_findings(
+        document,
+        evidence_verdict["status"]
+        if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
+        else None,
+    )
     criteria = [
         _lifecycle(document),
         complete,

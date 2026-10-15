@@ -720,6 +720,7 @@ guardrails:
       - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_a_1_0_verdict_keeps_its_schema
       - tests/test_assurance_completeness.py::MissingVendorCharacterizationTests.test_gnostoa_s_declaration_keeps_its_935ea6c_verdict_for_every_status
       - tests/test_merge_gate_record.py::MergeGateRecordTests.test_the_required_evidence_declares_the_checks_r_main_requires
+      - tests/test_assurance_completeness.py::GnostoaClaimsTests.test_gnostoa_declares_each_item_s_failure_domain
 
   - id: merge-admission-verdict
     title: A merge is admitted only when every criterion holds for the exact head, and unknown evidence denies
@@ -790,6 +791,11 @@ guardrails:
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_an_unresolved_analyzer_finding_denies_and_is_listed
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_denies_unless_the_findings_were_read_completely
       - tests/test_merge_admission.py::MergeAdmissionTests.test_m17_the_findings_have_a_closed_contract
+      - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_s_coverage_is_the_verdict_under_1_1
+      - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_still_lists_and_vetoes_every_finding_under_1_1
+      - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_holds_when_a_claim_is_not_met_under_1_1
+      - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_keeps_its_1_0_rule
+      - tests/test_merge_admission.py::GnostoaDecisionParityTests.test_the_real_policy_keeps_every_merge_decision
 
   - id: merge-admission-publication
     title: The merge-admission check is published from protected main only, on the exact evaluated head, and never once its evidence has changed
@@ -1042,6 +1048,11 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_subject_repository_not_in_owner_name_form_is_refused
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_an_unreadable_escape_is_not_a_foreign_association
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_s_qualification_follows_its_identity
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_a_qualified_alternative_meets_m17_through_the_verdict
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_any_obtained_finding_still_denies
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_f1_already_meets_m2_m8_under_the_alternative
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_without_proof_deepsource_still_holds
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_neither_the_bundle_nor_the_evidence_can_supply_the_policy
 
   - id: authenticated-analyzer-readback
     title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe

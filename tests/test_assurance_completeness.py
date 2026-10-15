@@ -1393,5 +1393,48 @@ class ClaimDeclarationTests(unittest.TestCase):
         self.assertEqual("COMPLETE", json.loads(output)["status"])
 
 
+class GnostoaClaimsTests(unittest.TestCase):
+    def test_gnostoa_declares_each_item_s_failure_domain(self) -> None:
+        """#389 F1: GitHub's checks and CodeQL share GitHub, and DeepSource's
+        diff and full reads are one domain (R2, R9). No substitute is qualified
+        yet (6157839931), so each item is its own claim."""
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        self.assertEqual("1.1", declaration["schema_version"])
+        domains = {
+            (requirement["id"], item): domain
+            for requirement in declaration["requirements"]
+            for item, domain in requirement["domains"].items()
+        }
+        self.assertEqual(
+            {
+                ("verification-checks", "policy"): "github",
+                ("verification-checks", "fast"): "github",
+                ("verification-checks", "regression"): "github",
+                ("verification-checks", "smoke"): "github",
+                ("codeql", "codeql"): "github",
+                ("analyzer-readback", "deepsource-diff"): "deepsource",
+                ("analyzer-readback", "deepsource-full"): "deepsource",
+                ("analyzer-readback", "codacy"): "codacy",
+                ("sonarcloud", "quality-gate"): "sonarcloud",
+                ("sonarcloud", "issue-inventory"): "sonarcloud",
+            },
+            domains,
+        )
+        supported = sorted(
+            (evidence["requirement"], evidence["item"])
+            for claim in declaration["claims"]
+            for evidence in claim["evidence"]
+        )
+        self.assertEqual(sorted(domains), supported)
+        for claim in declaration["claims"]:
+            with self.subTest(claim=claim["id"]):
+                self.assertEqual(1, len(claim["evidence"]))
+                self.assertEqual(
+                    dict.fromkeys(MERGING_CLASSES, 1), claim["independent_domains"]
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

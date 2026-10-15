@@ -408,7 +408,11 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      evidence. Only the threads replied to are resolved.
    - Every fix is a new head, so a new seal and new review requests follow.
    - The pre-merge check and the exact-head analyzer readback must both be clean:
-     `BOUND`, every analyzer `COMPLETE`, 0 findings.
+     `BOUND`; every applicable claim of protected `main`'s declaration met, which
+     with its singleton claims (#389 F2) means every analyzer `COMPLETE`; and 0
+     findings obtained from any source, a partial one or one no claim needed
+     included. A degraded source is reported as it is, never as clean. A
+     candidate's own declaration never governs its own merge.
    - The pre-merge check is `premerge-check.sh`, a script in the agent's session
      workspace, not yet versioned; versioning it with the host's helpers is #398's
      follow-up. Until then, an agent without it checks the same, on the exact head:
