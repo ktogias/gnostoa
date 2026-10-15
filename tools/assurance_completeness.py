@@ -559,44 +559,64 @@ def _claims_reduction(
     for claim in declaration["claims"]:
         if change_class not in claim["independent_domains"]:
             continue
-        required = claim["independent_domains"][change_class]
-        evidence = [
-            {
-                "requirement": entry["requirement"],
-                "item": entry["item"],
-                "domain": domains[(entry["requirement"], entry["item"])],
-                "status": statuses[(entry["requirement"], entry["item"])],
-            }
-            for entry in claim["evidence"]
-        ]
-        supporting = sorted(
-            {entry["domain"] for entry in evidence if entry["status"] == "COMPLETE"}
+        reduced, claim_reasons = _claim_reduction(
+            claim, claim["independent_domains"][change_class], statuses, domains
         )
-        complete = len(supporting) >= required
-        if not complete:
-            reasons.append(
-                f"claim {claim['id']!r} is supported by {len(supporting)} of the "
-                f"{required} independent domains it requires"
-            )
-        claims.append(
-            {
-                "id": claim["id"],
-                "status": "COMPLETE" if complete else "INCOMPLETE",
-                "required_domains": required,
-                "domains": supporting,
-                "evidence": evidence,
-            }
-        )
+        claims.append(reduced)
+        reasons.extend(claim_reasons)
     if not claims:
         reasons.append(f"no claim applies to change class {change_class!r}")
-    degraded = [
+    complete = bool(claims) and all(claim["status"] == "COMPLETE" for claim in claims)
+    status = "COMPLETE" if complete else "INCOMPLETE"
+    return status, claims, _degraded(results), reasons
+
+
+def _claim_reduction(
+    claim: Mapping[str, Any],
+    required: int,
+    statuses: Mapping[tuple[str, str], str],
+    domains: Mapping[tuple[str, str], str],
+) -> tuple[dict[str, Any], list[str]]:
+    """One applicable claim's result, and its reason when it is not complete."""
+
+    evidence = [
+        {
+            "requirement": entry["requirement"],
+            "item": entry["item"],
+            "domain": domains[(entry["requirement"], entry["item"])],
+            "status": statuses[(entry["requirement"], entry["item"])],
+        }
+        for entry in claim["evidence"]
+    ]
+    supporting = sorted(
+        {entry["domain"] for entry in evidence if entry["status"] == "COMPLETE"}
+    )
+    complete = len(supporting) >= required
+    reasons: list[str] = []
+    if not complete:
+        reasons.append(
+            f"claim {claim['id']!r} is supported by {len(supporting)} of the "
+            f"{required} independent domains it requires"
+        )
+    result: dict[str, Any] = {
+        "id": claim["id"],
+        "status": "COMPLETE" if complete else "INCOMPLETE",
+        "required_domains": required,
+        "domains": supporting,
+        "evidence": evidence,
+    }
+    return result, reasons
+
+
+def _degraded(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every applicable item that is not `COMPLETE`, in requirement and item order."""
+
+    return [
         {"requirement": result["id"], "item": entry["item"], "status": entry["status"]}
         for result in results
         for entry in result["items"]
         if entry["status"] != "COMPLETE"
     ]
-    complete = bool(claims) and all(claim["status"] == "COMPLETE" for claim in claims)
-    return "COMPLETE" if complete else "INCOMPLETE", claims, degraded, reasons
 
 
 def _parser() -> argparse.ArgumentParser:
