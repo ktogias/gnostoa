@@ -851,10 +851,41 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
             assurance_completeness.parse_declaration(document)
 
     def test_a_1_0_verdict_keeps_its_schema(self) -> None:
-        """R6: a 1.0 declaration's verdict is unchanged by #389 F1."""
+        """R6: a 1.0 declaration's verdict is unchanged by #389 F1, in its schema
+        and in the order of its keys, its requirements and their items, as at main
+        2f63cf3. The other tests compare its values."""
+        declared: dict[str, Any] = DECLARATION
         verdict = _evaluate(_complete())
         self.assertEqual("gnostoa-assurance-completeness/v1", verdict["schema"])
         self.assertNotIn("claims", verdict)
+        self.assertEqual(
+            [
+                "schema",
+                "status",
+                "subject",
+                "change_class",
+                "declaration",
+                "requirements",
+                "reasons",
+                "ignored_receipts",
+            ],
+            list(verdict),
+        )
+        self.assertEqual(
+            [requirement["id"] for requirement in declared["requirements"]],
+            [requirement["id"] for requirement in verdict["requirements"]],
+        )
+        for requirement, declared_requirement in zip(
+            verdict["requirements"], declared["requirements"], strict=True
+        ):
+            with self.subTest(requirement=requirement["id"]):
+                self.assertEqual(["id", "status", "items"], list(requirement))
+                self.assertEqual(
+                    declared_requirement["coverage"],
+                    [entry["item"] for entry in requirement["items"]],
+                )
+                for entry in requirement["items"]:
+                    self.assertEqual(["item", "status"], list(entry))
 
     def test_a_receipt_cannot_name_its_own_domain_or_claim(self) -> None:
         """R6, R9: domains and claims come only from the protected declaration."""
@@ -870,9 +901,11 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
         self,
     ) -> None:
         """Over every combination of complete and unavailable items, for every
-        merging class, Gnostoa's declaration gives the verdict its 1.0 form gave
-        at main 935ea6c. F1 leaves that declaration unchanged; F2's migration must
-        keep this green (the Router's disposition, #389 6158642620)."""
+        merging class, Gnostoa's declaration gives the verdict status its 1.0
+        form gave at main 935ea6c. Only the status is compared: this is the guard
+        F2's migration must keep green (the Router's disposition, #389
+        6158642620). F1 leaves that declaration's bytes unchanged, and the other
+        1.0 tests pin the rest of the verdict."""
         baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
         current = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
