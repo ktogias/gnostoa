@@ -1066,5 +1066,169 @@ class GnostoaPolicyTests(unittest.TestCase):
                 self.assertEqual(needs_links, "M14" in _failed(verdict))
 
 
+# #389 F2 (the Router's exact-base continuation, 6192443314): under a 1.1
+# declaration, M17's positive coverage is the completeness verdict the admission
+# computes once; under 1.0 it stays the findings' own coverage.
+CLAIMS_DECLARATION = {
+    "schema_version": "1.1",
+    "id": "example.required-evidence",
+    "version": "0.2.0",
+    "requirements": [
+        {
+            "id": "verification-checks",
+            "title": "The required checks ran on the exact head",
+            "applies_to": ["mechanical", "normal", "normative", "critical"],
+            "coverage": ["fast", "smoke"],
+            "domains": {"fast": "ci", "smoke": "ci"},
+        }
+    ],
+    "claims": [
+        {
+            "id": f"{item}-tests",
+            "title": f"The {item} tests ran",
+            "evidence": [{"requirement": "verification-checks", "item": item}],
+            "independent_domains": dict.fromkeys(
+                ["mechanical", "normal", "normative", "critical"], 1
+            ),
+        }
+        for item in ("fast", "smoke")
+    ],
+}
+
+
+def _claims_verdict(evidence: dict[str, Any]) -> dict[str, Any]:
+    declaration = assurance_completeness.parse_declaration(CLAIMS_DECLARATION)
+    return merge_admission.evaluate(
+        evidence, declaration=declaration, change_policy=POLICY
+    )
+
+
+class ClaimsM17Tests(unittest.TestCase):
+    def test_m17_s_coverage_is_the_verdict_under_1_1(self) -> None:
+        """RED: a source the declaration does not require reads INCOMPLETE; its
+        state stays in the evidence, and M17 follows the met claims."""
+        for coverage in ("UNAVAILABLE", "INCOMPLETE", "PARTIAL"):
+            with self.subTest(coverage=coverage):
+                evidence = _evidence()
+                evidence["analyzer_findings"]["coverage"] = coverage
+                verdict = _claims_verdict(evidence)
+                self.assertEqual("COMPLETE", verdict["completeness"]["status"])
+                self.assertEqual({}, _failed(verdict))
+
+    def test_m17_still_lists_and_vetoes_every_finding_under_1_1(self) -> None:
+        """RED for the reasons: the findings are M17's only reason."""
+        evidence = _evidence()
+        evidence["analyzer_findings"] = {
+            "coverage": "INCOMPLETE",
+            "findings": [{"item": "deepsource-full", "id": "issue-1", "message": "x"}],
+        }
+        verdict = _claims_verdict(evidence)
+        self.assertEqual({"M17": ["1 unresolved analyzer finding"]}, _failed(verdict))
+        self.assertEqual(
+            evidence["analyzer_findings"]["findings"],
+            verdict["for_approval"]["analyzer_findings"],
+        )
+
+    def test_m17_holds_when_a_claim_is_not_met_under_1_1(self) -> None:
+        """RED: a missing claim proof fails M2-M8, and today M17 passes on the
+        findings' own coverage instead of the verdict."""
+        evidence = _evidence()
+        evidence["receipts"] = [_receipt(evidence["subject"], ["fast"])]
+        failed = _failed(_claims_verdict(evidence))
+        self.assertIn("M2-M8", failed)
+        self.assertIn("M17", failed)
+
+    def test_m17_keeps_its_1_0_rule(self) -> None:
+        """Characterization: under 1.0 the findings' own coverage still gates M17,
+        as `test_m17_denies_unless_the_findings_were_read_completely` pins."""
+        evidence = _evidence()
+        evidence["analyzer_findings"]["coverage"] = "INCOMPLETE"
+        self.assertEqual(
+            {"M17": ["analyzer finding coverage is INCOMPLETE"]},
+            _failed(_verdict(evidence)),
+        )
+
+
+_PARITY_ANALYZERS = frozenset(
+    {
+        ("analyzer-readback", "deepsource-diff"),
+        ("analyzer-readback", "deepsource-full"),
+        ("analyzer-readback", "codacy"),
+        ("sonarcloud", "issue-inventory"),
+    }
+)
+
+
+def _parity_evidence(
+    change_class: str, items: list[tuple[str, str]], down: set[tuple[str, str]]
+) -> dict[str, Any]:
+    """A converged change of the class, with one receipt per item: unavailable
+    when `down` names it, and the findings' coverage as the readback gives it."""
+
+    evidence = _evidence()
+    evidence["change_class"] = change_class
+    evidence["receipts"] = [
+        {
+            **_receipt(evidence["subject"], [item]),
+            "requirement": requirement,
+            "status": "UNAVAILABLE" if (requirement, item) in down else "COMPLETE",
+        }
+        for requirement, item in items
+    ]
+    evidence["analyzer_findings"]["coverage"] = (
+        "INCOMPLETE" if down & _PARITY_ANALYZERS else "COMPLETE"
+    )
+    return evidence
+
+
+class GnostoaDecisionParityTests(unittest.TestCase):
+    def test_the_real_policy_keeps_every_merge_decision(self) -> None:
+        """Guard for F2's singleton migration: over every combination of complete
+        and unavailable items, for every merging class, the real declaration gives
+        the decision its 1.0 form (main 935ea6c) gave. M17 may add only its
+        coverage reason, and only where M2-M8 already fails."""
+        from test_assurance_completeness import GNOSTOA_1_0
+
+        baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
+        current = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        items = [
+            (requirement["id"], item)
+            for requirement in GNOSTOA_1_0["requirements"]
+            for item in requirement["coverage"]
+        ]
+        wrong = []
+        decisions: dict[tuple[int, str], tuple[str, str]] = {}
+        for mask in range(2 ** len(items)):
+            down = {pair for index, pair in enumerate(items) if mask >> index & 1}
+            for change_class in ("mechanical", "normal", "normative", "critical"):
+                evidence = _parity_evidence(change_class, items, down)
+                old, new = (
+                    merge_admission.evaluate(
+                        evidence, declaration=declaration, change_policy=POLICY
+                    )
+                    for declaration in (baseline, current)
+                )
+                old_failed, new_failed = set(_failed(old)), set(_failed(new))
+                extra = {"M17"} if "M2-M8" in old_failed else set()
+                if old["status"] != new["status"] or not (
+                    old_failed <= new_failed <= old_failed | extra
+                ):
+                    wrong.append((change_class, sorted(down), old_failed, new_failed))
+                decisions[(mask, change_class)] = (old["status"], new["status"])
+        self.assertEqual([], wrong)
+        # The guard's positive control (the Router's 6192773699): with every other
+        # criterion valid, all ten items complete ALLOW in each class, and any one
+        # missing item DENYs, so the comparison above is never vacuous.
+        for change_class in ("mechanical", "normal", "normative", "critical"):
+            with self.subTest(change_class=change_class):
+                self.assertEqual(("ALLOW", "ALLOW"), decisions[(0, change_class)])
+                for index in range(len(items)):
+                    self.assertEqual(
+                        ("DENY", "DENY"), decisions[(1 << index, change_class)]
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

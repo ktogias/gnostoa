@@ -104,7 +104,10 @@ provider-neutral public change-governance contract of
      degraded, never as clean. Findings are not read here; M17 still denies on any
      of them.
    - A `1.0` declaration keeps its form and its verdict. Gnostoa's own declaration
-     stays `1.0` until its consumers migrate with it (#389 F2). A substitute becomes
+     is `1.1` since #389 F2, with each item its own claim at a minimum of one in
+     every merging class. Every `1.0` obligation stays, so a missing item still
+     holds, as a guard over every combination of statuses proves for the verdict
+     and for the merge decision. A substitute becomes
      eligible only through a reviewed change to the declaration, after its
      qualification (#389 F3).
 3. **The owner's native approval of the exact head is the only per-merge human act.**
@@ -395,11 +398,18 @@ provider-neutral public change-governance contract of
     native reference (the owner's re-admission, #417 6107601240). Their
     provenance and native metadata stay in the bundle, traceable by item and id.
     It also lists their coverage: `COMPLETE` only when all four readbacks are
-    present and complete.
-    M17 denies unless that coverage is `COMPLETE` and the list is empty. Every
+    present and complete. That coverage is the readback's own, so a degraded
+    source stays visibly degraded.
+    Under a `1.0` declaration, M17 denies unless that coverage is `COMPLETE` and
+    the list is empty. Under a `1.1` declaration, the read is complete when the
+    claims are (#389 F2, the Router's 6192443314): M17 denies unless the
+    completeness verdict the admission computed for M2–M8, over every applicable
+    claim of the protected declaration, is `COMPLETE`, and the list is empty. No
+    second reduction or claim projection exists. Every
     listed finding counts, a suppressed one included, with no waiver: a justified
-    suppression discharges none (1b.3b-4). The verdict lists the findings for the
-    approval.
+    suppression discharges none (1b.3b-4). So does a finding from a partial
+    source, or from one no claim needed: a met claim never erases a finding. The
+    verdict lists the findings for the approval.
   - **M13 and M15 read the exact comparison** against two declarations of the
     protected target (1b.3b-4, the owner's sequence admission, #325 6113092417,
     with the contract 6112833932). The declarations are

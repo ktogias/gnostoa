@@ -341,11 +341,17 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
 
 
 def _analyzer_findings(
-    evidence: Mapping[str, Any],
+    evidence: Mapping[str, Any], claims_verdict: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
-    pass (the owner's rule, #407 6096770145 and 6101607240)."""
+    pass (the owner's rule, #407 6096770145 and 6101607240).
+
+    Under a 1.1 declaration the read is complete when the claims are: the
+    completeness verdict this admission already computed, over every applicable
+    claim (#389 F2, the Router's 6192443314). The findings' own coverage stays in
+    the evidence as the readback reported it, degraded sources included; under
+    1.0 it still decides."""
 
     record = _coverage(
         evidence["analyzer_findings"], "analyzer_findings", frozenset({"findings"})
@@ -360,8 +366,11 @@ def _analyzer_findings(
         require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
         findings.append(_listed_finding(finding, label))
     reasons = []
-    if record["coverage"] != "COMPLETE":
-        reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    coverage = (
+        record["coverage"] if claims_verdict is None else claims_verdict["status"]
+    )
+    if coverage != "COMPLETE":
+        reasons.append(f"analyzer finding coverage is {coverage}")
     if findings:
         plural = "" if len(findings) == 1 else "s"
         reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
@@ -522,7 +531,12 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
-    analyzer_criterion, analyzer_findings = _analyzer_findings(document)
+    analyzer_criterion, analyzer_findings = _analyzer_findings(
+        document,
+        evidence_verdict
+        if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
+        else None,
+    )
     criteria = [
         _lifecycle(document),
         complete,
