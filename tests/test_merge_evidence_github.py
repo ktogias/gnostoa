@@ -3121,10 +3121,11 @@ class AnalyzerReceiptTests(unittest.TestCase):
             evidence["analyzer_findings"],
         )
         # Without the gate in the default snapshot the claims are not met, so M17
-        # names their coverage beside the findings (#389 F2).
+        # names the required evidence beside the findings (#389 F2).
         self.assertEqual(
             [
-                "analyzer finding coverage is INCOMPLETE",
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
                 "2 unresolved analyzer findings",
             ],
             _failed(evidence)["M17"],
@@ -3167,10 +3168,11 @@ class AnalyzerReceiptTests(unittest.TestCase):
             evidence["analyzer_findings"]["findings"],
         )
         # Without the gate in the default snapshot the claims are not met, so M17
-        # names their coverage beside the findings (#389 F2).
+        # names the required evidence beside the findings (#389 F2).
         self.assertEqual(
             [
-                "analyzer finding coverage is INCOMPLETE",
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
                 "2 unresolved analyzer findings",
             ],
             _failed(evidence)["M17"],
@@ -3602,10 +3604,11 @@ class SonarCloudInventoryTests(unittest.TestCase):
             [f["id"] for f in evidence["analyzer_findings"]["findings"]],
         )
         # Without the gate in the default snapshot the claims are not met, so M17
-        # names their coverage beside the findings (#389 F2).
+        # names the required evidence beside the findings (#389 F2).
         self.assertEqual(
             [
-                "analyzer finding coverage is INCOMPLETE",
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
                 "2 unresolved analyzer findings",
             ],
             _failed(evidence)["M17"],
@@ -3947,16 +3950,6 @@ class SonarCloudGateTests(unittest.TestCase):
 # protected declaration, computed once by the admission; the adapter keeps each
 # source's raw coverage, and every obtained finding still vetoes. The substitute
 # claims are a test-only qualification, never a live one (F3 owns qualification).
-_F2_DOMAINS = {
-    "verification-checks": dict.fromkeys(REQUIRED, "github"),
-    "codeql": {"codeql": "github"},
-    "analyzer-readback": {
-        "deepsource-diff": "deepsource",
-        "deepsource-full": "deepsource",
-        "codacy": "codacy",
-    },
-    "sonarcloud": {"quality-gate": "sonarcloud", "issue-inventory": "sonarcloud"},
-}
 _F2_SUBSTITUTES = (
     (("analyzer-readback", "deepsource-diff"), ("analyzer-readback", "codacy")),
     (("analyzer-readback", "deepsource-full"), ("sonarcloud", "issue-inventory")),
@@ -3967,15 +3960,14 @@ _F2_CLASSES = ("critical", "mechanical", "normal", "normative")
 def _f2_declaration(
     groups: tuple[tuple[tuple[str, str], ...], ...] = (), minimum: int = 1
 ) -> dict[str, Any]:
-    """Gnostoa's requirements as a 1.1 declaration: each group is one claim with
-    the minimum given, and every other item is its own claim (minimum 1)."""
+    """Gnostoa's own 1.1 declaration, its requirements and their domains as they
+    are, with its claims replaced: each group is one claim with the minimum given,
+    and every other item is its own claim (minimum 1). Taking the domains from the
+    declaration keeps a requirement it gains covered (Amazon Q on #435)."""
 
     document: dict[str, Any] = yaml.safe_load(
         (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
     )
-    document["schema_version"] = "1.1"
-    for requirement in document["requirements"]:
-        requirement["domains"] = _F2_DOMAINS[requirement["id"]]
     grouped = {pair for group in groups for pair in group}
     claims = [
         (((requirement["id"], item),), 1)
@@ -4182,21 +4174,18 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
         """Characterization: a readback cannot name a claim or a domain, and an
         evidence document cannot carry its own completeness verdict."""
         readback = {**_readback("codacy", "DIFF"), "claims": ["diff-findings"]}
+        declaration = _f2_declaration(_F2_SUBSTITUTES)
+        bundle = _bundle(*_F2_DEEPSOURCE_DOWN[:2], readback, _F2_DEEPSOURCE_DOWN[3])
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
-            self._admit(
-                _f2_declaration(_F2_SUBSTITUTES),
-                _bundle(*_F2_DEEPSOURCE_DOWN[:2], readback, _F2_DEEPSOURCE_DOWN[3]),
-            )
+            self._admit(declaration, bundle)
         evidence = _evidence(analyzer=_bundle())
         evidence["completeness"] = {"status": "COMPLETE"}
+        loaded = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        policy = _policy()
         with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
-            merge_admission.evaluate(
-                evidence,
-                declaration=assurance_completeness.load_declaration(
-                    ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
-                ),
-                change_policy=_policy(),
-            )
+            merge_admission.evaluate(evidence, declaration=loaded, change_policy=policy)
 
 
 if __name__ == "__main__":

@@ -366,11 +366,16 @@ def _analyzer_findings(
         require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
         findings.append(_listed_finding(finding, label))
     reasons = []
-    coverage = (
-        record["coverage"] if claims_verdict is None else claims_verdict["status"]
-    )
-    if coverage != "COMPLETE":
-        reasons.append(f"analyzer finding coverage is {coverage}")
+    if claims_verdict is None:
+        if record["coverage"] != "COMPLETE":
+            reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    elif claims_verdict["status"] != "COMPLETE":
+        # The verdict spans every applicable claim, so the reason names it rather
+        # than the analyzers (Octopus and CodeAnt on #435).
+        reasons.append(
+            "analyzer finding coverage follows the required evidence, which is "
+            f"{claims_verdict['status']}"
+        )
     if findings:
         plural = "" if len(findings) == 1 else "s"
         reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
