@@ -21,7 +21,9 @@ class _Children(unittest.TestCase):
         for process in self.children:
             if process.poll() is None:
                 process.kill()
-            process.wait()
+            # Bounded, so that a child that survives its kill fails the cleanup
+            # instead of hanging the suite (Amazon Q on #437).
+            process.wait(timeout=10)
             for stream in (process.stdin, process.stdout, process.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()

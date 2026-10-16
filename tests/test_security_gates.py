@@ -1310,7 +1310,9 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         for process in self.started:
             if process.poll() is None:
                 process.kill()
-                process.wait()
+                # Bounded, so that a child that survives its kill fails the cleanup
+                # instead of hanging the suite (Amazon Q on #437).
+                process.wait(timeout=10)
 
     def _scan(
         self, script: str, *, timeout: int = 10
