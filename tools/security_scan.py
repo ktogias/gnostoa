@@ -489,7 +489,7 @@ def _run_bounded_scan(
             close_issues.append("tracked-tree secret scan selector could not be closed")
         if drained.outcome == "exited" and drained.returncode is not None:
             returncode = drained.returncode
-        elif drained.outcome == "cap":
+        elif drained.outcome == "cap" and drained.stream is not None:
             execution_error = _with_secondary(
                 f"tracked-tree secret scan {drained.stream} exceeds the bound",
                 _reap_detail(process),
@@ -515,9 +515,8 @@ def _run_bounded_scan(
                 "tracked-tree secret scan timed out", _reap_detail(process)
             )
             # The cause main raised from, as a value: no process is started here.
-            execution_cause = subprocess.TimeoutExpired(
-                command, timeout
-            )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit -- an exception value, no process is started
+            execution_cause = subprocess.TimeoutExpired(command, timeout)
     finally:
         for role, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             if not stream.closed:

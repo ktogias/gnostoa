@@ -52,7 +52,8 @@ def drain(
 
     The sink receives each chunk read while its stream's total stays within `cap`.
     The chunk that crosses it is never delivered, and at most one byte past the cap
-    is read. A spent deadline reads nothing, and no stream is read once it has passed.
+    is read. A spent deadline reads nothing before its first select; a batch that a
+    select returns at or after the deadline is still read, and the next loop stops.
     A failure is returned, never raised, so that a consumer can reap the child and
     word the failure itself. The child is waited on within the deadline, which reaps
     it once it has exited (cubic on #437); nothing is killed or closed here, except
@@ -114,11 +115,10 @@ def _read_ready(
     cap: int,
 ) -> Drained | None:
     """Read each ready stream once: the drain's end, or None to select again."""
+    # The deadline is checked before each select, as the scanner did on main, and not
+    # again before each ready stream: a batch that select returns at or after the
+    # deadline is still read, and the next loop stops (Router 6221408680 on #437).
     for key, _ in events:
-        if time.monotonic() >= deadline:
-            # Before each ready stream, not only before select: a slow sink must
-            # not let another stream be read late (cubic on #437).
-            return Drained("deadline")
         name = str(key.data)
         # At most one byte past the cap is read, so a crossing is seen at once.
         room = cap + 1 - delivered[name]
@@ -153,7 +153,7 @@ def reap(process: subprocess.Popen[bytes], *, timeout: float) -> Exception | Non
     if process.poll() is None:
         try:
             process.kill()
-        except Exception:
+        except Exception:  # nosec B110 -- a failed kill still reaches the bounded wait below
             pass
     try:
         process.wait(timeout=timeout)

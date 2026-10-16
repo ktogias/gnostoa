@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import selectors
 import subprocess  # nosec B404 -- test-only: real children of this interpreter
 import sys
 import time
@@ -21,7 +22,7 @@ class _Children(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
             process.wait()
-            for stream in (process.stdout, process.stderr):
+            for stream in (process.stdin, process.stdout, process.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()
 
@@ -149,14 +150,26 @@ class DrainTests(_Children):
         self.assertEqual("deadline", drained.outcome)
         self.assertLess(time.monotonic() - began, 1.5)
 
-    def test_no_stream_is_read_once_the_deadline_has_passed(self) -> None:
-        # cubic on #437: the deadline was checked before select, but not before each
-        # ready stream was read, so a slow sink let a second stream be read late.
+    def test_a_batch_already_selected_is_read_past_the_deadline_then_stops(
+        self,
+    ) -> None:
+        # The legacy limit the factor preserves (Router 6221408680 on #437): the
+        # deadline is checked before select, so a slow sink lets the rest of the same
+        # batch be read late, and the next loop stops at the deadline.
         process = self._child(
             "import sys\nsys.stdout.write('o'); sys.stdout.flush()\n"
             "sys.stderr.write('e'); sys.stderr.flush()\nimport time; time.sleep(30)"
         )
-        time.sleep(0.5)  # both streams have data before the drain starts
+        if process.stdout is None or process.stderr is None:
+            self.fail("the child has no pipes")
+        # Both streams are readable before the drain starts: waited for, never slept
+        # for (cubic and CodeAnt on #437).
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            ready.register(process.stderr, selectors.EVENT_READ)
+            waited = time.monotonic() + 10
+            while len(ready.select(1)) < 2 and time.monotonic() < waited:
+                pass
         received: dict[str, bytes] = {"out": b"", "err": b""}
 
         def slow_sink(name: str, chunk: bytes) -> None:
@@ -173,7 +186,7 @@ class DrainTests(_Children):
             cap=64,
         )
         self.assertEqual("deadline", drained.outcome)
-        self.assertEqual(1, sum(1 for chunk in received.values() if chunk))
+        self.assertEqual({"out": b"o", "err": b"e"}, received)
 
     def test_the_exit_wait_takes_only_what_is_left_of_the_deadline(self) -> None:
         # Deterministic, with no wall-clock threshold (the owner's audit on #437): the
@@ -260,14 +273,18 @@ class DrainTests(_Children):
         self.assertFalse(drained.selector_closed)
         self.assertEqual(b"ok", received["out"])
 
-    def test_events_returned_after_the_deadline_are_never_read(self) -> None:
-        # The PAO's T1 on #437: a select that returns ready streams only after the
-        # deadline, deterministically. Nothing is read, and the outcome is deadline.
+    def test_a_batch_returned_after_the_deadline_is_read_then_the_drain_stops(
+        self,
+    ) -> None:
+        # The PAO's T1 and the Router (6221408680) on #437: a select that returns ready
+        # streams only after the deadline, deterministically. Its batch is still read,
+        # as main's scanner read it, and the next loop stops at the deadline.
         real = bounded_process.selectors.DefaultSelector
 
         class Late(real):
             def select(self, timeout: float | None = None) -> list:
-                time.sleep(max(0.0, (timeout or 0.0) + 0.2))
+                # Bounded, so that a mutated deadline cannot hold the test.
+                time.sleep(min(max(0.0, (timeout or 0.0) + 0.2), 2.0))
                 return super().select(0)
 
         process = self._child(
@@ -277,7 +294,7 @@ class DrainTests(_Children):
         with mock.patch.object(bounded_process.selectors, "DefaultSelector", Late):
             drained, received = self._drain(process, seconds=0.3)
         self.assertEqual("deadline", drained.outcome)
-        self.assertEqual({"out": b"", "err": b""}, received)
+        self.assertEqual(b"late", received["out"])
 
     def test_draining_kills_nothing_and_closes_nothing(self) -> None:
         # Killing, reaping and closing stay with each consumer.

@@ -7,6 +7,7 @@ import selectors
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
@@ -1466,6 +1467,32 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
             "tracked-tree secret scan selector could not be closed",
             str(raised.exception),
         )
+        self.assertIsNotNone(self.started[0].poll())
+
+    def test_a_late_select_still_reads_its_batch_and_reports_the_cap(self) -> None:
+        # Main's precedence, which the factor preserves (Router 6221408680 on #437):
+        # a batch that select returns after the deadline is still read, so a cap
+        # crossing in it is reported as the cap, not as a timeout.
+        real = selectors.DefaultSelector
+
+        class Late(real):
+            def select(self, timeout: float | None = None) -> list:
+                # Bounded, so that a mutated deadline cannot hold the test.
+                time.sleep(min(max(0.0, (timeout or 0.0) + 0.3), 2.0))
+                return super().select(5)
+
+        with (
+            mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+            mock.patch.object(selectors, "DefaultSelector", Late),
+        ):
+            with self.assertRaisesRegex(
+                SecurityScanError, "^tracked-tree secret scan report exceeds the bound$"
+            ):
+                self._scan(
+                    "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); "
+                    "time.sleep(30)",
+                    timeout=1,
+                )
         self.assertIsNotNone(self.started[0].poll())
 
 
