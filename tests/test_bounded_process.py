@@ -355,6 +355,20 @@ class ReapTests(_Children):
         process.wait.side_effect = failure
         self.assertIs(failure, bounded_process.reap(process, timeout=2))
 
+    def test_a_failed_poll_is_taken_as_running_and_the_wait_still_bounded(self) -> None:
+        # CodeAnt on #437: a poll() failure escaped before the kill and the bounded
+        # wait. A state that cannot be read is taken as running, so it is killed.
+        process = mock.Mock(spec=subprocess.Popen)
+        process.poll.side_effect = RuntimeError("poll failed")
+        process.wait.return_value = -9
+        try:
+            failure = bounded_process.reap(process, timeout=2)
+        except RuntimeError as exc:
+            self.fail(f"reap() raised {exc!r} from poll()")
+        self.assertIsNone(failure)
+        process.kill.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=2)
+
     def test_a_real_running_child_is_reaped(self) -> None:
         process = self._child("import time; time.sleep(30)")
         self.assertIsNone(bounded_process.reap(process, timeout=5))

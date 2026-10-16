@@ -148,8 +148,14 @@ def _wait_for_exit(process: subprocess.Popen[bytes], deadline: float) -> Drained
 def reap(process: subprocess.Popen[bytes], *, timeout: float) -> Exception | None:
     """Kill the child if it is still running, and confirm its exit within
     `timeout`. A failure of any kind is returned, never raised, so that cleanup
-    always reaches the bounded wait (Sourcery on #437); None means it was reaped."""
-    if process.poll() is None:
+    always reaches the bounded wait (Sourcery on #437); None means it was reaped. A
+    state that cannot be read is taken as running, so the child is killed (CodeAnt
+    on #437)."""
+    try:
+        running = process.poll() is None
+    except Exception:
+        running = True
+    if running:
         try:
             process.kill()
         except Exception:  # nosec B110 -- a failed kill still reaches the bounded wait below
