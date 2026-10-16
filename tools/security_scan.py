@@ -8,7 +8,6 @@ import json
 import math
 import os
 import re
-import selectors
 import stat
 import subprocess
 import sys
@@ -21,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
+from tools import bounded_process
 from tools.repository_scope import (
     RepositoryScopeError,
     candidate_paths,
@@ -29,7 +29,6 @@ from tools.repository_scope import (
 
 DEFAULT_BASELINE = Path(".secrets.baseline")
 _MAX_REPORT_BYTES = 8_388_608
-_READ_CHUNK_BYTES = 65_536
 _SNAPSHOT_CHUNK_BYTES = 65_536
 _MAX_SNAPSHOT_FILE_BYTES = 16_777_216
 _MAX_SNAPSHOT_TOTAL_BYTES = 67_108_864
@@ -390,17 +389,11 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     secondary context rather than replacing that primary.
     """
 
-    if process.poll() is None:
-        try:
-            process.kill()
-        except OSError:
-            pass
-    try:
-        process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    failure = bounded_process.reap(process, timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+    if failure is not None:
         raise SecurityScanError(
             "tracked-tree secret scan child could not be reaped within the bound"
-        ) from exc
+        ) from failure
 
 
 def _reap_detail(process: subprocess.Popen[bytes]) -> str | None:
@@ -478,74 +471,51 @@ def _run_bounded_scan(
         )
 
     outputs = {"report": bytearray(), "diagnostics": bytearray()}
-    selector: selectors.BaseSelector | None = None
-    deadline = time.monotonic() + timeout
     execution_error: str | None = None
-    execution_cause: Exception | None = None
+    execution_cause: BaseException | None = None
     close_issues = []
+    returncode = 0
     try:
-        selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ, "report")
-        selector.register(process.stderr, selectors.EVENT_READ, "diagnostics")
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, timeout)
-            events = selector.select(remaining)
-            if not events:
-                raise subprocess.TimeoutExpired(command, timeout)
-            for key, _ in events:
-                label = str(key.data)
-                buffer = outputs[label]
-                remaining_bound = _MAX_REPORT_BYTES + 1 - len(buffer)
-                read_size = min(_READ_CHUNK_BYTES, max(1, remaining_bound))
-                chunk = os.read(key.fd, read_size)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                buffer.extend(chunk)
-                if len(buffer) > _MAX_REPORT_BYTES:
-                    raise SecurityScanError(
-                        _with_secondary(
-                            f"tracked-tree secret scan {label} exceeds the bound",
-                            _reap_detail(process),
-                        )
-                    )
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise subprocess.TimeoutExpired(command, timeout)
-        returncode = process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired as exc:
-        execution_error = _with_secondary(
-            "tracked-tree secret scan timed out", _reap_detail(process)
+        # The shared drain (#365): both capped streams under one deadline. The
+        # scanner keeps its own spawn, sinks, wording and primary-then-secondary order.
+        drained = bounded_process.drain(
+            process,
+            {"report": process.stdout, "diagnostics": process.stderr},
+            lambda label, chunk: outputs[label].extend(chunk),
+            deadline=time.monotonic() + timeout,
+            cap=_MAX_REPORT_BYTES,
         )
-        execution_cause = exc
-    except OSError as exc:
-        execution_error = _with_secondary(_scanner_os_error(exc), _reap_detail(process))
-        execution_cause = exc
-    except SecurityScanError as exc:
-        execution_error = str(exc)
-        execution_cause = exc
-    except Exception as exc:
-        # A type this runner does not classify would otherwise leave the try
-        # without reaching the aggregation below, discarding every close issue
-        # the finally collected and leaving the child unreaped. Reap it here as
-        # the classified arms do, name the failure by type only, and keep the
-        # original as the cause.
-        execution_error = _with_secondary(
-            f"tracked-tree secret scan failed (unexpected {type(exc).__name__})",
-            _reap_detail(process),
-        )
-        execution_cause = exc
+        if not drained.selector_closed:
+            close_issues.append("tracked-tree secret scan selector could not be closed")
+        if drained.outcome == "exited" and drained.returncode is not None:
+            returncode = drained.returncode
+        elif drained.outcome == "cap":
+            execution_error = _with_secondary(
+                f"tracked-tree secret scan {drained.stream} exceeds the bound",
+                _reap_detail(process),
+            )
+            execution_cause = SecurityScanError(execution_error)
+        elif drained.outcome == "error" and drained.error is not None:
+            execution_error = _with_secondary(
+                _scanner_os_error(drained.error), _reap_detail(process)
+            )
+            execution_cause = drained.error
+        elif drained.outcome == "unexpected" and drained.exception is not None:
+            # A type this runner does not classify: reap the child as the classified
+            # arms do, name the failure by type only, and keep the original as the
+            # cause.
+            execution_error = _with_secondary(
+                "tracked-tree secret scan failed "
+                f"(unexpected {type(drained.exception).__name__})",
+                _reap_detail(process),
+            )
+            execution_cause = drained.exception
+        else:
+            execution_error = _with_secondary(
+                "tracked-tree secret scan timed out", _reap_detail(process)
+            )
+            execution_cause = subprocess.TimeoutExpired(command, timeout)
     finally:
-        if selector is not None:
-            try:
-                selector.close()
-            except OSError:
-                close_issues.append(
-                    "tracked-tree secret scan selector could not be closed"
-                )
         for role, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             if not stream.closed:
                 try:
@@ -690,7 +660,7 @@ def _copy_candidate_to_snapshot(
     copied_bytes = 0
     primary_error: SecurityScanError | None = None
     primary_cause: Exception | None = None
-    close_issues: list[str] = []
+    close_issues = []
     try:
         parent_descriptor = os.dup(root_descriptor)
         for part in relative.parts[:-1]:

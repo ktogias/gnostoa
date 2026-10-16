@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import selectors
 import subprocess
 import sys
 import tempfile
@@ -1281,6 +1282,149 @@ class ProviderSecurityGateTests(unittest.TestCase):
                     for line in output.read_text(encoding="utf-8").splitlines()
                 ),
             )
+
+
+class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
+    """The scanner runner's observable contract on protected main, pinned before its
+    lifecycle moves into a shared owner (#365's admitted factor, 6218886743). Every
+    child is real, and its creation is counted at Popen itself (the PAO's BP-EVID-01
+    on #365), never inferred from a marker the child writes."""
+
+    def setUp(self) -> None:
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.started: list[subprocess.Popen[bytes]] = []
+        real_popen = subprocess.Popen
+
+        def counted(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+            process = real_popen(*args, **kwargs)  # type: ignore[call-overload]  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- test-only: the scanner's own argv, counted
+            self.started.append(process)
+            return process
+
+        self.enterContext(
+            mock.patch.object(security_scan.subprocess, "Popen", side_effect=counted)
+        )
+        self.addCleanup(self._kill_leftovers)
+
+    def _kill_leftovers(self) -> None:
+        for process in self.started:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    def _scan(
+        self, script: str, *, timeout: int = 10
+    ) -> subprocess.CompletedProcess[bytes]:
+        return security_scan._run_bounded_scan(
+            [sys.executable, "-c", script], cwd=self.directory, timeout=timeout
+        )
+
+    def test_a_spent_budget_still_starts_the_child_then_times_out(self) -> None:
+        # Main's scanner creates its child before it reads its deadline: a factor
+        # must keep this, or route the change as a new semantic choice.
+        with self.assertRaisesRegex(
+            SecurityScanError, "^tracked-tree secret scan timed out"
+        ):
+            self._scan("pass", timeout=0)
+        self.assertEqual(1, len(self.started))
+        self.assertIsNotNone(self.started[0].poll())
+
+    def test_output_exactly_at_the_cap_is_kept_whole(self) -> None:
+        with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
+            completed = self._scan(
+                "import sys; sys.stdout.buffer.write(b'x' * 64); "
+                "sys.stderr.buffer.write(b'y' * 64)"
+            )
+        self.assertEqual(
+            (0, b"x" * 64, b"y" * 64),
+            (completed.returncode, completed.stdout, completed.stderr),
+        )
+
+    def test_endless_output_stops_at_the_cap_and_reaps_the_child(self) -> None:
+        with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
+            with self.assertRaisesRegex(
+                SecurityScanError, "^tracked-tree secret scan report exceeds the bound$"
+            ):
+                self._scan(
+                    "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
+                    timeout=30,
+                )
+        (process,) = self.started
+        self.assertIsNotNone(process.poll(), "the child was left running")
+        self.assertTrue(process.stdout.closed and process.stderr.closed)
+
+    def test_a_nonzero_exit_is_returned_not_raised(self) -> None:
+        completed = self._scan("import sys; sys.stdout.write('out'); sys.exit(3)")
+        self.assertEqual((3, b"out"), (completed.returncode, completed.stdout))
+
+    def test_the_child_inherits_the_callers_environment(self) -> None:
+        with mock.patch.dict(os.environ, {"GNOSTOA_SCAN_PROBE": "inherited"}):
+            completed = self._scan(
+                "import os, sys; sys.stdout.write(os.environ['GNOSTOA_SCAN_PROBE'])"
+            )
+        self.assertEqual(b"inherited", completed.stdout)
+
+    def test_a_cap_crossing_keeps_its_primary_failure_over_a_failed_reap(self) -> None:
+        failed_reap = SecurityScanError(
+            "tracked-tree secret scan child could not be reaped within the bound"
+        )
+        with (
+            mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+            mock.patch.object(
+                security_scan, "_terminate_and_reap", side_effect=failed_reap
+            ),
+        ):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan(
+                    "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); time.sleep(30)"
+                )
+        self.assertEqual(
+            "tracked-tree secret scan report exceeds the bound; "
+            "tracked-tree secret scan child could not be reaped within the bound",
+            str(raised.exception),
+        )
+
+    def test_both_pipes_are_closed_after_success_and_after_failure(self) -> None:
+        self._scan("print('ok')")
+        with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 1):
+            with self.assertRaises(SecurityScanError):
+                self._scan("print('too long')")
+        for process in self.started:
+            self.assertTrue(process.stdout.closed and process.stderr.closed)
+            self.assertIsNotNone(process.poll())
+
+    def test_an_unexpected_failure_is_named_by_type_and_reaps_the_child(self) -> None:
+        # The global selectors module: the patch target survives the runner's move.
+        with mock.patch.object(
+            selectors, "DefaultSelector", side_effect=RuntimeError("secret detail")
+        ):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan("import time; time.sleep(30)", timeout=30)
+        self.assertEqual(
+            "tracked-tree secret scan failed (unexpected RuntimeError)",
+            str(raised.exception),
+        )
+        self.assertNotIn("secret detail", str(raised.exception))
+        self.assertIsNotNone(self.started[0].poll())
+
+    def test_an_unexpected_failure_keeps_a_selector_close_failure(self) -> None:
+        # A selector that cannot register, and then cannot close: the unexpected
+        # failure stays primary, and the close failure follows it as secondary.
+        class Failing:
+            def register(self, *args: object) -> None:
+                raise RuntimeError("secret detail")
+
+            def close(self) -> None:
+                raise OSError("cannot close")
+
+        with mock.patch.object(selectors, "DefaultSelector", Failing):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan("import time; time.sleep(30)", timeout=30)
+        self.assertEqual(
+            "tracked-tree secret scan failed (unexpected RuntimeError); "
+            "tracked-tree secret scan selector could not be closed",
+            str(raised.exception),
+        )
+        self.assertIsNotNone(self.started[0].poll())
 
 
 if __name__ == "__main__":
