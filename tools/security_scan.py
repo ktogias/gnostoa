@@ -510,13 +510,21 @@ def _run_bounded_scan(
                 _reap_detail(process),
             )
             execution_cause = drained.exception
-        else:
+        elif drained.outcome == "deadline":
             execution_error = _with_secondary(
                 "tracked-tree secret scan timed out", _reap_detail(process)
             )
             # The cause main raised from, as a value: no process is started here.
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit -- an exception value, no process is started
             execution_cause = subprocess.TimeoutExpired(command, timeout)
+        else:
+            # An outcome without the field its contract names is the owner's
+            # failure, never a timeout; the child is still reaped (Amazon Q on #437).
+            execution_error = _with_secondary(
+                "tracked-tree secret scan failed (unexpected drain outcome "
+                f"{drained.outcome})",
+                _reap_detail(process),
+            )
     finally:
         for role, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             if not stream.closed:

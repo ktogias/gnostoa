@@ -1495,6 +1495,23 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 )
         self.assertIsNotNone(self.started[0].poll())
 
+    def test_an_outcome_without_its_field_is_never_called_a_timeout(self) -> None:
+        # Amazon Q on #437: a cap without the crossing stream's name fell through to
+        # the timeout arm. An outcome that breaks the owner's contract is named as
+        # such, and the child is still reaped.
+        with mock.patch.object(
+            security_scan.bounded_process,
+            "drain",
+            return_value=security_scan.bounded_process.Drained("cap"),
+        ):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan("import time; time.sleep(30)", timeout=30)
+        self.assertEqual(
+            "tracked-tree secret scan failed (unexpected drain outcome cap)",
+            str(raised.exception),
+        )
+        self.assertIsNotNone(self.started[0].poll())
+
 
 if __name__ == "__main__":
     unittest.main()

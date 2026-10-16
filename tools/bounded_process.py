@@ -100,7 +100,7 @@ def _drain(
         events = selector.select(remaining)
         if not events:
             return Drained("deadline")
-        stopped = _read_ready(events, selector, sink, delivered, deadline, cap)
+        stopped = _read_ready(events, selector, sink, delivered, cap)
         if stopped is not None:
             return stopped
     return _wait_for_exit(process, deadline)
@@ -111,7 +111,6 @@ def _read_ready(
     selector: selectors.BaseSelector,
     sink: Callable[[str, bytes], None],
     delivered: dict[str, int],
-    deadline: float,
     cap: int,
 ) -> Drained | None:
     """Read each ready stream once: the drain's end, or None to select again."""
