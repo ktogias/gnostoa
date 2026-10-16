@@ -1307,12 +1307,17 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         self.addCleanup(self._kill_leftovers)
 
     def _kill_leftovers(self) -> None:
+        # The owner's own reap, which never raises: every child is reaped within a
+        # bound, whatever another one does, and the first unconfirmed exit is raised
+        # after the loop, so that a child that survives its kill fails the cleanup
+        # instead of hanging the suite (Amazon Q, cubic and Claude on #437).
+        failures = []
         for process in self.started:
-            if process.poll() is None:
-                process.kill()
-                # Bounded, so that a child that survives its kill fails the cleanup
-                # instead of hanging the suite (Amazon Q on #437).
-                process.wait(timeout=10)
+            failure = security_scan.bounded_process.reap(process, timeout=10)
+            if failure is not None:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
 
     def _scan(
         self, script: str, *, timeout: int = 10

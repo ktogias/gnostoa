@@ -18,15 +18,21 @@ class _Children(unittest.TestCase):
         self.addCleanup(self._kill_leftovers)
 
     def _kill_leftovers(self) -> None:
+        # The owner's own reap, which never raises: every child is reaped within a
+        # bound and closed, whatever another one does, and the first unconfirmed
+        # exit is raised after the loop, so that a child that survives its kill
+        # fails the cleanup instead of hanging the suite (Amazon Q, cubic and
+        # Claude on #437).
+        failures = []
         for process in self.children:
-            if process.poll() is None:
-                process.kill()
-            # Bounded, so that a child that survives its kill fails the cleanup
-            # instead of hanging the suite (Amazon Q on #437).
-            process.wait(timeout=10)
+            failure = bounded_process.reap(process, timeout=10)
+            if failure is not None:
+                failures.append(failure)
             for stream in (process.stdin, process.stdout, process.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()
+        if failures:
+            raise failures[0]
 
     def _child(self, script: str) -> subprocess.Popen[bytes]:
         process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- test-only: this interpreter, a literal script
