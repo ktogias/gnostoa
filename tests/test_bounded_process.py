@@ -369,11 +369,9 @@ class ReapTests(_Children):
         process = mock.Mock(spec=subprocess.Popen)
         process.poll.side_effect = RuntimeError("poll failed")
         process.wait.return_value = -9
-        try:
-            failure = bounded_process.reap(process, timeout=2)
-        except RuntimeError as exc:
-            self.fail(f"reap() raised {exc!r} from poll()")
-        self.assertIsNone(failure)
+        # No try/except: a poll() failure that escapes fails the test by itself
+        # (SonarCloud S8714 on #437).
+        self.assertIsNone(bounded_process.reap(process, timeout=2))
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=2)
 
