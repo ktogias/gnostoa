@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import selectors
-import subprocess
+import subprocess  # nosec B404 -- it signals, waits on and reads a caller's child; it starts none
 import time
 from collections.abc import Callable, Mapping
 from typing import IO, Literal
@@ -52,9 +52,11 @@ def drain(
 
     The sink receives each chunk read while its stream's total stays within `cap`.
     The chunk that crosses it is never delivered, and at most one byte past the cap
-    is read. A spent deadline reads nothing. A failure is returned, never raised, so that a consumer
-    can reap the child and word the failure itself. Nothing is killed, reaped or
-    closed here, except the drain's own selector.
+    is read. A spent deadline reads nothing, and no stream is read once it has passed.
+    A failure is returned, never raised, so that a consumer can reap the child and
+    word the failure itself. The child is waited on within the deadline, which reaps
+    it once it has exited (cubic on #437); nothing is killed or closed here, except
+    the drain's own selector.
     """
     # A spent deadline reads nothing: _drain checks it before any select or read.
     selector: selectors.BaseSelector | None = None
@@ -72,7 +74,9 @@ def drain(
         if selector is not None:
             try:
                 selector.close()
-            except OSError:
+            except Exception:
+                # A close failure of any kind is reported, never raised, so that the
+                # consumer still reaps its child (Sourcery on #437).
                 closed = False
     return result if closed else dataclasses.replace(result, selector_closed=False)
 
@@ -95,20 +99,44 @@ def _drain(
         events = selector.select(remaining)
         if not events:
             return Drained("deadline")
-        for key, _ in events:
-            name = str(key.data)
-            # At most one byte past the cap is read, so a crossing is seen at once.
-            room = cap + 1 - delivered[name]
-            chunk = os.read(key.fd, min(_READ_CHUNK_BYTES, max(1, room)))
-            if not chunk:
-                selector.unregister(key.fileobj)
-                continue
-            delivered[name] += len(chunk)
-            if delivered[name] > cap:
-                # The crossing chunk is never delivered, whole or in part: a sink
-                # keeps only the chunks before it (the PAO on #436, 6220140281).
-                return Drained("cap", stream=name)
-            sink(name, chunk)
+        stopped = _read_ready(events, selector, sink, delivered, deadline, cap)
+        if stopped is not None:
+            return stopped
+    return _wait_for_exit(process, deadline)
+
+
+def _read_ready(
+    events: list[tuple[selectors.SelectorKey, int]],
+    selector: selectors.BaseSelector,
+    sink: Callable[[str, bytes], None],
+    delivered: dict[str, int],
+    deadline: float,
+    cap: int,
+) -> Drained | None:
+    """Read each ready stream once: the drain's end, or None to select again."""
+    for key, _ in events:
+        if time.monotonic() >= deadline:
+            # Before each ready stream, not only before select: a slow sink must
+            # not let another stream be read late (cubic on #437).
+            return Drained("deadline")
+        name = str(key.data)
+        # At most one byte past the cap is read, so a crossing is seen at once.
+        room = cap + 1 - delivered[name]
+        chunk = os.read(key.fd, min(_READ_CHUNK_BYTES, max(1, room)))
+        if not chunk:
+            selector.unregister(key.fileobj)
+            continue
+        delivered[name] += len(chunk)
+        if delivered[name] > cap:
+            # The crossing chunk is never delivered, whole or in part: a sink keeps
+            # only the chunks before it (the PAO on #436, 6220140281).
+            return Drained("cap", stream=name)
+        sink(name, chunk)
+    return None
+
+
+def _wait_for_exit(process: subprocess.Popen[bytes], deadline: float) -> Drained:
+    """The child's exit, waited on within what is left of the deadline."""
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return Drained("deadline")
@@ -118,18 +146,17 @@ def _drain(
         return Drained("deadline")
 
 
-def reap(
-    process: subprocess.Popen[bytes], *, timeout: float
-) -> OSError | subprocess.TimeoutExpired | None:
+def reap(process: subprocess.Popen[bytes], *, timeout: float) -> Exception | None:
     """Kill the child if it is still running, and confirm its exit within
-    `timeout`. The failure is returned, never raised; None means it was reaped."""
+    `timeout`. A failure of any kind is returned, never raised, so that cleanup
+    always reaches the bounded wait (Sourcery on #437); None means it was reaped."""
     if process.poll() is None:
         try:
             process.kill()
-        except OSError:
+        except Exception:
             pass
     try:
         process.wait(timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except Exception as exc:
         return exc
     return None

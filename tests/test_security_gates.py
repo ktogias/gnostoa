@@ -1426,6 +1426,48 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         )
         self.assertIsNotNone(self.started[0].poll())
 
+    def test_a_selector_close_failure_alone_fails_the_scan(self) -> None:
+        # The PAO's T1 on #437: a close failure with no primary failure still fails
+        # the scan, named as finalization, and the child has exited normally.
+        real = selectors.DefaultSelector
+
+        class CloseFails(real):
+            def close(self) -> None:
+                super().close()
+                raise OSError("cannot close")
+
+        with mock.patch.object(selectors, "DefaultSelector", CloseFails):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan("print('ok')")
+        self.assertEqual(
+            "tracked-tree secret scan process finalization failed; "
+            "tracked-tree secret scan selector could not be closed",
+            str(raised.exception),
+        )
+        self.assertIsNotNone(self.started[0].poll())
+
+    def test_a_timeout_keeps_its_primary_failure_over_a_selector_close_failure(
+        self,
+    ) -> None:
+        # The PAO's T1 on #437: a timeout, then a selector that cannot close. The
+        # timeout stays primary, the close failure follows, and the child is reaped.
+        real = selectors.DefaultSelector
+
+        class CloseFails(real):
+            def close(self) -> None:
+                super().close()
+                raise OSError("cannot close")
+
+        with mock.patch.object(selectors, "DefaultSelector", CloseFails):
+            with self.assertRaises(SecurityScanError) as raised:
+                self._scan("import time; time.sleep(30)", timeout=1)
+        self.assertEqual(
+            "tracked-tree secret scan timed out; "
+            "tracked-tree secret scan selector could not be closed",
+            str(raised.exception),
+        )
+        self.assertIsNotNone(self.started[0].poll())
+
 
 if __name__ == "__main__":
     unittest.main()

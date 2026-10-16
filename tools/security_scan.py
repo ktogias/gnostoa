@@ -514,7 +514,10 @@ def _run_bounded_scan(
             execution_error = _with_secondary(
                 "tracked-tree secret scan timed out", _reap_detail(process)
             )
-            execution_cause = subprocess.TimeoutExpired(command, timeout)
+            # The cause main raised from, as a value: no process is started here.
+            execution_cause = subprocess.TimeoutExpired(
+                command, timeout
+            )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
     finally:
         for role, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             if not stream.closed:
@@ -660,7 +663,7 @@ def _copy_candidate_to_snapshot(
     copied_bytes = 0
     primary_error: SecurityScanError | None = None
     primary_cause: Exception | None = None
-    close_issues = []
+    close_issues: list[str] = []
     try:
         parent_descriptor = os.dup(root_descriptor)
         for part in relative.parts[:-1]:

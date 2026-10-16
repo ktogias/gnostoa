@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 -- test-only: real children of this interpreter
 import sys
 import time
 import unittest
@@ -43,7 +43,8 @@ class _Children(unittest.TestCase):
         def sink(name: str, chunk: bytes) -> None:
             received[name] += chunk
 
-        assert process.stdout is not None and process.stderr is not None
+        if process.stdout is None or process.stderr is None:
+            self.fail("the child has no pipes")
         drained = bounded_process.drain(
             process,
             {"out": process.stdout, "err": process.stderr},
@@ -78,11 +79,37 @@ class DrainTests(_Children):
         self.assertIsNone(drained.returncode)
 
     def test_the_chunks_before_the_crossing_one_are_delivered(self) -> None:
-        process = self._child(
-            "import sys, time\nsys.stdout.buffer.write(b'a' * 40); sys.stdout.flush()\n"
-            "time.sleep(0.3)\nsys.stdout.buffer.write(b'b' * 40)"
+        # The child writes its second chunk only after the sink holds the first: a
+        # handshake on its stdin, never a sleep (Sourcery on #437).
+        process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- test-only: this interpreter, a literal script
+            [
+                sys.executable,
+                "-c",
+                "import sys\nsys.stdout.buffer.write(b'a' * 40); sys.stdout.flush()\n"
+                "sys.stdin.read(1)\nsys.stdout.buffer.write(b'b' * 40); sys.stdout.flush()",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        drained, received = self._drain(process)
+        self.children.append(process)
+        if process.stdin is None or process.stdout is None or process.stderr is None:
+            self.fail("the child has no pipes")
+        received = {"out": b"", "err": b""}
+
+        def sink(name: str, chunk: bytes) -> None:
+            received[name] += chunk
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.write(b"go")
+                process.stdin.close()
+
+        drained = bounded_process.drain(
+            process,
+            {"out": process.stdout, "err": process.stderr},
+            sink,
+            deadline=time.monotonic() + 10,
+            cap=64,
+        )
         self.assertEqual(("cap", "out"), (drained.outcome, drained.stream))
         self.assertEqual(b"a" * 40, received["out"])
 
@@ -101,7 +128,9 @@ class DrainTests(_Children):
         began = time.monotonic()
         drained, _ = self._drain(process, seconds=0.5)
         self.assertEqual("deadline", drained.outcome)
-        self.assertLess(time.monotonic() - began, 3)
+        # One second of scheduling margin past the 0.5-second deadline, never more
+        # (Sourcery on #437).
+        self.assertLess(time.monotonic() - began, 1.5)
 
     def test_a_spent_deadline_reads_nothing(self) -> None:
         process = self._child("import sys; sys.stdout.write('late')")
@@ -115,8 +144,62 @@ class DrainTests(_Children):
         process = self._child(
             "import os, time; os.close(1); os.close(2); time.sleep(30)"
         )
+        began = time.monotonic()
         drained, _ = self._drain(process, seconds=0.5)
         self.assertEqual("deadline", drained.outcome)
+        self.assertLess(time.monotonic() - began, 1.5)
+
+    def test_no_stream_is_read_once_the_deadline_has_passed(self) -> None:
+        # cubic on #437: the deadline was checked before select, but not before each
+        # ready stream was read, so a slow sink let a second stream be read late.
+        process = self._child(
+            "import sys\nsys.stdout.write('o'); sys.stdout.flush()\n"
+            "sys.stderr.write('e'); sys.stderr.flush()\nimport time; time.sleep(30)"
+        )
+        time.sleep(0.5)  # both streams have data before the drain starts
+        received: dict[str, bytes] = {"out": b"", "err": b""}
+
+        def slow_sink(name: str, chunk: bytes) -> None:
+            received[name] += chunk
+            time.sleep(1.0)  # past the deadline, before the other stream is read
+
+        if process.stdout is None or process.stderr is None:
+            self.fail("the child has no pipes")
+        drained = bounded_process.drain(
+            process,
+            {"out": process.stdout, "err": process.stderr},
+            slow_sink,
+            deadline=time.monotonic() + 0.5,
+            cap=64,
+        )
+        self.assertEqual("deadline", drained.outcome)
+        self.assertEqual(1, sum(1 for chunk in received.values() if chunk))
+
+    def test_the_exit_wait_takes_only_what_is_left_of_the_deadline(self) -> None:
+        # Deterministic, with no wall-clock threshold (the owner's audit on #437): the
+        # wait gets the time remaining, a timeout there is the deadline, and a spent
+        # deadline never waits at all.
+        process = mock.Mock(spec=subprocess.Popen)
+        process.wait.return_value = 0
+        with mock.patch.object(bounded_process.time, "monotonic", return_value=100.0):
+            drained = bounded_process.drain(
+                process, {}, mock.Mock(), deadline=105.0, cap=64
+            )
+        self.assertEqual(("exited", 0), (drained.outcome, drained.returncode))
+        process.wait.assert_called_once_with(timeout=5.0)
+        process.wait.side_effect = subprocess.TimeoutExpired(["child"], 5)
+        with mock.patch.object(bounded_process.time, "monotonic", return_value=100.0):
+            drained = bounded_process.drain(
+                process, {}, mock.Mock(), deadline=105.0, cap=64
+            )
+        self.assertEqual("deadline", drained.outcome)
+        process.wait.reset_mock()
+        with mock.patch.object(bounded_process.time, "monotonic", return_value=105.0):
+            drained = bounded_process.drain(
+                process, {}, mock.Mock(), deadline=105.0, cap=64
+            )
+        self.assertEqual("deadline", drained.outcome)
+        process.wait.assert_not_called()
 
     def test_a_read_error_is_returned_not_raised(self) -> None:
         process = self._child("import time; print('x', flush=True); time.sleep(30)")
@@ -141,6 +224,60 @@ class DrainTests(_Children):
         self.assertEqual("unexpected", drained.outcome)
         self.assertIsInstance(drained.exception, RuntimeError)
         self.assertFalse(drained.selector_closed)
+
+    def test_a_selector_close_failure_of_any_kind_is_returned(self) -> None:
+        # Sourcery on #437: a close failure other than OSError escaped drain(), and
+        # the scanner then skipped its reap of a running child.
+        class Failing:
+            def register(self, *args: object) -> None:
+                raise RuntimeError("register failed")
+
+            def close(self) -> None:
+                raise RuntimeError("cannot close")
+
+        process = self._child("import time; time.sleep(30)")
+        with mock.patch.object(bounded_process.selectors, "DefaultSelector", Failing):
+            drained, _ = self._drain(process)
+        self.assertEqual("unexpected", drained.outcome)
+        self.assertFalse(drained.selector_closed)
+
+    def test_a_selector_close_failure_alone_keeps_the_outcome(self) -> None:
+        # The PAO's T1 on #437: with no other failure, the drain's own outcome stands,
+        # and the close failure is reported beside it.
+        real = bounded_process.selectors.DefaultSelector
+
+        class CloseFails(real):
+            def close(self) -> None:
+                super().close()
+                raise OSError("cannot close")
+
+        process = self._child("import sys; sys.stdout.write('ok'); sys.exit(4)")
+        with mock.patch.object(
+            bounded_process.selectors, "DefaultSelector", CloseFails
+        ):
+            drained, received = self._drain(process)
+        self.assertEqual(("exited", 4), (drained.outcome, drained.returncode))
+        self.assertFalse(drained.selector_closed)
+        self.assertEqual(b"ok", received["out"])
+
+    def test_events_returned_after_the_deadline_are_never_read(self) -> None:
+        # The PAO's T1 on #437: a select that returns ready streams only after the
+        # deadline, deterministically. Nothing is read, and the outcome is deadline.
+        real = bounded_process.selectors.DefaultSelector
+
+        class Late(real):
+            def select(self, timeout: float | None = None) -> list:
+                time.sleep(max(0.0, (timeout or 0.0) + 0.2))
+                return super().select(0)
+
+        process = self._child(
+            "import sys; sys.stdout.write('late'); sys.stdout.flush()"
+        )
+        process.wait()
+        with mock.patch.object(bounded_process.selectors, "DefaultSelector", Late):
+            drained, received = self._drain(process, seconds=0.3)
+        self.assertEqual("deadline", drained.outcome)
+        self.assertEqual({"out": b"", "err": b""}, received)
 
     def test_draining_kills_nothing_and_closes_nothing(self) -> None:
         # Killing, reaping and closing stay with each consumer.
@@ -188,6 +325,18 @@ class ReapTests(_Children):
                 process.poll.return_value = None
                 process.wait.side_effect = failure
                 self.assertIs(failure, bounded_process.reap(process, timeout=5))
+
+    def test_a_kill_or_wait_failure_of_any_kind_is_returned_not_raised(self) -> None:
+        # Sourcery on #437: a kill() or wait() failure other than OSError escaped.
+        process = mock.Mock(spec=subprocess.Popen)
+        process.poll.return_value = None
+        process.kill.side_effect = RuntimeError("kill failed")
+        process.wait.return_value = -9
+        self.assertIsNone(bounded_process.reap(process, timeout=2))
+        process.wait.assert_called_once_with(timeout=2)
+        failure = RuntimeError("wait failed")
+        process.wait.side_effect = failure
+        self.assertIs(failure, bounded_process.reap(process, timeout=2))
 
     def test_a_real_running_child_is_reaped(self) -> None:
         process = self._child("import time; time.sleep(30)")
