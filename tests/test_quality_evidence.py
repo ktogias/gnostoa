@@ -1587,6 +1587,9 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 "metric": "cyclomatic-n-1/v1",
                 "reported_above": 15,
                 "qualification": "UNQUALIFIED",
+                # The producers' declared grammar, best-effort as Python's own
+                # feature_version is (Codex, the Router's 6242507671 on #436).
+                "grammar": {"python": "3.11", "binding": "BEST_EFFORT"},
             },
             inventory["configuration"]["complexity"],
         )
@@ -3856,6 +3859,60 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             self.assertIn(
                 "mypy:main unparsable mypy report", unanalyzed["tools/sample.py"]
             )
+
+    def test_the_metric_parses_with_the_analyzers_declared_grammar(self) -> None:
+        # Codex on #436: the metric parsed with the host's grammar while mypy and ruff
+        # target Python 3.11, so a tracked file in 3.12 syntax had complexity findings
+        # on a 3.12 host and was unanalyzed on a 3.11 one. The metric binds the declared
+        # 3.11 grammar, best-effort as Python's own feature_version is: a type
+        # parameter list or a type statement is that file's named gap on any host.
+        sources = {
+            "tools/generic.py": "def f[T](x: T) -> T:\n    return x\n",
+            "tools/alias.py": "type Number = int\n",
+        }
+
+        def measured(inventory: dict) -> list[tuple]:
+            return sorted(
+                (f["range"]["start_line"], f["range"]["end_line"], f["native"]["value"])
+                for f in inventory["findings"]
+                if f["tool"]["id"] == "complexity" and f["path"] == "tools/sample.py"
+            )
+
+        before = measured(self._inventory())
+        shutil.rmtree(self.output, ignore_errors=True)
+        self.commands.clear()
+        for path, source in sources.items():
+            (self.root / path).write_text(source, encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "newer syntax")
+        inventory = self._inventory()
+        unanalyzed = {
+            u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
+        }
+        for path in sources:
+            with self.subTest(path):
+                self.assertIn(
+                    "complexity could not parse: SyntaxError", unanalyzed[path]
+                )
+        # The later 3.11 file is analyzed, its counts and ranges unchanged.
+        self.assertNotIn("tools/sample.py", unanalyzed)
+        self.assertTrue(before)
+        self.assertEqual(before, measured(inventory))
+        # One declared target: mypy's and ruff's arguments are the same bytes.
+        commands = [command for command, _cwd, _env in self.commands]
+        mypy = [c for c in commands if "mypy" in c and "--version" not in c]
+        ruff = [c for c in commands if "ruff" in c and "--version" not in c]
+        self.assertTrue(mypy and ruff)
+        for command in mypy:
+            index = command.index("--python-version")
+            self.assertEqual("3.11", command[index + 1])
+        for command in ruff:
+            index = command.index("--target-version")
+            self.assertEqual("py311", command[index + 1])
+        self.assertEqual(
+            {"python": "3.11", "binding": "BEST_EFFORT"},
+            inventory["configuration"]["complexity"]["grammar"],
+        )
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
