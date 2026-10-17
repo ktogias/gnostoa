@@ -14,6 +14,7 @@ REPOSITORY_SCOPE_ERROR_CATEGORIES = frozenset(
         "GIT_FAILED",
         "GIT_IO",
         "GIT_METADATA_IO",
+        "GIT_TIMEOUT",
         "MANIFEST_INVALID",
         "MANIFEST_IO",
         "MANIFEST_MISSING",
@@ -63,7 +64,7 @@ def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
     return sorted(set(paths), key=lambda path: path.as_posix())
 
 
-def _git_candidate_paths(root: Path) -> list[Path]:
+def _git_candidate_paths(root: Path, *, timeout: float | None = None) -> list[Path]:
     try:
         result = subprocess.run(
             [
@@ -79,7 +80,13 @@ def _git_candidate_paths(root: Path) -> list[Path]:
             ],
             check=False,
             capture_output=True,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RepositoryScopeError(
+            f"cannot enumerate Git-tracked candidate files in {root} within {timeout} seconds",
+            category="GIT_TIMEOUT",
+        ) from exc
     except OSError as exc:
         raise RepositoryScopeError(
             f"cannot enumerate Git-tracked candidate files in {root}: {exc}",
@@ -131,8 +138,15 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
     return _decode_paths(encoded_paths, "packaged source manifest")
 
 
-def candidate_paths(repository_root: Path) -> list[Path]:
-    """Return the declared candidate paths without scanning local state."""
+def candidate_paths(
+    repository_root: Path, *, timeout: float | None = None
+) -> list[Path]:
+    """Return the declared candidate paths without scanning local state.
+
+    An optional `timeout`, in seconds, bounds the Git enumeration; past it the
+    enumeration is refused as GIT_TIMEOUT. The packaged manifest is a local file
+    read and takes none. Without one, nothing changes for existing callers.
+    """
 
     root = repository_root.resolve()
     git_metadata = root / ".git"
@@ -149,7 +163,7 @@ def candidate_paths(repository_root: Path) -> list[Path]:
         git_metadata_exists = True
 
     if git_metadata_exists:
-        return _git_candidate_paths(root)
+        return _git_candidate_paths(root, timeout=timeout)
 
     manifest = root / SOURCE_MANIFEST
     try:
