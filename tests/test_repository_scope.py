@@ -141,6 +141,121 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 self.module().find_text_matches(root, FORBIDDEN_PATTERNS),
             )
 
+    def test_git_metadata_is_classified_by_its_entry_never_followed(self) -> None:
+        # cubic and Claude on #436, by the Router's 6239259708: one owner classifies
+        # `root/.git` by lstat. A missing entry is no metadata; a directory, or a
+        # linked worktree's regular file, is; a symlink, dangling or not, or any other
+        # kind is refused as UNSAFE_PATH, never followed; an entry that cannot be
+        # inspected stays GIT_METADATA_IO.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            self.assertTrue(module.has_git_metadata(outer))
+            empty = parent / "empty"
+            empty.mkdir()
+            self.assertFalse(module.has_git_metadata(empty))
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertTrue((worktree / ".git").is_file())
+            self.assertTrue(module.has_git_metadata(worktree))
+            for label, make in (
+                (
+                    "a symlink to a checkout",
+                    lambda entry: entry.symlink_to(outer / ".git"),
+                ),
+                (
+                    "a dangling symlink",
+                    lambda entry: entry.symlink_to(parent / "missing"),
+                ),
+                ("another kind", lambda entry: os.mkfifo(entry)),
+            ):
+                with self.subTest(label):
+                    root = parent / label.replace(" ", "-")
+                    root.mkdir()
+                    make(root / ".git")
+                    with self.assertRaises(module.RepositoryScopeError) as raised:
+                        module.has_git_metadata(root)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            real_lstat = Path.lstat
+
+            def failing(path, *args, **kwargs):
+                if path.name == ".git" and path.parent == outer:
+                    raise PermissionError(13, "denied")
+                return real_lstat(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "lstat", failing):
+                with self.assertRaises(module.RepositoryScopeError) as raised:
+                    module.has_git_metadata(outer)
+            self.assertEqual("GIT_METADATA_IO", raised.exception.category)
+
+    def test_unsafe_git_metadata_refuses_the_enumeration_before_any_fallback(
+        self,
+    ) -> None:
+        # The Router's 6239259708: candidate_paths consumes the one classification
+        # before any Git or manifest fallback, so a packaged root whose `.git` links to
+        # an enclosing checkout never enumerates that checkout's paths. A missing
+        # entry keeps the manifest, and a worktree's file keeps Git.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            for label, target in (
+                ("to-a-checkout", outer / ".git"),
+                ("dangling", parent / "missing"),
+            ):
+                with self.subTest(label):
+                    package = parent / f"package-{label}"
+                    package.mkdir()
+                    (package / "source.md").write_text(
+                        "generic source\n", encoding="utf-8"
+                    )
+                    (package / module.SOURCE_MANIFEST).write_bytes(b"source.md\0")
+                    (package / ".git").symlink_to(target)
+                    with (
+                        mock.patch.object(module, "_git_candidate_paths") as enumerated,
+                        mock.patch.object(
+                            module, "_manifest_candidate_paths"
+                        ) as listed,
+                        self.assertRaises(module.RepositoryScopeError) as raised,
+                    ):
+                        module.candidate_paths(package)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+                    self.assertEqual([], enumerated.call_args_list)
+                    self.assertEqual([], listed.call_args_list)
+            manifest_only = parent / "manifest-only"
+            manifest_only.mkdir()
+            (manifest_only / "source.md").write_text(
+                "generic source\n", encoding="utf-8"
+            )
+            (manifest_only / module.SOURCE_MANIFEST).write_bytes(b"source.md\0")
+            self.assertEqual([Path("source.md")], module.candidate_paths(manifest_only))
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
+
     def _tracked_repository(self, parent: Path) -> Path:
         root = parent / "repository"
         root.mkdir()

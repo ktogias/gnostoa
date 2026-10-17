@@ -138,6 +138,30 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
     return _decode_paths(encoded_paths, "packaged source manifest")
 
 
+def has_git_metadata(root: Path) -> bool:
+    """Whether `root/.git` is Git metadata, by `lstat`, never followed: False for a
+    missing entry, True for a directory or a linked worktree's regular file. A
+    symlink, dangling or not, or any other kind is refused as UNSAFE_PATH, so that
+    no enclosing checkout's metadata is borrowed; an entry that cannot be inspected
+    is GIT_METADATA_IO (cubic and Claude, the Router's 6239259708 on #436)."""
+    git_metadata = root / ".git"
+    try:
+        mode = git_metadata.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RepositoryScopeError(
+            f"cannot inspect Git metadata at {git_metadata}: {exc}",
+            category="GIT_METADATA_IO",
+        ) from exc
+    if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+        return True
+    raise RepositoryScopeError(
+        f"Git metadata at {git_metadata} is not a directory or a regular file",
+        category="UNSAFE_PATH",
+    )
+
+
 def candidate_paths(
     repository_root: Path, *, timeout: float | None = None
 ) -> list[Path]:
@@ -149,20 +173,7 @@ def candidate_paths(
     """
 
     root = repository_root.resolve()
-    git_metadata = root / ".git"
-    try:
-        git_metadata.lstat()
-    except FileNotFoundError:
-        git_metadata_exists = False
-    except OSError as exc:
-        raise RepositoryScopeError(
-            f"cannot inspect Git metadata at {git_metadata}: {exc}",
-            category="GIT_METADATA_IO",
-        ) from exc
-    else:
-        git_metadata_exists = True
-
-    if git_metadata_exists:
+    if has_git_metadata(root):
         return _git_candidate_paths(root, timeout=timeout)
 
     manifest = root / SOURCE_MANIFEST
