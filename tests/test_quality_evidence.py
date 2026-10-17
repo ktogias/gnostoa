@@ -2749,6 +2749,26 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                     [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
                 )
 
+    def test_the_subject_identity_check_holds_to_the_deadline(self) -> None:
+        # The Router's I-b, and the two mutants that survived on bfcb906a: a spent
+        # budget starts no identity check, so no Git at all, and an open one passes
+        # the check what is left of it, never no bound.
+        identity = Mock(return_value=True)
+        with patch.object(self.module, "has_git_metadata", identity):
+            source, _gaps = self.module._diagnostic_subject(
+                self.root, None, time.monotonic() - 1
+            )
+        self.assertEqual([], identity.call_args_list)
+        self.assertIsNone(source["tracked_tree_dirty"])
+        identity = Mock(return_value=True)
+        with patch.object(self.module, "has_git_metadata", identity):
+            self.module._diagnostic_subject(self.root, None, time.monotonic() + 30)
+        self.assertEqual(1, identity.call_count)
+        timeout = identity.call_args.kwargs["timeout"]
+        self.assertIsNotNone(timeout)
+        self.assertLess(0, timeout)
+        self.assertLessEqual(timeout, 30)
+
     def test_an_unconfirmed_git_identity_reads_no_subject(self) -> None:
         # The Router's I-b on #436: an operational failure of the identity check is
         # never a confirmed identity, so no Git subject is read and the state is
@@ -2954,6 +2974,51 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                     "the tracked tree is dirty or its state is unknown",
                     inventory["coverage"]["reason"],
                 )
+
+    def test_an_unbound_subject_publishes_no_diff(self) -> None:
+        # Codex on #436, by the Router's D1b (6240492499): a subject that changed,
+        # turned dirty or could not be re-read after a clean comparison kept
+        # scope.diff, whose changed_paths may describe another revision. It is null, as
+        # for a subject that was dirty from the start, and the gap names why.
+        self._changed_once()
+        clean = self.module._git_state(self.root)
+        cases = (
+            (
+                "HEAD changed",
+                {"revision": "f" * 40, "tracked_tree_dirty": False},
+                "the subject changed during collection",
+            ),
+            (
+                "turned dirty",
+                {**clean, "tracked_tree_dirty": True},
+                "the subject changed during collection",
+            ),
+            (
+                "could not be re-read",
+                {"revision": None, "tracked_tree_dirty": None},
+                "the subject could not be re-read after collection",
+            ),
+        )
+        for label, after, gap in cases:
+            with self.subTest(label):
+                shutil.rmtree(self.output, ignore_errors=True)
+                with patch.object(
+                    self.module, "_git_state", side_effect=[clean, after]
+                ):
+                    inventory = self._inventory(base=self.base)
+                self.assertIsNone(inventory["scope"]["diff"])
+                self.assertEqual(
+                    {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+                )
+                self.assertIn(gap, inventory["coverage"]["reason"])
+        with self.subTest("a stable clean subject keeps its diff"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            with patch.object(self.module, "_git_state", side_effect=[clean, clean]):
+                inventory = self._inventory(base=self.base)
+            self.assertEqual(self.base, inventory["scope"]["diff"]["base"])
+        with self.subTest("no base, no diff"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            self.assertIsNone(self._inventory()["scope"]["diff"])
 
     def test_a_subject_that_changed_or_cannot_be_re_read_has_no_in_diff(self) -> None:
         # The Router's D1: when the final read differs, or cannot finish, the definite

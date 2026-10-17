@@ -292,6 +292,19 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
             self.assertEqual([Path("tracked.md")], module.candidate_paths(outer))
 
+    def test_the_identity_check_compares_the_resolved_root(self) -> None:
+        # cubic on #436, by the Router's I-b ("the resolved requested root"): Git's top
+        # level is absolute, so a relative root of a real repository is still its own.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            previous = os.getcwd()
+            os.chdir(root.parent)
+            try:
+                self.assertTrue(module.has_git_metadata(Path(root.name)))
+            finally:
+                os.chdir(previous)
+
     def test_the_identity_check_fails_closed_and_shares_the_budget(self) -> None:
         # The Router's I-b on #436: a malformed answer is UNSAFE_PATH; a failed or a
         # timed-out check keeps Git's own category, never the manifest's fallback; a
@@ -305,7 +318,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
 
             def malformed(command, **arguments):
                 if "rev-parse" in command:
-                    return subprocess.CompletedProcess(command, 0, b"\n", b"")
+                    return mock.Mock(returncode=0, stdout=b"\n", stderr=b"")
                 return real(command, **arguments)
 
             with (

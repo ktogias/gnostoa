@@ -2721,8 +2721,10 @@ def collect_diagnostic_inventory(
     else:
         unbound = False
     if base is not None and unbound:
-        # The comparison no longer describes the subject, so no answer stays definite
-        # (the Router's D1 on #436).
+        # The comparison no longer describes the subject, so no answer stays definite,
+        # and its own record is not published as bound provenance either (the Router's
+        # D1 and D1b on #436).
+        diff = None
         for finding in result.findings:
             finding["native"]["in_diff"] = None
     try:
