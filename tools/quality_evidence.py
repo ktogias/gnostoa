@@ -1578,7 +1578,9 @@ def _bounded_run(
         stream = _new_file(report)
     except OSError as exc:
         return None, f"cannot create its report: {type(exc).__name__}", False
-    with stream:
+    status: int | None
+    gap: str | None
+    try:
         try:
             process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: the producer and its options are fixed, and the files follow "--"
                 command,
@@ -1589,11 +1591,29 @@ def _bounded_run(
                 stderr=subprocess.DEVNULL,
             )
         except OSError as exc:
-            return None, f"could not run: {type(exc).__name__}", False
-        status, gap, invalid = _drain_report(process, stream, deadline, limits)
+            status, gap, invalid = None, f"could not run: {type(exc).__name__}", False
+        else:
+            status, gap, invalid = _drain_report(process, stream, deadline, limits)
+    except BaseException:
+        _close_report(stream)
+        raise
     if gap is None and status not in (0, 1):
         gap = f"exited {status}"
+    closed = _close_report(stream)
+    if closed is not None:
+        # The report's tail may be lost, so its capture is invalid, after the primary
+        # reason (Codex, the Router's C-a on #436).
+        gap, invalid = _with(gap, closed), True
     return status, gap, invalid
+
+
+def _close_report(stream: BinaryIO) -> str | None:
+    """Close a report: None, or its failure by the exception's type, never raised."""
+    try:
+        stream.close()
+    except OSError as exc:
+        return f"its report could not be closed: {type(exc).__name__}"
+    return None
 
 
 def _drain_report(
@@ -1793,7 +1813,7 @@ def _mypy_records(
         try:
             record = json.loads(line)
             finding = _mypy_finding(record, prefix)
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
             # The first malformed line is the gap; the records after it are still
             # read, never dropped (Codex on #436). json.loads accepts Infinity, which is
             # no exact integer, so the position check refuses it (cubic on #436).
@@ -1956,7 +1976,9 @@ def _run_ruff(
         records = json.loads(report.read_text(encoding="utf-8"))
         if not isinstance(records, list):
             raise ValueError("the report is not a list of records")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # A report nested past the decoder's recursion is unparsable too (Codex, the
+        # Router's J-a on #436).
         records = []
         if gap is None:
             gap = f"unparsable report: {type(exc).__name__}"
@@ -2262,7 +2284,9 @@ def _diagnostic_git(
     raise _git_failure(drained, _reap(process))
 
 
-def _git_failure(drained: bounded_process.Drained, reaped: str | None) -> Exception:
+def _git_failure(
+    drained: bounded_process.Drained, reaped: str | None
+) -> _ComparisonRefused | subprocess.TimeoutExpired | OSError:
     """The exception for a Git read that did not exit cleanly, after its child was
     reaped once: the comparison's own reason, by the exception's type and with the
     cleanup's detail, or, when the child was reaped, the timeout or the read error
@@ -2546,20 +2570,9 @@ def _check_limits(limits: DiagnosticLimits) -> None:
         )
 
 
-def collect_diagnostic_inventory(
-    repository_root: Path,
-    output_directory: Path,
-    *,
-    base: str | None = None,
-    expected_revision: str | None = None,
-    limits: DiagnosticLimits = DEFAULT_DIAGNOSTIC_LIMITS,
-) -> Path:
-    """Write the experimental diagnostic inventory of the tracked Python set into a
-    new run directory under `output_directory`, and return its path. Only an
-    explicit call runs it. More findings than `limits.max_findings` write no
-    inventory at all: the raw reports stay in the run directory. It is never
-    COMPLETE while its source binding is UNVERIFIED."""
-    _check_limits(limits)
+def _refuse_caller_git_overrides() -> None:
+    """Refuse a caller whose environment overrides Git, before the inventory's first
+    work (the Router's R1 and X-a on #436)."""
     # A caller whose environment overrides Git is refused before any work: each
     # variable that preparation's own scrub removes, even empty, could rebind the
     # subject, the scope or the comparison. The rule is that owner's, consumed
@@ -2582,6 +2595,23 @@ def collect_diagnostic_inventory(
             f"the caller's Git overrides are set ({', '.join(overrides)}), so the "
             "subject cannot be bound: no inventory was written"
         )
+
+
+def collect_diagnostic_inventory(
+    repository_root: Path,
+    output_directory: Path,
+    *,
+    base: str | None = None,
+    expected_revision: str | None = None,
+    limits: DiagnosticLimits = DEFAULT_DIAGNOSTIC_LIMITS,
+) -> Path:
+    """Write the experimental diagnostic inventory of the tracked Python set into a
+    new run directory under `output_directory`, and return its path. Only an
+    explicit call runs it. More findings than `limits.max_findings` write no
+    inventory at all: the raw reports stay in the run directory. It is never
+    COMPLETE while its source binding is UNVERIFIED."""
+    _check_limits(limits)
+    _refuse_caller_git_overrides()
     root = repository_root.resolve()
     output = output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -2698,11 +2728,25 @@ def _publish(
 
     payload = encoded()
     inventory = run / DIAGNOSTIC_INVENTORY
-    with _new_file(inventory) as stream:
-        if time.monotonic() > deadline:
-            gaps.append("the inventory ran past its deadline")
-            payload = encoded()
-        stream.write(payload)
+    stream = _new_file(inventory)
+    try:
+        with stream:
+            if time.monotonic() > deadline:
+                gaps.append("the inventory ran past its deadline")
+                payload = encoded()
+            stream.write(payload)
+    except BaseException as primary:
+        # Only the file this call created exclusively is removed, and the primary
+        # failure is raised (Codex, the Router's P-a on #436). This is no atomic
+        # publication: until the removal, a reader can see the partial bytes.
+        try:
+            os.unlink(inventory)
+        except OSError as removal:
+            primary.add_note(
+                f"the partial inventory {inventory} could not be removed: "
+                f"{type(removal).__name__}"
+            )
+        raise
     return inventory
 
 
