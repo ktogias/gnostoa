@@ -5,8 +5,10 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN_PATTERNS = {
@@ -37,6 +39,16 @@ def initialize_repository(root: Path) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def fake_git(parent: Path, body: str) -> str:
+    """A PATH whose first `git` runs `body`: a stalled or failing Git."""
+    directory = parent / "fake-bin"
+    directory.mkdir()
+    executable = directory / "git"
+    executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    executable.chmod(0o755)
+    return f"{directory}{os.pathsep}{os.environ['PATH']}"
 
 
 class RepositoryCandidateScopeTests(unittest.TestCase):
@@ -127,6 +139,80 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             self.assertEqual(
                 [],
                 self.module().find_text_matches(root, FORBIDDEN_PATTERNS),
+            )
+
+    def _tracked_repository(self, parent: Path) -> Path:
+        root = parent / "repository"
+        root.mkdir()
+        initialize_repository(root)
+        (root / "tracked.md").write_text("generic source\n", encoding="utf-8")
+        git(root, "add", "tracked.md")
+        return root
+
+    def _enumerate_recording_git(self, root: Path, **options) -> tuple[list, list]:
+        seen: list[object] = []
+        real = subprocess.run
+
+        def recording(command, **arguments):
+            seen.append(arguments.get("timeout"))
+            return real(command, **arguments)
+
+        with mock.patch.object(self.module().subprocess, "run", side_effect=recording):
+            paths = self.module().candidate_paths(root, **options)
+        return paths, seen
+
+    def test_the_default_enumeration_takes_no_budget(self) -> None:
+        # Characterization: a legacy caller passes no budget, and Git gets no timeout.
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            paths, seen = self._enumerate_recording_git(root)
+        self.assertEqual([Path("tracked.md")], paths)
+        self.assertEqual([None], seen)
+
+    def test_an_enumeration_passes_its_budget_to_git(self) -> None:
+        # An optional budget, for the diagnostic inventory (#389 F3-S1, Option A on #436).
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            paths, seen = self._enumerate_recording_git(root, timeout=2.5)
+        self.assertEqual([Path("tracked.md")], paths)
+        self.assertEqual([2.5], seen)
+
+    def test_a_stalled_enumeration_is_refused_within_its_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            # Built before the assertion, so that it holds one call (SonarCloud S5778).
+            scope = self.module()
+            stalled = fake_git(parent, "exec sleep 30")
+            started = time.monotonic()
+            with (
+                mock.patch.dict(os.environ, {"PATH": stalled}),
+                self.assertRaises(scope.RepositoryScopeError) as raised,
+            ):
+                scope.candidate_paths(root, timeout=0.5)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+
+    def test_a_failing_enumeration_keeps_its_category_under_a_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            scope = self.module()
+            failing = fake_git(parent, "exit 3")
+            with (
+                mock.patch.dict(os.environ, {"PATH": failing}),
+                self.assertRaises(scope.RepositoryScopeError) as raised,
+            ):
+                scope.candidate_paths(root, timeout=5.0)
+        self.assertEqual("GIT_FAILED", raised.exception.category)
+
+    def test_a_packaged_candidate_keeps_its_manifest_under_a_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source.md").write_text("generic source\n", encoding="utf-8")
+            (root / self.module().SOURCE_MANIFEST).write_bytes(b"source.md\0")
+            self.assertEqual(
+                [Path("source.md")], self.module().candidate_paths(root, timeout=0.5)
             )
 
     def test_unsafe_build_manifest_entry_is_rejected(self) -> None:

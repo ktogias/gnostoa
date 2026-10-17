@@ -3,21 +3,39 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import dataclasses
 import hashlib
 import importlib
+import io
 import json
+import math
 import os
 import re
+import selectors
+import stat
 import subprocess
 import sys
+import tempfile
+import time
+import tokenize
 import tomllib
 import uuid
+from collections.abc import Mapping
 from importlib import metadata
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 from urllib.parse import quote, unquote, urlparse
 
 from tools import test_suite
+from tools.analyzer_readback import (
+    MAX_FINDINGS,
+    AnalyzerReadbackError,
+    deduplicate_findings,
+    normalize_finding,
+)
+from tools.analyzer_readback import coverage as readback_coverage
+from tools.github_events import exact_sha
 from tools.repository_scope import (
     RepositoryScopeError,
     candidate_paths,
@@ -835,9 +853,17 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return document
 
 
-def _git_state(root: Path) -> dict[str, Any]:
+def _time_left(end: float | None) -> float | None:
+    """The time left before `end` on the monotonic clock, at least a millisecond, or
+    None without an end."""
+    return None if end is None else max(end - time.monotonic(), 0.001)
+
+
+def _git_state(root: Path, *, timeout: float | None = None) -> dict[str, Any]:
     revision = os.environ.get("KNOWLEDGE_KIT_REVISION", "unbound")
     dirty: bool | None = None
+    # Both reads share the one budget (cubic and CodeAnt on #436).
+    end = None if timeout is None else time.monotonic() + timeout
     try:
         revision_result = subprocess.run(
             ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
@@ -845,8 +871,12 @@ def _git_state(root: Path) -> dict[str, Any]:
             check=True,
             capture_output=True,
             text=True,
+            timeout=_time_left(end),
         )
         revision = revision_result.stdout.strip()
+        if end is not None and time.monotonic() >= end:
+            # A spent budget starts no status read (Codex on #436).
+            return {"revision": revision, "tracked_tree_dirty": None}
         status_result = subprocess.run(
             [
                 "git",
@@ -860,9 +890,10 @@ def _git_state(root: Path) -> dict[str, Any]:
             check=True,
             capture_output=True,
             text=True,
+            timeout=_time_left(end),
         )
         dirty = bool(status_result.stdout)
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
     return {"revision": revision, "tracked_tree_dirty": dirty}
 
@@ -1334,6 +1365,1173 @@ def collect_quality_evidence(
             "quality evidence failed: " + ", ".join(sorted(set(failures)))
         )
     return summary_path
+
+
+# The explicit, offline diagnostic inventory (#389 F3-S1, the Router's 6201584332). It is
+# experimental qualification material: collect_quality_evidence and the CLI never run it,
+# it is no assurance receipt, and it filters nothing. Every diagnostic its producers emit is
+# listed with its producer, code, mapping status, path and range. Coverage is never
+# COMPLETE in this slice: the source binding is UNVERIFIED (the Router's I3 and U1 on
+# #436), so the COMPLETE and PARTIAL statuses stay unreachable until it is proven.
+
+DIAGNOSTIC_SCHEMA = "gnostoa-diagnostic-inventory/v1"
+DIAGNOSTIC_INVENTORY = "diagnostic-inventory.json"
+# Provisional mappings, calibrated on #389's thirteen reference heads (6201413011) and not
+# qualified: a mapped code is evidence about a DeepSource rule, never a substitute for it.
+DIAGNOSTIC_RULE_MAP: dict[tuple[str, str], str] = {
+    ("mypy", "arg-type"): "TYP-050",
+    ("ruff", "SLF001"): "PYL-W0212",
+    ("ruff", "PLR6301"): "PYL-R0201",
+    ("ruff", "SIM117"): "PTC-W0062",
+    ("ruff", "S106"): "SCT-A000",
+    ("complexity", "cc"): "PY-R1000",
+}
+DIAGNOSTIC_RUFF_SELECT = ("SLF001", "PLR6301", "SIM117", "S106")
+COMPLEXITY_METRIC = "cyclomatic-n-1/v1"
+COMPLEXITY_REPORTED_ABOVE = 15
+_DIAGNOSTIC_FIXTURE_ROOT = "tests/fixtures/"
+_UNRESOLVED_IMPORTS = frozenset({"import-not-found", "import-untyped"})
+_QUOTED = re.compile(r'"([^"]+)"')
+_DECISIONS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHandler)
+# One read of a producer's output stream.
+_READ_CHUNK = 65_536
+
+
+@dataclasses.dataclass(frozen=True)
+class DiagnosticLimits:
+    """The finite bounds of one inventory: one deadline for every producer and Git
+    call, and caps on the tracked files, the findings, each producer's output and
+    each source that the complexity metric parses in this process."""
+
+    max_files: int = 5_000
+    max_findings: int = MAX_FINDINGS
+    max_report_bytes: int = 64 * 1024 * 1024
+    timeout_seconds: float = 900.0
+    max_source_bytes: int = 8 * 1024 * 1024
+
+
+DEFAULT_DIAGNOSTIC_LIMITS = DiagnosticLimits()
+
+
+@dataclasses.dataclass
+class _ProducerResult:
+    runs: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    truncated: bool = False
+    findings: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    unanalyzed: dict[str, str] = dataclasses.field(default_factory=dict)
+    partial: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+
+    def merge(self, other: _ProducerResult) -> None:
+        self.runs += other.runs
+        self.truncated = self.truncated or other.truncated
+        self.findings += other.findings
+        for path, reason in other.unanalyzed.items():
+            # Every producer's failure of a file is named (Codex on #436).
+            known = self.unanalyzed.get(path)
+            self.unanalyzed[path] = reason if known is None else f"{known}; {reason}"
+        for path, modules in other.partial.items():
+            self.partial.setdefault(path, []).extend(modules)
+
+
+def cyclomatic_complexity(function: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """1, plus each decision (if, loop, conditional expression, except handler), each
+    boolean operand after the first, and each comprehension with its conditions, over
+    the whole function node, its decorators, annotations and defaults included (CodeAnt
+    on #436): a nested function's decisions count in its parent too. This is the
+    calibrated definition of #389 6201028334 section 4, an unqualified hypothesis. A
+    `match` statement's cases are not counted: no calibration subject holds one, so
+    how DeepSource counts them is unmeasured (CodeAnt on #436)."""
+    total = 1
+    for node in ast.walk(function):
+        if isinstance(node, _DECISIONS):
+            total += 1
+        elif isinstance(node, ast.BoolOp):
+            total += len(node.values) - 1
+        elif isinstance(node, ast.comprehension):
+            total += 1 + len(node.ifs)
+    return total
+
+
+def _location_range(
+    location: tuple[int, int, int | None, int | None],
+) -> dict[str, int] | None:
+    start_line, start_column, end_line, end_column = location
+    # Exact integers, as the producer emitted them, checked before any clamping: a
+    # fraction or a boolean is the record's fault, never a position (cubic and Claude
+    # on #436). The range owner refuses them too, but only after the clamps below.
+    if not all(type(value) is int for value in (start_line, start_column)) or not all(
+        value is None or type(value) is int for value in (end_line, end_column)
+    ):
+        raise ValueError("a position is not an exact integer")
+    if start_line < 1:
+        return None
+    result = {"start_line": start_line, "start_column": max(start_column, 1)}
+    if end_line is not None and end_column is not None:
+        end = (end_line, max(end_column, 1))
+        if end >= (start_line, result["start_column"]):
+            result["end_line"], result["end_column"] = end
+    return result
+
+
+def _diagnostic_finding(
+    tool: str,
+    code: str | None,
+    path: str,
+    location: tuple[int, int, int | None, int | None],
+    message: str,
+    native: dict[str, Any],
+) -> dict[str, Any]:
+    deepsource_rule = None if code is None else DIAGNOSTIC_RULE_MAP.get((tool, code))
+    location_range = _location_range(location)
+    identity = json.dumps([tool, code, path, location_range, message], sort_keys=True)
+    finding = {
+        "id": f"{tool}:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:32]}",
+        "message": message,
+        "rule": code,
+        "path": path,
+        "tool": {"id": tool},
+        "range": location_range,
+        "native": {
+            **native,
+            "producer_code": code,
+            "deepsource_rule": deepsource_rule,
+            "mapping": "UNMAPPED" if deepsource_rule is None else "PROVISIONAL",
+        },
+        "provenance": [{"surface": "diagnostic-inventory", "reference": tool}],
+    }
+    # Validated by the consumed owner record by record (Router on #436), which refuses
+    # a code or message that is not text, and keeps a null code null (Claude on
+    # #436): a record it refuses is its report's gap, never the collection's abort.
+    normalize_finding(finding)
+    return finding
+
+
+def _new_file(path: Path) -> BinaryIO:
+    """A new regular file at `path`: never an existing file, and never a symlink."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags, 0o644), "wb")
+
+
+_OUTPUT_CAP_GAP = "budget: the output exceeds max_report_bytes"
+
+
+def _stream_output(
+    process: subprocess.Popen[bytes], stream: BinaryIO, deadline: float, cap: int
+) -> str | None:
+    """Copy the producer's stdout into `stream` until it closes; a gap at the
+    deadline or past `cap` bytes, which stops the copy at once."""
+    if process.stdout is None:
+        return "the producer's stdout pipe is unavailable"
+    written = 0
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "timed out at the inventory deadline"
+            if not selector.select(timeout=min(remaining, 1.0)):
+                continue
+            chunk = os.read(process.stdout.fileno(), _READ_CHUNK)
+            if not chunk:
+                return None
+            written += len(chunk)
+            if written > cap:
+                return _OUTPUT_CAP_GAP
+            stream.write(chunk)
+
+
+_REAP_SECONDS = 5.0
+
+
+def _kill_and_reap(process: subprocess.Popen[bytes]) -> str | None:
+    """Kill a producer that is still running and confirm its exit within
+    _REAP_SECONDS, as security_scan's _terminate_and_reap: a gap when it cannot be
+    confirmed (Amazon Q on #436)."""
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=_REAP_SECONDS)
+    except subprocess.TimeoutExpired:
+        return f"its process could not be reaped within {_REAP_SECONDS:g} seconds"
+    except OSError as exc:
+        # As ChildProcessError, when it was already reaped elsewhere (CodeAnt on #436).
+        return f"its process could not be reaped: {exc}"
+    return None
+
+
+def _bounded_run(
+    command: list[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+    report: Path,
+    deadline: float,
+    limits: DiagnosticLimits,
+) -> tuple[int | None, str | None]:
+    """Run one producer with its stdout streamed into a new `report`, stopped at the
+    inventory's deadline or at max_report_bytes: its exit status, and a gap if any. A
+    spent budget starts nothing (Codex on #436)."""
+    if time.monotonic() >= deadline:
+        return None, "not started: the inventory deadline had passed"
+    print("+ " + " ".join(command[:8]), flush=True)
+    try:
+        stream = _new_file(report)
+    except OSError as exc:
+        return None, f"cannot create its report: {exc}"
+    with stream:
+        try:
+            process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: the producer and its options are fixed, and the files follow "--"
+                command,
+                cwd=cwd,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            return None, f"could not run: {exc}"
+        status: int | None = None
+        gap: str | None = None
+        try:
+            gap = _stream_output(process, stream, deadline, limits.max_report_bytes)
+            if gap is None:
+                status = process.wait(timeout=_time_left(deadline))
+        except subprocess.TimeoutExpired:
+            gap = "timed out at the inventory deadline"
+        except OSError as exc:
+            # From following its output or from wait() (cubic on #436).
+            gap = f"the producer could not be followed: {exc}"
+        finally:
+            # Not `with process`: Popen's own exit waits without a bound.
+            if process.stdout is not None:
+                process.stdout.close()
+            if status is None:
+                unreaped = _kill_and_reap(process)
+                status = process.returncode
+                if unreaped is not None:
+                    gap = unreaped if gap is None else f"{gap}; {unreaped}"
+    if gap is None and status not in (0, 1):
+        gap = f"exited {status}"
+    return status, gap
+
+
+def _cut(gap: str | None) -> bool:
+    """Whether a run's report was cut at max_report_bytes, dropping what followed."""
+    return gap is not None and gap.startswith(_OUTPUT_CAP_GAP)
+
+
+def _run_record(
+    name: str,
+    producer: str,
+    command: list[str],
+    status: int | None,
+    report: Path,
+    run: Path,
+    version: str | None,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "invocation": name,
+        "producer": producer,
+        "version": version,
+        "argv": command,
+        "exit_status": status,
+    }
+    if report.is_file() and not report.is_symlink():
+        record["report"] = {
+            "path": report.relative_to(run).as_posix(),
+            **file_evidence(report),
+        }
+    return record
+
+
+def _producer_version(
+    root: Path, run: Path, producer: str, limits: DiagnosticLimits, deadline: float
+) -> str | None:
+    """The producer's own `--version`, run as it runs: isolated with -I, and under the
+    deadline. The collector's metadata search can include the
+    analyzed root, so a tracked dist-info could name another version (Codex on
+    #436). None when it cannot be read."""
+    report = run / f"diagnostic-{producer}-version.txt"
+    status, gap = _bounded_run(
+        [sys.executable, "-I", "-m", producer, "--version"],
+        cwd=root,
+        environment=dict(os.environ),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    if gap is not None or status != 0:
+        return None
+    try:
+        words = report.read_text(encoding="utf-8").split()
+    except (OSError, ValueError):
+        return None
+    return words[1] if len(words) > 1 and words[0] == producer else None
+
+
+def _mypy_groups(paths: list[str]) -> dict[str, list[str]]:
+    """The non-fixture set analyzed from the root, and each tests/fixtures/<name>
+    directory from its own root: the c0 configuration of #389 6201413011 section 3."""
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        parts = path.split("/")
+        fixture = path.startswith(_DIAGNOSTIC_FIXTURE_ROOT) and len(parts) > 3
+        groups.setdefault("/".join(parts[:3]) if fixture else "", []).append(path)
+    return groups
+
+
+def _mypy_command(
+    root: Path, key: str, files: list[str]
+) -> tuple[str, Path, str, list[str], dict[str, str]]:
+    """One group's invocation: its name, root, path prefix, argv and environment."""
+    name = f"mypy:{key or 'main'}"
+    cwd = root / key if key else root
+    prefix = f"{key}/" if key else ""
+    flags = [] if key else ["--explicit-package-bases"]
+    command = [
+        sys.executable,
+        # -I, the interpreter's own isolation, as security_scan's child runs: -P left
+        # the user site on, so a usercustomize ran in every producer (Codex on #436).
+        "-I",
+        "-m",
+        "mypy",
+        "--config-file=",
+        "--python-version",
+        "3.11",
+        "--output",
+        "json",
+        *flags,
+        "--",
+        *(path[len(prefix) :] for path in files),
+    ]
+    environment = {
+        **os.environ,
+        "MYPYPATH": str(cwd),
+        # No cache: a fresh run never reuses one, and the run directory keeps only
+        # evidence (CodeAnt on #436). /dev/null is mypy's own way to disable it.
+        "MYPY_CACHE_DIR": os.devnull,
+    }
+    return name, cwd, prefix, command, environment
+
+
+def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
+    # Nothing is coerced: _location_range and _diagnostic_finding refuse what is not
+    # an exact integer or a text, and only an integer column moves to 1-based.
+    path = record["file"]
+    # A file that is absolute or has a .. segment cannot be bound to the group's root:
+    # it is the report's malformed record, before any prefix could hide it (Codex,
+    # routed by the Router 6224373564 on #436, M2).
+    if type(path) is str and (path.startswith("/") or ".." in path.split("/")):
+        raise ValueError(f"mypy file {path!r} is not relative to its group's root")
+    # A severity is a text or null: json.loads takes NaN and Infinity, which the
+    # inventory would write back as bare tokens (Codex, the Router's S1 on #436).
+    severity = record.get("severity")
+    if severity is not None and type(severity) is not str:
+        raise ValueError("the mypy severity is not a text or null")
+    column, end_column = record["column"], record.get("end_column")
+    location = (
+        record["line"],
+        column + 1 if type(column) is int else column,
+        record.get("end_line"),
+        end_column + 1 if type(end_column) is int else end_column,
+    )
+    return _diagnostic_finding(
+        "mypy",
+        record.get("code"),
+        prefix + path,
+        location,
+        record["message"],
+        {"severity": severity},
+    )
+
+
+def _mypy_records(
+    report: Path, prefix: str, result: _ProducerResult
+) -> tuple[list[str], int, str | None]:
+    """Every mypy record as a finding, a code-less one included. Returns the
+    aborting messages, the error count and a parse failure: any nonblank line
+    that is not a record is one (Codex, cubic and Sourcery on #436)."""
+    aborts: list[str] = []
+    errors = 0
+    try:
+        lines = report.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError) as exc:
+        # The exception's type, never its text, which can carry a host path (Octopus,
+        # the Router's X1 on #436): so for every written gap below.
+        return aborts, errors, f"unreadable mypy report: {type(exc).__name__}"
+    parse_gap: str | None = None
+    for line in filter(str.strip, lines):
+        try:
+            record = json.loads(line)
+            finding = _mypy_finding(record, prefix)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            # The first malformed line is the gap; the records after it are still
+            # read, never dropped (Codex on #436). json.loads accepts Infinity, which is
+            # no exact integer, so the position check refuses it (cubic on #436).
+            if parse_gap is None:
+                parse_gap = f"unparsable mypy report: {type(exc).__name__}"
+            continue
+        result.findings.append(finding)
+        is_error = record.get("severity") == "error"
+        errors += is_error
+        if is_error and record.get("code") is None:
+            aborts.append(finding["message"])
+        unresolved = _QUOTED.search(finding["message"])
+        if record.get("code") in _UNRESOLVED_IMPORTS and unresolved:
+            result.partial.setdefault(finding["path"], []).append(unresolved.group(1))
+    return aborts, errors, parse_gap
+
+
+def _mypy_gap(
+    report: Path,
+    prefix: str,
+    status: int | None,
+    gap: str | None,
+    result: _ProducerResult,
+) -> str | None:
+    """Read one group's report into `result`; its gap, if it is not analyzed whole.
+    An exit 2 is still read, so that its aborting messages name the gap."""
+    aborts, errors, parse_gap = _mypy_records(report, prefix, result)
+    if gap is not None and not (status == 2 and gap == "exited 2"):
+        return gap
+    if parse_gap is not None:
+        return parse_gap
+    if aborts or status == 2:
+        return "aborted: " + "; ".join(aborts or ["exited 2"])
+    if status == 1 and errors == 0:
+        return "exited 1 without an error record"
+    if status == 0 and errors > 0:
+        # The inverse: mypy exits 0 only with no error, though notes may remain
+        # (Codex, the Router's Z1 on #436).
+        return "exited 0 with an error record"
+    return None
+
+
+def _run_mypy(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    limits: DiagnosticLimits,
+    deadline: float,
+    version: str | None,
+) -> _ProducerResult:
+    result = _ProducerResult()
+    for index, (key, files) in enumerate(sorted(_mypy_groups(paths).items())):
+        if len(result.findings) > limits.max_findings:
+            # mypy runs first, so these are every finding so far: past the existing
+            # refusal's predicate, no later group starts (cubic on #436).
+            break
+        name, cwd, prefix, command, environment = _mypy_command(root, key, files)
+        # The index keeps names apart that the replacement would merge, as
+        # tests/fixtures/a-b and tests/fixtures/a:b (Codex on #436).
+        slug = name.replace(":", "-").replace("/", "-")
+        report = run / f"diagnostic-{index:03d}-{slug}.jsonl"
+        status, gap = _bounded_run(
+            command,
+            cwd=cwd,
+            environment=environment,
+            report=report,
+            deadline=deadline,
+            limits=limits,
+        )
+        result.runs.append(
+            _run_record(name, "mypy", command, status, report, run, version)
+        )
+        result.truncated = result.truncated or _cut(gap)
+        gap = _mypy_gap(report, prefix, status, gap, result)
+        if gap is not None:
+            result.unanalyzed.update({path: f"{name} {gap}" for path in files})
+    return result
+
+
+def _ruff_finding(record: Mapping[str, Any], root: Path) -> dict[str, Any]:
+    name = Path(record["filename"])
+    path = (name if name.is_absolute() else root / name).resolve().relative_to(root)
+    start, end = record["location"], record.get("end_location") or {}
+    # Nothing is coerced, as for mypy: _location_range and _diagnostic_finding refuse
+    # what is not an exact integer or a text (cubic and Claude on #436).
+    location = (start["row"], start["column"], end.get("row"), end.get("column"))
+    return _diagnostic_finding(
+        "ruff",
+        record["code"],
+        path.as_posix(),
+        location,
+        record["message"],
+        {},
+    )
+
+
+def _ruff_gap(status: int | None, gap: str | None, records: list[Any]) -> str | None:
+    """A ruff run's gap, if it is not analyzed whole: an earlier one, or a status its
+    report contradicts. Ruff exits 1 only when it reports a diagnostic, and, without
+    --exit-zero or a fix, 0 only when it reports none, as mypy's _mypy_gap reads its
+    own (Codex, the Router's Z1 and K2 on #436)."""
+    if gap is not None:
+        return gap
+    if status == 1 and not records:
+        return "exited 1 without a finding record"
+    if status == 0 and records:
+        return "exited 0 with a finding record"
+    return None
+
+
+def _run_ruff(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    limits: DiagnosticLimits,
+    deadline: float,
+    version: str | None,
+) -> _ProducerResult:
+    result = _ProducerResult()
+    command = [
+        sys.executable,
+        # -I, the interpreter's own isolation, as security_scan's child runs: -P left
+        # the user site on, so a usercustomize ran in every producer (Codex on #436).
+        "-I",
+        "-m",
+        "ruff",
+        "check",
+        "--isolated",
+        "--ignore-noqa",  # a flag, not a marker -- ruff then reports what its suppression comments would hide (Codex on #436)
+        "--no-cache",
+        "--preview",
+        "--target-version",
+        "py311",
+        "--select",
+        ",".join(DIAGNOSTIC_RUFF_SELECT),
+        "--output-format",
+        "json",
+        "--",
+        *paths,
+    ]
+    report = run / "diagnostic-ruff.json"
+    status, gap = _bounded_run(
+        command,
+        cwd=root,
+        environment=dict(os.environ),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    result.runs.append(
+        _run_record("ruff", "ruff", command, status, report, run, version)
+    )
+    result.truncated = result.truncated or _cut(gap)
+    # A complete report is read even after a gap, so that nothing ruff emitted is
+    # dropped (Codex on #436); a truncated or missing one keeps its gap.
+    try:
+        records = json.loads(report.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            raise ValueError("the report is not a list of records")
+    except (OSError, ValueError) as exc:
+        records = []
+        if gap is None:
+            gap = f"unparsable report: {type(exc).__name__}"
+    # One malformed record is the gap, and the records after it are still read
+    # (Codex on #436), as mypy's are.
+    for record in records:
+        try:
+            result.findings.append(_ruff_finding(record, root))
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            if gap is None:
+                gap = f"unparsable report: {type(exc).__name__}"
+    gap = _ruff_gap(status, gap, records)
+    if gap is not None:
+        result.unanalyzed.update({path: f"ruff {gap}" for path in paths})
+    return result
+
+
+def _source_lines(source: bytes) -> list[str]:
+    """The source's lines as the tokenizer counts them: decoded by its declared
+    encoding, split at CRLF, CR and LF only."""
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(source).readline)
+    return re.split(r"\r\n|\r|\n", source.decode(encoding))
+
+
+def _column(lines: list[str], line: int, offset: int) -> int:
+    """The 1-based character column of the AST's UTF-8 byte `offset` on `line`
+    (CodeAnt on #436)."""
+    text = lines[line - 1] if 0 < line <= len(lines) else ""
+    return len(text.encode("utf-8")[:offset].decode("utf-8", errors="ignore")) + 1
+
+
+def _function_findings(
+    tree: ast.AST, path: str, lines: list[str]
+) -> list[dict[str, Any]]:
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        value = cyclomatic_complexity(node)
+        if value <= COMPLEXITY_REPORTED_ABOVE:
+            continue
+        end_line = node.end_lineno or node.lineno
+        location = (
+            node.lineno,
+            _column(lines, node.lineno, node.col_offset),
+            end_line,
+            _column(lines, end_line, node.end_col_offset or 0),
+        )
+        message = f"`{node.name}` has a cyclomatic complexity of {value}"
+        findings.append(
+            _diagnostic_finding(
+                "complexity", "cc", path, location, message, {"value": value}
+            )
+        )
+    return findings
+
+
+def _run_complexity(
+    root: Path,
+    paths: list[str],
+    deadline: float,
+    *,
+    max_source_bytes: int = DEFAULT_DIAGNOSTIC_LIMITS.max_source_bytes,
+    max_findings: int = DEFAULT_DIAGNOSTIC_LIMITS.max_findings,
+) -> _ProducerResult:
+    """The complexity metric, in this process: checked against the inventory deadline
+    before each file (Codex, cubic and Claude on #436), and never reading more than
+    max_source_bytes of one (CodeAnt on #436). The parser reports a source nested too
+    deeply to parse as MemoryError or RecursionError, not SyntaxError, and the read
+    raises OverflowError for a size it cannot provide, as for a max_source_bytes of
+    sys.maxsize: each is that file's named gap (Codex, the Router's L2 on #436).
+    max_findings is what the earlier producers left of the inventory's own: past it,
+    no next file starts, and the caller's refusal follows (CodeAnt, the Router's C1
+    on #436)."""
+    result = _ProducerResult()
+    result.runs.append(
+        {
+            "invocation": "complexity",
+            "producer": "complexity",
+            "version": COMPLEXITY_METRIC,
+        }
+    )
+    for index, path in enumerate(paths):
+        if len(result.findings) > max_findings:
+            break
+        if time.monotonic() >= deadline:
+            late = "complexity timed out at the inventory deadline"
+            result.unanalyzed.update(dict.fromkeys(paths[index:], late))
+            break
+        try:
+            # Non-blocking, so that a FIFO swapped in after the check below cannot hold
+            # the read (CodeAnt on #436).
+            descriptor = os.open(
+                root / path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+            )
+            with os.fdopen(descriptor, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    result.unanalyzed[path] = "complexity: not a regular file, not read"
+                    continue
+                source = stream.read(max_source_bytes + 1)
+            if len(source) > max_source_bytes:
+                result.unanalyzed[path] = (
+                    f"complexity: larger than {max_source_bytes} bytes, not parsed"
+                )
+                continue
+            # The bytes, so that an encoding cookie or a BOM is read as Python reads it
+            # (Octopus on #436).
+            tree = ast.parse(source, filename=path)
+        except (
+            OSError,
+            SyntaxError,
+            ValueError,
+            RecursionError,
+            MemoryError,
+            OverflowError,
+        ) as exc:
+            result.unanalyzed[path] = (
+                f"complexity could not parse: {type(exc).__name__}"
+            )
+            continue
+        result.findings += _function_findings(tree, path, _source_lines(source))
+    return result
+
+
+def _symlinked(root: Path, path: str) -> bool:
+    """Whether the tracked path, or a directory on its way, is a symlink."""
+    current = root
+    for part in Path(path).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _regular_file(root: Path, path: str) -> bool:
+    """Whether the tracked path is a regular file now. A FIFO or a device would block
+    a read or never end it (CodeAnt on #436), and a missing file cannot be analyzed."""
+    try:
+        return stat.S_ISREG((root / path).lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _source_size(root: Path, path: str) -> int:
+    """The tracked file's size by lstat; -1 when it cannot be read, so that the
+    producers meet it and report it."""
+    try:
+        return (root / path).lstat().st_size
+    except OSError:
+        return -1
+
+
+def _run_producers(
+    root: Path,
+    run: Path,
+    expected: list[str],
+    limits: DiagnosticLimits,
+    gaps: list[str],
+    deadline: float,
+) -> _ProducerResult:
+    """Every producer over the analyzable tracked Python set: never a symlinked path,
+    whose content may lie outside the tree, and nothing when over budget."""
+    result = _ProducerResult()
+    if len(expected) > limits.max_files:
+        gaps.append(
+            f"budget: {len(expected)} tracked Python files exceed max_files {limits.max_files}"
+        )
+        result.unanalyzed = dict.fromkeys(expected, "budget: not analyzed")
+        return result
+    paths = []
+    withheld: list[str] = []
+    for path in expected:
+        if _symlinked(root, path):
+            result.unanalyzed[path] = "a symlink, never analyzed"
+            withheld.append(path)
+        elif not _regular_file(root, path):
+            result.unanalyzed[path] = "missing or not a regular file, never analyzed"
+            withheld.append(path)
+        elif _source_size(root, path) > limits.max_source_bytes:
+            # One bound for every producer, not only the metric (CodeAnt on #436).
+            result.unanalyzed[path] = (
+                f"larger than {limits.max_source_bytes} bytes, never analyzed"
+            )
+            # Never analyzed, so a finding a producer reaches it by is out of scope too
+            # (cubic on #436).
+            withheld.append(path)
+        else:
+            paths.append(path)
+    if paths:
+        versions = {
+            producer: _producer_version(root, run, producer, limits, deadline)
+            for producer in ("mypy", "ruff")
+        }
+        result.merge(_run_mypy(root, run, paths, limits, deadline, versions["mypy"]))
+        # The existing refusal's predicate, the raw count above max_findings: once it
+        # holds, no later producer starts, and that refusal follows (cubic on #436).
+        if len(result.findings) <= limits.max_findings:
+            result.merge(
+                _run_ruff(root, run, paths, limits, deadline, versions["ruff"])
+            )
+        if len(result.findings) <= limits.max_findings:
+            result.merge(
+                _run_complexity(
+                    root,
+                    paths,
+                    deadline,
+                    max_source_bytes=limits.max_source_bytes,
+                    max_findings=limits.max_findings - len(result.findings),
+                )
+            )
+    # A withheld path's findings come from a producer following an import into it
+    # (Codex on #436): they stay listed, and are not tracked-source evidence.
+    tracked = set(expected) - set(withheld)
+    for finding in result.findings:
+        # Whether the finding's named file is tracked: never proof that every input
+        # that shaped it was tracked or bound to HEAD (the Router's U1 on #436).
+        finding["native"]["tracked"] = finding["path"] in tracked
+    return result
+
+
+class _ComparisonUnavailable(OSError):
+    """The comparison's own reason that Git cannot run, written into the gap as it is
+    (the Router's Y2 on #436)."""
+
+
+class _ComparisonRefused(ValueError):
+    """The comparison's own reason that the base or a patch cannot be compared,
+    written into the gap as it is (the Router's Y2 on #436)."""
+
+
+def _diagnostic_git(root: Path, deadline: float, *arguments: str) -> str:
+    if time.monotonic() >= deadline:
+        # Never Git against the millisecond floor (CodeAnt on #436).
+        raise subprocess.SubprocessError("the inventory deadline had passed")
+    # Consumed unchanged, as data: no caller GIT_DIR or configuration override reroutes
+    # the comparison (IMPLEMENTER_RCA probe 2; Router 6218796619 on #436). Its PATH
+    # lookup and the repository's own configuration are not isolated by it (PAO
+    # 6218788670). Imported here, so that the default collection never loads it.
+    from tools.candidate_prepare import PrepareError, _base_env, _git_executable
+
+    try:
+        git = _git_executable()
+    except PrepareError as exc:
+        raise _ComparisonUnavailable("git is unavailable") from exc
+    # Bytes, decoded without newline translation, so that a CRLF inside a NUL-delimited
+    # name survives (CodeAnt on #436). --no-replace-objects: every comparison read uses
+    # the objects the recorded base names, never a refs/replace/ substitute (Codex,
+    # routed by the Router 6227604656 on #436, N1).
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: Git by its resolved path, fixed options and a validated commit id
+        [git, "--no-replace-objects", "-c", f"safe.directory={root}", *arguments],
+        cwd=root,
+        env=_base_env(),
+        check=True,
+        capture_output=True,
+        timeout=_time_left(deadline),
+    ).stdout.decode("utf-8", errors="surrogateescape")
+
+
+def _diff_scope(
+    root: Path, base: str, deadline: float, wanted: set[str] | None = None
+) -> tuple[dict[str, Any], dict[str, set[int]]]:
+    """The paths changed since `base`, and the lines each change adds, read per path
+    by the GitHub patch reader's own hunk accounting (Claude on #436). It is imported
+    here, so that the default collection never loads the merge-evidence reader. With
+    `wanted`, only those paths are read line by line: a changed path that no finding
+    names is listed, never read whole (CodeAnt on #436)."""
+    from tools.merge_evidence_github import _added_lines
+
+    # The base must be the commit it names: a tree, a blob, a tag that peels to
+    # another id, a missing object or an unusable answer is the comparison's gap,
+    # never a comparison labelled as its base (Codex, routed by the Router
+    # 6224373564 on #436, B1).
+    resolved = _diagnostic_git(
+        root,
+        deadline,
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        f"{base}^{{commit}}",
+    )
+    if resolved.splitlines() != [base]:
+        raise _ComparisonRefused("the base is not that commit")
+    names = _diagnostic_git(
+        root, deadline, "diff", "--name-only", "-z", "--no-renames", base, "HEAD"
+    ).split("\0")
+    changed = sorted(name for name in names if name)
+    lines: dict[str, set[int]] = {}
+    for path in changed:
+        if wanted is not None and path not in wanted:
+            continue
+        patch = _diagnostic_git(
+            root,
+            deadline,
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            base,
+            "HEAD",
+            "--",
+            f":(literal){path}",
+        )
+        if "\n@@" not in patch:
+            # No textual hunk proves that no line was added: a binary, mode-only or
+            # otherwise unaccounted change is the comparison's gap, never an empty set
+            # (the PAO and the Router on #436).
+            raise _ComparisonRefused(f"the comparison of {path} has no textual hunk")
+        read = _added_lines(patch[patch.index("\n@@") + 1 :])
+        if read is None:
+            raise _ComparisonRefused(
+                f"the comparison of {path} is not a sequence of hunks"
+            )
+        lines[path] = {number for number, _ in read[0]}
+    return {"base": base, "changed_paths": changed}, lines
+
+
+def _in_diff(finding: Mapping[str, Any], changed: Mapping[str, set[int]]) -> bool:
+    """Whether a changed line lies anywhere in the finding's range (CodeAnt on #436)."""
+    location = finding.get("range") or {}
+    start = location.get("start_line")
+    if start is None:
+        return False
+    end = location.get("end_line", start)
+    # The changed lines, never every line of the range: its end comes from a producer
+    # record, so walking it was unbounded (Codex, the Router's W1 on #436).
+    return any(start <= line <= end for line in changed.get(finding["path"], set()))
+
+
+def _annotate_diff(
+    root: Path,
+    base: str,
+    findings: list[dict[str, Any]],
+    gaps: list[str],
+    deadline: float,
+) -> dict[str, Any] | None:
+    """Each finding's `in_diff` against `base`, or None, never False, when the
+    comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope."""
+    diff: dict[str, Any] | None = None
+    changed: dict[str, set[int]] | None = None
+    try:
+        exact_sha(base, "base")
+    except ValueError:
+        gaps.append(f"base {base!r} is not a 40-hex commit id")
+    else:
+        try:
+            diff, changed = _diff_scope(
+                root, base, deadline, {finding["path"] for finding in findings}
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # The comparison's own reasons are written as they are; any other failure
+            # by its type alone, never its text (the Router's X1 and Y2 on #436).
+            own = isinstance(exc, (_ComparisonUnavailable, _ComparisonRefused))
+            reason = str(exc) if own else type(exc).__name__
+            gaps.append(f"cannot compare with base {base}: {reason}")
+    for finding in findings:
+        finding["native"]["in_diff"] = (
+            None if changed is None else _in_diff(finding, changed)
+        )
+    return diff
+
+
+_SOURCE_BINDING_GAP = (
+    "source binding UNVERIFIED: no bounded check of the index's assume-unchanged and "
+    "skip-worktree entries, which can hide edits from git status; and the producers' "
+    "import graph is not proven confined to the recorded tracked inputs, so an "
+    "untracked module in the checkout can shape a diagnostic on a tracked path"
+)
+
+
+def _diagnostic_subject(
+    root: Path, expected_revision: str | None, deadline: float
+) -> tuple[dict[str, Any], list[str]]:
+    """The subject as `git status` sees it, and its gaps. The index can hide an edit
+    from that view (Codex on #436), and no bounded check of the index is admitted, so
+    the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
+    6210989878)."""
+    if time.monotonic() >= deadline:
+        # A spent budget reads nothing: the state is unknown (CodeAnt on #436).
+        state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
+    else:
+        state = _git_state(root, timeout=_time_left(deadline))
+    if state["tracked_tree_dirty"] is None:
+        # A state the shared reader could not read whole names no revision: its value
+        # may be the caller's KNOWLEDGE_KIT_REVISION, never observed. A revision read
+        # just before a failed or out-of-budget status read is dropped too, a stated,
+        # conservative loss (the Router's V1, 6225341677 on #436).
+        state = {**state, "revision": None}
+    gaps = []
+    if state["tracked_tree_dirty"] is not False:
+        gaps.append("the tracked tree is dirty or its state is unknown")
+    if expected_revision is not None and state["revision"] != expected_revision:
+        gaps.append(
+            f"revision {state['revision']} is not the expected {expected_revision}"
+        )
+    gaps.append(_SOURCE_BINDING_GAP)
+    return {
+        **state,
+        "expected_revision": expected_revision,
+        "source_binding": "UNVERIFIED",
+    }, gaps
+
+
+def _diagnostic_coverage(
+    expected: list[str] | None,
+    result: _ProducerResult,
+    gaps: list[str],
+    pages: int,
+) -> dict[str, Any]:
+    reasons = list(gaps)
+    if expected is not None and not expected:
+        reasons.append("no tracked Python file")
+    if result.unanalyzed:
+        reasons.append(f"{len(result.unanalyzed)} tracked Python files unanalyzed")
+    status = "COMPLETE"
+    if reasons:
+        status = "INCOMPLETE"
+    elif result.partial:
+        status = "PARTIAL"
+    if result.partial:
+        reasons.append(f"{len(result.partial)} files with unresolved imports")
+    known = expected or []
+    return readback_coverage(
+        status,
+        pages=pages,
+        count=len(known) - len(set(result.unanalyzed) & set(known)),
+        total=None if expected is None else len(expected),
+        reason="; ".join(reasons) or None,
+    )
+
+
+def _inventory_configuration(limits: DiagnosticLimits) -> dict[str, Any]:
+    return {
+        "rule_map": [
+            {
+                "producer": tool,
+                "code": code,
+                "deepsource_rule": rule,
+                "mapping": "PROVISIONAL",
+            }
+            for (tool, code), rule in sorted(DIAGNOSTIC_RULE_MAP.items())
+        ],
+        "ruff_select": list(DIAGNOSTIC_RUFF_SELECT),
+        "complexity": {
+            "metric": COMPLEXITY_METRIC,
+            "reported_above": COMPLEXITY_REPORTED_ABOVE,
+            "qualification": "UNQUALIFIED",
+        },
+        "limits": dataclasses.asdict(limits),
+    }
+
+
+def _tracked_python(root: Path, deadline: float) -> tuple[list[str] | None, str | None]:
+    """The tracked Python set, enumerated by candidate_paths within what is left of
+    the inventory's one budget; None, an unknown set, and its gap when it cannot be
+    (Option A on #436). A spent budget enumerates nothing, rather than race Git
+    against the millisecond floor."""
+    if time.monotonic() >= deadline:
+        return None, "the deadline passed before the tracked set was enumerated"
+    try:
+        paths = candidate_paths(root, timeout=_time_left(deadline))
+    except RepositoryScopeError as exc:
+        return None, scope_error_detail("cannot enumerate tracked-tree candidates", exc)
+    return sorted(p.as_posix() for p in paths if p.suffix == ".py"), None
+
+
+def _check_limits(limits: DiagnosticLimits) -> None:
+    """Refuse, before any work, a limit that would fail open or admit none: a negative
+    bound, which read() takes as everything (cubic on #436), a max_findings above the
+    normalization bound, or a timeout that is not a positive finite number of seconds
+    (CodeAnt on #436)."""
+    for name in ("max_files", "max_findings", "max_report_bytes", "max_source_bytes"):
+        value = getattr(limits, name)
+        # An exact integer: inf or 1.5 would pass a comparison (CodeAnt on #436).
+        if type(value) is not int or value < 0:
+            raise QualityEvidenceError(f"{name} {value} must be a non-negative integer")
+    if limits.max_findings > MAX_FINDINGS:
+        raise QualityEvidenceError(
+            f"max_findings {limits.max_findings} exceeds the normalization bound {MAX_FINDINGS}"
+        )
+    timeout = limits.timeout_seconds
+    # A number first: isfinite raises on a string (CodeAnt on #436), and overflows on
+    # an int too large for a float (cubic on #436).
+    try:
+        valid = type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise QualityEvidenceError(
+            f"timeout_seconds {timeout} must be a positive finite number of seconds"
+        )
+
+
+def collect_diagnostic_inventory(
+    repository_root: Path,
+    output_directory: Path,
+    *,
+    base: str | None = None,
+    expected_revision: str | None = None,
+    limits: DiagnosticLimits = DEFAULT_DIAGNOSTIC_LIMITS,
+) -> Path:
+    """Write the experimental diagnostic inventory of the tracked Python set into a
+    new run directory under `output_directory`, and return its path. Only an
+    explicit call runs it. More findings than `limits.max_findings` write no
+    inventory at all: the raw reports stay in the run directory. It is never
+    COMPLETE while its source binding is UNVERIFIED."""
+    _check_limits(limits)
+    # A caller whose environment overrides Git is refused before any work: each
+    # variable that preparation's own scrub removes, even empty, could rebind the
+    # subject, the scope or the comparison. The rule is that owner's, consumed
+    # unchanged as data, with no list of its own, and a failure to obtain it is
+    # refused too, never a fallback (Router 6223042901 on #436, R1). Only names are
+    # reported, never values. The import is inside the boundary, so that an owner
+    # that cannot be imported is refused too (Claude on #436).
+    try:
+        from tools.candidate_prepare import _git_env_without_caller_overrides
+
+        kept = _git_env_without_caller_overrides()
+    except Exception as exc:
+        raise QualityEvidenceError(
+            "the caller's Git environment could not be checked, so the subject cannot "
+            "be bound: no inventory was written"
+        ) from exc
+    overrides = sorted(set(os.environ) - set(kept))
+    if overrides:
+        raise QualityEvidenceError(
+            f"the caller's Git overrides are set ({', '.join(overrides)}), so the "
+            "subject cannot be bound: no inventory was written"
+        )
+    root = repository_root.resolve()
+    output = output_directory.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    run = Path(tempfile.mkdtemp(prefix="diagnostic-", dir=output))
+    deadline = time.monotonic() + limits.timeout_seconds
+    source, gaps = _diagnostic_subject(root, expected_revision, deadline)
+    expected, unknown = _tracked_python(root, deadline)
+    if unknown is not None:
+        gaps.append(unknown)
+    result = _run_producers(root, run, expected or [], limits, gaps, deadline)
+    if result.truncated:
+        # A cut report drops what followed, so, as over max_findings, nothing is
+        # published (Codex on #436).
+        raise QualityEvidenceError(
+            f"budget: a producer's output exceeded max_report_bytes "
+            f"{limits.max_report_bytes}; no inventory was written, the raw reports "
+            f"are in {run}"
+        )
+    if len(result.findings) > limits.max_findings:
+        raise QualityEvidenceError(
+            f"budget: {len(result.findings)} findings exceed max_findings "
+            f"{limits.max_findings}; no inventory was written, the raw reports are in {run}"
+        )
+    diff = (
+        None
+        if base is None
+        else _annotate_diff(root, base, result.findings, gaps, deadline)
+    )
+    after, _ = _diagnostic_subject(root, expected_revision, deadline)
+    if after["tracked_tree_dirty"] is None:
+        # A read that could not finish is no evidence of a change (Claude on #436).
+        gaps.append("the subject could not be re-read after collection")
+    elif source["tracked_tree_dirty"] is not None and (
+        after["revision"],
+        after["tracked_tree_dirty"],
+    ) != (source["revision"], source["tracked_tree_dirty"]):
+        gaps.append("the subject changed during collection")
+    try:
+        findings = deduplicate_findings(result.findings)
+    except AnalyzerReadbackError as exc:
+        raise QualityEvidenceError(f"cannot normalize the findings: {exc}") from exc
+    if time.monotonic() > deadline:
+        # Checked after the inventory's own work, so that only the document's
+        # serialization and write follow it (Codex on #436); what takes no budget, the
+        # local reads, is reported here when late (the PAO's F3-BND-01 on #436).
+        gaps.append("the inventory ran past its deadline")
+    document = {
+        "schema": DIAGNOSTIC_SCHEMA,
+        "status": "EXPERIMENTAL",
+        "source": source,
+        "configuration": _inventory_configuration(limits),
+        "producers": result.runs,
+        "scope": {
+            "full": {
+                "expected": expected,
+                "unanalyzed": [
+                    {"path": p, "reason": r}
+                    for p, r in sorted(result.unanalyzed.items())
+                ],
+                "partial": {
+                    p: sorted(set(m)) for p, m in sorted(result.partial.items())
+                },
+            },
+            "diff": diff,
+        },
+        "coverage": _diagnostic_coverage(expected, result, gaps, len(result.runs)),
+        "findings": findings,
+    }
+    inventory = run / DIAGNOSTIC_INVENTORY
+    with _new_file(inventory) as stream:
+        stream.write(
+            (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        )
+    return inventory
 
 
 def build_parser() -> argparse.ArgumentParser:
