@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import bisect
 import dataclasses
 import hashlib
 import importlib
@@ -12,7 +13,6 @@ import json
 import math
 import os
 import re
-import selectors
 import stat
 import subprocess
 import sys
@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 from urllib.parse import quote, unquote, urlparse
 
-from tools import test_suite
+from tools import bounded_process, test_suite
 from tools.analyzer_readback import (
     MAX_FINDINGS,
     AnalyzerReadbackError,
@@ -1393,10 +1393,9 @@ _DIAGNOSTIC_FIXTURE_ROOT = "tests/fixtures/"
 _UNRESOLVED_IMPORTS = frozenset({"import-not-found", "import-untyped"})
 _QUOTED = re.compile(r'"([^"]+)"')
 _DECISIONS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHandler)
+
+
 # One read of a producer's output stream.
-_READ_CHUNK = 65_536
-
-
 @dataclasses.dataclass(frozen=True)
 class DiagnosticLimits:
     """The finite bounds of one inventory: one deadline for every producer and Git
@@ -1420,11 +1419,18 @@ class _ProducerResult:
     findings: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unanalyzed: dict[str, str] = dataclasses.field(default_factory=dict)
     partial: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+    # Valid findings counted past the allowance, never kept (the Router's M1 on #436).
+    excess: int = 0
+
+    def count(self) -> int:
+        """The raw count of valid findings, those kept and those only counted."""
+        return len(self.findings) + self.excess
 
     def merge(self, other: _ProducerResult) -> None:
         self.runs += other.runs
         self.truncated = self.truncated or other.truncated
         self.findings += other.findings
+        self.excess += other.excess
         for path, reason in other.unanalyzed.items():
             # Every producer's failure of a file is named (Codex on #436).
             known = self.unanalyzed.get(path)
@@ -1515,51 +1521,25 @@ def _new_file(path: Path) -> BinaryIO:
 _OUTPUT_CAP_GAP = "budget: the output exceeds max_report_bytes"
 
 
-def _stream_output(
-    process: subprocess.Popen[bytes], stream: BinaryIO, deadline: float, cap: int
-) -> str | None:
-    """Copy the producer's stdout into `stream` until it closes; a gap at the
-    deadline or past `cap` bytes, which stops the copy at once."""
-    if process.stdout is None:
-        return "the producer's stdout pipe is unavailable"
-    written = 0
-    with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ)
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return "timed out at the inventory deadline"
-            if not selector.select(timeout=min(remaining, 1.0)):
-                continue
-            chunk = os.read(process.stdout.fileno(), _READ_CHUNK)
-            if not chunk:
-                return None
-            written += len(chunk)
-            if written > cap:
-                return _OUTPUT_CAP_GAP
-            stream.write(chunk)
-
-
 _REAP_SECONDS = 5.0
 
 
-def _kill_and_reap(process: subprocess.Popen[bytes]) -> str | None:
-    """Kill a producer that is still running and confirm its exit within
-    _REAP_SECONDS, as security_scan's _terminate_and_reap: a gap when it cannot be
-    confirmed (Amazon Q on #436)."""
-    if process.poll() is None:
-        try:
-            process.kill()
-        except OSError:
-            pass
-    try:
-        process.wait(timeout=_REAP_SECONDS)
-    except subprocess.TimeoutExpired:
+def _reap(process: subprocess.Popen[bytes]) -> str | None:
+    """The shared owner's bounded reap (#365): None once the child is reaped, or its
+    failure by type alone (the Router's X1 on #436)."""
+    failure = bounded_process.reap(process, timeout=_REAP_SECONDS)
+    if failure is None:
+        return None
+    if isinstance(failure, subprocess.TimeoutExpired):
         return f"its process could not be reaped within {_REAP_SECONDS:g} seconds"
-    except OSError as exc:
-        # As ChildProcessError, when it was already reaped elsewhere (CodeAnt on #436).
-        return f"its process could not be reaped: {exc}"
-    return None
+    return f"its process could not be reaped: {type(failure).__name__}"
+
+
+def _with(gap: str | None, detail: str | None) -> str | None:
+    """The primary gap first, then a cleanup's detail."""
+    if detail is None:
+        return gap
+    return detail if gap is None else f"{gap}; {detail}"
 
 
 def _bounded_run(
@@ -1570,17 +1550,20 @@ def _bounded_run(
     report: Path,
     deadline: float,
     limits: DiagnosticLimits,
-) -> tuple[int | None, str | None]:
-    """Run one producer with its stdout streamed into a new `report`, stopped at the
-    inventory's deadline or at max_report_bytes: its exit status, and a gap if any. A
-    spent budget starts nothing (Codex on #436)."""
+) -> tuple[int | None, str | None, bool]:
+    """Run one producer with its stdout drained into a new `report` by the shared
+    owner (#365), under the inventory's deadline and max_report_bytes: its exit
+    status, a gap if any, and whether its capture is invalid. An invalid capture, cut
+    at the cap or failed part way, keeps a prefix whose rest is unknown, so the
+    collector writes no inventory (the Router's V1 and G2 on #436). A spent budget
+    starts nothing (Codex on #436)."""
     if time.monotonic() >= deadline:
-        return None, "not started: the inventory deadline had passed"
+        return None, "not started: the inventory deadline had passed", False
     print("+ " + " ".join(command[:8]), flush=True)
     try:
         stream = _new_file(report)
     except OSError as exc:
-        return None, f"cannot create its report: {exc}"
+        return None, f"cannot create its report: {type(exc).__name__}", False
     with stream:
         try:
             process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: the producer and its options are fixed, and the files follow "--"
@@ -1592,35 +1575,62 @@ def _bounded_run(
                 stderr=subprocess.DEVNULL,
             )
         except OSError as exc:
-            return None, f"could not run: {exc}"
-        status: int | None = None
-        gap: str | None = None
-        try:
-            gap = _stream_output(process, stream, deadline, limits.max_report_bytes)
-            if gap is None:
-                status = process.wait(timeout=_time_left(deadline))
-        except subprocess.TimeoutExpired:
-            gap = "timed out at the inventory deadline"
-        except OSError as exc:
-            # From following its output or from wait() (cubic on #436).
-            gap = f"the producer could not be followed: {exc}"
-        finally:
-            # Not `with process`: Popen's own exit waits without a bound.
-            if process.stdout is not None:
-                process.stdout.close()
-            if status is None:
-                unreaped = _kill_and_reap(process)
-                status = process.returncode
-                if unreaped is not None:
-                    gap = unreaped if gap is None else f"{gap}; {unreaped}"
+            return None, f"could not run: {type(exc).__name__}", False
+        status, gap, invalid = _drain_report(process, stream, deadline, limits)
     if gap is None and status not in (0, 1):
         gap = f"exited {status}"
-    return status, gap
+    return status, gap, invalid
 
 
-def _cut(gap: str | None) -> bool:
-    """Whether a run's report was cut at max_report_bytes, dropping what followed."""
-    return gap is not None and gap.startswith(_OUTPUT_CAP_GAP)
+def _drain_report(
+    process: subprocess.Popen[bytes],
+    stream: BinaryIO,
+    deadline: float,
+    limits: DiagnosticLimits,
+) -> tuple[int | None, str | None, bool]:
+    """The producer's stdout drained into `stream`, and the child reaped: each of the
+    shared owner's outcomes mapped to the consumer's status, gap and validity."""
+    if process.stdout is None:
+        gap = _with("the producer's stdout pipe is unavailable", _reap(process))
+        return process.returncode, gap, True
+
+    def sink(_name: str, chunk: bytes) -> None:
+        stream.write(chunk)
+
+    try:
+        drained = bounded_process.drain(
+            process,
+            {"stdout": process.stdout},
+            sink,
+            deadline=deadline,
+            cap=limits.max_report_bytes,
+        )
+    finally:
+        # Not `with process`: Popen's own exit waits without a bound.
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
+    cleanup = (
+        None if drained.selector_closed else "its output selector could not be closed"
+    )
+    if drained.outcome == "exited" and drained.returncode is not None:
+        return drained.returncode, cleanup, False
+    if drained.outcome == "deadline":
+        gap, invalid = "timed out at the inventory deadline", False
+    elif drained.outcome == "cap":
+        gap, invalid = _OUTPUT_CAP_GAP, True
+    elif drained.outcome == "error" and drained.error is not None:
+        gap = f"the producer could not be followed: {type(drained.error).__name__}"
+        invalid = True
+    elif drained.outcome == "unexpected" and drained.exception is not None:
+        gap = f"the producer could not be followed: {type(drained.exception).__name__}"
+        invalid = True
+    else:
+        gap = f"the producer could not be followed: unexpected drain outcome {drained.outcome}"
+        invalid = True
+    gap = _with(_with(gap, cleanup), _reap(process))
+    return process.returncode, gap, invalid
 
 
 def _run_record(
@@ -1655,7 +1665,7 @@ def _producer_version(
     analyzed root, so a tracked dist-info could name another version (Codex on
     #436). None when it cannot be read."""
     report = run / f"diagnostic-{producer}-version.txt"
-    status, gap = _bounded_run(
+    status, gap, _invalid = _bounded_run(
         [sys.executable, "-I", "-m", producer, "--version"],
         cwd=root,
         environment=dict(os.environ),
@@ -1749,11 +1759,13 @@ def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
 
 
 def _mypy_records(
-    report: Path, prefix: str, result: _ProducerResult
+    report: Path, prefix: str, result: _ProducerResult, max_findings: int
 ) -> tuple[list[str], int, str | None]:
     """Every mypy record as a finding, a code-less one included. Returns the
     aborting messages, the error count and a parse failure: any nonblank line
-    that is not a record is one (Codex, cubic and Sourcery on #436)."""
+    that is not a record is one (Codex, cubic and Sourcery on #436). Past
+    max_findings, a valid record is still validated and counted, never kept, so the
+    refusal that follows names the real count (CodeAnt, the Router's M1 on #436)."""
     aborts: list[str] = []
     errors = 0
     try:
@@ -1774,7 +1786,10 @@ def _mypy_records(
             if parse_gap is None:
                 parse_gap = f"unparsable mypy report: {type(exc).__name__}"
             continue
-        result.findings.append(finding)
+        if result.count() > max_findings:
+            result.excess += 1
+        else:
+            result.findings.append(finding)
         is_error = record.get("severity") == "error"
         errors += is_error
         if is_error and record.get("code") is None:
@@ -1791,10 +1806,11 @@ def _mypy_gap(
     status: int | None,
     gap: str | None,
     result: _ProducerResult,
+    max_findings: int,
 ) -> str | None:
     """Read one group's report into `result`; its gap, if it is not analyzed whole.
     An exit 2 is still read, so that its aborting messages name the gap."""
-    aborts, errors, parse_gap = _mypy_records(report, prefix, result)
+    aborts, errors, parse_gap = _mypy_records(report, prefix, result, max_findings)
     if gap is not None and not (status == 2 and gap == "exited 2"):
         return gap
     if parse_gap is not None:
@@ -1820,7 +1836,7 @@ def _run_mypy(
 ) -> _ProducerResult:
     result = _ProducerResult()
     for index, (key, files) in enumerate(sorted(_mypy_groups(paths).items())):
-        if len(result.findings) > limits.max_findings:
+        if result.count() > limits.max_findings:
             # mypy runs first, so these are every finding so far: past the existing
             # refusal's predicate, no later group starts (cubic on #436).
             break
@@ -1829,7 +1845,7 @@ def _run_mypy(
         # tests/fixtures/a-b and tests/fixtures/a:b (Codex on #436).
         slug = name.replace(":", "-").replace("/", "-")
         report = run / f"diagnostic-{index:03d}-{slug}.jsonl"
-        status, gap = _bounded_run(
+        status, gap, invalid = _bounded_run(
             command,
             cwd=cwd,
             environment=environment,
@@ -1840,8 +1856,8 @@ def _run_mypy(
         result.runs.append(
             _run_record(name, "mypy", command, status, report, run, version)
         )
-        result.truncated = result.truncated or _cut(gap)
-        gap = _mypy_gap(report, prefix, status, gap, result)
+        result.truncated = result.truncated or invalid
+        gap = _mypy_gap(report, prefix, status, gap, result, limits.max_findings)
         if gap is not None:
             result.unanalyzed.update({path: f"{name} {gap}" for path in files})
     return result
@@ -1909,7 +1925,7 @@ def _run_ruff(
         *paths,
     ]
     report = run / "diagnostic-ruff.json"
-    status, gap = _bounded_run(
+    status, gap, invalid = _bounded_run(
         command,
         cwd=root,
         environment=dict(os.environ),
@@ -1920,7 +1936,7 @@ def _run_ruff(
     result.runs.append(
         _run_record("ruff", "ruff", command, status, report, run, version)
     )
-    result.truncated = result.truncated or _cut(gap)
+    result.truncated = result.truncated or invalid
     # A complete report is read even after a gap, so that nothing ruff emitted is
     # dropped (Codex on #436); a truncated or missing one keeps its gap.
     try:
@@ -2124,18 +2140,18 @@ def _run_producers(
         result.merge(_run_mypy(root, run, paths, limits, deadline, versions["mypy"]))
         # The existing refusal's predicate, the raw count above max_findings: once it
         # holds, no later producer starts, and that refusal follows (cubic on #436).
-        if len(result.findings) <= limits.max_findings:
+        if result.count() <= limits.max_findings:
             result.merge(
                 _run_ruff(root, run, paths, limits, deadline, versions["ruff"])
             )
-        if len(result.findings) <= limits.max_findings:
+        if result.count() <= limits.max_findings:
             result.merge(
                 _run_complexity(
                     root,
                     paths,
                     deadline,
                     max_source_bytes=limits.max_source_bytes,
-                    max_findings=limits.max_findings - len(result.findings),
+                    max_findings=limits.max_findings - result.count(),
                 )
             )
     # A withheld path's findings come from a producer following an import into it
@@ -2158,7 +2174,12 @@ class _ComparisonRefused(ValueError):
     written into the gap as it is (the Router's Y2 on #436)."""
 
 
-def _diagnostic_git(root: Path, deadline: float, *arguments: str) -> str:
+def _diagnostic_git(
+    root: Path,
+    deadline: float,
+    *arguments: str,
+    cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
+) -> str:
     if time.monotonic() >= deadline:
         # Never Git against the millisecond floor (CodeAnt on #436).
         raise subprocess.SubprocessError("the inventory deadline had passed")
@@ -2172,22 +2193,71 @@ def _diagnostic_git(root: Path, deadline: float, *arguments: str) -> str:
         git = _git_executable()
     except PrepareError as exc:
         raise _ComparisonUnavailable("git is unavailable") from exc
-    # Bytes, decoded without newline translation, so that a CRLF inside a NUL-delimited
-    # name survives (CodeAnt on #436). --no-replace-objects: every comparison read uses
-    # the objects the recorded base names, never a refs/replace/ substitute (Codex,
-    # routed by the Router 6227604656 on #436, N1).
-    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: Git by its resolved path, fixed options and a validated commit id
-        [git, "--no-replace-objects", "-c", f"safe.directory={root}", *arguments],
+    # --no-replace-objects: every comparison read uses the objects the recorded base
+    # names, never a refs/replace/ substitute (Codex, routed by the Router 6227604656
+    # on #436, N1).
+    command = [git, "--no-replace-objects", "-c", f"safe.directory={root}", *arguments]
+    process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: Git by its resolved path, fixed options and a validated commit id
+        command,
         cwd=root,
         env=_base_env(),
-        check=True,
-        capture_output=True,
-        timeout=_time_left(deadline),
-    ).stdout.decode("utf-8", errors="surrogateescape")
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    # Drained by the shared owner under max_report_bytes, so that a large historical
+    # blob is never read whole (CodeAnt, the Router's G1 on #436): the output is used
+    # only after a complete, successful exit.
+    output = bytearray()
+    if process.stdout is None:
+        raise _ComparisonRefused(
+            _with("the comparison's Git output is unavailable", _reap(process)) or ""
+        )
+    try:
+        drained = bounded_process.drain(
+            process,
+            {"stdout": process.stdout},
+            lambda _name, chunk: output.extend(chunk),
+            deadline=deadline,
+            cap=cap,
+        )
+    finally:
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
+    if drained.outcome == "exited" and drained.returncode is not None:
+        if drained.returncode != 0:
+            raise subprocess.CalledProcessError(drained.returncode, command)
+        if not drained.selector_closed:
+            raise _ComparisonRefused(
+                "the comparison's Git selector could not be closed"
+            )
+        # Bytes, decoded without newline translation, so that a CRLF inside a
+        # NUL-delimited name survives (CodeAnt on #436).
+        return output.decode("utf-8", errors="surrogateescape")
+    reaped = _reap(process)
+    if drained.outcome == "cap":
+        raise _ComparisonRefused(
+            _with("the comparison's Git output exceeds max_report_bytes", reaped) or ""
+        )
+    if drained.outcome == "deadline" and reaped is None:
+        raise subprocess.TimeoutExpired(command, 0)
+    if drained.outcome == "error" and drained.error is not None and reaped is None:
+        raise drained.error
+    failure = drained.error or drained.exception
+    kind = type(failure).__name__ if failure is not None else drained.outcome
+    raise _ComparisonRefused(
+        _with(f"the comparison's Git output was not read whole ({kind})", reaped) or ""
+    )
 
 
 def _diff_scope(
-    root: Path, base: str, deadline: float, wanted: set[str] | None = None
+    root: Path,
+    base: str,
+    deadline: float,
+    wanted: set[str] | None = None,
+    cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
 ) -> tuple[dict[str, Any], dict[str, set[int]]]:
     """The paths changed since `base`, and the lines each change adds, read per path
     by the GitHub patch reader's own hunk accounting (Claude on #436). It is imported
@@ -2207,11 +2277,20 @@ def _diff_scope(
         "--verify",
         "--end-of-options",
         f"{base}^{{commit}}",
+        cap=cap,
     )
     if resolved.splitlines() != [base]:
         raise _ComparisonRefused("the base is not that commit")
     names = _diagnostic_git(
-        root, deadline, "diff", "--name-only", "-z", "--no-renames", base, "HEAD"
+        root,
+        deadline,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        base,
+        "HEAD",
+        cap=cap,
     ).split("\0")
     changed = sorted(name for name in names if name)
     lines: dict[str, set[int]] = {}
@@ -2231,6 +2310,7 @@ def _diff_scope(
             "HEAD",
             "--",
             f":(literal){path}",
+            cap=cap,
         )
         if "\n@@" not in patch:
             # No textual hunk proves that no line was added: a binary, mode-only or
@@ -2246,16 +2326,19 @@ def _diff_scope(
     return {"base": base, "changed_paths": changed}, lines
 
 
-def _in_diff(finding: Mapping[str, Any], changed: Mapping[str, set[int]]) -> bool:
+def _in_diff(finding: Mapping[str, Any], changed: Mapping[str, list[int]]) -> bool:
     """Whether a changed line lies anywhere in the finding's range (CodeAnt on #436)."""
     location = finding.get("range") or {}
     start = location.get("start_line")
     if start is None:
         return False
     end = location.get("end_line", start)
-    # The changed lines, never every line of the range: its end comes from a producer
-    # record, so walking it was unbounded (Codex, the Router's W1 on #436).
-    return any(start <= line <= end for line in changed.get(finding["path"], set()))
+    # The path's changed lines, ordered once, and one bisect: never every line of the
+    # range, whose end comes from a producer record (Codex, the Router's W1), nor
+    # every changed line for each finding (cubic, the Router's I1 on #436).
+    lines = changed.get(finding["path"], [])
+    index = bisect.bisect_left(lines, start)
+    return index < len(lines) and lines[index] <= end
 
 
 def _annotate_diff(
@@ -2264,20 +2347,30 @@ def _annotate_diff(
     findings: list[dict[str, Any]],
     gaps: list[str],
     deadline: float,
+    cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
+    *,
+    compare: bool = True,
 ) -> dict[str, Any] | None:
     """Each finding's `in_diff` against `base`, or None, never False, when the
-    comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope."""
+    comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope. Without
+    `compare`, the base is still checked, and nothing is compared: a dirty or unknown
+    tree's producers read the working tree, and the comparison reads HEAD (the
+    Router's D1 on #436)."""
     diff: dict[str, Any] | None = None
-    changed: dict[str, set[int]] | None = None
+    changed: dict[str, list[int]] | None = None
     try:
         exact_sha(base, "base")
     except ValueError:
         gaps.append(f"base {base!r} is not a 40-hex commit id")
     else:
         try:
-            diff, changed = _diff_scope(
-                root, base, deadline, {finding["path"] for finding in findings}
-            )
+            if compare:
+                diff, lines = _diff_scope(
+                    root, base, deadline, {finding["path"] for finding in findings}, cap
+                )
+                # Each path's changed lines ordered once, for every finding's bisect
+                # (cubic, the Router's I1 on #436).
+                changed = {path: sorted(numbers) for path, numbers in lines.items()}
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             # The comparison's own reasons are written as they are; any other failure
             # by its type alone, never its text (the Router's X1 and Y2 on #436).
@@ -2469,24 +2562,34 @@ def collect_diagnostic_inventory(
         gaps.append(unknown)
     result = _run_producers(root, run, expected or [], limits, gaps, deadline)
     if result.truncated:
-        # A cut report drops what followed, so, as over max_findings, nothing is
-        # published (Codex on #436).
+        # A report cut at max_report_bytes, or whose capture failed, holds a prefix
+        # whose rest is unknown, so, as over max_findings, nothing is published (Codex
+        # on #436; the Router's V1 and G2).
         raise QualityEvidenceError(
             f"budget: a producer's output exceeded max_report_bytes "
-            f"{limits.max_report_bytes}; no inventory was written, the raw reports "
-            f"are in {run}"
+            f"{limits.max_report_bytes} or was not captured whole; no inventory was "
+            f"written, the raw reports are in {run}"
         )
-    if len(result.findings) > limits.max_findings:
+    if result.count() > limits.max_findings:
         raise QualityEvidenceError(
-            f"budget: {len(result.findings)} findings exceed max_findings "
+            f"budget: {result.count()} findings exceed max_findings "
             f"{limits.max_findings}; no inventory was written, the raw reports are in {run}"
         )
     diff = (
         None
         if base is None
-        else _annotate_diff(root, base, result.findings, gaps, deadline)
+        else _annotate_diff(
+            root,
+            base,
+            result.findings,
+            gaps,
+            deadline,
+            limits.max_report_bytes,
+            compare=source["tracked_tree_dirty"] is False,
+        )
     )
     after, _ = _diagnostic_subject(root, expected_revision, deadline)
+    unbound = True
     if after["tracked_tree_dirty"] is None:
         # A read that could not finish is no evidence of a change (Claude on #436).
         gaps.append("the subject could not be re-read after collection")
@@ -2495,6 +2598,13 @@ def collect_diagnostic_inventory(
         after["tracked_tree_dirty"],
     ) != (source["revision"], source["tracked_tree_dirty"]):
         gaps.append("the subject changed during collection")
+    else:
+        unbound = False
+    if base is not None and unbound:
+        # The comparison no longer describes the subject, so no answer stays definite
+        # (the Router's D1 on #436).
+        for finding in result.findings:
+            finding["native"]["in_diff"] = None
     try:
         findings = deduplicate_findings(result.findings)
     except AnalyzerReadbackError as exc:

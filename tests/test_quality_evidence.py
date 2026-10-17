@@ -1105,13 +1105,13 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
             report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
-            return 0, None
+            return 0, None, False
         if "mypy" in command:
             prefix = Path(cwd).resolve().relative_to(self.root.resolve()).as_posix()
             prefix = "" if prefix == "." else prefix + "/"
             if self.mypy_text is not None and not prefix:
                 report.write_text(self.mypy_text, encoding="utf-8")
-                return self.mypy_exit.get(".", 1), None
+                return self.mypy_exit.get(".", 1), None, False
             files = command[command.index("--") + 1 :]
             lines = [
                 json.dumps({**r, "file": r["file"][len(prefix) :]})
@@ -1120,7 +1120,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             ]
             report.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
             status = self.mypy_exit.get(prefix or ".", 1 if lines else 0)
-            return status, None if status in (0, 1) else f"exited {status}"
+            return status, None if status in (0, 1) else f"exited {status}", False
         if "ruff" in command:
             report.write_text(
                 self.ruff_text
@@ -1128,7 +1128,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 else json.dumps(self.ruff_records),
                 encoding="utf-8",
             )
-            return self.ruff_exit, None
+            return self.ruff_exit, None, False
         raise AssertionError(f"unexpected producer: {command}")
 
     def _inventory(self, **options) -> dict:
@@ -1555,7 +1555,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         def timing_out(command, **options):
             if "ruff" in command:
                 options["report"].write_bytes(b"")
-                return None, "timed out at the inventory deadline"
+                return None, "timed out at the inventory deadline", False
             return self._fake_run(command, **options)
 
         with patch("tools.quality_evidence._bounded_run", side_effect=timing_out):
@@ -2029,7 +2029,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 options["report"].write_text(
                     json.dumps(record) + '\n{"file": "tests/te', encoding="utf-8"
                 )
-                return None, "timed out at the inventory deadline"
+                return None, "timed out at the inventory deadline", False
             return self._fake_run(command, **options)
 
         with patch("tools.quality_evidence._bounded_run", side_effect=timing_out):
@@ -2163,7 +2163,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 options["report"].write_text(
                     json.dumps(self.ruff_records), encoding="utf-8"
                 )
-                return None, "timed out at the inventory deadline"
+                return None, "timed out at the inventory deadline", False
             return self._fake_run(command, **options)
 
         with patch("tools.quality_evidence._bounded_run", side_effect=late):
@@ -2189,7 +2189,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
 
             def answer(command, *, report, status=status, text=text, **options):
                 report.write_text(text, encoding="utf-8")
-                return status, None
+                return status, None, False
 
             with (
                 self.subTest(answer=name),
@@ -2205,7 +2205,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         def cut(command, **options):
             if "ruff" in command and "--version" not in command:
                 options["report"].write_text('[{"filename": "tes', encoding="utf-8")
-                return None, "timed out at the inventory deadline"
+                return None, "timed out at the inventory deadline", False
             return self._fake_run(command, **options)
 
         with patch("tools.quality_evidence._bounded_run", side_effect=cut):
@@ -2305,7 +2305,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
 
         def recording(command, *, report, **options):
             reports.append(report)
-            return 0, None
+            return 0, None, False
 
         paths = [
             "tests/fixtures/a-b/x.py",
@@ -2340,7 +2340,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         def cut(command, **options):
             if "ruff" in command and "--version" not in command:
                 options["report"].write_text('[{"filename": "tes', encoding="utf-8")
-                return None, "budget: the output exceeds max_report_bytes"
+                return None, "budget: the output exceeds max_report_bytes", True
             return self._fake_run(command, **options)
 
         with (
@@ -2354,6 +2354,272 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             1,
             len(list(self.output.glob("*/diagnostic-*-ruff.json")))
             + len(list(self.output.glob("*/diagnostic-ruff.json"))),
+        )
+
+    def _with_a_real_main_mypy(self, script: str):
+        """A patch of _bounded_run under which the main mypy group runs `script` in a
+        real child, through the real runner; every other producer is the fake."""
+        real = self.module._bounded_run
+        root = self.root.resolve()
+
+        def run(command, **options):
+            main = Path(options["cwd"]).resolve() == root
+            if main and "mypy" in command and "--version" not in command:
+                return real([sys.executable, "-I", "-c", script], **options)
+            return self._fake_run(command, **options)
+
+        return patch("tools.quality_evidence._bounded_run", side_effect=run)
+
+    def _two_batches(self) -> tuple[str, str]:
+        """A child script writing one mypy record, then, a moment later, another."""
+        first, second = (
+            json.dumps(r) + "\n" for r in self.mypy_records["tests/test_sample.py"]
+        )
+        script = (
+            "import sys, time\n"
+            f"sys.stdout.write({first!r}); sys.stdout.flush(); time.sleep(0.5)\n"
+            f"sys.stdout.write({second!r}); sys.stdout.flush()\n"
+        )
+        return script, first
+
+    def test_a_capture_that_fails_mid_report_writes_no_inventory(self) -> None:
+        # Codex on #436, by the Router's V1 (6229993455): a read or write failure while
+        # a report streams kept its valid prefix and published it with a gap. It is an
+        # invalid capture, as a cut is: no inventory, and the raw prefix kept.
+        script, first = self._two_batches()
+        real_read = os.read
+        reads: list[int] = []
+
+        def failing_read(fd, size):
+            if size != 65_536:
+                return real_read(fd, size)
+            reads.append(size)
+            if len(reads) == 1:
+                return real_read(fd, size)
+            raise OSError(5, "Input/output error")
+
+        real_new_file = self.module._new_file
+
+        def failing_sink(path):
+            stream = real_new_file(path)
+            if not path.name.endswith("-mypy-main.jsonl"):
+                return stream
+            writes: list[bytes] = []
+            real_write = stream.write
+
+            def write(chunk):
+                writes.append(chunk)
+                if len(writes) > 1:
+                    raise OSError(28, "No space left on device")
+                return real_write(chunk)
+
+            stream.write = write
+            return stream
+
+        def unexpected_sink(path):
+            stream = failing_sink(path)
+            if path.name.endswith("-mypy-main.jsonl"):
+                real_write = stream.write
+
+                def write(chunk):
+                    try:
+                        return real_write(chunk)
+                    except OSError as exc:
+                        raise ValueError("an unclassified sink failure") from exc
+
+                stream.write = write
+            return stream
+
+        real_popen = self.module.subprocess.Popen
+
+        def no_stdout(command, **options):
+            process = real_popen(command, **options)
+            if command[0] == sys.executable:
+                process.stdout.close()
+                process.stdout = None
+            return process
+
+        cases = (
+            (
+                "a read error",
+                patch.object(self.module.os, "read", side_effect=failing_read),
+            ),
+            (
+                "a write error",
+                patch.object(self.module, "_new_file", side_effect=failing_sink),
+            ),
+            # The Router's G2 (6231894979): an unclassified failure, or no stdout pipe at
+            # all, is an unknown capture too.
+            (
+                "an unexpected failure",
+                patch.object(self.module, "_new_file", side_effect=unexpected_sink),
+            ),
+            (
+                "no stdout pipe",
+                patch.object(self.module.subprocess, "Popen", side_effect=no_stdout),
+            ),
+        )
+        for label, failure in cases:
+            with self.subTest(label):
+                reads.clear()
+                shutil.rmtree(self.output, ignore_errors=True)
+                with self._with_a_real_main_mypy(script), failure:
+                    with self.assertRaisesRegex(
+                        QualityEvidenceError, "no inventory was written"
+                    ):
+                        self.collect(self.root, self.output)
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+                (report,) = self.output.rglob("diagnostic-*-mypy-main.jsonl")
+                kept = "" if label == "no stdout pipe" else first
+                self.assertEqual(kept, report.read_text(encoding="utf-8"))
+
+    def test_mypy_positions_without_a_location_are_kept(self) -> None:
+        # The Router's P1 (6231894979): mypy writes line -1 and column -1 itself, for an
+        # error without a location and for a whole-line one (measured on #436). They
+        # stay listed, as no range and as column 1.
+        nowhere = {
+            **self._mypy("tools/sample.py", -1, -1, "misc", "no location"),
+            "end_line": -1,
+            "end_column": 0,
+        }
+        whole = {
+            **self._mypy("tools/sample.py", 2, -1, "unused-ignore", "whole line"),
+            "end_line": 2,
+            "end_column": -1,
+        }
+        self.mypy_text = json.dumps(nowhere) + "\n" + json.dumps(whole) + "\n"
+        inventory = self._inventory()
+        found = {
+            f["message"]: f.get("range")
+            for f in inventory["findings"]
+            if f["tool"]["id"] == "mypy"
+        }
+        self.assertIsNone(found["no location"])
+        self.assertEqual(
+            {"start_line": 2, "start_column": 1, "end_line": 2, "end_column": 1},
+            found["whole line"],
+        )
+
+    def test_a_mypy_report_past_the_findings_budget_retains_only_the_allowance(
+        self,
+    ) -> None:
+        # CodeAnt on #436, by the Router's M1 (6231894979): one report within
+        # max_report_bytes built every record's finding before the refusal. Past the
+        # allowance, each record is still validated and counted, never kept, and the
+        # refusal names the real count.
+        peak = [0]
+        real = self.module._ProducerResult
+
+        class Peaked(list):
+            def append(self, item):
+                super().append(item)
+                peak[0] = max(peak[0], len(self))
+
+            def __iadd__(self, other):
+                result = super().__iadd__(other)
+                peak[0] = max(peak[0], len(self))
+                return result
+
+        def make(*args, **kwargs):
+            made = real(*args, **kwargs)
+            made.findings = Peaked(made.findings)
+            return made
+
+        valid = [
+            self._mypy("tools/sample.py", n, 1, "assignment", f"valid {n}")
+            for n in range(1, 7)
+        ]
+        lines = [json.dumps(r) for r in valid]
+        lines.insert(4, "{not json")
+        self.mypy_text = "".join(line + "\n" for line in lines)
+        limits = self.module.DiagnosticLimits(max_findings=3)
+        with (
+            patch.object(self.module, "_ProducerResult", side_effect=make),
+            self.assertRaisesRegex(
+                QualityEvidenceError, "budget: 6 findings exceed max_findings 3"
+            ),
+        ):
+            self._inventory(limits=limits)
+        self.assertLessEqual(peak[0], 4)
+
+    def test_a_dirty_or_unknown_subject_is_never_compared(self) -> None:
+        # The Router's D1 (6231894979): the producers read the working tree and the
+        # comparison reads HEAD, so a definite in_diff for a dirty or unknown tree may
+        # be wrong. It is not compared: no diff, every in_diff null, and the named gap.
+        clean = self.module._git_state(self.root)
+        cases = (
+            ("dirty", {"revision": self.base, "tracked_tree_dirty": True}),
+            ("unknown", {"revision": None, "tracked_tree_dirty": None}),
+        )
+        for label, first in cases:
+            with self.subTest(label):
+                spy = Mock(side_effect=self.module._diagnostic_git)
+                with (
+                    patch.object(self.module, "_git_state", side_effect=[first, clean]),
+                    patch.object(self.module, "_diagnostic_git", spy),
+                ):
+                    inventory = self._inventory(base=self.base)
+                self.assertEqual([], spy.call_args_list)
+                self.assertIsNone(inventory["scope"]["diff"])
+                self.assertEqual(
+                    {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+                )
+                self.assertIn(
+                    "the tracked tree is dirty or its state is unknown",
+                    inventory["coverage"]["reason"],
+                )
+
+    def test_a_subject_that_changed_or_cannot_be_re_read_has_no_in_diff(self) -> None:
+        # The Router's D1: when the final read differs, or cannot finish, the definite
+        # answers are cleared to null, and the subject gap stays.
+        clean = self.module._git_state(self.root)
+        cases = (
+            (
+                "changed",
+                {"revision": "f" * 40, "tracked_tree_dirty": False},
+                "the subject changed during collection",
+            ),
+            (
+                "unreadable",
+                {"revision": None, "tracked_tree_dirty": None},
+                "the subject could not be re-read after collection",
+            ),
+        )
+        for label, after, gap in cases:
+            with self.subTest(label):
+                with patch.object(
+                    self.module, "_git_state", side_effect=[clean, after]
+                ):
+                    inventory = self._inventory(base=self.base)
+                self.assertTrue(inventory["findings"])
+                self.assertEqual(
+                    {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+                )
+                self.assertIn(gap, inventory["coverage"]["reason"])
+
+    def test_a_comparison_whose_git_output_passes_the_cap_is_a_gap(self) -> None:
+        # CodeAnt on #436, by the Router's G1 (6231894979): Git's output was read whole.
+        # Each read is drained under max_report_bytes, and a crossing is the
+        # comparison's named gap, never a prefix compared as if whole.
+        sample = self.root / "tools" / "sample.py"
+        sample.write_text(
+            sample.read_text(encoding="utf-8")
+            + "".join(f"# added line {n}\n" for n in range(2000)),
+            encoding="utf-8",
+        )
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "a large change")
+        limits = self.module.DiagnosticLimits(max_report_bytes=8192)
+        inventory = self._inventory(base=self.base, limits=limits)
+        self.assertIsNone(inventory["scope"]["diff"])
+        self.assertEqual(
+            {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+        )
+        self.assertIn(
+            f"cannot compare with base {self.base}: the comparison's Git output exceeds max_report_bytes",
+            inventory["coverage"]["reason"],
         )
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
@@ -3046,26 +3312,26 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         # the base, and a spent shared budget each take the comparison's gap.
         real = self.module._diagnostic_git
 
-        def failing(root, deadline, *arguments):
+        def failing(root, deadline, *arguments, **options):
             if arguments[0] == "rev-parse":
                 raise OSError("read failed")
-            return real(root, deadline, *arguments)
+            return real(root, deadline, *arguments, **options)
 
-        def unusable(root, deadline, *arguments):
+        def unusable(root, deadline, *arguments, **options):
             if arguments[0] == "rev-parse":
                 return "not a commit id\n"
-            return real(root, deadline, *arguments)
+            return real(root, deadline, *arguments, **options)
 
-        def doubled(root, deadline, *arguments):
+        def doubled(root, deadline, *arguments, **options):
             if arguments[0] == "rev-parse":
-                answer = real(root, deadline, *arguments)
+                answer = real(root, deadline, *arguments, **options)
                 return answer + answer
-            return real(root, deadline, *arguments)
+            return real(root, deadline, *arguments, **options)
 
-        def spent(root, deadline, *arguments):
+        def spent(root, deadline, *arguments, **options):
             if arguments[0] == "rev-parse":
-                return real(root, time.monotonic() - 1, *arguments)
-            return real(root, deadline, *arguments)
+                return real(root, time.monotonic() - 1, *arguments, **options)
+            return real(root, deadline, *arguments, **options)
 
         self._changed_once()
         for kind, reader in (
@@ -3102,12 +3368,13 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         # name list and every patch, through the one comparison reader.
         self._changed_once()
         git = importlib.import_module("tools.candidate_prepare")._git_executable()
+        # Git is spawned through Popen and drained by the shared owner (the Router's G1).
         with patch.object(
-            self.module.subprocess, "run", wraps=self.module.subprocess.run
-        ) as run:
+            self.module.subprocess, "Popen", wraps=self.module.subprocess.Popen
+        ) as spawned:
             self._inventory(base=self.base)
         comparison = [
-            call.args[0] for call in run.call_args_list if call.args[0][0] == git
+            call.args[0] for call in spawned.call_args_list if call.args[0][0] == git
         ]
         verbs = [argv[argv.index("-c") + 2] for argv in comparison]
         self.assertIn("rev-parse", verbs)
@@ -3243,8 +3510,41 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                     finding = {"path": "tools/sample.py"}
                     if location is not None:
                         finding["range"] = location
-                    changed = {"tools/sample.py": lines}
+                    changed = {"tools/sample.py": sorted(lines)}
                     self.assertIs(expected, self.module._in_diff(finding, changed))
+
+    def test_each_paths_changed_lines_are_ordered_once_for_every_finding(self) -> None:
+        # cubic on #436, by the Router's I1 (6231894979): each finding scanned the whole
+        # changed-line set. The set is ordered once per path, and each finding is one
+        # bisect, with the same answer.
+        passes = [0]
+
+        class Counted(set):
+            def __iter__(self):
+                passes[0] += 1
+                return super().__iter__()
+
+        lines = Counted(range(10, 2010, 2))
+        findings = [
+            {
+                "path": "tools/sample.py",
+                "range": {"start_line": n, "end_line": n},
+                "native": {},
+            }
+            for n in range(1, 401)
+        ]
+        diff = {"base": self.base, "changed_paths": ["tools/sample.py"]}
+        with patch.object(
+            self.module, "_diff_scope", return_value=(diff, {"tools/sample.py": lines})
+        ):
+            self.module._annotate_diff(
+                self.root, self.base, findings, [], time.monotonic() + 30
+            )
+        self.assertEqual(1, passes[0])
+        self.assertEqual(
+            [n % 2 == 0 and 10 <= n < 2010 for n in range(1, 401)],
+            [f["native"]["in_diff"] for f in findings],
+        )
 
     def test_a_deletion_only_change_is_a_known_empty_set(self) -> None:
         # The other side of the same gap (Router 6220963008): textual hunks that only
@@ -3548,9 +3848,9 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         calls: list[tuple[str, ...]] = []
         git = self.module._diagnostic_git
 
-        def recording(root, deadline, *arguments):
+        def recording(root, deadline, *arguments, **options):
             calls.append(arguments)
-            return git(root, deadline, *arguments)
+            return git(root, deadline, *arguments, **options)
 
         with patch("tools.quality_evidence._diagnostic_git", side_effect=recording):
             inventory = self._read(self.collect(self.root, self.output, base=self.base))
@@ -3627,12 +3927,12 @@ class BoundedRunTests(unittest.TestCase):
         )
 
     def test_a_clean_run_streams_its_output(self) -> None:
-        self.assertEqual((0, None), self._run("print('done')"))
+        self.assertEqual((0, None, False), self._run("print('done')"))
         self.assertEqual("done\n", (self.path / "report").read_text(encoding="utf-8"))
 
     def test_output_past_the_budget_stops_the_producer(self) -> None:
         started = time.monotonic()
-        _status, gap = self._run(
+        _status, gap, _invalid = self._run(
             "import sys\nwhile True: sys.stdout.write('x' * 65536)",
             limits=self.module.DiagnosticLimits(max_report_bytes=200_000),
         )
@@ -3641,7 +3941,7 @@ class BoundedRunTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 20)
 
     def test_the_deadline_stops_the_producer(self) -> None:
-        _status, gap = self._run("import time\ntime.sleep(60)", seconds=1.0)
+        _status, gap, _invalid = self._run("import time\ntime.sleep(60)", seconds=1.0)
         self.assertIn("timed out", gap)
 
     def test_a_spent_budget_starts_no_producer(self) -> None:
@@ -3651,7 +3951,7 @@ class BoundedRunTests(unittest.TestCase):
             "tools.quality_evidence.subprocess.Popen",
             side_effect=AssertionError("a producer started past the deadline"),
         ):
-            status, gap = self._run("print('x')", seconds=-1.0)
+            status, gap, _invalid = self._run("print('x')", seconds=-1.0)
         self.assertIsNone(status)
         self.assertEqual("not started: the inventory deadline had passed", gap)
 
@@ -3662,47 +3962,147 @@ class BoundedRunTests(unittest.TestCase):
             raise ChildProcessError(10, "No child processes")
 
         process = SimpleNamespace(poll=lambda: None, kill=lambda: None, wait=no_child)
-        gap = self.module._kill_and_reap(process)
-        self.assertIn("could not be reaped", gap)
+        # The shared owner's reap, worded by the consumer (#365; the Router's X1).
+        gap = self.module._reap(process)
+        self.assertEqual("its process could not be reaped: ChildProcessError", gap)
 
     def test_a_producer_whose_output_cannot_be_read_is_a_gap(self) -> None:
-        with patch(
-            "tools.quality_evidence._stream_output",
-            side_effect=OSError(5, "Input/output error"),
-        ):
-            status, gap = self._run("import time\ntime.sleep(60)")
+        # The shared drain's own read fails: the child is killed and reaped, and the
+        # capture is invalid (the Router's V1 on #436).
+        real_read = os.read
+
+        def failing_read(fd, size):
+            if size != 65_536:
+                return real_read(fd, size)
+            raise OSError(5, "Input/output error")
+
+        with patch.object(self.module.os, "read", side_effect=failing_read):
+            status, gap, invalid = self._run(
+                "import sys, time\nprint('x', flush=True)\ntime.sleep(60)"
+            )
         self.assertIn("the producer could not be followed", gap)
         self.assertEqual(-signal.SIGKILL, status)
+        self.assertIs(True, invalid)
 
-    def test_a_wait_error_is_not_called_an_output_failure(self) -> None:
-        # cubic on #436: an OSError from wait() names the producer, not its output.
+    def test_a_wait_error_is_an_invalid_capture(self) -> None:
+        # cubic on #436 named a wait failure apart from an output failure. The shared
+        # drain returns either as its `error`, and the Router's V1 (6229993455) refuses
+        # that report conservatively, even when its output had ended.
         def no_child(timeout=None):
             raise ChildProcessError(10, "No child processes")
 
+        read_end, write_end = os.pipe()
+        os.close(write_end)
         process = SimpleNamespace(
-            stdout=SimpleNamespace(close=lambda: None),
+            stdout=os.fdopen(read_end, "rb"),
             poll=lambda: None,
             kill=lambda: None,
             wait=no_child,
             returncode=None,
         )
-        with (
-            patch("tools.quality_evidence.subprocess.Popen", return_value=process),
-            patch("tools.quality_evidence._stream_output", return_value=None),
-        ):
-            _status, gap = self._run("print('x')")
-        self.assertTrue(gap.startswith("the producer could not be followed"), gap)
+        with patch("tools.quality_evidence.subprocess.Popen", return_value=process):
+            _status, gap, invalid = self._run("print('x')", report="no-child")
+        self.assertTrue(
+            gap.startswith("the producer could not be followed: ChildProcessError"), gap
+        )
+        self.assertIs(True, invalid)
+
+    def test_a_lifecycle_gap_names_the_exception_type_never_its_text(self) -> None:
+        # Octopus on #436, by the Router's X1 (6228685377), at the four lifecycle sites
+        # that the consumer slice held: a failure's text can carry a host path or argv.
+        sentinel = f"{self.path}/safe.directory=sentinel"
+        real_read = os.read
+
+        def failing_read(fd, size):
+            if size != 65_536:
+                return real_read(fd, size)
+            raise OSError(5, "Input/output error", sentinel)
+
+        cases = (
+            (
+                "its report cannot be created",
+                patch.object(
+                    self.module,
+                    "_new_file",
+                    side_effect=PermissionError(13, "Permission denied", sentinel),
+                ),
+                "cannot create its report: PermissionError",
+            ),
+            (
+                "it cannot be started",
+                patch(
+                    "tools.quality_evidence.subprocess.Popen",
+                    side_effect=FileNotFoundError(2, "No such file", sentinel),
+                ),
+                "could not run: FileNotFoundError",
+            ),
+            (
+                "its output cannot be read",
+                patch.object(self.module.os, "read", side_effect=failing_read),
+                "the producer could not be followed: OSError",
+            ),
+        )
+        for index, (label, failure, expected) in enumerate(cases):
+            with self.subTest(label):
+                with failure:
+                    gap = self._run(
+                        "import time\ntime.sleep(2)\nprint('x')", report=f"r{index}"
+                    )[1]
+                self.assertIn(expected, gap)
+                self.assertNotIn(sentinel, gap)
+        with self.subTest("it cannot be waited on or reaped"):
+            read_end, write_end = os.pipe()
+            os.close(write_end)
+
+            def no_child(timeout=None):
+                raise ChildProcessError(10, "No child processes", sentinel)
+
+            process = SimpleNamespace(
+                stdout=os.fdopen(read_end, "rb"),
+                poll=lambda: None,
+                kill=lambda: None,
+                wait=no_child,
+                returncode=None,
+            )
+            with patch("tools.quality_evidence.subprocess.Popen", return_value=process):
+                gap = self._run("print('x')", report="unreaped")[1]
+            self.assertIn("could not be reaped: ChildProcessError", gap)
+            self.assertNotIn(sentinel, gap)
+            # The primary failure first, then the cleanup's (the Router's G2).
+            self.assertTrue(gap.startswith("the producer could not be followed: "), gap)
+
+    def test_a_selector_that_cannot_be_closed_is_named(self) -> None:
+        # The Router's G2 (6231894979): the drain reports a selector it could not
+        # close, and the run says so rather than declaring a clean capture.
+        import selectors as real_selectors
+
+        real_selector = real_selectors.DefaultSelector
+
+        class Unclosable(real_selector):
+            def close(self):
+                super().close()
+                raise OSError(9, "Bad file descriptor")
+
+        with patch.object(real_selectors, "DefaultSelector", Unclosable):
+            gap = self._run("print('done')", report="unclosable")[1]
+        self.assertIn("its output selector could not be closed", gap or "")
 
     def test_an_unexpected_exit_status_is_a_gap(self) -> None:
-        self.assertEqual((3, "exited 3"), self._run("raise SystemExit(3)"))
+        self.assertEqual((3, "exited 3", False), self._run("raise SystemExit(3)"))
 
     def test_a_missing_stdout_pipe_is_a_gap_not_a_crash(self) -> None:
-        process = SimpleNamespace(stdout=None)
-        with tempfile.TemporaryFile() as stream:
-            gap = self.module._stream_output(
-                process, stream, time.monotonic() + 5, 1024
-            )
+        # The child is still reaped, and its capture is invalid (the Router's G2).
+        process = SimpleNamespace(
+            stdout=None,
+            poll=lambda: None,
+            kill=lambda: None,
+            wait=lambda timeout=None: 0,
+            returncode=-9,
+        )
+        with patch("tools.quality_evidence.subprocess.Popen", return_value=process):
+            _status, gap, invalid = self._run("print('x')", report="no-stdout")
         self.assertEqual("the producer's stdout pipe is unavailable", gap)
+        self.assertIs(True, invalid)
 
     def test_a_subject_read_past_its_timeout_is_unknown(self) -> None:
         def slow(command, **options):
@@ -3787,7 +4187,7 @@ class BoundedRunTests(unittest.TestCase):
         with patch(
             "tools.quality_evidence.subprocess.Popen", return_value=Unreapable()
         ):
-            status, gap = self._run("print('x')")
+            status, gap, _invalid = self._run("print('x')")
         self.assertIsNone(status)
         self.assertIn("could not be reaped", gap)
         self.assertNotIn(None, waits)
@@ -3802,7 +4202,9 @@ class BoundedRunTests(unittest.TestCase):
             return started[-1]
 
         with patch("tools.quality_evidence.subprocess.Popen", side_effect=recording):
-            status, gap = self._run("import time\ntime.sleep(60)", seconds=1.0)
+            status, gap, _invalid = self._run(
+                "import time\ntime.sleep(60)", seconds=1.0
+            )
         self.assertIn("timed out", gap)
         self.assertEqual(-signal.SIGKILL, status)
         self.assertEqual(-signal.SIGKILL, started[0].returncode)
@@ -3810,12 +4212,12 @@ class BoundedRunTests(unittest.TestCase):
 
     def test_a_report_is_never_an_existing_file_or_a_symlink(self) -> None:
         (self.path / "taken").write_text("kept", encoding="utf-8")
-        _status, gap = self._run("print('x')", report="taken")
+        _status, gap, _invalid = self._run("print('x')", report="taken")
         self.assertIn("cannot create its report", gap)
         self.assertEqual("kept", (self.path / "taken").read_text(encoding="utf-8"))
         target = self.path / "target"
         (self.path / "link").symlink_to(target)
-        _status, gap = self._run("print('x')", report="link")
+        _status, gap, _invalid = self._run("print('x')", report="link")
         self.assertIn("cannot create its report", gap)
         self.assertFalse(target.exists())
 
