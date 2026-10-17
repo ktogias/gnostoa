@@ -2510,6 +2510,18 @@ def _refuse_unsafe_metadata(exc: RepositoryScopeError, prefix: str) -> None:
         ) from exc
 
 
+def _unrepresentable_timeout(read: str) -> QualityEvidenceError:
+    """The refusal for a remaining budget that the platform cannot represent as a Git
+    read's timeout: subprocess raised OverflowError for a finite timeout_seconds such
+    as 1e20 (Codex, the Router's 6243027809 on #436). Its reason is fixed, never the
+    exception's text, and it is no evidence that the deadline passed or that the
+    metadata is absent."""
+    return QualityEvidenceError(
+        f"the remaining timeout cannot be represented for {read}; no inventory was "
+        "written"
+    )
+
+
 def _diagnostic_subject(
     root: Path, expected_revision: str | None, deadline: float
 ) -> tuple[dict[str, Any], list[str]]:
@@ -2537,9 +2549,14 @@ def _diagnostic_subject(
             owned = has_git_metadata(root, timeout=remaining)
         except RepositoryScopeError as exc:
             _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
+        except OverflowError as exc:
+            raise _unrepresentable_timeout("the subject's Git metadata") from exc
         remaining = deadline - time.monotonic()
         if owned and remaining > 0:
-            state = _git_state(root, timeout=remaining)
+            try:
+                state = _git_state(root, timeout=remaining)
+            except OverflowError as exc:
+                raise _unrepresentable_timeout("the subject's Git state") from exc
     if state["tracked_tree_dirty"] is None:
         # A state the shared reader could not read whole names no revision: its value
         # may be the caller's KNOWLEDGE_KIT_REVISION, never observed. A revision read
@@ -2630,6 +2647,8 @@ def _tracked_python(root: Path, deadline: float) -> tuple[list[str] | None, str 
     except RepositoryScopeError as exc:
         _refuse_unsafe_metadata(exc, "cannot bind the tracked set's Git metadata")
         return None, scope_error_detail("cannot enumerate tracked-tree candidates", exc)
+    except OverflowError as exc:
+        raise _unrepresentable_timeout("the tracked set's enumeration") from exc
     return sorted(p.as_posix() for p in paths if p.suffix == ".py"), None
 
 
