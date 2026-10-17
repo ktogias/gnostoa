@@ -3760,6 +3760,103 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 )
                 self.assertNotIn("tests/test_sample.py", result.unanalyzed)
 
+    def test_a_valid_mypy_spelling_is_keyed_by_its_canonical_path(self) -> None:
+        # Claude on #436, by the Router's M2 (6242233401): a valid mypy file spelled
+        # "./tools/sample.py" was kept verbatim, so a tracked file read as untracked and
+        # its changed lines were looked up under the wrong key. In the main and the
+        # fixture groups, the finding is keyed by its canonical relative path, the
+        # report keeps the producer's own spelling, a later valid record is still
+        # read, and a malformed path is still the report's gap.
+        sample = self.root / "tools" / "sample.py"
+        lines = sample.read_text(encoding="utf-8").split("\n")
+        lines[0] += "  # changed"
+        sample.write_text("\n".join(lines), encoding="utf-8")
+        (self.root / "tests" / "fixtures" / "one" / "baseline.py").write_text(
+            "VALUE = 2\n", encoding="utf-8"
+        )
+        self._git("commit", "-q", "-am", "head")
+        self.ruff_records = []
+        spellings = (
+            ("./tools/sample.py", "./baseline.py"),
+            ("tools//sample.py", ".//baseline.py"),
+            ("tools/./sample.py", "././baseline.py"),
+        )
+        for main, fixture in spellings:
+            with self.subTest(main=main, fixture=fixture):
+                shutil.rmtree(self.output, ignore_errors=True)
+                self.mypy_records = {
+                    "tools/sample.py": [
+                        self._mypy(main, 1, 1, "misc", "spelled main"),
+                        self._mypy("tools/sample.py", 1, 1, "misc", "later main"),
+                    ],
+                    "tests/fixtures/one/baseline.py": [
+                        self._mypy(
+                            "tests/fixtures/one/" + fixture,
+                            1,
+                            1,
+                            "misc",
+                            "spelled fixture",
+                        ),
+                        self._mypy(
+                            "tests/fixtures/one/baseline.py",
+                            1,
+                            1,
+                            "misc",
+                            "later fixture",
+                        ),
+                    ],
+                }
+                self.mypy_exit = {".": 1, "tests/fixtures/one/": 1}
+                inventory = self._inventory(base=self.base)
+                keyed = {
+                    f["message"]: (
+                        f["path"],
+                        f["native"]["tracked"],
+                        f["native"]["in_diff"],
+                    )
+                    for f in inventory["findings"]
+                    if f["tool"]["id"] == "mypy"
+                }
+                self.assertEqual(
+                    {
+                        "spelled main": ("tools/sample.py", True, True),
+                        "later main": ("tools/sample.py", True, True),
+                        "spelled fixture": (
+                            "tests/fixtures/one/baseline.py",
+                            True,
+                            True,
+                        ),
+                        "later fixture": ("tests/fixtures/one/baseline.py", True, True),
+                    },
+                    keyed,
+                )
+                reports = "".join(
+                    report.read_text(encoding="utf-8")
+                    for report in self.run_directory.glob("diagnostic-*-mypy-*.jsonl")
+                )
+                for spelling in (main, fixture):
+                    self.assertIn(json.dumps({"file": spelling})[1:-1], reports)
+        with self.subTest("a malformed path is still the gap"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            self.mypy_records = {
+                "tools/sample.py": [
+                    self._mypy("tools/../tools/sample.py", 1, 1, "misc", "malformed"),
+                    self._mypy("tools/sample.py", 1, 1, "misc", "later main"),
+                ]
+            }
+            self.mypy_exit = {".": 1, "tests/fixtures/one/": 0}
+            inventory = self._inventory(base=self.base)
+            messages = {
+                f["message"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"
+            }
+            self.assertEqual({"later main"}, messages)
+            unanalyzed = {
+                u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
+            }
+            self.assertIn(
+                "mypy:main unparsable mypy report", unanalyzed["tools/sample.py"]
+            )
+
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
         # still read, never dropped.

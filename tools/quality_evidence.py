@@ -1793,6 +1793,11 @@ def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
         not PurePosixPath(path).parts or path.startswith("/") or ".." in path.split("/")
     ):
         raise ValueError(f"mypy file {path!r} is not relative to its group's root")
+    # A valid spelling, as "./tools/sample.py", is keyed by its canonical relative path,
+    # as ruff's is, so the tracked set and the diff find the file under one key; the
+    # report keeps the producer's own spelling (Claude, the Router's M2 on #436).
+    if type(path) is str:
+        path = PurePosixPath(path).as_posix()
     # A severity is a text or null: json.loads takes NaN and Infinity, which the
     # inventory would write back as bare tokens (Codex, the Router's S1 on #436).
     severity = record.get("severity")
