@@ -3914,6 +3914,83 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             inventory["configuration"]["complexity"]["grammar"],
         )
 
+    @staticmethod
+    def _timeouts_overflow() -> bool:
+        """Whether this platform's subprocess refuses a 1e20 timeout as OverflowError
+        when it captures output, as the Git reads do, and as CPython 3.12 and 3.14 on
+        Linux do (measured): only communicate's selector converts the timeout."""
+        try:
+            subprocess.run(
+                [sys.executable, "-c", ""],
+                capture_output=True,
+                timeout=1e20,
+                check=False,
+            )
+        except OverflowError:
+            return True
+        return False
+
+    def test_an_unrepresentable_timeout_refuses_the_inventory(self) -> None:
+        # Codex on #436, by the Router's 6243027809: a finite timeout_seconds of 1e20
+        # passes validation, and the subject's Git read raised OverflowError out of the
+        # collector. Here it is reproduced for real; it is a classified refusal with a
+        # fixed reason and no inventory.
+        if not self._timeouts_overflow():
+            self.skipTest("this platform's subprocess represents a 1e20 timeout")
+        limits = self.module.DiagnosticLimits(timeout_seconds=1e20)
+        with self.assertRaises(QualityEvidenceError) as raised:
+            self._inventory(limits=limits)
+        self.assertIn("cannot be represented", str(raised.exception))
+        self.assertNotIn("PyTime", str(raised.exception))
+        self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
+
+    def test_an_overflowing_git_read_is_refused_at_each_seam(self) -> None:
+        # The Router's 6243027809, portable injected controls: an OverflowError from
+        # the metadata check, the state reader, the tracked-set enumeration or the
+        # recheck after collection is the same classified refusal. It names no raw
+        # text and no revision, and writes no inventory. It is no evidence that the
+        # deadline passed or that the metadata is absent.
+        state = self.module._git_state
+        seams = {
+            "the metadata check": ("has_git_metadata", OverflowError("raw detail")),
+            "the state reader": ("_git_state", OverflowError("raw detail")),
+            "the tracked set": ("candidate_paths", OverflowError("raw detail")),
+            "the recheck": (
+                "_git_state",
+                [state(self.root), OverflowError("raw detail")],
+            ),
+        }
+        for label, (name, effect) in seams.items():
+            with self.subTest(label):
+                shutil.rmtree(self.output, ignore_errors=True)
+                with (
+                    patch.object(self.module, name, side_effect=effect),
+                    self.assertRaises(QualityEvidenceError) as raised,
+                ):
+                    self._inventory()
+                message = str(raised.exception)
+                self.assertIn("cannot be represented", message)
+                self.assertIn("no inventory was written", message)
+                self.assertNotIn("raw detail", message)
+                self.assertNotIn(self.base, message)
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+        with self.subTest("an ordinary timeout publishes"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            inventory = self._inventory(
+                limits=self.module.DiagnosticLimits(timeout_seconds=600)
+            )
+            self.assertEqual(self.base, inventory["source"]["revision"])
+        with self.subTest("a spent budget starts no Git read to overflow"):
+            identity = Mock(side_effect=OverflowError("raw detail"))
+            with patch.object(self.module, "has_git_metadata", identity):
+                source, _gaps = self.module._diagnostic_subject(
+                    self.root, None, time.monotonic() - 1
+                )
+            self.assertEqual([], identity.call_args_list)
+            self.assertIsNone(source["tracked_tree_dirty"])
+
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
         # still read, never dropped.
