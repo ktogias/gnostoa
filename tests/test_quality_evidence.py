@@ -1938,10 +1938,11 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                     tree, "tools/sample.py", source.splitlines()
                 )
                 self.assertEqual(16, finding["native"]["value"])
-                self.assertEqual(
-                    start,
-                    (finding["range"]["start_line"], finding["range"]["start_column"]),
+                found = (
+                    finding["range"]["start_line"],
+                    finding["range"]["start_column"],
                 )
+                self.assertEqual(start, found)
                 end_line = finding["range"]["end_line"]
                 self.assertEqual(len(source.splitlines()), end_line)
                 self.assertTrue(
@@ -2713,6 +2714,100 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             self.assertEqual(
                 f"the comparison's Git output is unavailable; {failed}",
                 str(caught.exception),
+            )
+
+    def test_an_interrupt_during_a_git_read_reaps_the_child_and_is_raised_again(
+        self,
+    ) -> None:
+        # Codex on #436, the Router's K-b at the comparison's Git read: a cancellation
+        # escaping the shared drain left the Git child running. It is reaped once,
+        # through the existing owner, its pipe is closed, and the same exception is
+        # raised again; a failed reap is noted on it.
+        from tools import candidate_prepare
+
+        slow = Path(self.directory.name) / "slow-git"
+        slow.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+        slow.chmod(0o755)
+        real_reap = self.module.bounded_process.reap
+
+        def read(interrupt, reap):
+            seen = {}
+
+            def interrupted(process, *args, **kwargs):
+                seen["process"] = process
+                raise interrupt
+
+            deadline = time.monotonic() + 30
+            with (
+                patch.object(
+                    candidate_prepare, "_git_executable", return_value=str(slow)
+                ),
+                patch.object(
+                    self.module.bounded_process, "drain", side_effect=interrupted
+                ),
+                patch.object(self.module.bounded_process, "reap", reap),
+                self.assertRaises(type(interrupt)) as raised,
+            ):
+                self.module._diagnostic_git(
+                    self.root, deadline, "rev-parse", "HEAD", cap=4096
+                )
+            return raised.exception, seen["process"]
+
+        for kind in (KeyboardInterrupt, SystemExit):
+            with self.subTest(kind.__name__):
+                interrupt, reap = kind(), Mock(side_effect=real_reap)
+                raised, process = read(interrupt, reap)
+                self.assertIs(interrupt, raised)
+                self.assertEqual([], getattr(raised, "__notes__", []))
+                self.assertEqual(1, reap.call_count)
+                self.assertIsNotNone(process.poll())
+                self.assertTrue(process.stdout.closed)
+        with self.subTest("a reap that fails"):
+            interrupt = KeyboardInterrupt()
+            reap = Mock(return_value=subprocess.TimeoutExpired("git", 5))
+            raised, process = read(interrupt, reap)
+            process.kill()
+            process.wait()
+            self.assertIs(interrupt, raised)
+            self.assertEqual(
+                ["its process could not be reaped within 5 seconds"], raised.__notes__
+            )
+        with self.subTest("a clean or a non-zero exit is not reaped again"):
+            reap = Mock(side_effect=real_reap)
+            deadline = time.monotonic() + 30
+            with patch.object(self.module.bounded_process, "reap", reap):
+                self.module._diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.module._diagnostic_git(
+                        self.root, deadline, "rev-parse", "--verify", "no-such-ref"
+                    )
+            self.assertEqual(0, reap.call_count)
+        with self.subTest("a failed spawn reaps nothing"):
+            reap = Mock(side_effect=real_reap)
+            deadline = time.monotonic() + 30
+            with (
+                patch.object(self.module.bounded_process, "reap", reap),
+                patch(
+                    "tools.quality_evidence.subprocess.Popen",
+                    side_effect=FileNotFoundError(errno.ENOENT, "/host/private"),
+                ),
+                self.assertRaises(FileNotFoundError),
+            ):
+                self.module._diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
+            self.assertEqual(0, reap.call_count)
+        with self.subTest("an interrupted comparison writes no inventory"):
+            reap = Mock(side_effect=real_reap)
+            with (
+                patch.object(
+                    self.module.bounded_process, "drain", side_effect=KeyboardInterrupt
+                ),
+                patch.object(self.module.bounded_process, "reap", reap),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                self._inventory(base=self.base)
+            self.assertEqual(1, reap.call_count)
+            self.assertEqual(
+                [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
             )
 
     def test_ruff_keeps_only_what_the_earlier_producers_left(self) -> None:
