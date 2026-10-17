@@ -2277,6 +2277,14 @@ def _diagnostic_git(
             deadline=deadline,
             cap=cap,
         )
+    except BaseException as escaped:
+        # As at the producers' drain: the Git child is reaped once, through the
+        # existing owner, and the same exception is raised again, never a comparison
+        # result (Codex and Claude, the Router's K-b2 on #436).
+        failure = _reap(process)
+        if failure is not None:
+            escaped.add_note(failure)
+        raise
     finally:
         try:
             process.stdout.close()
