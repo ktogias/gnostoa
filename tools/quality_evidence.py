@@ -1639,6 +1639,14 @@ def _drain_report(
             deadline=deadline,
             cap=limits.max_report_bytes,
         )
+    except BaseException as escaped:
+        # A cancellation that escapes the shared drain still reaps the child once,
+        # through the existing owner, and is raised again unchanged; a failed reap is
+        # noted on it, never in its place (Claude, the Router's K-b on #436).
+        failure = _reap(process)
+        if failure is not None:
+            escaped.add_note(failure)
+        raise
     finally:
         # Not `with process`: Popen's own exit waits without a bound.
         try:
@@ -2023,9 +2031,12 @@ def _function_findings(
         if value <= COMPLEXITY_REPORTED_ABOVE:
             continue
         end_line = node.end_lineno or node.lineno
+        # The range covers what the value counts: from the earliest decorator
+        # expression's line, in the function's column (Codex, the Router's D-a on #436).
+        start_line = min((d.lineno for d in node.decorator_list), default=node.lineno)
         location = (
-            node.lineno,
-            _column(lines, node.lineno, node.col_offset),
+            start_line,
+            _column(lines, start_line, node.col_offset),
             end_line,
             _column(lines, end_line, node.end_col_offset or 0),
         )

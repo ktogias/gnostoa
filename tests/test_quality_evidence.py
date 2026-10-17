@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import errno
 import hashlib
 import importlib
@@ -1906,6 +1907,50 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
 
         return patch.object(self.module.os, "open", side_effect=opening), opened
 
+    def test_a_decorators_decision_is_inside_its_functions_range(self) -> None:
+        # Codex on #436, by the Router's D-a (6233671174): the metric counts a
+        # decorator's decisions, but the range began at `def`, so a change to the
+        # decorator alone was not in_diff. The range starts at the earliest decorator
+        # expression's line, in the function's column; an undecorated function keeps its
+        # coordinates.
+        body = "".join(f"    if a == {i}:\n        a += 1\n" for i in range(14))
+        indented = "".join("    " + row for row in body.splitlines(keepends=True))
+        for label, source, start, counted in (
+            ("stacked", "@dec(1 if x else 2)\n@other\ndef f(a):\n" + body, (1, 1), 1),
+            (
+                "a method",
+                "class C:\n    @dec(1 if x else 2)\n    def f(self, a):\n" + indented,
+                (2, 5),
+                2,
+            ),
+            ("async", "@dec(1 if x else 2)\nasync def f(a):\n" + body, (1, 1), 1),
+            (
+                "multiline",
+                "@dec(\n    1 if x else 2\n)\ndef f(a):\n" + body,
+                (1, 1),
+                2,
+            ),
+            ("undecorated", "def f(a):\n    b = 1 if a else 2\n" + body, (1, 1), 2),
+        ):
+            with self.subTest(label):
+                tree = ast.parse(source)
+                (finding,) = self.module._function_findings(
+                    tree, "tools/sample.py", source.splitlines()
+                )
+                self.assertEqual(16, finding["native"]["value"])
+                self.assertEqual(
+                    start,
+                    (finding["range"]["start_line"], finding["range"]["start_column"]),
+                )
+                end_line = finding["range"]["end_line"]
+                self.assertEqual(len(source.splitlines()), end_line)
+                self.assertTrue(
+                    self.module._in_diff(finding, {"tools/sample.py": [counted]})
+                )
+                self.assertFalse(
+                    self.module._in_diff(finding, {"tools/sample.py": [end_line + 1]})
+                )
+
     def test_the_metric_stops_past_its_remaining_findings_allowance(self) -> None:
         # CodeAnt on #436, by the Router's C1 (6228830094): the metric's findings were
         # counted only after every file. Before each next file it stops once its count
@@ -3061,8 +3106,9 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             findings=[],
             gaps=[],
         )
+        deadline = time.monotonic() + 30
         with self.assertRaises(FileExistsError):
-            self.module._publish(run, time.monotonic() + 30, **arguments)
+            self.module._publish(run, deadline, **arguments)
         self.assertEqual(b"not ours\n", existing.read_bytes())
         existing.unlink()
         real = self.module._new_file
@@ -3084,7 +3130,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             ),
             self.assertRaises(OSError) as raised,
         ):
-            self.module._publish(run, time.monotonic() + 30, **arguments)
+            self.module._publish(run, deadline, **arguments)
         self.assertEqual(errno.ENOSPC, raised.exception.errno)
         notes = getattr(raised.exception, "__notes__", [])
         self.assertEqual(1, len(notes), notes)
@@ -4466,6 +4512,83 @@ class BoundedRunTests(unittest.TestCase):
                 (None, f"could not run: FileNotFoundError; {closed}", True),
                 self._run("print('x')", report="unlaunched"),
             )
+
+    def test_an_interrupt_during_the_drain_reaps_the_child_and_is_raised_again(
+        self,
+    ) -> None:
+        # Claude on #436, by the Router's K-b (6233671174): a cancellation escaping the
+        # shared drain left the producer running. The child is reaped once, through the
+        # existing owner, the pipe and the report are closed, and the same exception is
+        # raised again; a failed reap is noted on it, never in its place.
+        real_reap, real_new = self.module.bounded_process.reap, self.module._new_file
+
+        def run(code, report, interrupt, reap):
+            seen = {}
+
+            def interrupted(process, *args, **kwargs):
+                seen["process"] = process
+                raise interrupt
+
+            def opened(path):
+                seen["stream"] = real_new(path)
+                return seen["stream"]
+
+            with (
+                patch.object(
+                    self.module.bounded_process, "drain", side_effect=interrupted
+                ),
+                patch.object(self.module.bounded_process, "reap", reap),
+                patch.object(self.module, "_new_file", side_effect=opened),
+                self.assertRaises(type(interrupt)) as raised,
+            ):
+                self._run(code, report=report)
+            return raised.exception, seen
+
+        for kind in (KeyboardInterrupt, SystemExit):
+            with self.subTest(kind.__name__):
+                interrupt, reap = kind(), Mock(side_effect=real_reap)
+                raised, seen = run(
+                    "import time; time.sleep(30)", kind.__name__, interrupt, reap
+                )
+                self.assertIs(interrupt, raised)
+                self.assertEqual([], getattr(raised, "__notes__", []))
+                self.assertEqual(1, reap.call_count)
+                self.assertIsNotNone(seen["process"].poll())
+                self.assertTrue(seen["process"].stdout.closed)
+                self.assertTrue(seen["stream"].closed)
+                self.assertTrue((self.path / kind.__name__).exists())
+        with self.subTest("a reap that fails"):
+            interrupt = KeyboardInterrupt()
+            reap = Mock(return_value=subprocess.TimeoutExpired("producer", 5))
+            raised, seen = run(
+                "import time; time.sleep(30)", "unreaped", interrupt, reap
+            )
+            seen["process"].kill()
+            seen["process"].wait()
+            self.assertIs(interrupt, raised)
+            self.assertEqual(1, reap.call_count)
+            self.assertEqual(
+                ["its process could not be reaped within 5 seconds"], raised.__notes__
+            )
+        with self.subTest("a clean exit is not reaped again"):
+            # The drain's own exit waited for the child, so no second cleanup runs.
+            reap = Mock(side_effect=real_reap)
+            with patch.object(self.module.bounded_process, "reap", reap):
+                self.assertEqual(
+                    (0, None, False), self._run("print('x')", report="once")
+                )
+            self.assertEqual(0, reap.call_count)
+        with self.subTest("a failed spawn reaps nothing"):
+            reap = Mock(side_effect=real_reap)
+            with (
+                patch.object(self.module.bounded_process, "reap", reap),
+                patch(
+                    "tools.quality_evidence.subprocess.Popen",
+                    side_effect=FileNotFoundError(errno.ENOENT, "/host/private"),
+                ),
+            ):
+                self._run("print('x')", report="unspawned")
+            self.assertEqual(0, reap.call_count)
 
     def test_output_past_the_budget_stops_the_producer(self) -> None:
         started = time.monotonic()
