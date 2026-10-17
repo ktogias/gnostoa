@@ -3681,6 +3681,46 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self.assertIn("could not be removed: PermissionError", notes[0])
         self.assertTrue(existing.exists())
 
+    def test_a_record_that_names_no_file_is_a_malformed_record(self) -> None:
+        # Codex on #436, by the Router's M2: a ruff filename or a mypy file of "" or
+        # "." names the root, not a file, and was published as a finding at ".". It is
+        # the report's malformed record: its gap is named, no finding is kept for it,
+        # and the valid records after it are still read.
+        later_ruff = self._ruff("tests/test_sample.py", 3, 1, "F401", "later")
+        later_mypy = self._mypy("tools/sample.py", 2, 1, "assignment", "later")
+        for name in ("", "."):
+            with self.subTest(producer="ruff", name=name):
+                rootless = {
+                    **self._ruff("tests/test_sample.py", 2, 1, "F401", "rootless"),
+                    "filename": name,
+                }
+                result, _run = self._ruff_alone([rootless, later_ruff], 10)
+                self.assertEqual(["later"], [f["message"] for f in result.findings])
+                self.assertIn(
+                    "ruff unparsable report", result.unanalyzed["tests/test_sample.py"]
+                )
+            with self.subTest(producer="mypy", name=name):
+                shutil.rmtree(self.output, ignore_errors=True)
+                rootless = {
+                    **self._mypy("tools/sample.py", 2, 1, "assignment", "rootless"),
+                    "file": name,
+                }
+                self.mypy_text = (
+                    json.dumps(rootless) + "\n" + json.dumps(later_mypy) + "\n"
+                )
+                inventory = self._inventory()
+                messages = {
+                    f["message"]
+                    for f in inventory["findings"]
+                    if f["tool"]["id"] == "mypy"
+                }
+                self.assertNotIn("rootless", messages)
+                self.assertIn("later", messages)
+                paths = {f["path"] for f in inventory["findings"]}
+                self.assertNotIn(".", paths)
+                self.assertNotIn("", paths)
+        self.mypy_text = None
+
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
         # still read, never dropped.

@@ -1788,7 +1788,9 @@ def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
     # A file that is absolute or has a .. segment cannot be bound to the group's root:
     # it is the report's malformed record, before any prefix could hide it (Codex,
     # routed by the Router 6224373564 on #436, M2).
-    if type(path) is str and (path.startswith("/") or ".." in path.split("/")):
+    if type(path) is str and (
+        path in ("", ".") or path.startswith("/") or ".." in path.split("/")
+    ):
         raise ValueError(f"mypy file {path!r} is not relative to its group's root")
     # A severity is a text or null: json.loads takes NaN and Infinity, which the
     # inventory would write back as bare tokens (Codex, the Router's S1 on #436).
@@ -1917,6 +1919,10 @@ def _run_mypy(
 def _ruff_finding(record: Mapping[str, Any], root: Path) -> dict[str, Any]:
     name = Path(record["filename"])
     path = (name if name.is_absolute() else root / name).resolve().relative_to(root)
+    if path == Path("."):
+        # A filename that resolves to the root names no file: the report's malformed
+        # record (Codex, the Router's M2 on #436).
+        raise ValueError("the ruff filename names no file")
     start, end = record["location"], record.get("end_location") or {}
     # Nothing is coerced, as for mypy: _location_range and _diagnostic_finding refuse
     # what is not an exact integer or a text (cubic and Claude on #436).
