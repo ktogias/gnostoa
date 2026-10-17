@@ -174,7 +174,9 @@ def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
         purpose="confirm the Git top level",
     )
     top = os.fsdecode(output.rstrip(b"\n"))
-    if not top or Path(top) != root:
+    # Git's top level is absolute, so the root is resolved before the comparison
+    # (cubic, the Router's I-b on #436).
+    if not top or Path(top) != root.resolve():
         raise RepositoryScopeError(
             f"Git metadata at {git_metadata} belongs to another work tree",
             category="UNSAFE_PATH",
