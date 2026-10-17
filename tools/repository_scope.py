@@ -4,6 +4,7 @@ import os
 import re
 import stat
 import subprocess
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -14,6 +15,7 @@ REPOSITORY_SCOPE_ERROR_CATEGORIES = frozenset(
         "GIT_FAILED",
         "GIT_IO",
         "GIT_METADATA_IO",
+        "GIT_TIMEOUT",
         "MANIFEST_INVALID",
         "MANIFEST_IO",
         "MANIFEST_MISSING",
@@ -63,36 +65,46 @@ def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
     return sorted(set(paths), key=lambda path: path.as_posix())
 
 
-def _git_candidate_paths(root: Path) -> list[Path]:
+def _git_output(
+    root: Path, arguments: list[str], *, timeout: float | None, purpose: str
+) -> bytes:
+    """One Git read of `root`, classified: GIT_TIMEOUT past `timeout`, GIT_IO when Git
+    cannot run, and GIT_FAILED on a non-zero exit."""
     try:
         result = subprocess.run(
-            [
-                "git",
-                "-c",
-                f"safe.directory={root}",
-                "-C",
-                str(root),
-                "ls-files",
-                "--cached",
-                "--deduplicate",
-                "-z",
-            ],
+            ["git", "-c", f"safe.directory={root}", "-C", str(root), *arguments],
             check=False,
             capture_output=True,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RepositoryScopeError(
+            f"cannot {purpose} in {root} within {timeout} seconds",
+            category="GIT_TIMEOUT",
+        ) from exc
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot enumerate Git-tracked candidate files in {root}: {exc}",
+            f"cannot {purpose} in {root}: {exc}",
             category="GIT_IO",
         ) from exc
 
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise RepositoryScopeError(
-            message or f"cannot enumerate Git-tracked candidate files in {root}",
+            message or f"cannot {purpose} in {root}",
             category="GIT_FAILED",
         )
-    return _decode_paths(result.stdout, "Git")
+    return result.stdout
+
+
+def _git_candidate_paths(root: Path, *, timeout: float | None = None) -> list[Path]:
+    output = _git_output(
+        root,
+        ["ls-files", "--cached", "--deduplicate", "-z"],
+        timeout=timeout,
+        purpose="enumerate Git-tracked candidate files",
+    )
+    return _decode_paths(output, "Git")
 
 
 def _manifest_candidate_paths(root: Path) -> list[Path]:
@@ -131,25 +143,72 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
     return _decode_paths(encoded_paths, "packaged source manifest")
 
 
-def candidate_paths(repository_root: Path) -> list[Path]:
-    """Return the declared candidate paths without scanning local state."""
-
-    root = repository_root.resolve()
+def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
+    """Whether `root/.git` is Git metadata of `root` itself. Its entry is classified by
+    `lstat`, never followed: False for a missing entry, with no Git read; a symlink,
+    dangling or not, or any other kind than a directory or a regular file is
+    UNSAFE_PATH, and an entry that cannot be inspected GIT_METADATA_IO (cubic and
+    Claude, the Router's 6239259708 on #436). An accepted entry is True only when
+    Git's own `rev-parse --show-toplevel` names `root`: a malformed `.git` directory
+    that Git skips for an enclosing checkout is UNSAFE_PATH, and a failed or
+    timed-out answer keeps Git's own category (cubic, the Router's I-b on #436)."""
     git_metadata = root / ".git"
     try:
-        git_metadata.lstat()
+        mode = git_metadata.lstat().st_mode
     except FileNotFoundError:
-        git_metadata_exists = False
+        return False
     except OSError as exc:
         raise RepositoryScopeError(
             f"cannot inspect Git metadata at {git_metadata}: {exc}",
             category="GIT_METADATA_IO",
         ) from exc
-    else:
-        git_metadata_exists = True
+    if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+        raise RepositoryScopeError(
+            f"Git metadata at {git_metadata} is not a directory or a regular file",
+            category="UNSAFE_PATH",
+        )
+    output = _git_output(
+        root,
+        ["rev-parse", "--show-toplevel"],
+        timeout=timeout,
+        purpose="confirm the Git top level",
+    )
+    # Exactly Git's one terminator, so a root whose name ends in a newline keeps it
+    # (CodeAnt on #436).
+    top = os.fsdecode(output[:-1] if output.endswith(b"\n") else output)
+    # Git's top level is absolute, so the root is resolved before the comparison
+    # (cubic, the Router's I-b on #436).
+    if not top or Path(top) != root.resolve():
+        raise RepositoryScopeError(
+            f"Git metadata at {git_metadata} belongs to another work tree",
+            category="UNSAFE_PATH",
+        )
+    return True
 
-    if git_metadata_exists:
-        return _git_candidate_paths(root)
+
+def candidate_paths(
+    repository_root: Path, *, timeout: float | None = None
+) -> list[Path]:
+    """Return the declared candidate paths without scanning local state.
+
+    An optional `timeout`, in seconds, bounds the Git enumeration; past it the
+    enumeration is refused as GIT_TIMEOUT. The packaged manifest is a local file
+    read and takes none. Without one, nothing changes for existing callers.
+    """
+
+    root = repository_root.resolve()
+    # One budget for the identity check and the enumeration: the enumeration gets
+    # only what is left, and none once it is spent (the Router's I-b on #436).
+    end = None if timeout is None else time.monotonic() + timeout
+    if has_git_metadata(root, timeout=timeout):
+        remaining = None if end is None else end - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise RepositoryScopeError(
+                f"cannot enumerate Git-tracked candidate files in {root} within "
+                f"{timeout} seconds",
+                category="GIT_TIMEOUT",
+            )
+        return _git_candidate_paths(root, timeout=remaining)
 
     manifest = root / SOURCE_MANIFEST
     try:

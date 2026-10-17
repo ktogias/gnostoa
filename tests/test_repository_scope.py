@@ -5,8 +5,10 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN_PATTERNS = {
@@ -37,6 +39,16 @@ def initialize_repository(root: Path) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def fake_git(parent: Path, body: str) -> str:
+    """A PATH whose first `git` runs `body`: a stalled or failing Git."""
+    directory = parent / "fake-bin"
+    directory.mkdir()
+    executable = directory / "git"
+    executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    executable.chmod(0o755)
+    return f"{directory}{os.pathsep}{os.environ['PATH']}"
 
 
 class RepositoryCandidateScopeTests(unittest.TestCase):
@@ -127,6 +139,315 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             self.assertEqual(
                 [],
                 self.module().find_text_matches(root, FORBIDDEN_PATTERNS),
+            )
+
+    def test_git_metadata_is_classified_by_its_entry_never_followed(self) -> None:
+        # cubic and Claude on #436, by the Router's 6239259708: one owner classifies
+        # `root/.git` by lstat. A missing entry is no metadata; a directory, or a
+        # linked worktree's regular file, is; a symlink, dangling or not, or any other
+        # kind is refused as UNSAFE_PATH, never followed; an entry that cannot be
+        # inspected stays GIT_METADATA_IO.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            self.assertTrue(module.has_git_metadata(outer))
+            empty = parent / "empty"
+            empty.mkdir()
+            self.assertFalse(module.has_git_metadata(empty))
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertTrue((worktree / ".git").is_file())
+            self.assertTrue(module.has_git_metadata(worktree))
+            for label, make in (
+                (
+                    "a symlink to a checkout",
+                    lambda entry: entry.symlink_to(outer / ".git"),
+                ),
+                (
+                    "a dangling symlink",
+                    lambda entry: entry.symlink_to(parent / "missing"),
+                ),
+                ("another kind", lambda entry: os.mkfifo(entry)),
+            ):
+                with self.subTest(label):
+                    root = parent / label.replace(" ", "-")
+                    root.mkdir()
+                    make(root / ".git")
+                    with self.assertRaises(module.RepositoryScopeError) as raised:
+                        module.has_git_metadata(root)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            real_lstat = Path.lstat
+
+            def failing(path, *args, **kwargs):
+                if path.name == ".git" and path.parent == outer:
+                    raise PermissionError(13, "denied")
+                return real_lstat(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "lstat", failing):
+                with self.assertRaises(module.RepositoryScopeError) as raised:
+                    module.has_git_metadata(outer)
+            self.assertEqual("GIT_METADATA_IO", raised.exception.category)
+
+    def test_unsafe_git_metadata_refuses_the_enumeration_before_any_fallback(
+        self,
+    ) -> None:
+        # The Router's 6239259708: candidate_paths consumes the one classification
+        # before any Git or manifest fallback, so a packaged root whose `.git` links to
+        # an enclosing checkout never enumerates that checkout's paths. A missing
+        # entry keeps the manifest, and a worktree's file keeps Git.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            for label, target in (
+                ("to-a-checkout", outer / ".git"),
+                ("dangling", parent / "missing"),
+            ):
+                with self.subTest(label):
+                    package = parent / f"package-{label}"
+                    package.mkdir()
+                    (package / "source.md").write_text(
+                        "generic source\n", encoding="utf-8"
+                    )
+                    (package / module.SOURCE_MANIFEST).write_bytes(b"source.md\0")
+                    (package / ".git").symlink_to(target)
+                    with (
+                        mock.patch.object(module, "_git_candidate_paths") as enumerated,
+                        mock.patch.object(
+                            module, "_manifest_candidate_paths"
+                        ) as listed,
+                        self.assertRaises(module.RepositoryScopeError) as raised,
+                    ):
+                        module.candidate_paths(package)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+                    self.assertEqual([], enumerated.call_args_list)
+                    self.assertEqual([], listed.call_args_list)
+            manifest_only = parent / "manifest-only"
+            manifest_only.mkdir()
+            (manifest_only / "source.md").write_text(
+                "generic source\n", encoding="utf-8"
+            )
+            (manifest_only / module.SOURCE_MANIFEST).write_bytes(b"source.md\0")
+            self.assertEqual([Path("source.md")], module.candidate_paths(manifest_only))
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
+
+    def test_metadata_that_git_resolves_elsewhere_is_refused(self) -> None:
+        # cubic on #436, by the Router's I-b: an empty `.git` directory, or a `gitdir:`
+        # file to an enclosing checkout, is accepted by type, but Git's own discovery
+        # resolves it to that checkout. Git's top level must be the root itself, else
+        # UNSAFE_PATH, before any enumeration; a real linked worktree keeps its route.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            for label, make in (("an empty directory", lambda entry: entry.mkdir()),):
+                with self.subTest(label):
+                    package = outer / label.replace(" ", "-")
+                    package.mkdir()
+                    (package / "source.md").write_text(
+                        "generic source\n", encoding="utf-8"
+                    )
+                    make(package / ".git")
+                    with self.assertRaises(module.RepositoryScopeError) as raised:
+                        module.candidate_paths(package)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(outer))
+
+    def test_the_identity_check_compares_the_resolved_root(self) -> None:
+        # cubic on #436, by the Router's I-b ("the resolved requested root"): Git's top
+        # level is absolute, so a relative root of a real repository is still its own.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            previous = os.getcwd()
+            os.chdir(root.parent)
+            try:
+                self.assertTrue(module.has_git_metadata(Path(root.name)))
+            finally:
+                os.chdir(previous)
+
+    def test_the_identity_check_keeps_a_root_name_that_ends_in_a_newline(self) -> None:
+        # CodeAnt on #436: Git ends its top level with one newline, and only that one is
+        # its terminator, so a root whose name itself ends in a newline is its own.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository\n"
+            root.mkdir()
+            initialize_repository(root)
+            self.assertTrue(module.has_git_metadata(root))
+
+    def test_the_identity_check_fails_closed_and_shares_the_budget(self) -> None:
+        # The Router's I-b on #436: a malformed answer is UNSAFE_PATH; a failed or a
+        # timed-out check keeps Git's own category, never the manifest's fallback; a
+        # budget the check spends starts no enumeration.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            (root / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
+            real = subprocess.run
+
+            def malformed(command, **arguments):
+                if "rev-parse" in command:
+                    return mock.Mock(returncode=0, stdout=b"\n", stderr=b"")
+                return real(command, **arguments)
+
+            with (
+                mock.patch.object(module.subprocess, "run", side_effect=malformed),
+                self.assertRaises(module.RepositoryScopeError) as raised,
+            ):
+                module.candidate_paths(root)
+            self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            for label, body, category in (
+                ("a failed check", "exit 3", "GIT_FAILED"),
+                ("a timed-out check", "exec sleep 30", "GIT_TIMEOUT"),
+            ):
+                with self.subTest(label):
+                    home = parent / label.replace(" ", "-")
+                    home.mkdir()
+                    fake = fake_git(home, body)
+                    with (
+                        mock.patch.dict(os.environ, {"PATH": fake}),
+                        self.assertRaises(module.RepositoryScopeError) as raised,
+                    ):
+                        module.candidate_paths(root, timeout=0.5)
+                    self.assertEqual(category, raised.exception.category)
+            clock = [100.0]
+
+            def advancing(command, **arguments):
+                if "rev-parse" in command:
+                    result = real(command, **arguments)
+                    clock[0] = 200.0
+                    return result
+                raise AssertionError("the enumeration started past the budget")
+
+            with (
+                mock.patch.object(
+                    module, "time", mock.Mock(monotonic=lambda: clock[0])
+                ),
+                mock.patch.object(module.subprocess, "run", side_effect=advancing),
+                self.assertRaises(module.RepositoryScopeError) as raised,
+            ):
+                module.candidate_paths(root, timeout=2.5)
+            self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+
+    def _tracked_repository(self, parent: Path) -> Path:
+        root = parent / "repository"
+        root.mkdir()
+        initialize_repository(root)
+        (root / "tracked.md").write_text("generic source\n", encoding="utf-8")
+        git(root, "add", "tracked.md")
+        return root
+
+    def _enumerate_recording_git(self, root: Path, **options) -> tuple[list, list]:
+        seen: list[object] = []
+        real = subprocess.run
+
+        def recording(command, **arguments):
+            seen.append(arguments.get("timeout"))
+            return real(command, **arguments)
+
+        with mock.patch.object(self.module().subprocess, "run", side_effect=recording):
+            paths = self.module().candidate_paths(root, **options)
+        return paths, seen
+
+    def test_the_default_enumeration_takes_no_budget(self) -> None:
+        # Characterization: a legacy caller passes no budget, and Git gets no timeout.
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            paths, seen = self._enumerate_recording_git(root)
+        self.assertEqual([Path("tracked.md")], paths)
+        # The identity check, then the enumeration (the Router's I-b on #436).
+        self.assertEqual([None, None], seen)
+
+    def test_an_enumeration_passes_its_budget_to_git(self) -> None:
+        # An optional budget, for the diagnostic inventory (#389 F3-S1, Option A on #436).
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            paths, seen = self._enumerate_recording_git(root, timeout=2.5)
+        self.assertEqual([Path("tracked.md")], paths)
+        # One budget: the identity check gets it whole, the enumeration what is left
+        # (the Router's I-b on #436).
+        self.assertEqual(2, len(seen))
+        self.assertEqual(2.5, seen[0])
+        self.assertLess(0, seen[1])
+        self.assertLess(seen[1], 2.5)
+
+    def test_a_stalled_enumeration_is_refused_within_its_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            # Built before the assertion, so that it holds one call (SonarCloud S5778).
+            scope = self.module()
+            stalled = fake_git(parent, "exec sleep 30")
+            started = time.monotonic()
+            with (
+                mock.patch.dict(os.environ, {"PATH": stalled}),
+                self.assertRaises(scope.RepositoryScopeError) as raised,
+            ):
+                scope.candidate_paths(root, timeout=0.5)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+
+    def test_a_failing_enumeration_keeps_its_category_under_a_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            scope = self.module()
+            failing = fake_git(parent, "exit 3")
+            with (
+                mock.patch.dict(os.environ, {"PATH": failing}),
+                self.assertRaises(scope.RepositoryScopeError) as raised,
+            ):
+                scope.candidate_paths(root, timeout=5.0)
+        self.assertEqual("GIT_FAILED", raised.exception.category)
+
+    def test_a_packaged_candidate_keeps_its_manifest_under_a_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source.md").write_text("generic source\n", encoding="utf-8")
+            (root / self.module().SOURCE_MANIFEST).write_bytes(b"source.md\0")
+            self.assertEqual(
+                [Path("source.md")], self.module().candidate_paths(root, timeout=0.5)
             )
 
     def test_unsafe_build_manifest_entry_is_rejected(self) -> None:
