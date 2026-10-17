@@ -2500,7 +2500,11 @@ def _diagnostic_subject(
     the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
     6210989878)."""
     state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
-    if time.monotonic() < deadline:
+    # One clock reading decides each check and its timeout: a spent budget starts no
+    # Git, and an open one passes exactly what is left, never a floor (Codex, the
+    # Router's I-b on #436).
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
         owned = False
         # A spent budget reads nothing, and its state is unknown (CodeAnt on #436).
         # Otherwise the scope owner classifies `root/.git`. A root with none of its
@@ -2512,11 +2516,12 @@ def _diagnostic_subject(
         # An identity that Git could not confirm, by a failed or timed-out answer, is
         # never a bound subject: no Git subject is read (the Router's I-b on #436).
         try:
-            owned = has_git_metadata(root, timeout=_time_left(deadline))
+            owned = has_git_metadata(root, timeout=remaining)
         except RepositoryScopeError as exc:
             _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
-        if owned and time.monotonic() < deadline:
-            state = _git_state(root, timeout=_time_left(deadline))
+        remaining = deadline - time.monotonic()
+        if owned and remaining > 0:
+            state = _git_state(root, timeout=remaining)
     if state["tracked_tree_dirty"] is None:
         # A state the shared reader could not read whole names no revision: its value
         # may be the caller's KNOWLEDGE_KIT_REVISION, never observed. A revision read
@@ -2592,10 +2597,11 @@ def _tracked_python(root: Path, deadline: float) -> tuple[list[str] | None, str 
     the inventory's one budget; None, an unknown set, and its gap when it cannot be
     (Option A on #436). A spent budget enumerates nothing, rather than race Git
     against the millisecond floor."""
-    if time.monotonic() >= deadline:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
         return None, "the deadline passed before the tracked set was enumerated"
     try:
-        paths = candidate_paths(root, timeout=_time_left(deadline))
+        paths = candidate_paths(root, timeout=remaining)
     except RepositoryScopeError as exc:
         _refuse_unsafe_metadata(exc, "cannot bind the tracked set's Git metadata")
         return None, scope_error_detail("cannot enumerate tracked-tree candidates", exc)

@@ -2769,6 +2769,53 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self.assertLess(0, timeout)
         self.assertLessEqual(timeout, 30)
 
+    def test_one_clock_reading_decides_each_readers_check_and_timeout(self) -> None:
+        # Codex on #436, by the Router's I-b ("no fresh millisecond allowance"): the
+        # check and the timeout came from two readings, and _time_left floored a
+        # deadline spent in between to a millisecond, so Git started past it. One
+        # reading decides both: a spent budget starts no Git, and an open one passes
+        # exactly what that reading leaves, never the floor.
+        def clock(*readings):
+            values = iter(readings)
+            return SimpleNamespace(
+                monotonic=lambda: next(values, readings[-1]), sleep=time.sleep
+            )
+
+        identity, state = Mock(return_value=True), Mock()
+        with (
+            patch.object(self.module, "time", clock(101.0)),
+            patch.object(self.module, "has_git_metadata", identity),
+            patch.object(self.module, "_git_state", state),
+        ):
+            source, _gaps = self.module._diagnostic_subject(self.root, None, 100.5)
+        self.assertEqual([], identity.call_args_list)
+        self.assertEqual([], state.call_args_list)
+        self.assertIsNone(source["tracked_tree_dirty"])
+        identity, state = Mock(return_value=True), Mock()
+        with (
+            patch.object(self.module, "time", clock(100.0, 101.0)),
+            patch.object(self.module, "has_git_metadata", identity),
+            patch.object(self.module, "_git_state", state),
+        ):
+            self.module._diagnostic_subject(self.root, None, 100.5)
+        self.assertEqual(0.5, identity.call_args.kwargs["timeout"])
+        self.assertEqual([], state.call_args_list)
+        enumeration = Mock(return_value=[])
+        with (
+            patch.object(self.module, "time", clock(101.0)),
+            patch.object(self.module, "candidate_paths", enumeration),
+        ):
+            expected, gap = self.module._tracked_python(self.root, 100.5)
+        self.assertEqual([], enumeration.call_args_list)
+        self.assertIsNone(expected)
+        self.assertIn("deadline", gap)
+        with (
+            patch.object(self.module, "time", clock(100.0, 101.0)),
+            patch.object(self.module, "candidate_paths", enumeration),
+        ):
+            self.module._tracked_python(self.root, 100.5)
+        self.assertEqual(0.5, enumeration.call_args.kwargs["timeout"])
+
     def test_an_unconfirmed_git_identity_reads_no_subject(self) -> None:
         # The Router's I-b on #436: an operational failure of the identity check is
         # never a confirmed identity, so no Git subject is read and the state is

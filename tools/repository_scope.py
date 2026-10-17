@@ -173,7 +173,9 @@ def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
         timeout=timeout,
         purpose="confirm the Git top level",
     )
-    top = os.fsdecode(output.rstrip(b"\n"))
+    # Exactly Git's one terminator, so a root whose name ends in a newline keeps it
+    # (CodeAnt on #436).
+    top = os.fsdecode(output[:-1] if output.endswith(b"\n") else output)
     # Git's top level is absolute, so the root is resolved before the comparison
     # (cubic, the Router's I-b on #436).
     if not top or Path(top) != root.resolve():

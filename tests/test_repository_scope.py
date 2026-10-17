@@ -305,6 +305,16 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_the_identity_check_keeps_a_root_name_that_ends_in_a_newline(self) -> None:
+        # CodeAnt on #436: Git ends its top level with one newline, and only that one is
+        # its terminator, so a root whose name itself ends in a newline is its own.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository\n"
+            root.mkdir()
+            initialize_repository(root)
+            self.assertTrue(module.has_git_metadata(root))
+
     def test_the_identity_check_fails_closed_and_shares_the_budget(self) -> None:
         # The Router's I-b on #436: a malformed answer is UNSAFE_PATH; a failed or a
         # timed-out check keeps Git's own category, never the manifest's fallback; a
