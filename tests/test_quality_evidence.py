@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib
 import json
@@ -2599,6 +2600,105 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 )
                 self.assertIn(gap, inventory["coverage"]["reason"])
 
+    def test_a_git_read_that_does_not_exit_cleanly_is_mapped_after_one_reap(
+        self,
+    ) -> None:
+        # The Router's G1 and S-b (6232967571), and five mutants that survived on
+        # 818812e6: a Git read stopped by its deadline is TimeoutExpired, a reaped read
+        # error is that error, and every other outcome is the comparison's own reason
+        # with the cleanup's detail. The child is reaped once, never by the mapper.
+        drained = self.module.bounded_process.Drained
+        refused = self.module._ComparisonRefused
+        error = OSError(errno.EIO, "/host/private")
+        failed = "its process could not be reaped: OSError"
+        cases = (
+            ("deadline", drained("deadline"), None, subprocess.TimeoutExpired, None),
+            ("error", drained("error", error=error), None, OSError, None),
+            (
+                "cap, failed reap",
+                drained("cap", stream="stdout"),
+                failed,
+                refused,
+                f"the comparison's Git output exceeds max_report_bytes; {failed}",
+            ),
+            (
+                "deadline, failed reap",
+                drained("deadline"),
+                failed,
+                refused,
+                f"the comparison's Git output was not read whole (deadline); {failed}",
+            ),
+        )
+        for label, outcome, reaped, raised, reason in cases:
+            with self.subTest(label):
+                deadline = time.monotonic() + 30
+                reap = Mock(
+                    side_effect=lambda process, reaped=reaped: (process.wait(), reaped)[
+                        1
+                    ]
+                )
+                with (
+                    patch.object(
+                        self.module.bounded_process, "drain", return_value=outcome
+                    ),
+                    patch.object(self.module, "_reap", reap),
+                    self.assertRaises(raised) as caught,
+                ):
+                    self.module._diagnostic_git(
+                        self.root, deadline, "rev-parse", "HEAD", cap=4096
+                    )
+                self.assertEqual(1, reap.call_count)
+                if label == "deadline":
+                    self.assertEqual("git", caught.exception.cmd)
+                if label == "error":
+                    self.assertIs(error, caught.exception)
+                if reason is not None:
+                    self.assertEqual(reason, str(caught.exception))
+        with self.subTest("an unavailable output, failed reap"):
+            deadline = time.monotonic() + 30
+            process = SimpleNamespace(stdout=None, returncode=None)
+            with (
+                patch("tools.quality_evidence.subprocess.Popen", return_value=process),
+                patch.object(self.module, "_reap", Mock(return_value=failed)),
+                self.assertRaises(refused) as caught,
+            ):
+                self.module._diagnostic_git(
+                    self.root, deadline, "rev-parse", "HEAD", cap=4096
+                )
+            self.assertEqual(
+                f"the comparison's Git output is unavailable; {failed}",
+                str(caught.exception),
+            )
+
+    def test_ruff_keeps_only_what_the_earlier_producers_left(self) -> None:
+        # The Router's R1, and the mutant that survived on 818812e6: ruff's allowance
+        # is what mypy left of max_findings, so the producers keep at most
+        # max_findings + 1 findings, the one witness, while the count stays raw.
+        self.mypy_records = {
+            "tools/sample.py": [
+                self._mypy("tools/sample.py", 2, column, "assignment", f"m{column}")
+                for column in (1, 2)
+            ]
+        }
+        self.ruff_records = [
+            self._ruff("tests/test_sample.py", n, 1, "F401", f"r{n}")
+            for n in range(1, 11)
+        ]
+        limits = self.module.DiagnosticLimits(max_findings=3)
+        run = Path(tempfile.mkdtemp(prefix="producers-", dir=self.directory.name))
+        deadline = time.monotonic() + 30
+        with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
+            result = self.module._run_producers(
+                self.root,
+                run,
+                ["tests/test_sample.py", "tools/sample.py"],
+                limits,
+                [],
+                deadline,
+            )
+        self.assertEqual(12, result.count())
+        self.assertEqual(4, len(result.findings))
+
     def test_each_git_read_is_held_to_its_cap_exactly(self) -> None:
         # The Router's G1 (6231894979): rev-parse HEAD writes 41 bytes. A cap of 41
         # reads them whole; a cap of 40 is the comparison's own reason, never a prefix.
@@ -2832,6 +2932,164 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             inventory = self._inventory()
         self.assertNotIn("ran past its deadline", inventory["coverage"]["reason"])
         self.assertEqual(1, len(writes))
+
+    def test_a_report_nested_past_the_decoders_recursion_is_a_gap(self) -> None:
+        # Codex on #436: valid JSON nested past the decoder's recursion, well inside
+        # max_report_bytes, raised RecursionError out of the parsers. It is the report's
+        # or the line's existing unparsable gap, by its type.
+        nested = "[" * 100_000 + "]" * 100_000
+        self.assertLess(
+            len(nested), self.module.DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes
+        )
+        with self.subTest("ruff"):
+            self.ruff_text = nested
+            result, _run = self._ruff_alone([], 3)
+            self.assertEqual([], result.findings)
+            self.assertIn(
+                "ruff unparsable report: RecursionError",
+                result.unanalyzed["tests/test_sample.py"],
+            )
+        self.ruff_text = None
+        with self.subTest("mypy"):
+            first = self._mypy("tools/sample.py", 2, 1, "assignment", "first")
+            later = self._mypy("tools/sample.py", 2, 2, "assignment", "later")
+            self.mypy_text = "\n".join(
+                [json.dumps(first), nested, json.dumps(later), ""]
+            )
+            inventory = self._inventory()
+            messages = {
+                f["message"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"
+            }
+            self.assertLessEqual({"first", "later"}, messages)
+            reasons = {
+                u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
+            }
+            self.assertIn(
+                "unparsable mypy report: RecursionError", reasons["tools/sample.py"]
+            )
+
+    def test_a_failed_publication_leaves_no_inventory(self) -> None:
+        # Codex on #436: a write or close failure left a partial inventory at its
+        # canonical path. The file the collector created is removed, the error is
+        # raised as before, and the raw reports stay.
+        real = self.module._new_file
+
+        def failing(path, stage):
+            stream = real(path)
+            if path.name != self.module.DIAGNOSTIC_INVENTORY:
+                return stream
+            if stage == "write":
+
+                def write(data):
+                    stream.raw.write(data[:100])
+                    raise OSError(errno.ENOSPC, "no space")
+
+                stream.write = write
+            else:
+                close = stream.close
+
+                def fail() -> None:
+                    close()
+                    raise OSError(errno.ENOSPC, "no space")
+
+                stream.close = fail
+            return stream
+
+        for stage in ("write", "close"):
+            with self.subTest(stage):
+                shutil.rmtree(self.output, ignore_errors=True)
+                with (
+                    patch.object(
+                        self.module,
+                        "_new_file",
+                        side_effect=lambda path, stage=stage: failing(path, stage),
+                    ),
+                    self.assertRaises(OSError),
+                ):
+                    self._inventory()
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+                self.assertTrue(list(self.output.rglob("diagnostic-ruff.json")))
+        with self.subTest("the late branch's rebuild fails"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            clock, dumps = [1000.0], json.dumps
+            documents = [0]
+
+            def failing_dumps(value, *args, **kwargs):
+                if (
+                    isinstance(value, dict)
+                    and value.get("schema") == self.module.DIAGNOSTIC_SCHEMA
+                ):
+                    documents[0] += 1
+                    if documents[0] == 2:
+                        raise MemoryError
+                return dumps(value, *args, **kwargs)
+
+            def opening(path):
+                if path.name == self.module.DIAGNOSTIC_INVENTORY:
+                    clock[0] = 10_000.0
+                return real(path)
+
+            with (
+                patch.object(
+                    self.module.time, "monotonic", side_effect=lambda: clock[0]
+                ),
+                patch.object(self.module.json, "dumps", side_effect=failing_dumps),
+                patch.object(self.module, "_new_file", side_effect=opening),
+                self.assertRaises(MemoryError),
+            ):
+                self._inventory()
+            self.assertEqual(
+                [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+            )
+
+    def test_a_publication_never_removes_what_it_did_not_create(self) -> None:
+        # The Router's P-a: a destination that already exists is refused by the
+        # exclusive creation and kept byte for byte; when removing the partial file
+        # fails, the primary error is raised, the removal failure is named by its type,
+        # and the file is honestly still there.
+        run = Path(tempfile.mkdtemp(prefix="publish-", dir=self.directory.name))
+        existing = run / self.module.DIAGNOSTIC_INVENTORY
+        existing.write_bytes(b"not ours\n")
+        arguments = dict(
+            source={"revision": None},
+            limits=self.module.DiagnosticLimits(),
+            result=self.module._ProducerResult(),
+            expected=[],
+            diff=None,
+            findings=[],
+            gaps=[],
+        )
+        with self.assertRaises(FileExistsError):
+            self.module._publish(run, time.monotonic() + 30, **arguments)
+        self.assertEqual(b"not ours\n", existing.read_bytes())
+        existing.unlink()
+        real = self.module._new_file
+
+        def partial(path):
+            stream = real(path)
+
+            def write(data):
+                stream.raw.write(data[:10])
+                raise OSError(errno.ENOSPC, "no space")
+
+            stream.write = write
+            return stream
+
+        with (
+            patch.object(self.module, "_new_file", side_effect=partial),
+            patch.object(
+                self.module.os, "unlink", side_effect=OSError(errno.EACCES, "denied")
+            ),
+            self.assertRaises(OSError) as raised,
+        ):
+            self.module._publish(run, time.monotonic() + 30, **arguments)
+        self.assertEqual(errno.ENOSPC, raised.exception.errno)
+        notes = getattr(raised.exception, "__notes__", [])
+        self.assertEqual(1, len(notes), notes)
+        self.assertIn("could not be removed: PermissionError", notes[0])
+        self.assertTrue(existing.exists())
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
@@ -4155,6 +4413,59 @@ class BoundedRunTests(unittest.TestCase):
     def test_a_clean_run_streams_its_output(self) -> None:
         self.assertEqual((0, None, False), self._run("print('done')"))
         self.assertEqual("done\n", (self.path / "report").read_text(encoding="utf-8"))
+
+    def test_a_report_that_cannot_be_closed_is_an_invalid_capture(self) -> None:
+        # Codex on #436: a flush or close failure of the report escaped _bounded_run.
+        # The report's tail may be lost, so the capture is invalid, and the collector's
+        # refusal follows; the gap names the error's type, never its text.
+        real = self.module._new_file
+
+        def failing(path):
+            stream = real(path)
+            close = stream.close
+
+            def fail() -> None:
+                close()
+                raise OSError(errno.ENOSPC, "/host/private: no space")
+
+            stream.close = fail
+            return stream
+
+        with patch.object(self.module, "_new_file", side_effect=failing):
+            status, gap, invalid = self._run("print('x')")
+        self.assertEqual(0, status)
+        self.assertTrue(invalid)
+        self.assertEqual("its report could not be closed: OSError", gap)
+        closed = "its report could not be closed: OSError"
+        reap = Mock(side_effect=self.module.bounded_process.reap)
+        limits = self.module.DiagnosticLimits(max_report_bytes=16)
+        with (
+            patch.object(self.module, "_new_file", side_effect=failing),
+            patch.object(self.module.bounded_process, "reap", reap),
+        ):
+            status, gap, invalid = self._run(
+                "import sys, time; sys.stdout.write('x' * 8); sys.stdout.flush(); "
+                "time.sleep(0.2); sys.stdout.write('y' * 4096)",
+                report="cut",
+                limits=limits,
+            )
+        self.assertTrue(invalid)
+        self.assertEqual(f"{self.module._OUTPUT_CAP_GAP}; {closed}", gap)
+        self.assertEqual(1, reap.call_count)
+        # The prefix read before the cut stays: the shared drain never writes part of
+        # the chunk that crosses the cap.
+        self.assertEqual(b"x" * 8, (self.path / "cut").read_bytes())
+        with (
+            patch.object(self.module, "_new_file", side_effect=failing),
+            patch(
+                "tools.quality_evidence.subprocess.Popen",
+                side_effect=FileNotFoundError(errno.ENOENT, "/host/private"),
+            ),
+        ):
+            self.assertEqual(
+                (None, f"could not run: FileNotFoundError; {closed}", True),
+                self._run("print('x')", report="unlaunched"),
+            )
 
     def test_output_past_the_budget_stops_the_producer(self) -> None:
         started = time.monotonic()
