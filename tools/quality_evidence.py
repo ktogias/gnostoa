@@ -1661,21 +1661,30 @@ def _drain_report(
         status = drained.returncode
         named = None if status in (0, 1) else f"exited {status}"
         return status, _with(named, cleanup), False
-    if drained.outcome == "deadline":
-        gap, invalid = "timed out at the inventory deadline", False
-    elif drained.outcome == "cap":
-        gap, invalid = _OUTPUT_CAP_GAP, True
-    elif drained.outcome == "error" and drained.error is not None:
-        gap = f"the producer could not be followed: {type(drained.error).__name__}"
-        invalid = True
-    elif drained.outcome == "unexpected" and drained.exception is not None:
-        gap = f"the producer could not be followed: {type(drained.exception).__name__}"
-        invalid = True
-    else:
-        gap = f"the producer could not be followed: unexpected drain outcome {drained.outcome}"
-        invalid = True
+    gap, invalid = _drain_gap(drained)
     gap = _with(_with(gap, cleanup), _reap(process))
     return process.returncode, gap, invalid
+
+
+def _drain_gap(drained: bounded_process.Drained) -> tuple[str, bool]:
+    """The gap and the validity of a drain that did not exit cleanly, by its outcome
+    alone: it performs no I/O, close or reap (SonarCloud, the Router's S-d on #436)."""
+    if drained.outcome == "deadline":
+        return "timed out at the inventory deadline", False
+    if drained.outcome == "cap":
+        return _OUTPUT_CAP_GAP, True
+    if drained.outcome == "error" and drained.error is not None:
+        return (
+            f"the producer could not be followed: {type(drained.error).__name__}",
+            True,
+        )
+    if drained.outcome == "unexpected" and drained.exception is not None:
+        failure = type(drained.exception).__name__
+        return f"the producer could not be followed: {failure}", True
+    return (
+        f"the producer could not be followed: unexpected drain outcome {drained.outcome}",
+        True,
+    )
 
 
 def _run_record(
@@ -2469,6 +2478,20 @@ _SOURCE_BINDING_GAP = (
 )
 
 
+# The scope owner's categories for Git metadata that is unsafe or cannot be
+# inspected: no proof of absence, so no inventory (the Router's 6239259708 and C-a on
+# #436). Every other scope error stays its own gap.
+_METADATA_REFUSALS = frozenset({"UNSAFE_PATH", "GIT_METADATA_IO"})
+
+
+def _refuse_unsafe_metadata(exc: RepositoryScopeError, prefix: str) -> None:
+    """Refuse the inventory for the metadata categories, by the category alone."""
+    if exc.category in _METADATA_REFUSALS:
+        raise QualityEvidenceError(
+            scope_error_detail(prefix, exc) + "; no inventory was written"
+        ) from exc
+
+
 def _diagnostic_subject(
     root: Path, expected_revision: str | None, deadline: float
 ) -> tuple[dict[str, Any], list[str]]:
@@ -2478,6 +2501,7 @@ def _diagnostic_subject(
     6210989878)."""
     state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
     if time.monotonic() < deadline:
+        owned = False
         # A spent budget reads nothing, and its state is unknown (CodeAnt on #436).
         # Otherwise the scope owner classifies `root/.git`. A root with none of its
         # own, such as a packaged root inside another checkout, is never bound to an
@@ -2485,14 +2509,13 @@ def _diagnostic_subject(
         # Router's G-a on #436). Unsafe or uninspectable metadata is no proof of
         # absence, so the inventory is refused, by its category alone (the Router's
         # 6239259708 on #436).
+        # An identity that Git could not confirm, by a failed or timed-out answer, is
+        # never a bound subject: no Git subject is read (the Router's I-b on #436).
         try:
-            owned = has_git_metadata(root)
+            owned = has_git_metadata(root, timeout=_time_left(deadline))
         except RepositoryScopeError as exc:
-            raise QualityEvidenceError(
-                scope_error_detail("cannot bind the subject's Git metadata", exc)
-                + "; no inventory was written"
-            ) from exc
-        if owned:
+            _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
+        if owned and time.monotonic() < deadline:
             state = _git_state(root, timeout=_time_left(deadline))
     if state["tracked_tree_dirty"] is None:
         # A state the shared reader could not read whole names no revision: its value
@@ -2574,6 +2597,7 @@ def _tracked_python(root: Path, deadline: float) -> tuple[list[str] | None, str 
     try:
         paths = candidate_paths(root, timeout=_time_left(deadline))
     except RepositoryScopeError as exc:
+        _refuse_unsafe_metadata(exc, "cannot bind the tracked set's Git metadata")
         return None, scope_error_detail("cannot enumerate tracked-tree candidates", exc)
     return sorted(p.as_posix() for p in paths if p.suffix == ".py"), None
 

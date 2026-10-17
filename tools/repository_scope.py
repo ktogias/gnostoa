@@ -4,6 +4,7 @@ import os
 import re
 import stat
 import subprocess
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -64,42 +65,46 @@ def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
     return sorted(set(paths), key=lambda path: path.as_posix())
 
 
-def _git_candidate_paths(root: Path, *, timeout: float | None = None) -> list[Path]:
+def _git_output(
+    root: Path, arguments: list[str], *, timeout: float | None, purpose: str
+) -> bytes:
+    """One Git read of `root`, classified: GIT_TIMEOUT past `timeout`, GIT_IO when Git
+    cannot run, and GIT_FAILED on a non-zero exit."""
     try:
         result = subprocess.run(
-            [
-                "git",
-                "-c",
-                f"safe.directory={root}",
-                "-C",
-                str(root),
-                "ls-files",
-                "--cached",
-                "--deduplicate",
-                "-z",
-            ],
+            ["git", "-c", f"safe.directory={root}", "-C", str(root), *arguments],
             check=False,
             capture_output=True,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         raise RepositoryScopeError(
-            f"cannot enumerate Git-tracked candidate files in {root} within {timeout} seconds",
+            f"cannot {purpose} in {root} within {timeout} seconds",
             category="GIT_TIMEOUT",
         ) from exc
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot enumerate Git-tracked candidate files in {root}: {exc}",
+            f"cannot {purpose} in {root}: {exc}",
             category="GIT_IO",
         ) from exc
 
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise RepositoryScopeError(
-            message or f"cannot enumerate Git-tracked candidate files in {root}",
+            message or f"cannot {purpose} in {root}",
             category="GIT_FAILED",
         )
-    return _decode_paths(result.stdout, "Git")
+    return result.stdout
+
+
+def _git_candidate_paths(root: Path, *, timeout: float | None = None) -> list[Path]:
+    output = _git_output(
+        root,
+        ["ls-files", "--cached", "--deduplicate", "-z"],
+        timeout=timeout,
+        purpose="enumerate Git-tracked candidate files",
+    )
+    return _decode_paths(output, "Git")
 
 
 def _manifest_candidate_paths(root: Path) -> list[Path]:
@@ -138,12 +143,15 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
     return _decode_paths(encoded_paths, "packaged source manifest")
 
 
-def has_git_metadata(root: Path) -> bool:
-    """Whether `root/.git` is Git metadata, by `lstat`, never followed: False for a
-    missing entry, True for a directory or a linked worktree's regular file. A
-    symlink, dangling or not, or any other kind is refused as UNSAFE_PATH, so that
-    no enclosing checkout's metadata is borrowed; an entry that cannot be inspected
-    is GIT_METADATA_IO (cubic and Claude, the Router's 6239259708 on #436)."""
+def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
+    """Whether `root/.git` is Git metadata of `root` itself. Its entry is classified by
+    `lstat`, never followed: False for a missing entry, with no Git read; a symlink,
+    dangling or not, or any other kind than a directory or a regular file is
+    UNSAFE_PATH, and an entry that cannot be inspected GIT_METADATA_IO (cubic and
+    Claude, the Router's 6239259708 on #436). An accepted entry is True only when
+    Git's own `rev-parse --show-toplevel` names `root`: a malformed `.git` directory
+    that Git skips for an enclosing checkout is UNSAFE_PATH, and a failed or
+    timed-out answer keeps Git's own category (cubic, the Router's I-b on #436)."""
     git_metadata = root / ".git"
     try:
         mode = git_metadata.lstat().st_mode
@@ -154,12 +162,24 @@ def has_git_metadata(root: Path) -> bool:
             f"cannot inspect Git metadata at {git_metadata}: {exc}",
             category="GIT_METADATA_IO",
         ) from exc
-    if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
-        return True
-    raise RepositoryScopeError(
-        f"Git metadata at {git_metadata} is not a directory or a regular file",
-        category="UNSAFE_PATH",
+    if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+        raise RepositoryScopeError(
+            f"Git metadata at {git_metadata} is not a directory or a regular file",
+            category="UNSAFE_PATH",
+        )
+    output = _git_output(
+        root,
+        ["rev-parse", "--show-toplevel"],
+        timeout=timeout,
+        purpose="confirm the Git top level",
     )
+    top = os.fsdecode(output.rstrip(b"\n"))
+    if not top or Path(top) != root:
+        raise RepositoryScopeError(
+            f"Git metadata at {git_metadata} belongs to another work tree",
+            category="UNSAFE_PATH",
+        )
+    return True
 
 
 def candidate_paths(
@@ -173,8 +193,18 @@ def candidate_paths(
     """
 
     root = repository_root.resolve()
-    if has_git_metadata(root):
-        return _git_candidate_paths(root, timeout=timeout)
+    # One budget for the identity check and the enumeration: the enumeration gets
+    # only what is left, and none once it is spent (the Router's I-b on #436).
+    end = None if timeout is None else time.monotonic() + timeout
+    if has_git_metadata(root, timeout=timeout):
+        remaining = None if end is None else end - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise RepositoryScopeError(
+                f"cannot enumerate Git-tracked candidate files in {root} within "
+                f"{timeout} seconds",
+                category="GIT_TIMEOUT",
+            )
+        return _git_candidate_paths(root, timeout=remaining)
 
     manifest = root / SOURCE_MANIFEST
     try:
