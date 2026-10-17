@@ -256,6 +256,97 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
             self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
 
+    def test_metadata_that_git_resolves_elsewhere_is_refused(self) -> None:
+        # cubic on #436, by the Router's I-b: an empty `.git` directory, or a `gitdir:`
+        # file to an enclosing checkout, is accepted by type, but Git's own discovery
+        # resolves it to that checkout. Git's top level must be the root itself, else
+        # UNSAFE_PATH, before any enumeration; a real linked worktree keeps its route.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            outer = self._tracked_repository(parent)
+            git(
+                outer,
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=a",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            )
+            for label, make in (("an empty directory", lambda entry: entry.mkdir()),):
+                with self.subTest(label):
+                    package = outer / label.replace(" ", "-")
+                    package.mkdir()
+                    (package / "source.md").write_text(
+                        "generic source\n", encoding="utf-8"
+                    )
+                    make(package / ".git")
+                    with self.assertRaises(module.RepositoryScopeError) as raised:
+                        module.candidate_paths(package)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            worktree = parent / "linked"
+            git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
+            self.assertEqual([Path("tracked.md")], module.candidate_paths(outer))
+
+    def test_the_identity_check_fails_closed_and_shares_the_budget(self) -> None:
+        # The Router's I-b on #436: a malformed answer is UNSAFE_PATH; a failed or a
+        # timed-out check keeps Git's own category, never the manifest's fallback; a
+        # budget the check spends starts no enumeration.
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = self._tracked_repository(parent)
+            (root / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
+            real = subprocess.run
+
+            def malformed(command, **arguments):
+                if "rev-parse" in command:
+                    return subprocess.CompletedProcess(command, 0, b"\n", b"")
+                return real(command, **arguments)
+
+            with (
+                mock.patch.object(module.subprocess, "run", side_effect=malformed),
+                self.assertRaises(module.RepositoryScopeError) as raised,
+            ):
+                module.candidate_paths(root)
+            self.assertEqual("UNSAFE_PATH", raised.exception.category)
+            for label, body, category in (
+                ("a failed check", "exit 3", "GIT_FAILED"),
+                ("a timed-out check", "exec sleep 30", "GIT_TIMEOUT"),
+            ):
+                with self.subTest(label):
+                    home = parent / label.replace(" ", "-")
+                    home.mkdir()
+                    fake = fake_git(home, body)
+                    with (
+                        mock.patch.dict(os.environ, {"PATH": fake}),
+                        self.assertRaises(module.RepositoryScopeError) as raised,
+                    ):
+                        module.candidate_paths(root, timeout=0.5)
+                    self.assertEqual(category, raised.exception.category)
+            clock = [100.0]
+
+            def advancing(command, **arguments):
+                if "rev-parse" in command:
+                    result = real(command, **arguments)
+                    clock[0] = 200.0
+                    return result
+                raise AssertionError("the enumeration started past the budget")
+
+            with (
+                mock.patch.object(
+                    module, "time", mock.Mock(monotonic=lambda: clock[0])
+                ),
+                mock.patch.object(module.subprocess, "run", side_effect=advancing),
+                self.assertRaises(module.RepositoryScopeError) as raised,
+            ):
+                module.candidate_paths(root, timeout=2.5)
+            self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+
     def _tracked_repository(self, parent: Path) -> Path:
         root = parent / "repository"
         root.mkdir()
@@ -282,7 +373,8 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             root = self._tracked_repository(Path(directory))
             paths, seen = self._enumerate_recording_git(root)
         self.assertEqual([Path("tracked.md")], paths)
-        self.assertEqual([None], seen)
+        # The identity check, then the enumeration (the Router's I-b on #436).
+        self.assertEqual([None, None], seen)
 
     def test_an_enumeration_passes_its_budget_to_git(self) -> None:
         # An optional budget, for the diagnostic inventory (#389 F3-S1, Option A on #436).
@@ -290,7 +382,12 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             root = self._tracked_repository(Path(directory))
             paths, seen = self._enumerate_recording_git(root, timeout=2.5)
         self.assertEqual([Path("tracked.md")], paths)
-        self.assertEqual([2.5], seen)
+        # One budget: the identity check gets it whole, the enumeration what is left
+        # (the Router's I-b on #436).
+        self.assertEqual(2, len(seen))
+        self.assertEqual(2.5, seen[0])
+        self.assertLess(0, seen[1])
+        self.assertLess(seen[1], 2.5)
 
     def test_a_stalled_enumeration_is_refused_within_its_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

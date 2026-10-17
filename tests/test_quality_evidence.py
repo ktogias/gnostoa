@@ -2731,6 +2731,94 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                     [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
                 )
 
+    def test_metadata_that_git_resolves_elsewhere_refuses_the_inventory(self) -> None:
+        # cubic on #436, by the Router's I-b: metadata that Git resolves to the
+        # enclosing checkout recorded that checkout's HEAD. The inventory is refused
+        # as UNSAFE_PATH, with no Git subject read and no inventory written.
+        self.mypy_records, self.ruff_records = {}, []
+        for label, make in (("an empty directory", lambda entry: entry.mkdir()),):
+            with self.subTest(label):
+                package = self._package(self.root / label.replace(" ", "-"))
+                make(package / ".git")
+                shutil.rmtree(self.output, ignore_errors=True)
+                reason, state, comparison = self._refused_spied(package, base=self.base)
+                self.assertIn("UNSAFE_PATH", reason)
+                self.assertEqual([], state.call_args_list)
+                self.assertEqual([], comparison.call_args_list)
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+
+    def test_an_unconfirmed_git_identity_reads_no_subject(self) -> None:
+        # The Router's I-b on #436: an operational failure of the identity check is
+        # never a confirmed identity, so no Git subject is read and the state is
+        # unknown; a budget the check spends reads no subject either.
+        from tools.repository_scope import RepositoryScopeError
+
+        self.mypy_records, self.ruff_records = {}, []
+        timed_out = RepositoryScopeError("timed out", category="GIT_TIMEOUT")
+        with patch.object(self.module, "has_git_metadata", side_effect=timed_out):
+            inventory, state, _comparison = self._collect_spied(self.root, self.output)
+        self.assertEqual([], state.call_args_list)
+        self.assertIsNone(inventory["source"]["revision"])
+        self.assertIn(
+            "the tracked tree is dirty or its state is unknown",
+            inventory["coverage"]["reason"],
+        )
+
+        def spending(root, *, timeout=None):
+            time.sleep(0.4)
+            return True
+
+        shutil.rmtree(self.output, ignore_errors=True)
+        limits = self.module.DiagnosticLimits(timeout_seconds=0.3)
+        with patch.object(self.module, "has_git_metadata", side_effect=spending):
+            inventory, state, _comparison = self._collect_spied(
+                self.root, self.output, limits=limits
+            )
+        self.assertEqual([], state.call_args_list)
+        self.assertIsNone(inventory["source"]["revision"])
+
+    def test_unsafe_metadata_at_the_tracked_read_refuses_the_inventory(self) -> None:
+        # Claude on #436, by the Router's C-a: the scope owner's UNSAFE_PATH or
+        # GIT_METADATA_IO at the tracked-set read refuses the inventory, as at the
+        # subject read, with no producer started; other scope errors stay soft gaps.
+        from tools.repository_scope import RepositoryScopeError
+
+        self.mypy_records, self.ruff_records = {}, []
+        for category in ("UNSAFE_PATH", "GIT_METADATA_IO"):
+            with self.subTest(category):
+                shutil.rmtree(self.output, ignore_errors=True)
+                self.commands = []
+                refused = RepositoryScopeError("/host/private", category=category)
+                with (
+                    patch(
+                        "tools.repository_scope.has_git_metadata", side_effect=refused
+                    ),
+                    patch(
+                        "tools.quality_evidence._bounded_run",
+                        side_effect=self._fake_run,
+                    ),
+                    self.assertRaises(QualityEvidenceError) as raised,
+                ):
+                    self.collect(self.root, self.output)
+                self.assertIn(category, str(raised.exception))
+                self.assertNotIn("/host/private", str(raised.exception))
+                self.assertEqual(
+                    [], [c for c, *_ in self.commands if "--version" not in c]
+                )
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+        for category in ("GIT_TIMEOUT", "MANIFEST_MISSING"):
+            with self.subTest(category):
+                shutil.rmtree(self.output, ignore_errors=True)
+                soft = RepositoryScopeError("/host/private", category=category)
+                with patch("tools.repository_scope.has_git_metadata", side_effect=soft):
+                    inventory = self._inventory()
+                self.assertIsNone(inventory["scope"]["full"]["expected"])
+                self.assertIn(category, inventory["coverage"]["reason"])
+
     def test_an_uninspectable_git_entry_refuses_the_inventory(self) -> None:
         # The Router's 6239259708 tightens G-a: a `.git` that cannot be inspected is no
         # proof of absence, so it is the scope owner's GIT_METADATA_IO, never an
