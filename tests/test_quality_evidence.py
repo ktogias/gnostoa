@@ -3682,13 +3682,61 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self.assertTrue(existing.exists())
 
     def test_a_record_that_names_no_file_is_a_malformed_record(self) -> None:
-        # Codex on #436, by the Router's M2: a ruff filename or a mypy file of "" or
-        # "." names the root, not a file, and was published as a finding at ".". It is
-        # the report's malformed record: its gap is named, no finding is kept for it,
-        # and the valid records after it are still read.
+        # Codex on #436, by the Router's M2 (6241642961): a mypy file that names only
+        # its group's root, or a ruff filename that resolves to the repository root,
+        # names no file, and was published as a finding at the root. In the main and
+        # the fixture groups alike it is its report's malformed record: the gap is
+        # named, no finding is kept for it, the valid records after it are still read,
+        # and a valid relative spelling stays a finding.
+        groups = {
+            "": ("tools/sample.py", "mypy:main"),
+            "tests/fixtures/one/": (
+                "tests/fixtures/one/baseline.py",
+                "mypy:tests/fixtures/one",
+            ),
+        }
+        # Ruff reports nothing and exits 0, so each reason is the mypy group's alone.
+        self.ruff_records, self.ruff_exit = [], 0
+        for name in ("", ".", "./", "./."):
+            with self.subTest(producer="mypy", name=name):
+                shutil.rmtree(self.output, ignore_errors=True)
+                self.mypy_records = {
+                    path: [
+                        self._mypy(prefix + name, 1, 1, "misc", f"rootless {group}"),
+                        self._mypy(path, 1, 1, "misc", f"later {group}"),
+                    ]
+                    for prefix, (path, group) in groups.items()
+                }
+                self.mypy_records["tools/sample.py"].append(
+                    self._mypy("./tools/sample.py", 1, 1, "misc", "a dotted spelling")
+                )
+                self.mypy_exit = {".": 1, "tests/fixtures/one/": 1}
+                inventory = self._inventory()
+                messages = {
+                    f["message"]
+                    for f in inventory["findings"]
+                    if f["tool"]["id"] == "mypy"
+                }
+                self.assertEqual(
+                    {
+                        "later mypy:main",
+                        "later mypy:tests/fixtures/one",
+                        "a dotted spelling",
+                    },
+                    messages,
+                )
+                unanalyzed = {
+                    u["path"]: u["reason"]
+                    for u in inventory["scope"]["full"]["unanalyzed"]
+                }
+                for path, group in groups.values():
+                    self.assertEqual(
+                        f"{group} unparsable mypy report: ValueError", unanalyzed[path]
+                    )
+        # Ruff exits 1 with its finding records again.
+        self.ruff_exit = 1
         later_ruff = self._ruff("tests/test_sample.py", 3, 1, "F401", "later")
-        later_mypy = self._mypy("tools/sample.py", 2, 1, "assignment", "later")
-        for name in ("", "."):
+        for name in ("", ".", "./", str(self.root.resolve()), "tests/.."):
             with self.subTest(producer="ruff", name=name):
                 rootless = {
                     **self._ruff("tests/test_sample.py", 2, 1, "F401", "rootless"),
@@ -3699,27 +3747,18 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 self.assertIn(
                     "ruff unparsable report", result.unanalyzed["tests/test_sample.py"]
                 )
-            with self.subTest(producer="mypy", name=name):
-                shutil.rmtree(self.output, ignore_errors=True)
-                rootless = {
-                    **self._mypy("tools/sample.py", 2, 1, "assignment", "rootless"),
-                    "file": name,
+        for name in ("tests/test_sample.py", "./tests/test_sample.py"):
+            with self.subTest(producer="ruff", relative=name):
+                relative = {
+                    **self._ruff("tests/test_sample.py", 2, 1, "F401", "relative"),
+                    "filename": name,
                 }
-                self.mypy_text = (
-                    json.dumps(rootless) + "\n" + json.dumps(later_mypy) + "\n"
+                result, _run = self._ruff_alone([relative], 10)
+                self.assertEqual(
+                    [("tests/test_sample.py", "relative")],
+                    [(f["path"], f["message"]) for f in result.findings],
                 )
-                inventory = self._inventory()
-                messages = {
-                    f["message"]
-                    for f in inventory["findings"]
-                    if f["tool"]["id"] == "mypy"
-                }
-                self.assertNotIn("rootless", messages)
-                self.assertIn("later", messages)
-                paths = {f["path"] for f in inventory["findings"]}
-                self.assertNotIn(".", paths)
-                self.assertNotIn("", paths)
-        self.mypy_text = None
+                self.assertNotIn("tests/test_sample.py", result.unanalyzed)
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are

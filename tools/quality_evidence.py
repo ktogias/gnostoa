@@ -23,7 +23,7 @@ import tomllib
 import uuid
 from collections.abc import Mapping
 from importlib import metadata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, TextIO
 from urllib.parse import quote, unquote, urlparse
 
@@ -1785,11 +1785,12 @@ def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
     # Nothing is coerced: _location_range and _diagnostic_finding refuse what is not
     # an exact integer or a text, and only an integer column moves to 1-based.
     path = record["file"]
-    # A file that is absolute or has a .. segment cannot be bound to the group's root:
-    # it is the report's malformed record, before any prefix could hide it (Codex,
-    # routed by the Router 6224373564 on #436, M2).
+    # A file that is absolute, has a .. segment or names only the group's root, as
+    # "", "." or "./" do, cannot be bound to a file of the group: it is the report's
+    # malformed record, before any prefix could hide it (Codex, routed by the Router
+    # 6224373564 and 6241642961 on #436, M2).
     if type(path) is str and (
-        path in ("", ".") or path.startswith("/") or ".." in path.split("/")
+        not PurePosixPath(path).parts or path.startswith("/") or ".." in path.split("/")
     ):
         raise ValueError(f"mypy file {path!r} is not relative to its group's root")
     # A severity is a text or null: json.loads takes NaN and Infinity, which the
