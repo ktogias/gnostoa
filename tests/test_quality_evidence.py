@@ -2599,6 +2599,87 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 )
                 self.assertIn(gap, inventory["coverage"]["reason"])
 
+    def test_each_git_read_is_held_to_its_cap_exactly(self) -> None:
+        # The Router's G1 (6231894979): rev-parse HEAD writes 41 bytes. A cap of 41
+        # reads them whole; a cap of 40 is the comparison's own reason, never a prefix.
+        deadline = time.monotonic() + 30
+        head = self._git("rev-parse", "HEAD")
+        answer = self.module._diagnostic_git(
+            self.root, deadline, "rev-parse", "HEAD", cap=41
+        )
+        self.assertEqual(head + "\n", answer)
+        with self.assertRaisesRegex(
+            ValueError, "the comparison's Git output exceeds max_report_bytes"
+        ):
+            self.module._diagnostic_git(
+                self.root, deadline, "rev-parse", "HEAD", cap=40
+            )
+
+    def test_a_spent_budget_spawns_no_git_and_a_failed_read_is_its_exit(self) -> None:
+        # The Router's G1: past the deadline no Git starts, and a non-zero exit stays
+        # CalledProcessError.
+        with patch(
+            "tools.quality_evidence.subprocess.Popen",
+            side_effect=AssertionError("Git started past the deadline"),
+        ):
+            with self.assertRaisesRegex(
+                subprocess.SubprocessError, "deadline had passed"
+            ):
+                self.module._diagnostic_git(
+                    self.root, time.monotonic() - 1, "rev-parse", "HEAD", cap=4096
+                )
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.module._diagnostic_git(
+                self.root,
+                time.monotonic() + 30,
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "f" * 40 + "^{commit}",
+                cap=4096,
+            )
+
+    def test_the_base_check_and_the_name_list_each_meet_the_cap(self) -> None:
+        # The Router's G1: every Git read is capped. The base check's 41 bytes cross a
+        # cap of 40 before any diff is read; with a cap of 100, the check passes, and a
+        # long name list crosses it before any patch is read.
+        for n in range(8):
+            (
+                self.root / "tools" / f"a_long_module_name_for_the_list_{n}.py"
+            ).write_text("VALUE = 1\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "many changed names")
+        real = self.module._diagnostic_git
+        for cap, read_last, reads in ((40, "rev-parse", 1), (100, "diff", 2)):
+            with self.subTest(cap=cap):
+                spy = Mock(side_effect=real)
+                with (
+                    patch.object(self.module, "_diagnostic_git", spy),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "the comparison's Git output exceeds max_report_bytes",
+                    ),
+                ):
+                    self.module._diff_scope(
+                        self.root, self.base, time.monotonic() + 30, cap=cap
+                    )
+                verbs = [call.args[2] for call in spy.call_args_list]
+                self.assertEqual(reads, len(verbs), verbs)
+                self.assertEqual(read_last, verbs[-1])
+
+    def test_a_changed_name_that_is_not_utf8_survives_the_read(self) -> None:
+        # The Router's G1: decoded only after a complete exit, with surrogateescape, as
+        # before, so a name with a byte that is not UTF-8 is kept exactly.
+        raw = os.fsencode(self.root / "tools") + b"/odd\xffname.py"
+        with open(raw, "wb") as stream:
+            stream.write(b"VALUE = 1\n")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "a name that is not UTF-8")
+        diff, _lines = self.module._diff_scope(
+            self.root, self.base, time.monotonic() + 30
+        )
+        self.assertIn("tools/odd\udcffname.py", diff["changed_paths"])
+
     def test_a_comparison_whose_git_output_passes_the_cap_is_a_gap(self) -> None:
         # CodeAnt on #436, by the Router's G1 (6231894979): Git's output was read whole.
         # Each read is drained under max_report_bytes, and a crossing is the
@@ -3541,6 +3622,21 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 self.root, self.base, findings, [], time.monotonic() + 30
             )
         self.assertEqual(1, passes[0])
+        # A set that iterates out of order, {8, 1} here, is still bisected in order.
+        unordered = [
+            {
+                "path": "tools/other.py",
+                "range": {"start_line": 1, "end_line": 1},
+                "native": {},
+            }
+        ]
+        with patch.object(
+            self.module, "_diff_scope", return_value=(diff, {"tools/other.py": {8, 1}})
+        ):
+            self.module._annotate_diff(
+                self.root, self.base, unordered, [], time.monotonic() + 30
+            )
+        self.assertIs(True, unordered[0]["native"]["in_diff"])
         self.assertEqual(
             [n % 2 == 0 and 10 <= n < 2010 for n in range(1, 401)],
             [f["native"]["in_diff"] for f in findings],
@@ -3937,12 +4033,17 @@ class BoundedRunTests(unittest.TestCase):
             limits=self.module.DiagnosticLimits(max_report_bytes=200_000),
         )
         self.assertIn("max_report_bytes", gap)
+        # The cut is an invalid capture, so the collector refuses it (the Router's V1).
+        self.assertIs(True, _invalid)
         self.assertLessEqual((self.path / "report").stat().st_size, 200_000)
         self.assertLess(time.monotonic() - started, 20)
 
     def test_the_deadline_stops_the_producer(self) -> None:
-        _status, gap, _invalid = self._run("import time\ntime.sleep(60)", seconds=1.0)
+        _status, gap, invalid = self._run("import time\ntime.sleep(60)", seconds=1.0)
         self.assertIn("timed out", gap)
+        # A deadline keeps its named partial gap, and is no invalid capture (the
+        # Router's G2 on #436).
+        self.assertIs(False, invalid)
 
     def test_a_spent_budget_starts_no_producer(self) -> None:
         # Codex on #436: past the deadline, each remaining mypy group, and ruff, would
@@ -4070,6 +4171,21 @@ class BoundedRunTests(unittest.TestCase):
             self.assertNotIn(sentinel, gap)
             # The primary failure first, then the cleanup's (the Router's G2).
             self.assertTrue(gap.startswith("the producer could not be followed: "), gap)
+
+    def test_an_unknown_drain_outcome_is_an_invalid_capture(self) -> None:
+        # The Router's G2: an outcome without the field its contract names is never a
+        # clean capture; the child is still reaped.
+        unknown = SimpleNamespace(
+            outcome="unknown",
+            returncode=None,
+            error=None,
+            exception=None,
+            selector_closed=True,
+        )
+        with patch.object(self.module.bounded_process, "drain", return_value=unknown):
+            _status, gap, invalid = self._run("print('x')", report="unknown")
+        self.assertIn("unexpected drain outcome unknown", gap)
+        self.assertIs(True, invalid)
 
     def test_a_selector_that_cannot_be_closed_is_named(self) -> None:
         # The Router's G2 (6231894979): the drain reports a selector it could not
