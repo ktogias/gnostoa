@@ -2689,10 +2689,52 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 self._git("rev-parse", "HEAD"), inventory["source"]["revision"]
             )
 
-    def test_an_uninspectable_git_entry_is_an_unknown_subject(self) -> None:
-        # The Router's G-a: a `.git` that cannot be inspected is no proof of absence or
-        # of a clean repository. No Git subject or comparison read starts, and the
-        # scope owner reports its own classified outcome.
+    def _refused_spied(self, root: Path, **options):
+        state = Mock(side_effect=self.module._git_state)
+        comparison = Mock(side_effect=self.module._diagnostic_git)
+        with (
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch.object(self.module, "_git_state", state),
+            patch.object(self.module, "_diagnostic_git", comparison),
+            self.assertRaises(QualityEvidenceError) as raised,
+        ):
+            self.collect(root, self.output, **options)
+        return str(raised.exception), state, comparison
+
+    def test_unsafe_git_metadata_refuses_the_inventory(self) -> None:
+        # cubic and Claude on #436, by the Router's 6239259708: a packaged root whose
+        # `.git` links to the enclosing checkout's metadata recorded that checkout's
+        # HEAD. Unsafe metadata, a symlink, dangling or not, or another kind, is the
+        # scope owner's UNSAFE_PATH: no Git is read, and no inventory is written.
+        self.mypy_records, self.ruff_records = {}, []
+        for label, make in (
+            (
+                "a symlink to the checkout",
+                lambda entry: entry.symlink_to(self.root / ".git"),
+            ),
+            (
+                "a dangling symlink",
+                lambda entry: entry.symlink_to(self.root / "missing"),
+            ),
+            ("another kind", lambda entry: os.mkfifo(entry)),
+        ):
+            with self.subTest(label):
+                package = self._package(self.root / label.replace(" ", "-"))
+                make(package / ".git")
+                shutil.rmtree(self.output, ignore_errors=True)
+                reason, state, comparison = self._refused_spied(package, base=self.base)
+                self.assertIn("UNSAFE_PATH", reason)
+                self.assertNotIn(str(self.root), reason)
+                self.assertEqual([], state.call_args_list)
+                self.assertEqual([], comparison.call_args_list)
+                self.assertEqual(
+                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
+                )
+
+    def test_an_uninspectable_git_entry_refuses_the_inventory(self) -> None:
+        # The Router's 6239259708 tightens G-a: a `.git` that cannot be inspected is no
+        # proof of absence, so it is the scope owner's GIT_METADATA_IO, never an
+        # unknown subject: no Git is read, and no inventory is written.
         self.mypy_records, self.ruff_records = {}, []
         real_lstat = Path.lstat
 
@@ -2702,15 +2744,71 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             return real_lstat(path, *args, **kwargs)
 
         with patch.object(Path, "lstat", failing):
-            inventory, state, comparison = self._collect_spied(
-                self.root, self.output, base=self.base
-            )
+            reason, state, comparison = self._refused_spied(self.root, base=self.base)
+        self.assertIn("GIT_METADATA_IO", reason)
         self.assertEqual([], state.call_args_list)
         self.assertEqual([], comparison.call_args_list)
-        self.assertIsNone(inventory["source"]["revision"])
-        self.assertIsNone(inventory["scope"]["diff"])
-        self.assertIsNone(inventory["scope"]["full"]["expected"])
-        self.assertIn("GIT_METADATA_IO", inventory["coverage"]["reason"])
+        self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
+
+    def test_unsafe_git_metadata_at_the_final_read_refuses_the_inventory(self) -> None:
+        # The Router's 6239259708 at the final subject read: metadata replaced by a
+        # symlink there is refused too, with no second Git subject read.
+        real = self.module._diagnostic_subject
+        calls: list[Path] = []
+
+        def final_with_a_link(root, *args, **kwargs):
+            calls.append(root)
+            if len(calls) == 2:
+                (root / ".git").rename(root / ".git-moved")
+                (root / ".git").symlink_to(root / ".git-moved")
+            return real(root, *args, **kwargs)
+
+        with patch.object(
+            self.module, "_diagnostic_subject", side_effect=final_with_a_link
+        ):
+            reason, state, _comparison = self._refused_spied(self.root, base=self.base)
+        self.assertEqual(2, len(calls))
+        self.assertEqual(1, state.call_count)
+        self.assertIn("UNSAFE_PATH", reason)
+        self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
+
+    def test_a_dirty_subjects_base_is_checked_for_its_form_only(self) -> None:
+        # Codex on #436, by the Router's B-a (6239259708): with nothing compared, a
+        # base is checked for its form only, never verified as a commit, and no Git
+        # comparison work starts; a malformed base keeps its gap.
+        self._git("tag", "-a", "-m", "a tag", "base-tag", self.base)
+        bases = {
+            "tree": self._git("rev-parse", f"{self.base}^{{tree}}"),
+            "blob": self._git("rev-parse", f"{self.base}:tools/sample.py"),
+            "tag": self._git("rev-parse", "base-tag"),
+            "missing object": "f" * 40,
+        }
+        clean = self.module._git_state(self.root)
+        dirty = {"revision": self.base, "tracked_tree_dirty": True}
+        for kind, base in bases.items():
+            with self.subTest(kind):
+                shutil.rmtree(self.output, ignore_errors=True)
+                comparison = Mock(side_effect=self.module._diagnostic_git)
+                with (
+                    patch.object(self.module, "_git_state", side_effect=[dirty, clean]),
+                    patch.object(self.module, "_diagnostic_git", comparison),
+                ):
+                    inventory = self._inventory(base=base)
+                self.assertEqual([], comparison.call_args_list)
+                self.assertIsNone(inventory["scope"]["diff"])
+                reason = inventory["coverage"]["reason"]
+                self.assertNotIn("commit", reason)
+                self.assertIn(
+                    "the tracked tree is dirty or its state is unknown", reason
+                )
+        with self.subTest("a malformed base"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            with patch.object(self.module, "_git_state", side_effect=[dirty, clean]):
+                inventory = self._inventory(base="not-a-sha")
+            self.assertIn(
+                "base 'not-a-sha' is not a 40-hex commit id",
+                inventory["coverage"]["reason"],
+            )
 
     def test_metadata_gone_at_the_final_read_leaves_the_comparison_unbound(
         self,
@@ -5012,6 +5110,76 @@ class BoundedRunTests(unittest.TestCase):
         with patch.object(real_selectors, "DefaultSelector", Unclosable):
             gap = self._run("print('done')", report="unclosable")[1]
         self.assertIn("its output selector could not be closed", gap or "")
+
+    def test_an_unexpected_exit_is_named_before_a_cleanup_detail(self) -> None:
+        # Octopus on #436, by the Router's O-a (6239259708): an exit of 2 whose
+        # selector could not be closed was named by the cleanup detail alone. A
+        # non-0/1 exit comes first, once; an already waited exit is not reaped again.
+        import selectors as real_selectors
+
+        real_selector = real_selectors.DefaultSelector
+        selector = "its output selector could not be closed"
+
+        class Unclosable(real_selector):
+            def close(self):
+                super().close()
+                raise OSError(9, "Bad file descriptor")
+
+        cases = (
+            ("exit 0", "raise SystemExit(0)", 0, None, selector),
+            ("exit 1", "raise SystemExit(1)", 1, None, selector),
+            ("exit 2", "raise SystemExit(2)", 2, "exited 2", f"exited 2; {selector}"),
+            (
+                "a signal",
+                "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",
+                -9,
+                "exited -9",
+                f"exited -9; {selector}",
+            ),
+        )
+        real_reap = self.module.bounded_process.reap
+        for label, code, status, plain, closed in cases:
+            for broken in (False, True):
+                with self.subTest(label, selector_fails=broken):
+                    reap = Mock(side_effect=real_reap)
+                    report = f"{label}-{broken}".replace(" ", "-")
+                    with patch.object(self.module.bounded_process, "reap", reap):
+                        if broken:
+                            with patch.object(
+                                real_selectors, "DefaultSelector", Unclosable
+                            ):
+                                result = self._run(code, report=report)
+                        else:
+                            result = self._run(code, report=report)
+                    self.assertEqual(
+                        (status, closed if broken else plain, False), result
+                    )
+                    self.assertEqual(0, reap.call_count)
+        real_new = self.module._new_file
+
+        def failing(path):
+            stream = real_new(path)
+            close = stream.close
+
+            def fail() -> None:
+                close()
+                raise OSError(errno.ENOSPC, "no space")
+
+            stream.close = fail
+            return stream
+
+        with (
+            patch.object(real_selectors, "DefaultSelector", Unclosable),
+            patch.object(self.module, "_new_file", side_effect=failing),
+        ):
+            self.assertEqual(
+                (
+                    2,
+                    f"exited 2; {selector}; its report could not be closed: OSError",
+                    True,
+                ),
+                self._run("raise SystemExit(2)", report="composed"),
+            )
 
     def test_an_unexpected_exit_status_is_a_gap(self) -> None:
         self.assertEqual((3, "exited 3", False), self._run("raise SystemExit(3)"))

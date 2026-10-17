@@ -39,6 +39,7 @@ from tools.github_events import exact_sha
 from tools.repository_scope import (
     RepositoryScopeError,
     candidate_paths,
+    has_git_metadata,
     scope_error_detail,
 )
 from tools.requirements_lock import (
@@ -1597,8 +1598,6 @@ def _bounded_run(
     except BaseException:
         _close_report(stream)
         raise
-    if gap is None and status not in (0, 1):
-        gap = f"exited {status}"
     closed = _close_report(stream)
     if closed is not None:
         # The report's tail may be lost, so its capture is invalid, after the primary
@@ -1657,7 +1656,11 @@ def _drain_report(
         None if drained.selector_closed else "its output selector could not be closed"
     )
     if drained.outcome == "exited" and drained.returncode is not None:
-        return drained.returncode, cleanup, False
+        # A non-0/1 exit is named first, then a cleanup's detail, once (Octopus, the
+        # Router's O-a on #436).
+        status = drained.returncode
+        named = None if status in (0, 1) else f"exited {status}"
+        return status, _with(named, cleanup), False
     if drained.outcome == "deadline":
         gap, invalid = "timed out at the inventory deadline", False
     elif drained.outcome == "cap":
@@ -2427,9 +2430,9 @@ def _annotate_diff(
 ) -> dict[str, Any] | None:
     """Each finding's `in_diff` against `base`, or None, never False, when the
     comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope. Without
-    `compare`, the base is still checked, and nothing is compared: a dirty or unknown
-    tree's producers read the working tree, and the comparison reads HEAD (the
-    Router's D1 on #436)."""
+    `compare`, only the base's form is checked, never whether it names a commit, and
+    nothing is compared: a dirty or unknown tree's producers read the working tree,
+    and the comparison reads HEAD (the Router's D1 and B-a on #436)."""
     diff: dict[str, Any] | None = None
     changed: dict[str, list[int]] | None = None
     try:
@@ -2466,17 +2469,6 @@ _SOURCE_BINDING_GAP = (
 )
 
 
-def _owns_git_metadata(root: Path) -> bool:
-    """Whether `root` has a `.git` entry of its own, by `lstat`, as the scope owner
-    checks it: a directory, or a linked worktree's file. An entry that cannot be
-    inspected is no proof of a repository (the Router's G-a on #436)."""
-    try:
-        (root / ".git").lstat()
-    except OSError:
-        return False
-    return True
-
-
 def _diagnostic_subject(
     root: Path, expected_revision: str | None, deadline: float
 ) -> tuple[dict[str, Any], list[str]]:
@@ -2484,16 +2476,24 @@ def _diagnostic_subject(
     from that view (Codex on #436), and no bounded check of the index is admitted, so
     the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
     6210989878)."""
-    if time.monotonic() >= deadline:
-        # A spent budget reads nothing: the state is unknown (CodeAnt on #436).
-        state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
-    elif not _owns_git_metadata(root):
-        # A root with no `.git` of its own, such as a packaged root inside another
-        # checkout, is never bound to an enclosing repository: its state is unknown,
-        # and no Git is read (Codex, the Router's G-a on #436).
-        state = {"revision": None, "tracked_tree_dirty": None}
-    else:
-        state = _git_state(root, timeout=_time_left(deadline))
+    state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
+    if time.monotonic() < deadline:
+        # A spent budget reads nothing, and its state is unknown (CodeAnt on #436).
+        # Otherwise the scope owner classifies `root/.git`. A root with none of its
+        # own, such as a packaged root inside another checkout, is never bound to an
+        # enclosing repository: its state is unknown, and no Git is read (Codex, the
+        # Router's G-a on #436). Unsafe or uninspectable metadata is no proof of
+        # absence, so the inventory is refused, by its category alone (the Router's
+        # 6239259708 on #436).
+        try:
+            owned = has_git_metadata(root)
+        except RepositoryScopeError as exc:
+            raise QualityEvidenceError(
+                scope_error_detail("cannot bind the subject's Git metadata", exc)
+                + "; no inventory was written"
+            ) from exc
+        if owned:
+            state = _git_state(root, timeout=_time_left(deadline))
     if state["tracked_tree_dirty"] is None:
         # A state the shared reader could not read whole names no revision: its value
         # may be the caller's KNOWLEDGE_KIT_REVISION, never observed. A revision read
