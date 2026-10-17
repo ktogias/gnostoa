@@ -2466,6 +2466,17 @@ _SOURCE_BINDING_GAP = (
 )
 
 
+def _owns_git_metadata(root: Path) -> bool:
+    """Whether `root` has a `.git` entry of its own, by `lstat`, as the scope owner
+    checks it: a directory, or a linked worktree's file. An entry that cannot be
+    inspected is no proof of a repository (the Router's G-a on #436)."""
+    try:
+        (root / ".git").lstat()
+    except OSError:
+        return False
+    return True
+
+
 def _diagnostic_subject(
     root: Path, expected_revision: str | None, deadline: float
 ) -> tuple[dict[str, Any], list[str]]:
@@ -2476,6 +2487,11 @@ def _diagnostic_subject(
     if time.monotonic() >= deadline:
         # A spent budget reads nothing: the state is unknown (CodeAnt on #436).
         state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
+    elif not _owns_git_metadata(root):
+        # A root with no `.git` of its own, such as a packaged root inside another
+        # checkout, is never bound to an enclosing repository: its state is unknown,
+        # and no Git is read (Codex, the Router's G-a on #436).
+        state = {"revision": None, "tracked_tree_dirty": None}
     else:
         state = _git_state(root, timeout=_time_left(deadline))
     if state["tracked_tree_dirty"] is None:
