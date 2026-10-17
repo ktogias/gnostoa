@@ -2591,6 +2591,157 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             self._inventory(limits=limits)
         self.assertLessEqual(peak[0], 4)
 
+    def _package(self, where: Path) -> Path:
+        """A packaged root: the scope owner's manifest, and no `.git` of its own."""
+        (where / "tools").mkdir(parents=True)
+        (where / "tools" / "sample.py").write_text("def f(x):\n    return x\n")
+        (where / ".gnostoa-source-files").write_bytes(b"tools/sample.py\0")
+        return where
+
+    def _collect_spied(self, root: Path, output: Path, **options):
+        def quiet(command, *, cwd, environment, report, deadline, limits):
+            # A root outside the fixture's repository: the version answer, no findings.
+            if "--version" in command:
+                report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
+            else:
+                report.write_text("[]" if "ruff" in command else "", encoding="utf-8")
+            return 0, None, False
+
+        inside = root.resolve().is_relative_to(self.root.resolve())
+        state = Mock(side_effect=self.module._git_state)
+        comparison = Mock(side_effect=self.module._diagnostic_git)
+        with (
+            patch(
+                "tools.quality_evidence._bounded_run",
+                side_effect=self._fake_run if inside else quiet,
+            ),
+            patch.object(self.module, "_git_state", state),
+            patch.object(self.module, "_diagnostic_git", comparison),
+        ):
+            path = self.collect(root, output, **options)
+        return self._read(path), state, comparison
+
+    def test_a_root_without_its_own_git_is_not_bound_to_an_enclosing_checkout(
+        self,
+    ) -> None:
+        # Codex on #436, by the Router's G-a (6234212478): a manifest-backed root with
+        # no `.git` of its own, inside another checkout, recorded that checkout's HEAD
+        # and compared against its history. It reads no Git: no revision, its state
+        # unknown, the named gap, and no comparison; a requested revision is never an
+        # observed one. A linked worktree's `.git` file is its own.
+        self.mypy_records, self.ruff_records = {}, []
+        nested = self._package(self.root / "pkg")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "a package")
+        standalone = self._package(Path(self.directory.name) / "standalone")
+        unknown = "the tracked tree is dirty or its state is unknown"
+        cases = (
+            ("nested, a base", nested, {"base": self.base}),
+            ("nested, no base", nested, {}),
+            ("outside any repository, a base", standalone, {"base": self.base}),
+            ("outside any repository, no base", standalone, {}),
+        )
+        for index, (label, root, options) in enumerate(cases):
+            with self.subTest(label):
+                inventory, state, comparison = self._collect_spied(
+                    root, Path(self.directory.name) / f"out-{index}", **options
+                )
+                self.assertEqual([], state.call_args_list)
+                self.assertEqual([], comparison.call_args_list)
+                self.assertIsNone(inventory["source"]["revision"])
+                self.assertIsNone(inventory["source"]["tracked_tree_dirty"])
+                self.assertIsNone(inventory["scope"]["diff"])
+                self.assertEqual(
+                    ["tools/sample.py"], inventory["scope"]["full"]["expected"]
+                )
+                self.assertIn(unknown, inventory["coverage"]["reason"])
+        with self.subTest("a requested revision is never observed"):
+            with patch.dict(os.environ, {"KNOWLEDGE_KIT_REVISION": self.base}):
+                inventory, state, _comparison = self._collect_spied(
+                    nested,
+                    Path(self.directory.name) / "out-expected",
+                    expected_revision=self.base,
+                )
+            self.assertEqual([], state.call_args_list)
+            self.assertIsNone(inventory["source"]["revision"])
+            self.assertIn(
+                f"revision None is not the expected {self.base}",
+                inventory["coverage"]["reason"],
+            )
+        with self.subTest("a malformed base"):
+            inventory, _state, comparison = self._collect_spied(
+                nested, Path(self.directory.name) / "out-malformed", base="not-a-sha"
+            )
+            self.assertEqual([], comparison.call_args_list)
+            self.assertIn(
+                "base 'not-a-sha' is not a 40-hex commit id",
+                inventory["coverage"]["reason"],
+            )
+        with self.subTest("a linked worktree"):
+            worktree = Path(self.directory.name) / "linked"
+            self._git("worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            self.assertTrue((worktree / ".git").is_file())
+            inventory, state, _comparison = self._collect_spied(
+                worktree, Path(self.directory.name) / "out-linked"
+            )
+            self.assertEqual(1 + 1, state.call_count)
+            self.assertEqual(
+                self._git("rev-parse", "HEAD"), inventory["source"]["revision"]
+            )
+
+    def test_an_uninspectable_git_entry_is_an_unknown_subject(self) -> None:
+        # The Router's G-a: a `.git` that cannot be inspected is no proof of absence or
+        # of a clean repository. No Git subject or comparison read starts, and the
+        # scope owner reports its own classified outcome.
+        self.mypy_records, self.ruff_records = {}, []
+        real_lstat = Path.lstat
+
+        def failing(path, *args, **kwargs):
+            if path.name == ".git" and path.parent == self.root:
+                raise PermissionError(errno.EACCES, "denied")
+            return real_lstat(path, *args, **kwargs)
+
+        with patch.object(Path, "lstat", failing):
+            inventory, state, comparison = self._collect_spied(
+                self.root, self.output, base=self.base
+            )
+        self.assertEqual([], state.call_args_list)
+        self.assertEqual([], comparison.call_args_list)
+        self.assertIsNone(inventory["source"]["revision"])
+        self.assertIsNone(inventory["scope"]["diff"])
+        self.assertIsNone(inventory["scope"]["full"]["expected"])
+        self.assertIn("GIT_METADATA_IO", inventory["coverage"]["reason"])
+
+    def test_metadata_gone_at_the_final_read_leaves_the_comparison_unbound(
+        self,
+    ) -> None:
+        # The Router's G-a at the final subject read: metadata gone there reads no Git,
+        # and the existing unbound-subject handling nulls every in_diff.
+        real = self.module._diagnostic_subject
+        calls: list[Path] = []
+
+        def final_without_metadata(root, *args, **kwargs):
+            calls.append(root)
+            if len(calls) == 2:
+                (root / ".git").rename(root / ".git-moved")
+            return real(root, *args, **kwargs)
+
+        with patch.object(
+            self.module, "_diagnostic_subject", side_effect=final_without_metadata
+        ):
+            inventory, state, _comparison = self._collect_spied(
+                self.root, self.output, base=self.base
+            )
+        self.assertEqual(2, len(calls))
+        self.assertEqual(1, state.call_count)
+        self.assertIn(
+            "the subject could not be re-read after collection",
+            inventory["coverage"]["reason"],
+        )
+        self.assertEqual(
+            {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+        )
+
     def test_a_dirty_or_unknown_subject_is_never_compared(self) -> None:
         # The Router's D1 (6231894979): the producers read the working tree and the
         # comparison reads HEAD, so a definite in_diff for a dirty or unknown tree may
