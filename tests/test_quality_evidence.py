@@ -2618,6 +2618,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
     def test_a_spent_budget_spawns_no_git_and_a_failed_read_is_its_exit(self) -> None:
         # The Router's G1: past the deadline no Git starts, and a non-zero exit stays
         # CalledProcessError.
+        spent, deadline = time.monotonic() - 1, time.monotonic() + 30
         with patch(
             "tools.quality_evidence.subprocess.Popen",
             side_effect=AssertionError("Git started past the deadline"),
@@ -2626,12 +2627,12 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 subprocess.SubprocessError, "deadline had passed"
             ):
                 self.module._diagnostic_git(
-                    self.root, time.monotonic() - 1, "rev-parse", "HEAD", cap=4096
+                    self.root, spent, "rev-parse", "HEAD", cap=4096
                 )
         with self.assertRaises(subprocess.CalledProcessError):
             self.module._diagnostic_git(
                 self.root,
-                time.monotonic() + 30,
+                deadline,
                 "rev-parse",
                 "--verify",
                 "--end-of-options",
@@ -2653,6 +2654,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         for cap, read_last, reads in ((40, "rev-parse", 1), (100, "diff", 2)):
             with self.subTest(cap=cap):
                 spy = Mock(side_effect=real)
+                deadline = time.monotonic() + 30
                 with (
                     patch.object(self.module, "_diagnostic_git", spy),
                     self.assertRaisesRegex(
@@ -2660,9 +2662,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                         "the comparison's Git output exceeds max_report_bytes",
                     ),
                 ):
-                    self.module._diff_scope(
-                        self.root, self.base, time.monotonic() + 30, cap=cap
-                    )
+                    self.module._diff_scope(self.root, self.base, deadline, cap=cap)
                 verbs = [call.args[2] for call in spy.call_args_list]
                 self.assertEqual(reads, len(verbs), verbs)
                 self.assertEqual(read_last, verbs[-1])
@@ -2702,6 +2702,136 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             f"cannot compare with base {self.base}: the comparison's Git output exceeds max_report_bytes",
             inventory["coverage"]["reason"],
         )
+
+    def _ruff_alone(self, records, max_findings: int):
+        """`_run_ruff` alone, over the fake producer's `records`, under `max_findings`."""
+        self.ruff_records = records
+        run = Path(tempfile.mkdtemp(prefix="ruff-run-", dir=self.directory.name))
+        limits = self.module.DiagnosticLimits(max_findings=max_findings)
+        with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
+            result = self.module._run_ruff(
+                self.root,
+                run,
+                ["tests/test_sample.py", "tools/sample.py"],
+                limits,
+                time.monotonic() + 30,
+                "1.0.0",
+            )
+        return result, run
+
+    def test_ruff_past_the_findings_budget_retains_only_the_allowance(self) -> None:
+        # CodeAnt on #436, by the Router's R1 (6232786300): ruff kept every record's
+        # finding before the refusal. As M1 for mypy, past the allowance a record is
+        # validated and counted, never kept: the first above it is the one witness.
+        def valid(n: int) -> dict[str, object]:
+            return self._ruff("tests/test_sample.py", n, 1, "F401", f"r{n}")
+
+        for label, records, allowance, kept, counted in (
+            ("none", [], 3, 0, 0),
+            ("exactly the allowance", [valid(n) for n in range(1, 4)], 3, 3, 3),
+            ("one past it", [valid(n) for n in range(1, 5)], 3, 4, 4),
+            ("many past it", [valid(n) for n in range(1, 41)], 3, 4, 40),
+            ("duplicates", [valid(1)] * 6, 3, 4, 6),
+        ):
+            with self.subTest(label):
+                result, _run = self._ruff_alone(records, allowance)
+                self.assertEqual(kept, len(result.findings))
+                self.assertEqual(counted, result.count())
+        with self.subTest("a malformed record past the allowance, then valid ones"):
+            records = [valid(n) for n in range(1, 5)] + [{"code": "F401"}] + [valid(9)]
+            result, run = self._ruff_alone(records, 3)
+            self.assertEqual(4, len(result.findings))
+            self.assertEqual(5, result.count())
+            self.assertIn(
+                "ruff unparsable report", result.unanalyzed["tests/test_sample.py"]
+            )
+            self.assertEqual(
+                json.dumps(records), (run / "diagnostic-ruff.json").read_text("utf-8")
+            )
+
+    def test_ruff_past_the_findings_budget_is_refused_with_its_real_count(self) -> None:
+        # The Router's R1: the refusal names the raw count, no later producer starts,
+        # and no inventory is written.
+        self.mypy_records = {}
+        self.ruff_records = [
+            self._ruff("tests/test_sample.py", n, 1, "F401", f"r{n}")
+            for n in range(1, 11)
+        ]
+        limits = self.module.DiagnosticLimits(max_findings=3)
+        with (
+            patch.object(
+                self.module, "_run_complexity", side_effect=AssertionError("started")
+            ),
+            self.assertRaisesRegex(
+                QualityEvidenceError, "budget: 10 findings exceed max_findings 3"
+            ),
+        ):
+            self._inventory(limits=limits)
+        self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
+
+    def _late_by(self, stage: str):
+        """A clock that passes the deadline during `stage`: the inventory document's
+        serialization, or the creation of its output handle (the Router's T1)."""
+        clock = [1000.0]
+        real_dumps, real_new_file = json.dumps, self.module._new_file
+
+        def dumps(value, *args, **kwargs):
+            if (
+                stage == "serialization"
+                and isinstance(value, dict)
+                and value.get("schema") == self.module.DIAGNOSTIC_SCHEMA
+            ):
+                clock[0] = 10_000.0
+            return real_dumps(value, *args, **kwargs)
+
+        def new_file(path):
+            if stage == "output" and path.name == self.module.DIAGNOSTIC_INVENTORY:
+                clock[0] = 10_000.0
+            return real_new_file(path)
+
+        return (
+            patch.object(self.module.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(self.module.json, "dumps", side_effect=dumps),
+            patch.object(self.module, "_new_file", side_effect=new_file),
+        )
+
+    def test_a_deadline_crossed_while_publishing_is_recorded(self) -> None:
+        # Codex on #436, by the Router's T1 (6232786300): the last check preceded the
+        # document and its serialization. The clock is now read after serialization,
+        # with the output handle already open, and a late result is rebuilt once.
+        for stage in ("serialization", "output"):
+            with self.subTest(stage):
+                shutil.rmtree(self.output, ignore_errors=True)
+                clock, dumps, new_file = self._late_by(stage)
+                with clock, dumps, new_file:
+                    inventory = self._inventory()
+                reason = inventory["coverage"]["reason"]
+                self.assertEqual(
+                    1, reason.count("the inventory ran past its deadline"), reason
+                )
+
+    def test_an_on_time_inventory_is_published_once_without_the_late_gap(self) -> None:
+        # The Router's T1: an on-time inventory is unchanged, and every inventory is one
+        # payload write to its one destination.
+        writes: list[int] = []
+        real_new_file = self.module._new_file
+
+        def counting(path):
+            stream = real_new_file(path)
+            if path.name == self.module.DIAGNOSTIC_INVENTORY:
+                real_write = stream.write
+
+                def write(data):
+                    writes.append(len(data))
+                    return real_write(data)
+
+                stream.write = write
+            return stream
+
+        with patch.object(self.module, "_new_file", side_effect=counting):
+            inventory = self._inventory()
+        self.assertNotIn("ran past its deadline", inventory["coverage"]["reason"])
+        self.assertEqual(1, len(writes))
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are

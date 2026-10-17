@@ -1395,7 +1395,6 @@ _QUOTED = re.compile(r'"([^"]+)"')
 _DECISIONS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHandler)
 
 
-# One read of a producer's output stream.
 @dataclasses.dataclass(frozen=True)
 class DiagnosticLimits:
     """The finite bounds of one inventory: one deadline for every producer and Git
@@ -1425,6 +1424,16 @@ class _ProducerResult:
     def count(self) -> int:
         """The raw count of valid findings, those kept and those only counted."""
         return len(self.findings) + self.excess
+
+    def keep(self, finding: dict[str, Any], max_findings: int) -> None:
+        """Keep a validated finding while the raw count is within `max_findings`,
+        the first one past it included as the witness; past it, count it only, so
+        that the refusal names the real count (the Router's M1, R1 and S-a on
+        #436)."""
+        if self.count() <= max_findings:
+            self.findings.append(finding)
+        else:
+            self.excess += 1
 
     def merge(self, other: _ProducerResult) -> None:
         self.runs += other.runs
@@ -1540,6 +1549,11 @@ def _with(gap: str | None, detail: str | None) -> str | None:
     if detail is None:
         return gap
     return detail if gap is None else f"{gap}; {detail}"
+
+
+def _and(reason: str, detail: str | None) -> str:
+    """A reason, then a cleanup's detail."""
+    return reason if detail is None else f"{reason}; {detail}"
 
 
 def _bounded_run(
@@ -1786,10 +1800,7 @@ def _mypy_records(
             if parse_gap is None:
                 parse_gap = f"unparsable mypy report: {type(exc).__name__}"
             continue
-        if result.count() > max_findings:
-            result.excess += 1
-        else:
-            result.findings.append(finding)
+        result.keep(finding, max_findings)
         is_error = record.get("severity") == "error"
         errors += is_error
         if is_error and record.get("code") is None:
@@ -1901,7 +1912,9 @@ def _run_ruff(
     limits: DiagnosticLimits,
     deadline: float,
     version: str | None,
+    max_findings: int | None = None,
 ) -> _ProducerResult:
+    allowance = limits.max_findings if max_findings is None else max_findings
     result = _ProducerResult()
     command = [
         sys.executable,
@@ -1951,10 +1964,12 @@ def _run_ruff(
     # (Codex on #436), as mypy's are.
     for record in records:
         try:
-            result.findings.append(_ruff_finding(record, root))
+            finding = _ruff_finding(record, root)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             if gap is None:
                 gap = f"unparsable report: {type(exc).__name__}"
+            continue
+        result.keep(finding, allowance)
     gap = _ruff_gap(status, gap, records)
     if gap is not None:
         result.unanalyzed.update({path: f"ruff {gap}" for path in paths})
@@ -2142,7 +2157,15 @@ def _run_producers(
         # holds, no later producer starts, and that refusal follows (cubic on #436).
         if result.count() <= limits.max_findings:
             result.merge(
-                _run_ruff(root, run, paths, limits, deadline, versions["ruff"])
+                _run_ruff(
+                    root,
+                    run,
+                    paths,
+                    limits,
+                    deadline,
+                    versions["ruff"],
+                    limits.max_findings - result.count(),
+                )
             )
         if result.count() <= limits.max_findings:
             result.merge(
@@ -2211,7 +2234,7 @@ def _diagnostic_git(
     output = bytearray()
     if process.stdout is None:
         raise _ComparisonRefused(
-            _with("the comparison's Git output is unavailable", _reap(process)) or ""
+            _and("the comparison's Git output is unavailable", _reap(process))
         )
     try:
         drained = bounded_process.drain(
@@ -2236,19 +2259,27 @@ def _diagnostic_git(
         # Bytes, decoded without newline translation, so that a CRLF inside a
         # NUL-delimited name survives (CodeAnt on #436).
         return output.decode("utf-8", errors="surrogateescape")
-    reaped = _reap(process)
+    raise _git_failure(drained, _reap(process))
+
+
+def _git_failure(drained: bounded_process.Drained, reaped: str | None) -> Exception:
+    """The exception for a Git read that did not exit cleanly, after its child was
+    reaped once: the comparison's own reason, by the exception's type and with the
+    cleanup's detail, or, when the child was reaped, the timeout or the read error
+    itself (the Router's G1 and S-b on #436). It never reaps, and never runs Git."""
     if drained.outcome == "cap":
-        raise _ComparisonRefused(
-            _with("the comparison's Git output exceeds max_report_bytes", reaped) or ""
+        return _ComparisonRefused(
+            _and("the comparison's Git output exceeds max_report_bytes", reaped)
         )
     if drained.outcome == "deadline" and reaped is None:
-        raise subprocess.TimeoutExpired(command, 0)
+        # The static name: an exception value, no process (Codacy on #436).
+        return subprocess.TimeoutExpired("git", 0)
     if drained.outcome == "error" and drained.error is not None and reaped is None:
-        raise drained.error
+        return drained.error
     failure = drained.error or drained.exception
     kind = type(failure).__name__ if failure is not None else drained.outcome
-    raise _ComparisonRefused(
-        _with(f"the comparison's Git output was not read whole ({kind})", reaped) or ""
+    return _ComparisonRefused(
+        _and(f"the comparison's Git output was not read whole ({kind})", reaped)
     )
 
 
@@ -2609,38 +2640,69 @@ def collect_diagnostic_inventory(
         findings = deduplicate_findings(result.findings)
     except AnalyzerReadbackError as exc:
         raise QualityEvidenceError(f"cannot normalize the findings: {exc}") from exc
-    if time.monotonic() > deadline:
-        # Checked after the inventory's own work, so that only the document's
-        # serialization and write follow it (Codex on #436); what takes no budget, the
-        # local reads, is reported here when late (the PAO's F3-BND-01 on #436).
-        gaps.append("the inventory ran past its deadline")
-    document = {
-        "schema": DIAGNOSTIC_SCHEMA,
-        "status": "EXPERIMENTAL",
-        "source": source,
-        "configuration": _inventory_configuration(limits),
-        "producers": result.runs,
-        "scope": {
-            "full": {
-                "expected": expected,
-                "unanalyzed": [
-                    {"path": p, "reason": r}
-                    for p, r in sorted(result.unanalyzed.items())
-                ],
-                "partial": {
-                    p: sorted(set(m)) for p, m in sorted(result.partial.items())
+    return _publish(
+        run,
+        deadline,
+        source=source,
+        limits=limits,
+        result=result,
+        expected=expected,
+        diff=diff,
+        findings=findings,
+        gaps=gaps,
+    )
+
+
+def _publish(
+    run: Path,
+    deadline: float,
+    *,
+    source: dict[str, Any],
+    limits: DiagnosticLimits,
+    result: _ProducerResult,
+    expected: list[str] | None,
+    diff: dict[str, Any] | None,
+    findings: list[dict[str, Any]],
+    gaps: list[str],
+) -> Path:
+    """Write the inventory once. Its bytes are serialized, and its exclusive file
+    opened, before the clock's last reading, so that a deadline crossed while
+    preparing them is recorded: the gap is added once, and the coverage and the bytes
+    are rebuilt once (Codex, the Router's T1 and S-c on #436). Only the write and
+    close follow that reading."""
+
+    def encoded() -> bytes:
+        document = {
+            "schema": DIAGNOSTIC_SCHEMA,
+            "status": "EXPERIMENTAL",
+            "source": source,
+            "configuration": _inventory_configuration(limits),
+            "producers": result.runs,
+            "scope": {
+                "full": {
+                    "expected": expected,
+                    "unanalyzed": [
+                        {"path": p, "reason": r}
+                        for p, r in sorted(result.unanalyzed.items())
+                    ],
+                    "partial": {
+                        p: sorted(set(m)) for p, m in sorted(result.partial.items())
+                    },
                 },
+                "diff": diff,
             },
-            "diff": diff,
-        },
-        "coverage": _diagnostic_coverage(expected, result, gaps, len(result.runs)),
-        "findings": findings,
-    }
+            "coverage": _diagnostic_coverage(expected, result, gaps, len(result.runs)),
+            "findings": findings,
+        }
+        return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+    payload = encoded()
     inventory = run / DIAGNOSTIC_INVENTORY
     with _new_file(inventory) as stream:
-        stream.write(
-            (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        )
+        if time.monotonic() > deadline:
+            gaps.append("the inventory ran past its deadline")
+            payload = encoded()
+        stream.write(payload)
     return inventory
 
 
