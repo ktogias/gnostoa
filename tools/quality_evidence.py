@@ -1388,6 +1388,10 @@ DIAGNOSTIC_RULE_MAP: dict[tuple[str, str], str] = {
     ("complexity", "cc"): "PY-R1000",
 }
 DIAGNOSTIC_RUFF_SELECT = ("SLF001", "PLR6301", "SIM117", "S106")
+# The Python grammar every producer analyzes: the declared requires-python floor,
+# as mypy's --python-version, ruff's --target-version and the metric's own parse
+# (Codex on #436).
+_PYTHON_TARGET = (3, 11)
 COMPLEXITY_METRIC = "cyclomatic-n-1/v1"
 COMPLEXITY_REPORTED_ABOVE = 15
 _DIAGNOSTIC_FIXTURE_ROOT = "tests/fixtures/"
@@ -1764,7 +1768,7 @@ def _mypy_command(
         "mypy",
         "--config-file=",
         "--python-version",
-        "3.11",
+        "{}.{}".format(*_PYTHON_TARGET),
         "--output",
         "json",
         *flags,
@@ -1981,7 +1985,7 @@ def _run_ruff(
         "--no-cache",
         "--preview",
         "--target-version",
-        "py311",
+        "py{}{}".format(*_PYTHON_TARGET),
         "--select",
         ",".join(DIAGNOSTIC_RUFF_SELECT),
         "--output-format",
@@ -2122,8 +2126,10 @@ def _run_complexity(
                 )
                 continue
             # The bytes, so that an encoding cookie or a BOM is read as Python reads it
-            # (Octopus on #436).
-            tree = ast.parse(source, filename=path)
+            # (Octopus on #436), in the producers' declared grammar, so that a host's
+            # newer one changes nothing: best-effort, as Python's feature_version is
+            # (Codex on #436).
+            tree = ast.parse(source, filename=path, feature_version=_PYTHON_TARGET)
         except (
             OSError,
             SyntaxError,
@@ -2599,6 +2605,13 @@ def _inventory_configuration(limits: DiagnosticLimits) -> dict[str, Any]:
             "metric": COMPLEXITY_METRIC,
             "reported_above": COMPLEXITY_REPORTED_ABOVE,
             "qualification": "UNQUALIFIED",
+            # The grammar the metric parses: the producers' declared target, bound
+            # best-effort as Python's feature_version is, which promises no AST
+            # identical to that Python's own (Codex, the Router's 6242507671 on #436).
+            "grammar": {
+                "python": "{}.{}".format(*_PYTHON_TARGET),
+                "binding": "BEST_EFFORT",
+            },
         },
         "limits": dataclasses.asdict(limits),
     }
