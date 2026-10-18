@@ -413,6 +413,23 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         self.assertLess(0, seen[1])
         self.assertLess(seen[1], seen[0])
 
+    def test_the_identity_check_gets_what_is_left_of_the_budget(self) -> None:
+        # The surviving mutant on e412f307: the identity check took the caller's whole
+        # timeout instead of what was left of the end it had fixed. A clock that moves
+        # between the two readings tells them apart.
+        module = self.module()
+        readings = iter([100.0, 100.5, 101.0])
+        identity = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                module.time, "monotonic", side_effect=lambda: next(readings)
+            ),
+            mock.patch.object(module, "has_git_metadata", identity),
+            mock.patch.object(module, "_git_candidate_paths", return_value=[]),
+        ):
+            module.candidate_paths(Path("."), timeout=2.5)
+        self.assertEqual(2.0, identity.call_args.kwargs["timeout"])
+
     def test_the_identity_check_counts_its_own_inspection(self) -> None:
         # Codex on #436, by the Router's I-b: the entry's lstat ran after the budget
         # was fixed, and the identity Git read still got the full timeout, so a slow
