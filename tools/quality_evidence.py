@@ -2725,6 +2725,32 @@ def _refuse_caller_git_overrides() -> None:
         )
 
 
+def _subject_unbound(
+    source: dict[str, Any],
+    after: dict[str, Any],
+    identity_gap: str | None,
+    gaps: list[str],
+) -> bool:
+    """Whether the recheck after collection leaves the subject unbound, naming why
+    in `gaps`: a read that could not finish, with its own identity failure once, or
+    a subject that changed during collection (SonarCloud's S3776 on #436)."""
+    if after["tracked_tree_dirty"] is None:
+        # A read that could not finish is no evidence of a change (Claude on #436).
+        gaps.append("the subject could not be re-read after collection")
+        # Its own identity failure is named too, once (the Router's 6243847776 on
+        # #436).
+        if identity_gap is not None and identity_gap not in gaps:
+            gaps.append(identity_gap)
+        return True
+    if source["tracked_tree_dirty"] is not None and (
+        after["revision"],
+        after["tracked_tree_dirty"],
+    ) != (source["revision"], source["tracked_tree_dirty"]):
+        gaps.append("the subject changed during collection")
+        return True
+    return False
+
+
 def collect_diagnostic_inventory(
     repository_root: Path,
     output_directory: Path,
@@ -2778,21 +2804,7 @@ def collect_diagnostic_inventory(
         )
     )
     after, identity_gap = _subject_state(root, deadline)
-    unbound = True
-    if after["tracked_tree_dirty"] is None:
-        # A read that could not finish is no evidence of a change (Claude on #436).
-        gaps.append("the subject could not be re-read after collection")
-        # Its own identity failure is named too, once (the Router's 6243847776 on
-        # #436).
-        if identity_gap is not None and identity_gap not in gaps:
-            gaps.append(identity_gap)
-    elif source["tracked_tree_dirty"] is not None and (
-        after["revision"],
-        after["tracked_tree_dirty"],
-    ) != (source["revision"], source["tracked_tree_dirty"]):
-        gaps.append("the subject changed during collection")
-    else:
-        unbound = False
+    unbound = _subject_unbound(source, after, identity_gap, gaps)
     if base is not None and unbound:
         # The comparison no longer describes the subject, so no answer stays definite,
         # and its own record is not published as bound provenance either (the Router's
