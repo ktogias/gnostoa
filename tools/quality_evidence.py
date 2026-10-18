@@ -1789,12 +1789,15 @@ def _mypy_finding(record: Mapping[str, Any], prefix: str) -> dict[str, Any]:
     # Nothing is coerced: _location_range and _diagnostic_finding refuse what is not
     # an exact integer or a text, and only an integer column moves to 1-based.
     path = record["file"]
-    # A file that is absolute, has a .. segment or names only the group's root, as
-    # "", "." or "./" do, cannot be bound to a file of the group: it is the report's
-    # malformed record, before any prefix could hide it (Codex, routed by the Router
-    # 6224373564 and 6241642961 on #436, M2).
+    # A file that is absolute, has a .. segment, names only the group's root, as "", "."
+    # or "./" do, or holds a NUL, which no path can, cannot be bound to a file of the
+    # group: it is the report's malformed record, before any prefix could hide it
+    # (Codex, routed by the Router 6224373564 and 6241642961 on #436, M2).
     if type(path) is str and (
-        not PurePosixPath(path).parts or path.startswith("/") or ".." in path.split("/")
+        not PurePosixPath(path).parts
+        or path.startswith("/")
+        or ".." in path.split("/")
+        or "\0" in path
     ):
         raise ValueError(f"mypy file {path!r} is not relative to its group's root")
     # A valid spelling, as "./tools/sample.py", is keyed by its canonical relative path,

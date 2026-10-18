@@ -3821,6 +3821,68 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 )
                 self.assertNotIn("tests/test_sample.py", result.unanalyzed)
 
+    def test_a_filename_with_a_nul_is_a_malformed_record(self) -> None:
+        # Codex on #436, by the Router's M2: a mypy file holding a NUL names no file a
+        # path can reach, and was published as a finding, with no gap. In the main and
+        # the fixture groups it is the report's malformed record; ruff's resolution
+        # already refuses one.
+        groups = {
+            "": ("tools/sample.py", "mypy:main"),
+            "tests/fixtures/one/": (
+                "tests/fixtures/one/baseline.py",
+                "mypy:tests/fixtures/one",
+            ),
+        }
+        self.ruff_records, self.ruff_exit = [], 0
+        # The Router's 6244363609: valid records before and after it both survive, and
+        # the raw report keeps the producer's own bytes.
+        self.mypy_records = {
+            path: [
+                self._mypy(path, 1, 1, "misc", f"earlier {group}"),
+                self._mypy(prefix + "bad\0.py", 1, 1, "misc", f"nul {group}"),
+                self._mypy(path, 1, 1, "misc", f"later {group}"),
+            ]
+            for prefix, (path, group) in groups.items()
+        }
+        self.mypy_exit = {".": 1, "tests/fixtures/one/": 1}
+        inventory = self._inventory()
+        found = {
+            f["message"]: (f["path"], f["native"]["tracked"])
+            for f in inventory["findings"]
+            if f["tool"]["id"] == "mypy"
+        }
+        self.assertEqual(
+            {
+                f"{when} {group}": (path, True)
+                for path, group in groups.values()
+                for when in ("earlier", "later")
+            },
+            found,
+        )
+        reports = "".join(
+            report.read_text(encoding="utf-8")
+            for report in self.run_directory.glob("diagnostic-*-mypy-*.jsonl")
+        )
+        self.assertEqual(2, reports.count('"file": "bad\\u0000.py"'))
+        unanalyzed = {
+            u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
+        }
+        for path, group in groups.values():
+            self.assertEqual(
+                f"{group} unparsable mypy report: ValueError", unanalyzed[path]
+            )
+        self.ruff_exit = 1
+        nul = {
+            **self._ruff("tests/test_sample.py", 2, 1, "F401", "nul"),
+            "filename": "bad\0.py",
+        }
+        later = self._ruff("tests/test_sample.py", 3, 1, "F401", "later")
+        result, _run = self._ruff_alone([nul, later], 10)
+        self.assertEqual(["later"], [f["message"] for f in result.findings])
+        self.assertIn(
+            "ruff unparsable report", result.unanalyzed["tests/test_sample.py"]
+        )
+
     def test_a_valid_mypy_spelling_is_keyed_by_its_canonical_path(self) -> None:
         # Claude on #436, by the Router's M2 (6242233401): a valid mypy file spelled
         # "./tools/sample.py" was kept verbatim, so a tracked file read as untracked and
