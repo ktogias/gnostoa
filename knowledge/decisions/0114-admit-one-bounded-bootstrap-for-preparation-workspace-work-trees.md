@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Admit one bounded bootstrap for declaring each preparation workspace's own work tree
-description: The owner-approved N-a narrowing in #436 refuses a gitfile whose selected Git directory declares no core.worktree, and the trusted preparer builds exactly such workspaces, so no candidate carrying N-a can be prepared. This Decision admits one finite, two-stage bootstrap for the first evolution of tools/candidate_prepare.py. After this governance change is integrated, an activation record binds the exact protected parent and its authority inventory for 48 hours. The one constructor correction is then published with every replacement blob bound, verified directly as Decisions 0109 and 0113 were, and recorded as having no ordinary preparation receipt.
+description: "The owner-approved N-a narrowing in #436 refuses a gitfile whose selected Git directory declares no core.worktree, and the trusted preparer builds exactly such workspaces, so no candidate carrying N-a can be prepared. This Decision admits one finite, two-stage bootstrap for the first evolution of tools/candidate_prepare.py. After this governance change is integrated, an activation record binds the exact protected parent and its authority inventory for 48 hours. The one constructor correction is then published with every replacement blob bound, verified directly as Decisions 0109 and 0113 were, and recorded as having no ordinary preparation receipt."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -81,8 +81,8 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
    workspaces. Its tests go in the existing `tests/test_candidate_prepare.py`.
    - **The allowlist:** those two paths, and no other.
    - **Unchanged:** every other configuration write, file and responsibility,
-     including `ci/prepare-candidate`, `ci/style`, `ci/verify` and the Ruff
-     configuration.
+     including `ci/prepare-candidate`, `ci/style`, `ci/verify`, the Ruff
+     configuration and the dependency locks.
 2. **This governance change edits no protected authority.** It is effective only
    once integrated through its ordinary native normative review and the owner's
    acceptance. Until then, nothing in the preparation authority changes.
@@ -91,7 +91,8 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
    - the full protected-main SHA **P** and its tree;
    - this governance change's merge identity;
    - the complete path-and-blob inventory of the preparation authority and its
-     configuration.
+     configuration: Decision 0090's protected paths, plus the dependency locks
+     that Decisions 0109 and 0113 treat as preparation-authority surfaces.
 
    That record is retained on #438 together with an absolute UTC expiry. It is
    compared with the admitted old-authority inventory below, read at main
@@ -105,6 +106,8 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
    | `ci/verify` | `56e9f2f6e5982c0da55fd594b0962244769853df` |
    | `tools/candidate_prepare.py` | `88b5d4eaef838135c5246f2e65bb10f81b72af90` |
    | `pyproject.toml` | `b4470749c54893140544b33cb729e132a8e06f24` |
+   | `requirements/development.lock` | `9c0b944b7da06982d4673519eafaba96415fa65c` |
+   | `requirements/runtime.lock` | `52ef2878a30dcfa2161e6a6f1cf1773f293b8570` |
    | `tests/test_candidate_prepare.py` | `f039ea635816c12e78fcbb6f94b143f28415b081` |
 
    No `ruff.toml` or `.ruff.toml` exists at `839ffea5`.
