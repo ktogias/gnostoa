@@ -2530,6 +2530,7 @@ def _diagnostic_subject(
     the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
     6210989878)."""
     state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
+    identity_gap: str | None = None
     # One clock reading decides each check and its timeout: a spent budget starts no
     # Git, and an open one passes exactly what is left, never a floor (Codex, the
     # Router's I-b on #436).
@@ -2549,6 +2550,11 @@ def _diagnostic_subject(
             owned = has_git_metadata(root, timeout=remaining)
         except RepositoryScopeError as exc:
             _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
+            # Any other scope error is its own named gap, by its category, never its
+            # text, as everywhere else (Amazon Q on #436).
+            identity_gap = scope_error_detail(
+                "cannot confirm the subject's Git identity", exc
+            )
         except OverflowError as exc:
             raise _unrepresentable_timeout("the subject's Git metadata") from exc
         remaining = deadline - time.monotonic()
@@ -2566,6 +2572,8 @@ def _diagnostic_subject(
     gaps = []
     if state["tracked_tree_dirty"] is not False:
         gaps.append("the tracked tree is dirty or its state is unknown")
+    if identity_gap is not None:
+        gaps.append(identity_gap)
     if expected_revision is not None and state["revision"] != expected_revision:
         gaps.append(
             f"revision {state['revision']} is not the expected {expected_revision}"

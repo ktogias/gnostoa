@@ -2825,16 +2825,28 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         # unknown; a budget the check spends reads no subject either.
         from tools.repository_scope import RepositoryScopeError
 
+        # Each such failure is its own named gap, by its category and never its text,
+        # as every other scope error is (Amazon Q on #436).
         self.mypy_records, self.ruff_records = {}, []
-        timed_out = RepositoryScopeError("timed out", category="GIT_TIMEOUT")
-        with patch.object(self.module, "has_git_metadata", side_effect=timed_out):
-            inventory, state, _comparison = self._collect_spied(self.root, self.output)
-        self.assertEqual([], state.call_args_list)
-        self.assertIsNone(inventory["source"]["revision"])
-        self.assertIn(
-            "the tracked tree is dirty or its state is unknown",
-            inventory["coverage"]["reason"],
-        )
+        for category in ("GIT_TIMEOUT", "GIT_FAILED", "GIT_IO"):
+            with self.subTest(category):
+                shutil.rmtree(self.output, ignore_errors=True)
+                failed = RepositoryScopeError("raw /host detail", category=category)
+                with patch.object(self.module, "has_git_metadata", side_effect=failed):
+                    inventory, state, _comparison = self._collect_spied(
+                        self.root, self.output
+                    )
+                self.assertEqual([], state.call_args_list)
+                self.assertIsNone(inventory["source"]["revision"])
+                reason = inventory["coverage"]["reason"]
+                self.assertIn(
+                    "the tracked tree is dirty or its state is unknown", reason
+                )
+                self.assertIn(
+                    f"cannot confirm the subject's Git identity (scope error: {category})",
+                    reason,
+                )
+                self.assertNotIn("raw /host detail", json.dumps(inventory))
 
         def spending(root, *, timeout=None):
             time.sleep(0.4)
