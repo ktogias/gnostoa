@@ -2522,13 +2522,10 @@ def _unrepresentable_timeout(read: str) -> QualityEvidenceError:
     )
 
 
-def _diagnostic_subject(
-    root: Path, expected_revision: str | None, deadline: float
-) -> tuple[dict[str, Any], list[str]]:
-    """The subject as `git status` sees it, and its gaps. The index can hide an edit
-    from that view (Codex on #436), and no bounded check of the index is admitted, so
-    the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
-    6210989878)."""
+def _subject_state(root: Path, deadline: float) -> tuple[dict[str, Any], str | None]:
+    """The subject's Git state, read within the one budget, and the identity check's
+    own named gap when it failed operationally: the subject read and the recheck after
+    collection both keep it (Amazon Q, the Router's 6243847776 on #436)."""
     state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
     identity_gap: str | None = None
     # One clock reading decides each check and its timeout: a spent budget starts no
@@ -2569,6 +2566,17 @@ def _diagnostic_subject(
         # just before a failed or out-of-budget status read is dropped too, a stated,
         # conservative loss (the Router's V1, 6225341677 on #436).
         state = {**state, "revision": None}
+    return state, identity_gap
+
+
+def _diagnostic_subject(
+    root: Path, expected_revision: str | None, deadline: float
+) -> tuple[dict[str, Any], list[str]]:
+    """The subject as `git status` sees it, and its gaps. The index can hide an edit
+    from that view (Codex on #436), and no bounded check of the index is admitted, so
+    the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
+    6210989878)."""
+    state, identity_gap = _subject_state(root, deadline)
     gaps = []
     if state["tracked_tree_dirty"] is not False:
         gaps.append("the tracked tree is dirty or its state is unknown")
@@ -2766,11 +2774,15 @@ def collect_diagnostic_inventory(
             compare=source["tracked_tree_dirty"] is False,
         )
     )
-    after, _ = _diagnostic_subject(root, expected_revision, deadline)
+    after, identity_gap = _subject_state(root, deadline)
     unbound = True
     if after["tracked_tree_dirty"] is None:
         # A read that could not finish is no evidence of a change (Claude on #436).
         gaps.append("the subject could not be re-read after collection")
+        # Its own identity failure is named too, once (the Router's 6243847776 on
+        # #436).
+        if identity_gap is not None and identity_gap not in gaps:
+            gaps.append(identity_gap)
     elif source["tracked_tree_dirty"] is not None and (
         after["revision"],
         after["tracked_tree_dirty"],

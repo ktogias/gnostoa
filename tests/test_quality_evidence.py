@@ -2861,6 +2861,52 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self.assertEqual([], state.call_args_list)
         self.assertIsNone(inventory["source"]["revision"])
 
+    def test_an_identity_failure_keeps_its_category_through_the_recheck(self) -> None:
+        # The Router's 6243847776 on #436: the identity check's own gap survives at the
+        # final subject recheck too, rather than being discarded with its gaps. It is
+        # never doubled, and an ordinary success names none.
+        from tools.repository_scope import RepositoryScopeError
+
+        self.mypy_records, self.ruff_records = {}, []
+        failed = RepositoryScopeError("raw /host detail", category="GIT_FAILED")
+        timed_out = RepositoryScopeError("raw /host detail", category="GIT_TIMEOUT")
+        named = "cannot confirm the subject's Git identity (scope error: {})"
+        reread = "the subject could not be re-read after collection"
+        for label, effect, expected in (
+            (
+                "an initial failure, then success",
+                [failed, True],
+                {named.format("GIT_FAILED"): 1, reread: 0},
+            ),
+            (
+                "a failure only at the recheck",
+                [True, timed_out],
+                {named.format("GIT_TIMEOUT"): 1, reread: 1},
+            ),
+            (
+                "the same failure at both",
+                [failed, failed],
+                {named.format("GIT_FAILED"): 1, reread: 1},
+            ),
+            (
+                "an ordinary success",
+                [True, True],
+                {"cannot confirm the subject's Git identity": 0, reread: 0},
+            ),
+        ):
+            with self.subTest(label):
+                shutil.rmtree(self.output, ignore_errors=True)
+                with patch.object(self.module, "has_git_metadata", side_effect=effect):
+                    inventory, _state, _comparison = self._collect_spied(
+                        self.root, self.output
+                    )
+                reason = inventory["coverage"]["reason"]
+                for text, count in expected.items():
+                    self.assertEqual(count, reason.count(text), (text, reason))
+                self.assertNotIn("raw /host detail", json.dumps(inventory))
+                if effect[0] is True:
+                    self.assertEqual(self.base, inventory["source"]["revision"])
+
     def test_unsafe_metadata_at_the_tracked_read_refuses_the_inventory(self) -> None:
         # Claude on #436, by the Router's C-a: the scope owner's UNSAFE_PATH or
         # GIT_METADATA_IO at the tracked-set read refuses the inventory, as at the
@@ -2922,8 +2968,9 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
 
     def test_unsafe_git_metadata_at_the_final_read_refuses_the_inventory(self) -> None:
         # The Router's 6239259708 at the final subject read: metadata replaced by a
-        # symlink there is refused too, with no second Git subject read.
-        real = self.module._diagnostic_subject
+        # symlink there is refused too, with no second Git subject read. Both reads go
+        # through _subject_state (the Router's 6243847776 on #436).
+        real = self.module._subject_state
         calls: list[Path] = []
 
         def final_with_a_link(root, *args, **kwargs):
@@ -2933,9 +2980,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
                 (root / ".git").symlink_to(root / ".git-moved")
             return real(root, *args, **kwargs)
 
-        with patch.object(
-            self.module, "_diagnostic_subject", side_effect=final_with_a_link
-        ):
+        with patch.object(self.module, "_subject_state", side_effect=final_with_a_link):
             reason, state, _comparison = self._refused_spied(self.root, base=self.base)
         self.assertEqual(2, len(calls))
         self.assertEqual(1, state.call_count)
@@ -2984,8 +3029,9 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         self,
     ) -> None:
         # The Router's G-a at the final subject read: metadata gone there reads no Git,
-        # and the existing unbound-subject handling nulls every in_diff.
-        real = self.module._diagnostic_subject
+        # and the existing unbound-subject handling nulls every in_diff. Both reads go
+        # through _subject_state (the Router's 6243847776 on #436).
+        real = self.module._subject_state
         calls: list[Path] = []
 
         def final_without_metadata(root, *args, **kwargs):
@@ -2995,7 +3041,7 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
             return real(root, *args, **kwargs)
 
         with patch.object(
-            self.module, "_diagnostic_subject", side_effect=final_without_metadata
+            self.module, "_subject_state", side_effect=final_without_metadata
         ):
             inventory, state, _comparison = self._collect_spied(
                 self.root, self.output, base=self.base
