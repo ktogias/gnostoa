@@ -90,25 +90,26 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
    edit to the candidate authority, the implementer freshly reads and freezes:
    - the full protected-main SHA **P** and its tree;
    - this governance change's merge identity;
-   - the complete path-and-blob inventory of the preparation authority and its
-     configuration: Decision 0090's protected paths, plus the dependency locks
+   - the complete path, mode and blob inventory of the preparation authority and
+     its configuration: Decision 0090's protected paths, plus the dependency locks
      that Decisions 0109 and 0113 treat as preparation-authority surfaces.
 
    That record is retained on #438 together with an absolute UTC expiry. It is
    compared with the admitted old-authority inventory below, read at main
    `839ffea51c91935a0ff523607fe2e0ba354f15c1`. Any difference is drift and voids
-   the bootstrap, and an added or removed Ruff configuration path counts as one.
+   the bootstrap. An added or removed Ruff configuration path counts as one, and
+   so does a mode change alone, such as an executable bit, with the blob unchanged.
 
-   | Path | Blob at `839ffea5` |
-   |---|---|
-   | `ci/prepare-candidate` | `cb8fc7c1ca455e8619109ebe613f4603259385f2` |
-   | `ci/style` | `d132ff0fbfd13577aeb679644c5a1c68b508ba86` |
-   | `ci/verify` | `56e9f2f6e5982c0da55fd594b0962244769853df` |
-   | `tools/candidate_prepare.py` | `88b5d4eaef838135c5246f2e65bb10f81b72af90` |
-   | `pyproject.toml` | `b4470749c54893140544b33cb729e132a8e06f24` |
-   | `requirements/development.lock` | `9c0b944b7da06982d4673519eafaba96415fa65c` |
-   | `requirements/runtime.lock` | `52ef2878a30dcfa2161e6a6f1cf1773f293b8570` |
-   | `tests/test_candidate_prepare.py` | `f039ea635816c12e78fcbb6f94b143f28415b081` |
+   | Path | Mode | Blob at `839ffea5` |
+   |---|---|---|
+   | `ci/prepare-candidate` | `100755` | `cb8fc7c1ca455e8619109ebe613f4603259385f2` |
+   | `ci/style` | `100755` | `d132ff0fbfd13577aeb679644c5a1c68b508ba86` |
+   | `ci/verify` | `100755` | `56e9f2f6e5982c0da55fd594b0962244769853df` |
+   | `tools/candidate_prepare.py` | `100644` | `88b5d4eaef838135c5246f2e65bb10f81b72af90` |
+   | `pyproject.toml` | `100644` | `b4470749c54893140544b33cb729e132a8e06f24` |
+   | `requirements/development.lock` | `100644` | `9c0b944b7da06982d4673519eafaba96415fa65c` |
+   | `requirements/runtime.lock` | `100644` | `52ef2878a30dcfa2161e6a6f1cf1773f293b8570` |
+   | `tests/test_candidate_prepare.py` | `100644` | `f039ea635816c12e78fcbb6f94b143f28415b081` |
 
    No `ruff.toml` or `.ruff.toml` exists at `839ffea5`.
 4. **An exact parent, never a floating one.** The candidate's parent is P. If main
@@ -121,7 +122,8 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
      are retained.
    - **Then the one correction, then GREEN.**
    - **A publication record,** made before the candidate is published. It binds P
-     and every replacement blob, and every other tree entry must equal P's.
+     and every replacement path's mode and blob, and every other tree entry, mode
+     included, must equal P's.
    - **The final native review and the owner's approval** bind the exact candidate
      head and tree. A changed head or tree invalidates that review and the
      publication binding, and is never silently substituted.
