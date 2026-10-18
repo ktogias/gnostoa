@@ -405,12 +405,78 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             root = self._tracked_repository(Path(directory))
             paths, seen = self._enumerate_recording_git(root, timeout=2.5)
         self.assertEqual([Path("tracked.md")], paths)
-        # One budget: the identity check gets it whole, the enumeration what is left
-        # (the Router's I-b on #436).
+        # One absolute budget for both (the Router's I-b on #436): each Git read gets
+        # only what is left of it, never a fresh one (Codex on #436).
         self.assertEqual(2, len(seen))
-        self.assertEqual(2.5, seen[0])
+        self.assertLess(2.0, seen[0])
+        self.assertLessEqual(seen[0], 2.5)
         self.assertLess(0, seen[1])
-        self.assertLess(seen[1], 2.5)
+        self.assertLess(seen[1], seen[0])
+
+    def test_the_identity_check_counts_its_own_inspection(self) -> None:
+        # Codex on #436, by the Router's I-b: the entry's lstat ran after the budget
+        # was fixed, and the identity Git read still got the full timeout, so a slow
+        # inspection let identity plus enumeration overrun it. The inspection is inside
+        # the budget: the Git read gets only what is left, and none once it is spent.
+        module = self.module()
+        real = Path.lstat
+
+        def slow(path, *args, **kwargs):
+            if path.name == ".git":
+                time.sleep(0.3)
+            return real(path, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._tracked_repository(Path(directory))
+            with self.subTest("a positive remainder"):
+                with mock.patch.object(Path, "lstat", autospec=True, side_effect=slow):
+                    started = time.monotonic()
+                    paths, seen = self._enumerate_recording_git(root, timeout=2.5)
+                self.assertEqual([Path("tracked.md")], paths)
+                self.assertEqual(2, len(seen))
+                self.assertLessEqual(seen[0], 2.5 - 0.3)
+                self.assertLess(seen[1], seen[0])
+                self.assertLess(time.monotonic() - started, 2.5)
+            spent: list[object] = []
+            run = subprocess.run
+
+            def recording(command, **arguments):
+                spent.append(command)
+                return run(command, **arguments)
+
+            # The Router's 6244180021: exhaustion before the launch starts neither the
+            # identity read nor the enumeration, at either entry.
+            for label, call in (
+                ("the identity check", module.has_git_metadata),
+                ("the enumeration", module.candidate_paths),
+            ):
+                with self.subTest(label):
+                    spent.clear()
+                    with (
+                        mock.patch.object(
+                            Path, "lstat", autospec=True, side_effect=slow
+                        ),
+                        mock.patch.object(
+                            module.subprocess, "run", side_effect=recording
+                        ),
+                        self.assertRaises(module.RepositoryScopeError) as raised,
+                    ):
+                        call(root, timeout=0.2)
+                    self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+                    self.assertEqual([], spent)
+        with self.subTest("a missing .git is the manifest's, budget or not"):
+            with tempfile.TemporaryDirectory() as directory:
+                packaged = Path(directory)
+                (packaged / "tracked.md").write_text("tracked\n", encoding="utf-8")
+                (packaged / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
+                spent.clear()
+                with (
+                    mock.patch.object(Path, "lstat", autospec=True, side_effect=slow),
+                    mock.patch.object(module.subprocess, "run", side_effect=recording),
+                ):
+                    paths = module.candidate_paths(packaged, timeout=0.2)
+                self.assertEqual([Path("tracked.md")], paths)
+                self.assertEqual([], spent)
 
     def test_a_stalled_enumeration_is_refused_within_its_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

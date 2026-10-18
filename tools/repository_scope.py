@@ -151,7 +151,10 @@ def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
     Claude, the Router's 6239259708 on #436). An accepted entry is True only when
     Git's own `rev-parse --show-toplevel` names `root`: a malformed `.git` directory
     that Git skips for an enclosing checkout is UNSAFE_PATH, and a failed or
-    timed-out answer keeps Git's own category (cubic, the Router's I-b on #436)."""
+    timed-out answer keeps Git's own category (cubic, the Router's I-b on #436). The
+    entry's own inspection is inside a finite `timeout`: the Git read gets only what
+    is left of it, and a spent one starts no Git (Codex, the Router's I-b on #436)."""
+    end = None if timeout is None else time.monotonic() + timeout
     git_metadata = root / ".git"
     try:
         mode = git_metadata.lstat().st_mode
@@ -167,10 +170,16 @@ def has_git_metadata(root: Path, *, timeout: float | None = None) -> bool:
             f"Git metadata at {git_metadata} is not a directory or a regular file",
             category="UNSAFE_PATH",
         )
+    remaining = None if end is None else end - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        raise RepositoryScopeError(
+            f"cannot confirm the Git top level in {root} within {timeout} seconds",
+            category="GIT_TIMEOUT",
+        )
     output = _git_output(
         root,
         ["rev-parse", "--show-toplevel"],
-        timeout=timeout,
+        timeout=remaining,
         purpose="confirm the Git top level",
     )
     # Exactly Git's one terminator, so a root whose name ends in a newline keeps it
@@ -200,7 +209,9 @@ def candidate_paths(
     # One budget for the identity check and the enumeration: the enumeration gets
     # only what is left, and none once it is spent (the Router's I-b on #436).
     end = None if timeout is None else time.monotonic() + timeout
-    if has_git_metadata(root, timeout=timeout):
+    # The identity check gets what is left of that one budget too, never a fresh one
+    # (Codex on #436).
+    if has_git_metadata(root, timeout=None if end is None else end - time.monotonic()):
         remaining = None if end is None else end - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise RepositoryScopeError(

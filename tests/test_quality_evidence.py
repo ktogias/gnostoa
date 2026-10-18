@@ -5817,6 +5817,47 @@ class BoundedRunTests(unittest.TestCase):
         self.assertEqual(["HEAD"], seen)
         self.assertIsNone(state["tracked_tree_dirty"])
 
+    def test_each_subject_read_decides_its_check_and_timeout_with_one_reading(
+        self,
+    ) -> None:
+        # CodeAnt on #436, by the Router's I-b ("no fresh millisecond allowance"):
+        # each state read took its check and its timeout from two readings, and the
+        # timeout was floored to a millisecond, so a deadline crossed in between, or
+        # spent before the first read, still started Git. One reading now decides
+        # both, unfloored.
+        def clocked(readings, timeout):
+            values = iter(readings)
+            seen: list[object] = []
+
+            def run(command, **options):
+                seen.append(options.get("timeout"))
+                return SimpleNamespace(stdout="a" * 40)
+
+            with (
+                patch(
+                    "tools.quality_evidence.time.monotonic",
+                    side_effect=lambda: next(values, readings[-1]),
+                ),
+                patch("tools.quality_evidence.subprocess.run", side_effect=run),
+            ):
+                state = self.module._git_state(self.path, timeout=timeout)
+            return state, seen
+
+        with self.subTest("crossed between the check and the timeout"):
+            _state, seen = clocked([100.0, 100.0, 100.9995, 101.2], 1.0)
+            self.assertEqual(2, len(seen))
+            self.assertEqual(1.0, seen[0])
+            self.assertAlmostEqual(0.0005, seen[1], places=9)
+        with self.subTest("spent before the first read"):
+            state, seen = clocked([100.0, 100.000002], 0.000001)
+            self.assertEqual([], seen)
+            self.assertIsNone(state["tracked_tree_dirty"])
+        with self.subTest("barely open before the first read"):
+            state, seen = clocked([100.0, 100.9996, 101.0], 1.0)
+            self.assertEqual(1, len(seen))
+            self.assertAlmostEqual(0.0004, seen[0], places=9)
+            self.assertIsNone(state["tracked_tree_dirty"])
+
     def test_a_producer_that_cannot_be_reaped_is_a_gap_not_a_hang(self) -> None:
         # The wait after kill() is bounded (Amazon Q on #436, as security_scan's
         # _terminate_and_reap), and so is every wait on the way out.

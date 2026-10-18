@@ -854,28 +854,28 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return document
 
 
-def _time_left(end: float | None) -> float | None:
-    """The time left before `end` on the monotonic clock, at least a millisecond, or
-    None without an end."""
-    return None if end is None else max(end - time.monotonic(), 0.001)
-
-
 def _git_state(root: Path, *, timeout: float | None = None) -> dict[str, Any]:
     revision = os.environ.get("KNOWLEDGE_KIT_REVISION", "unbound")
     dirty: bool | None = None
     # Both reads share the one budget (cubic and CodeAnt on #436).
     end = None if timeout is None else time.monotonic() + timeout
     try:
+        # One reading decides each read's check and its timeout, unfloored: a spent
+        # budget starts no Git (CodeAnt, the Router's I-b on #436).
+        remaining = None if end is None else end - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return {"revision": revision, "tracked_tree_dirty": None}
         revision_result = subprocess.run(
             ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
-            timeout=_time_left(end),
+            timeout=remaining,
         )
         revision = revision_result.stdout.strip()
-        if end is not None and time.monotonic() >= end:
+        remaining = None if end is None else end - time.monotonic()
+        if remaining is not None and remaining <= 0:
             # A spent budget starts no status read (Codex on #436).
             return {"revision": revision, "tracked_tree_dirty": None}
         status_result = subprocess.run(
@@ -891,7 +891,7 @@ def _git_state(root: Path, *, timeout: float | None = None) -> dict[str, Any]:
             check=True,
             capture_output=True,
             text=True,
-            timeout=_time_left(end),
+            timeout=remaining,
         )
         dirty = bool(status_result.stdout)
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
