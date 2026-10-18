@@ -76,8 +76,9 @@ operators' checkouts, not the trusted preparer's own temporary metadata.
 
 1. **One responsibility.** The bootstrap admits exactly one change:
    `_candidate_workspace` sets `core.worktree` to the actual resolved workspace root,
-   in the disposable Git metadata it itself creates, under the existing isolated
-   environment. That covers both the normalization and the focused-verification
+   in the disposable Git metadata it is given: the metadata that the trusted
+   preparer's `_isolated_git_metadata` creates for that workspace, never an
+   operator's. It does so under the existing isolated environment. That covers both the normalization and the focused-verification
    workspaces. Its tests go in the existing `tests/test_candidate_prepare.py`.
    - **The allowlist:** those two paths, and no other.
    - **Unchanged:** every other configuration write, file and responsibility,
