@@ -3626,14 +3626,16 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
     def test_a_limit_spent_before_the_exchange_starts_none(self) -> None:
         # The budget is checked, then time passes before the limit is chosen.
         ticks = iter([0.0] + [10.0] * 20)
+        client = self._client()
         with (
             patch("time.monotonic", side_effect=lambda: next(ticks)),
             patch.object(
                 github_rest, "exchange", return_value=(self._BODY, {})
             ) as exchange,
         ):
+            # One call inside the expectation (Sonar S5778).
             with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._client().graphql(
+                client.graphql(
                     analyzer_deepsource._RUN_QUERY,
                     {"runUid": "x", "cursor": None},
                     deadline=5.0,
