@@ -3428,5 +3428,169 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                     self.assertEqual("ERROR", raised.exception.kind)
 
 
+class DeepSourceRequestCeilingTests(unittest.TestCase):
+    """CodeAnt 4317340803 on #441, Router 6274471644: under the read deadline each
+    request is bounded by the shared owner's `request_timeout`, at most the 30 s
+    ceiling and at most the budget left, with no floor. A timeout is `DEADLINE` when
+    the budget set the bound, and `UNAVAILABLE` when the ceiling set it and the
+    deadline has not passed."""
+
+    _BODY = b'{"data": {"run": null}}'
+
+    def _client(self) -> analyzer_deepsource.DeepSourceGraphQLClient:
+        client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
+        client._opener = cast(urllib.request.OpenerDirector, object())
+        return client
+
+    def _call(
+        self, deadline: float, clock: list[float], answer: Any
+    ) -> tuple[Any, analyzer_deepsource.ProviderReadFailure | None]:
+        """Run one deadline-bound read with the shared exchange replaced by `answer`
+        (a callable taking the limit), on the patched clock. Returns the exchange
+        stand-in and the refusal, if any."""
+        github_rest = analyzer_deepsource.github_rest
+        refusal: analyzer_deepsource.ProviderReadFailure | None = None
+        with (
+            patch("time.monotonic", side_effect=lambda: clock[0]),
+            patch.object(
+                github_rest,
+                "exchange",
+                side_effect=lambda _opener, _request, limit, _policy: answer(limit),
+            ) as exchange,
+        ):
+            try:
+                self._client().graphql(
+                    analyzer_deepsource._RUN_QUERY,
+                    {"runUid": "x", "cursor": None},
+                    deadline=deadline,
+                )
+            except analyzer_deepsource.ProviderReadFailure as failure:
+                refusal = failure
+        return exchange, refusal
+
+    def _limit(self, budget: float) -> float:
+        _exchange, refusal = self._call(budget, [0.0], lambda _limit: (self._BODY, {}))
+        self.assertIsNone(refusal)
+        limit: float = _exchange.call_args.args[2]
+        return limit
+
+    def test_a_long_budget_still_caps_each_request_at_thirty_seconds(self) -> None:
+        for budget in (300.0, 45.0):
+            with self.subTest(budget=budget):
+                self.assertEqual(30.0, self._limit(budget))
+
+    def test_a_short_budget_bounds_the_request_by_what_remains(self) -> None:
+        # No floor: a request is never given more than the budget left.
+        for budget, expected in ((10.0, 10.0), (30.0, 30.0), (0.05, 0.05)):
+            with self.subTest(budget=budget):
+                self.assertAlmostEqual(expected, self._limit(budget), places=9)
+
+    def test_the_limit_comes_from_the_shared_owner(self) -> None:
+        github_rest = analyzer_deepsource.github_rest
+        with patch.object(
+            github_rest, "request_timeout", wraps=github_rest.request_timeout
+        ) as owner:
+            self._limit(300.0)
+        owner.assert_called_once_with(300.0, analyzer_deepsource._EXCHANGE_POLICY)
+
+    def test_no_exchange_starts_without_budget(self) -> None:
+        for deadline, kind in (
+            (0.0, "DEADLINE"),
+            (-1.0, "DEADLINE"),
+            (float("nan"), "ERROR"),
+            (float("inf"), "ERROR"),
+        ):
+            with self.subTest(deadline=deadline):
+                exchange, refusal = self._call(deadline, [0.0], lambda _limit: None)
+                self.assertIsNotNone(refusal)
+                assert refusal is not None
+                self.assertEqual(kind, refusal.kind)
+                exchange.assert_not_called()
+
+    def test_a_limit_spent_before_the_exchange_starts_none(self) -> None:
+        # The budget is checked, then time passes before the limit is chosen.
+        ticks = iter([0.0] + [10.0] * 20)
+        github_rest = analyzer_deepsource.github_rest
+        with (
+            patch("time.monotonic", side_effect=lambda: next(ticks)),
+            patch.object(
+                github_rest, "exchange", return_value=(self._BODY, {})
+            ) as exchange,
+        ):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._client().graphql(
+                    analyzer_deepsource._RUN_QUERY,
+                    {"runUid": "x", "cursor": None},
+                    deadline=5.0,
+                )
+        self.assertEqual("DEADLINE", raised.exception.kind)
+        exchange.assert_not_called()
+
+    def _failing(self, error: BaseException, *, at: float | None = None) -> Any:
+        """An exchange that fails with `error`, after moving the clock to `at`."""
+
+        def fail(_limit: float) -> None:
+            if at is not None:
+                self._clock[0] = at
+            raise error
+
+        return fail
+
+    def _kind(
+        self, deadline: float, error: BaseException, *, at: float | None = None
+    ) -> str:
+        self._clock = [0.0]
+        _exchange, refusal = self._call(
+            deadline, self._clock, self._failing(error, at=at)
+        )
+        self.assertIsNotNone(refusal)
+        assert refusal is not None
+        return refusal.kind
+
+    def test_a_timeout_the_ceiling_set_before_the_deadline_is_unavailable(
+        self,
+    ) -> None:
+        github_rest = analyzer_deepsource.github_rest
+        for error in (
+            github_rest.GitHubReadError("timed out", in_flight=True),
+            TimeoutError("timed out"),
+            urllib.error.URLError(TimeoutError("timed out")),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual("UNAVAILABLE", self._kind(300.0, error))
+
+    def test_a_timeout_the_budget_set_is_the_deadline(self) -> None:
+        # Including one observed before the absolute instant: the shared exchange's
+        # half-budget receive and body stop end early by design (Decision 0100).
+        github_rest = analyzer_deepsource.github_rest
+        for budget in (10.0, 30.0):
+            for error in (
+                github_rest.GitHubReadError("timed out", in_flight=True),
+                TimeoutError("timed out"),
+                urllib.error.URLError(TimeoutError("timed out")),
+            ):
+                with self.subTest(budget=budget, error=type(error).__name__):
+                    self.assertEqual("DEADLINE", self._kind(budget, error))
+
+    def test_a_ceiling_timeout_seen_after_the_deadline_is_the_deadline(self) -> None:
+        github_rest = analyzer_deepsource.github_rest
+        for error in (
+            github_rest.GitHubReadError("timed out", in_flight=True),
+            TimeoutError("timed out"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual("DEADLINE", self._kind(300.0, error, at=301.0))
+
+    def test_other_failures_keep_their_kind(self) -> None:
+        github_rest = analyzer_deepsource.github_rest
+        for error, kind in (
+            (github_rest.NotSent("16 earlier requests"), "UNAVAILABLE"),
+            (github_rest.ResponseTooLarge("too large"), "ERROR"),
+            (ConnectionResetError("reset"), "UNAVAILABLE"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual(kind, self._kind(300.0, error))
+
+
 if __name__ == "__main__":
     unittest.main()

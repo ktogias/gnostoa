@@ -43,6 +43,9 @@ _RESPONSE_TOO_LARGE = "DeepSource API response exceeds bounded size"
 _EXCHANGE_POLICY = github_rest.Policy(
     timeout_seconds=_TIMEOUT_SECONDS,
     max_response_bytes=_MAX_RESPONSE_BYTES,
+    # No floor: a deadline-bound request is never given more than the budget left;
+    # the shared default of 0.1 s could cross the deadline (Router 6274471644).
+    min_request_seconds=0.0,
     workers=_EXCHANGE_WORKERS,
 )
 _COMPLETED_RUN_STATUSES = frozenset({"SUCCESS", "FAILURE"})
@@ -377,13 +380,23 @@ class DeepSourceGraphQLClient:
     ) -> bytes:
         """The answer's bytes, each transport failure reported as its kind."""
 
+        ceiling = False
         try:
             if deadline is None:
                 with self._opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
                     raw: bytes = response.read(_MAX_RESPONSE_BYTES + 1)
             else:
+                # Each request's limit comes from the shared owner: at most the 30 s
+                # ceiling and at most the budget left, and none starts without
+                # budget. Which of the two set it decides what a timeout means; a
+                # tie is the budget's (CodeAnt 4317340803, Router 6274471644).
+                _remaining(deadline)
+                limit = github_rest.request_timeout(deadline, _EXCHANGE_POLICY)
+                if limit <= 0:
+                    raise _deadline_passed()
+                ceiling = limit < deadline - time.monotonic()
                 raw, _headers = github_rest.exchange(
-                    self._opener, request, _remaining(deadline), _EXCHANGE_POLICY
+                    self._opener, request, limit, _EXCHANGE_POLICY
                 )
         except urllib.error.HTTPError as exc:
             raise _http_failure(exc) from exc
@@ -393,14 +406,17 @@ class DeepSourceGraphQLClient:
             # Earlier stalled exchanges still hold the cap: nothing was sent.
             raise ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE) from exc
         except github_rest.GitHubReadError as exc:
-            # The shared exchange's own bound, which the deadline set: its wait for
-            # the whole budget, or its stop at half of it, which keeps the receive
-            # that straddles the stop inside the deadline (Decision 0100). Either is
-            # the read not finishing within its deadline (CodeAnt on #441).
+            # The shared exchange's own bound: its wait for the whole limit, or its
+            # stop at half of it, which keeps the receive that straddles the stop
+            # inside the limit (Decision 0100). Set by the budget, it is the read not
+            # finishing within its deadline (CodeAnt on #441); set by the ceiling
+            # while the deadline holds, it is the provider not answering in time.
+            if deadline is not None and ceiling and time.monotonic() < deadline:
+                raise ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE) from exc
             raise ProviderReadFailure("DEADLINE", _DEADLINE_BUDGET) from exc
         # URLError is an OSError.
         except (OSError, http.client.HTTPException) as exc:
-            raise _transport_failure(exc, deadline) from exc
+            raise _transport_failure(exc, deadline, ceiling) from exc
         except ValueError:
             # HTTP header validation can include credential bytes in its error.
             raise ProviderReadFailure(
@@ -426,14 +442,20 @@ def _http_failure(exc: urllib.error.HTTPError) -> ProviderReadFailure:
 
 
 def _transport_failure(
-    exc: OSError | http.client.HTTPException, deadline: float | None
+    exc: OSError | http.client.HTTPException,
+    deadline: float | None,
+    ceiling: bool = False,
 ) -> ProviderReadFailure:
     timed_out = isinstance(exc, TimeoutError) or isinstance(
         getattr(exc, "reason", None), TimeoutError
     )
-    if deadline is not None and (timed_out or time.monotonic() >= deadline):
-        # A timeout the deadline set is the deadline, not an outage: the exchange
-        # gives each receive half the budget left (Decision 0100).
+    if deadline is not None and (
+        (timed_out and not ceiling) or time.monotonic() >= deadline
+    ):
+        # A timeout the budget set is the deadline, not an outage: the exchange
+        # gives each receive half the limit (Decision 0100). One the 30 s ceiling
+        # set, before the deadline, is the provider not answering (Router
+        # 6274471644).
         return _deadline_passed()
     return ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE)
 
