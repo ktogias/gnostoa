@@ -2482,7 +2482,8 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
         self.assertEqual("PRESENT", receipt["configuration"]["state"])
         self.assertEqual(
-            hashlib.sha256(canonical).hexdigest(), receipt["configuration"]["sha256"]
+            "sha256:" + hashlib.sha256(canonical).hexdigest(),
+            receipt["configuration"]["digest"],
         )
         # The repository state is read twice: before and after the catalogues.
         kinds = [kind for kind, _ in fake.calls]
@@ -3027,13 +3028,74 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         self.assertEqual(
             {
                 "state": "PRESENT",
-                "sha256": hashlib.sha256(canonical).hexdigest(),
+                "digest": "sha256:" + hashlib.sha256(canonical).hexdigest(),
                 "json": config,
             },
             receipt["configuration"],
         )
         self.assertIs(True, receipt["activated"])
         self.assertEqual([], receipt["analyzers"])
+
+    def test_the_configuration_digest_is_the_shared_canonical_one(self) -> None:
+        # revix on #441 (rule canonical-json-digests): canonical JSON and digests come
+        # from the shared helpers, never ad hoc.
+        from tools import review_model
+
+        receipt = self._read(CapabilityFake(stable()))
+        config = {"version": 1, "analyzers": [{"name": "python"}]}
+        self.assertEqual(
+            {
+                "state": "PRESENT",
+                "digest": review_model.canonical_digest(config),
+                "json": config,
+            },
+            receipt["configuration"],
+        )
+
+    def test_a_configuration_with_a_non_finite_number_is_refused(self) -> None:
+        # The shared canonical JSON refuses NaN and infinities (allow_nan=False); the
+        # read reports it rather than crashing.
+        page = analyzers_page()
+        page["data"]["repository"]["configJson"] = {"limit": float("nan")}
+        record = self._status({("RepositoryAnalyzers", "gnostoa", None): page})
+        self.assertEqual("ERROR", record["status"])
+
+    def _paged_configuration(self, later: Mapping[str, Any]) -> dict[str, Any]:
+        """Two enabled-analyzer pages whose first has an explicit null configuration,
+        the same on both passes."""
+        first = analyzers_page([analyzer()], total=2, has_next=True, cursor="a1")
+        first["data"]["repository"]["configJson"] = None
+        return self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("RepositoryAnalyzers", "gnostoa", None): first,
+                        ("RepositoryAnalyzers", "gnostoa", "a1"): later,
+                        ("AnalyzerCatalogue", "javascript", None): catalogue_page(
+                            [catalogue_issue("JS-0001")],
+                            shortcode="javascript",
+                            num_issues=1,
+                            total=1,
+                        ),
+                    }
+                )
+            )
+        )
+
+    def test_a_later_page_that_omits_the_configuration_is_refused(self) -> None:
+        # Codex on #441 (4316925987): a later page that omits configJson is never the
+        # explicit null of the first, so the receipt is not COMPLETE with ABSENT.
+        later = analyzers_page([analyzer("javascript", num_issues=1)], total=2)
+        del later["data"]["repository"]["configJson"]
+        receipt = self._paged_configuration(later)
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+
+    def test_an_explicit_null_on_every_page_is_an_absent_configuration(self) -> None:
+        later = analyzers_page([analyzer("javascript", num_issues=1)], total=2)
+        later["data"]["repository"]["configJson"] = None
+        receipt = self._paged_configuration(later)
+        self.assertEqual("COMPLETE", receipt["coverage"]["status"])
+        self.assertEqual({"state": "ABSENT"}, receipt["configuration"])
 
 
 class _TimedResponse:

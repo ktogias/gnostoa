@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import html
 import http.client
 import json
@@ -24,6 +23,7 @@ from .analyzer_readback import (
     deduplicate_findings,
     normalize_repository,
 )
+from .review_model import canonical_digest, canonical_json
 
 _API_ROOT = "https://api.deepsource.com"
 _GRAPHQL_URL = f"{_API_ROOT}/graphql/"
@@ -1586,7 +1586,15 @@ def _optional_integer(value: object, label: str) -> int | None:
 
 
 def _canonical(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    """The shared canonical JSON (revix on #441). A value it cannot encode, such as
+    a non-finite number, is a malformed answer, never a crash."""
+
+    try:
+        return canonical_json(value)
+    except ValueError as error:
+        raise ProviderReadFailure(
+            "ERROR", "DeepSource configJson is not canonical JSON"
+        ) from error
 
 
 def _repository_state(
@@ -1612,10 +1620,10 @@ def _repository_state(
                 "ERROR", "DeepSource repository.isActivated is malformed"
             )
         if not settings:
+            configuration = _selected(repository, "configJson", "repository.configJson")
+            _canonical(configuration)
             settings["activated"] = activated
-            settings["configuration"] = _selected(
-                repository, "configJson", "repository.configJson"
-            )
+            settings["configuration"] = configuration
             if observed is not None:
                 observed.update(settings)
         return repository, repository.get("enabledAnalyzers")
@@ -1623,7 +1631,12 @@ def _repository_state(
     analyzers = _connection_nodes(
         analyzers_page,
         "enabledAnalyzers",
-        lambda r: (r.get("isActivated"), _canonical(r.get("configJson"))),
+        # Every page selects both fields, so an omitted one is never the first
+        # page's null (Codex on #441).
+        lambda r: (
+            _selected(r, "isActivated", "repository.isActivated"),
+            _canonical(_selected(r, "configJson", "repository.configJson")),
+        ),
         lambda node: _text(node.get("shortcode"), "analyzer.shortcode"),
     )
 
@@ -1786,7 +1799,7 @@ def _configuration(value: object) -> dict[str, Any]:
         return {"state": "ABSENT"}
     return {
         "state": "PRESENT",
-        "sha256": hashlib.sha256(_canonical(value).encode("ascii")).hexdigest(),
+        "digest": canonical_digest(value),
         "json": value,
     }
 
