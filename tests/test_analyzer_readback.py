@@ -10,7 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from tools import analyzer_codacy, analyzer_deepsource, analyzer_readback
@@ -3078,9 +3078,9 @@ class _ParsingOpener:
         self.data, self.slow_from, self.delay = data, slow_from, delay
 
     def open(self, _request: object, timeout: float) -> http.client.HTTPResponse:
-        response = http.client.HTTPResponse(
-            _DripSocket(self.data, self.slow_from, self.delay)  # type: ignore[arg-type]
-        )
+        # A test double: HTTPResponse uses only the socket's makefile() (M13 on #441).
+        sock = cast(Any, _DripSocket(self.data, self.slow_from, self.delay))
+        response = http.client.HTTPResponse(sock)
         response.begin()
         return response
 
@@ -3093,7 +3093,8 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
 
     def _client(self, opener: object) -> analyzer_deepsource.DeepSourceGraphQLClient:
         client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
-        client._opener = opener  # type: ignore[assignment]
+        # A test double in place of the opener (M13 on #441).
+        client._opener = cast(urllib.request.OpenerDirector, opener)
         return client
 
     def _graphql(
