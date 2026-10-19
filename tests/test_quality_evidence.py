@@ -2739,7 +2739,28 @@ class DiagnosticInventoryTests(_DiagnosticFixture):
         # enclosing checkout recorded that checkout's HEAD. The inventory is refused
         # as UNSAFE_PATH, with no Git subject read and no inventory written.
         self.mypy_records, self.ruff_records = {}, []
-        for label, make in (("an empty directory", lambda entry: entry.mkdir()),):
+        # The owner's N-a (6241486091): a gitfile to the enclosing checkout's metadata,
+        # or to another worktree's, bound that checkout's HEAD while Git's top level
+        # still named the root.
+        elsewhere = Path(tempfile.mkdtemp(dir=self.root.parent))
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        self._git(
+            "worktree", "add", "-q", "--detach", str(elsewhere / "linked"), "HEAD"
+        )
+        borrowed = self._git(
+            "-C", str(elsewhere / "linked"), "rev-parse", "--absolute-git-dir"
+        )
+
+        def gitfile(target: str):
+            return lambda entry: entry.write_text(
+                f"gitdir: {target}\n", encoding="utf-8"
+            )
+
+        for label, make in (
+            ("an empty directory", lambda entry: entry.mkdir()),
+            ("a gitfile to the enclosing metadata", gitfile(str(self.root / ".git"))),
+            ("a gitfile to another worktree's metadata", gitfile(borrowed)),
+        ):
             with self.subTest(label):
                 package = self._package(self.root / label.replace(" ", "-"))
                 make(package / ".git")

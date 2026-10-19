@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import itertools
 import os
 import re
+import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -291,6 +294,305 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             git(outer, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
             self.assertEqual([Path("tracked.md")], module.candidate_paths(worktree))
             self.assertEqual([Path("tracked.md")], module.candidate_paths(outer))
+
+    def test_a_gitfile_binds_only_through_its_own_registration(self) -> None:
+        # cubic on #436, with the Router's falsifiers (6240492499, 6240734250): a
+        # `gitdir:` file can borrow another repository's or another worktree's
+        # metadata while Git's top level still names the root. A regular-file `.git`
+        # binds only when the selected Git directory's own declaration names the
+        # root: a linked worktree's back-pointer, or `core.worktree`.
+        module = self.module()
+        commit = ("-c", "user.email=a@b", "-c", "user.name=a")
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            main = self._tracked_repository(parent)
+            git(main, *commit, "commit", "-q", "-m", "base")
+            source = parent / "module-source"
+            source.mkdir()
+            initialize_repository(source)
+            (source / "inner.md").write_text("inner\n", encoding="utf-8")
+            git(source, "add", "inner.md")
+            git(source, *commit, "commit", "-q", "-m", "inner")
+            git(
+                main,
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                str(source),
+                "vendored",
+            )
+            git(main, *commit, "commit", "-q", "-m", "a submodule")
+            first, spaced = parent / "first", parent / "with space"
+            git(main, "worktree", "add", "-q", "--detach", str(first), "HEAD")
+            git(main, "worktree", "add", "-q", "--detach", str(spaced), "HEAD")
+            declared = parent / "declared"
+            subprocess.run(
+                [
+                    "git",
+                    "init",
+                    "-q",
+                    f"--separate-git-dir={parent / 'declared.git'}",
+                    str(declared),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            git(declared, "config", "core.worktree", str(declared))
+            # The Router's 6240734250, per-worktree configuration: with
+            # extensions.worktreeConfig the declaration lives in config.worktree.
+            per_worktree = parent / "per-worktree"
+            subprocess.run(
+                [
+                    "git",
+                    "init",
+                    "-q",
+                    f"--separate-git-dir={parent / 'per-worktree.git'}",
+                    str(per_worktree),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            git(per_worktree, "config", "extensions.worktreeConfig", "true")
+            git(
+                per_worktree, "config", "--worktree", "core.worktree", str(per_worktree)
+            )
+            shared = parent / "shared"
+            subprocess.run(
+                [
+                    "git",
+                    "init",
+                    "-q",
+                    f"--separate-git-dir={parent / 'shared.git'}",
+                    str(shared),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            git(shared, "config", "extensions.worktreeConfig", "true")
+            git(shared, "config", "core.worktree", str(shared))
+            undeclared = parent / "undeclared"
+            subprocess.run(
+                [
+                    "git",
+                    "init",
+                    "-q",
+                    f"--separate-git-dir={parent / 'undeclared.git'}",
+                    str(undeclared),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            # Git's own setup takes core.worktree from the repository's config and,
+            # under extensions.worktreeConfig, its config.worktree, the last winning;
+            # never from an include, the global config or a `-c` (measured, Git 2.47).
+            extra = parent / "extra.cfg"
+            extra.write_text(f"[core]\n\tworktree = {undeclared}\n", encoding="utf-8")
+            for label, environment, include in (
+                (
+                    "an undeclared separate Git directory, the approved narrowing",
+                    {},
+                    False,
+                ),
+                ("declared only by an include", {}, True),
+                ("declared only globally", {"GIT_CONFIG_GLOBAL": str(extra)}, False),
+                (
+                    "declared only on the command line",
+                    {
+                        "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "core.worktree",
+                        "GIT_CONFIG_VALUE_0": str(undeclared),
+                    },
+                    False,
+                ),
+            ):
+                with self.subTest(label):
+                    if include:
+                        git(undeclared, "config", "include.path", str(extra))
+                    try:
+                        with (
+                            mock.patch.dict(os.environ, environment),
+                            self.assertRaises(module.RepositoryScopeError) as raised,
+                        ):
+                            module.has_git_metadata(undeclared)
+                        self.assertEqual("UNSAFE_PATH", raised.exception.category)
+                        self.assertIn(
+                            "declares no core.worktree", str(raised.exception)
+                        )
+                    finally:
+                        if include:
+                            git(undeclared, "config", "--unset", "include.path")
+            git(undeclared, "config", "core.worktree", str(undeclared))
+            for label, root in (
+                ("the same, once its work tree is declared", undeclared),
+                ("an ordinary checkout", main),
+                ("a linked worktree", first),
+                ("a linked worktree with a space", spaced),
+                ("a submodule", main / "vendored"),
+                ("a declared separate Git directory", declared),
+                ("a separate Git directory declared per worktree", per_worktree),
+                ("a shared declaration under worktreeConfig", shared),
+            ):
+                with self.subTest(label):
+                    self.assertTrue(module.has_git_metadata(root))
+            hijacked = main / "hijacked"
+            hijacked.mkdir()
+            (hijacked / ".git").write_text(
+                f"gitdir: {main / '.git'}\n", encoding="utf-8"
+            )
+            borrowed = parent / "borrowed"
+            borrowed.mkdir()
+            first_admin = git(first, "rev-parse", "--absolute-git-dir").stdout.strip()
+            (borrowed / ".git").write_text(f"gitdir: {first_admin}\n", encoding="utf-8")
+            second = parent / "second"
+            git(main, "worktree", "add", "-q", "--detach", str(second), "HEAD")
+            own = (second / ".git").read_text(encoding="utf-8")
+            for label, root, heads in (
+                ("the main metadata", hijacked, None),
+                ("another worktree's metadata", borrowed, None),
+                ("a registered worktree redirected, equal HEADs", second, "equal"),
+                (
+                    "a registered worktree redirected, different HEADs",
+                    second,
+                    "different",
+                ),
+            ):
+                with self.subTest(label):
+                    if heads is not None:
+                        (second / ".git").write_text(own, encoding="utf-8")
+                        if heads == "different":
+                            (second / "own.md").write_text("own\n", encoding="utf-8")
+                            git(second, "add", "own.md")
+                            git(second, *commit, "commit", "-q", "-m", "own")
+                        (second / ".git").write_text(
+                            f"gitdir: {first_admin}\n", encoding="utf-8"
+                        )
+                    with self.assertRaises(module.RepositoryScopeError) as raised:
+                        module.has_git_metadata(root)
+                    self.assertEqual("UNSAFE_PATH", raised.exception.category)
+
+    def _watched(self, module, worktree: Path, record: Path) -> BaseException | None:
+        """has_git_metadata's outcome, watched: a read that blocks on a FIFO in the
+        record's place is released by a writer and fails the test, never hangs it."""
+        outcome: dict[str, BaseException] = {}
+
+        def call() -> None:
+            try:
+                module.has_git_metadata(worktree, timeout=10.0)
+            except BaseException as exc:
+                outcome["raised"] = exc
+
+        thread = threading.Thread(target=call, daemon=True)
+        thread.start()
+        thread.join(15)
+        if thread.is_alive():
+            os.close(os.open(record, os.O_WRONLY | os.O_NONBLOCK))
+            thread.join(15)
+            self.fail("reading the worktree back-pointer blocked")
+        return outcome.get("raised")
+
+    def test_a_worktree_back_pointer_is_read_bounded_and_classified(self) -> None:
+        # The owner's N-a (6241486091): a linked worktree's own `gitdir` record is read
+        # once and bounded, from a regular file only. A missing, foreign, oversized or
+        # irregular record is UNSAFE_PATH, never absence or a fallback; a record that
+        # cannot be read is GIT_METADATA_IO; every query shares the one budget.
+        module = self.module()
+        commit = ("-c", "user.email=a@b", "-c", "user.name=a")
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            main = self._tracked_repository(parent)
+            git(main, *commit, "commit", "-q", "-m", "base")
+            worktree = parent / "linked"
+            git(main, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+            admin = Path(
+                git(worktree, "rev-parse", "--absolute-git-dir").stdout.strip()
+            )
+            record = admin / "gitdir"
+            original = record.read_bytes()
+
+            def replace(content) -> None:
+                record.unlink()
+                if isinstance(content, bytes):
+                    record.write_bytes(content)
+                elif content is not None:
+                    content(record)
+
+            for label, content, detail in (
+                ("missing", None, "no worktree back-pointer"),
+                (
+                    "foreign",
+                    f"{parent / 'elsewhere' / '.git'}\n".encode(),
+                    "another work tree",
+                ),
+                ("oversized", b"/" * 5000 + b"\n", "larger than"),
+                ("a directory", Path.mkdir, "not a regular file"),
+                ("a FIFO", os.mkfifo, "not a regular file"),
+            ):
+                with self.subTest(label):
+                    replace(content)
+                    try:
+                        raised = self._watched(module, worktree, record)
+                        self.assertIsInstance(raised, module.RepositoryScopeError)
+                        self.assertEqual("UNSAFE_PATH", raised.category)
+                        self.assertIn(detail, str(raised))
+                    finally:
+                        if record.is_dir():
+                            record.rmdir()
+                        else:
+                            record.unlink(missing_ok=True)
+                        record.write_bytes(original)
+            with self.subTest("the restored record binds"):
+                self.assertTrue(module.has_git_metadata(worktree))
+            real_open = os.open
+
+            def failing(path, *args, **kwargs):
+                if Path(path) == record:
+                    raise PermissionError(13, "denied")
+                return real_open(path, *args, **kwargs)
+
+            with self.subTest("unreadable"):
+                with (
+                    mock.patch.object(module.os, "open", side_effect=failing),
+                    self.assertRaises(module.RepositoryScopeError) as raised,
+                ):
+                    module.has_git_metadata(worktree)
+                self.assertEqual("GIT_METADATA_IO", raised.exception.category)
+            seen: list[object] = []
+            real = subprocess.run
+
+            def recording(command, **arguments):
+                seen.append(arguments.get("timeout"))
+                return real(command, **arguments)
+
+            with self.subTest("one budget"):
+                with mock.patch.object(module.subprocess, "run", side_effect=recording):
+                    self.assertTrue(module.has_git_metadata(worktree, timeout=5.0))
+                self.assertLess(1, len(seen))
+                # The first read gets what is left of the one budget, never more
+                # (#436's identity check takes the remaining budget, the Router's I-b).
+                self.assertLessEqual(seen[0], 5.0)
+                self.assertGreater(seen[0], 0)
+                self.assertTrue(all(b < a for a, b in itertools.pairwise(seen)), seen)
+            stalled = parent / "stalled"
+            stalled.mkdir()
+            fake = stalled / "git"
+            fake.write_text(
+                '#!/bin/sh\ncase "$*" in *absolute-git-dir*) exec sleep 30;; esac\n'
+                f'exec {shutil.which("git")} "$@"\n',
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            with self.subTest("a stalled query"):
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {"PATH": f"{stalled}{os.pathsep}{os.environ['PATH']}"},
+                    ),
+                    self.assertRaises(module.RepositoryScopeError) as raised,
+                ):
+                    module.has_git_metadata(worktree, timeout=0.5)
+                self.assertEqual("GIT_TIMEOUT", raised.exception.category)
 
     def test_the_identity_check_compares_the_resolved_root(self) -> None:
         # cubic on #436, by the Router's I-b ("the resolved requested root"): Git's top
