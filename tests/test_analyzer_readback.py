@@ -2680,7 +2680,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
     def test_a_spent_deadline_reads_no_further_page(self) -> None:
         fake = CapabilityFake(stable())
         ticks = iter([0.0, 0.0, 1000.0] + [1000.0] * 50)
-        with patch("time.monotonic", lambda: next(ticks)):
+        with patch("time.monotonic", side_effect=ticks):
             receipt = self._read(fake, deadline_seconds=10.0)
         self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
         self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
@@ -2696,7 +2696,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         fake = CapabilityFake(stable())
         clock = [0.0]
         fake.clock, fake.cost = clock, 6.0
-        with patch("time.monotonic", lambda: clock[0]):
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
             receipt = self._read(fake, deadline_seconds=10.0)
         self.assertEqual([10.0] * len(fake.calls), fake.deadlines)
         self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
@@ -2857,8 +2857,9 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
                 )
 
     def test_the_fake_refuses_a_query_it_does_not_answer(self) -> None:
+        fake = CapabilityFake(stable())
         with self.assertRaisesRegex(AssertionError, "answers no such query"):
-            CapabilityFake(stable()).graphql(analyzer_deepsource._RUN_QUERY, {})
+            fake.graphql(analyzer_deepsource._RUN_QUERY, {})
 
     def test_a_deadline_that_is_not_a_finite_positive_number_is_refused(self) -> None:
         # Amazon Q on #441: a non-positive budget; and NaN or an infinite one would
@@ -2875,7 +2876,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         fake = CapabilityFake(stable())
         clock = [0.0]
         fake.clock, fake.cost = clock, 1.9
-        with patch("time.monotonic", lambda: clock[0]):
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
             receipt = self._read(fake, deadline_seconds=10.0)
         self.assertEqual(6, len(fake.calls))
         self.assertEqual(
@@ -2988,8 +2989,9 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         )
 
     def test_the_fake_refuses_another_account(self) -> None:
+        fake = CapabilityFake(stable())
         with self.assertRaisesRegex(AssertionError, "answers no account"):
-            CapabilityFake(stable()).graphql(
+            fake.graphql(
                 analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY,
                 {"name": "gnostoa", "login": "other", "cursor": None},
             )
@@ -3097,13 +3099,20 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
     def _graphql(
         self, client: analyzer_deepsource.DeepSourceGraphQLClient, deadline: float
     ) -> Mapping[str, Any]:
-        query = analyzer_deepsource._RUN_QUERY
-        try:
-            return client.graphql(
-                query, {"runUid": "x", "cursor": None}, deadline=deadline
-            )  # type: ignore[call-arg]
-        except TypeError:
-            self.fail("the client takes no deadline")
+        return client.graphql(
+            analyzer_deepsource._RUN_QUERY,
+            {"runUid": "x", "cursor": None},
+            deadline=deadline,
+        )
+
+    def _refusal(
+        self, opener: object, deadline: float
+    ) -> analyzer_deepsource.ProviderReadFailure:
+        """The client's refusal, with one call inside the expectation (Sonar S5778)."""
+        client = self._client(opener)
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+            self._graphql(client, deadline)
+        return raised.exception
 
     def test_without_a_deadline_the_timeout_is_unchanged(self) -> None:
         clock = [0.0]
@@ -3117,16 +3126,16 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
             def open(self, *_args: object, **_kwargs: object) -> object:
                 raise AssertionError("no connection may open after the deadline")
 
-        with patch("time.monotonic", lambda: 100.0):
-            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._graphql(self._client(_FailOpener()), 50.0)
-        self.assertEqual("DEADLINE", raised.exception.kind)
+        with patch("time.monotonic", return_value=100.0):
+            refusal = self._refusal(_FailOpener(), 50.0)
+        self.assertEqual("DEADLINE", refusal.kind)
 
     def test_the_connection_timeout_never_exceeds_the_budget_left(self) -> None:
         clock = [0.0]
         opener = _TimedOpener(_TimedResponse(self._BODY, clock, 0.0))
-        with patch("time.monotonic", lambda: clock[0]):
-            self._graphql(self._client(opener), 5.0)
+        client = self._client(opener)
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            self._graphql(client, 5.0)
         # The shared exchange gives each receive half the budget left (Decision 0100).
         [timeout] = opener.timeouts
         self.assertLessEqual(timeout, 5.0)
@@ -3135,20 +3144,20 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
     def test_a_body_that_arrives_past_the_deadline_is_refused(self) -> None:
         clock = [0.0]
         opener = _TimedOpener(_TimedResponse(self._BODY, clock, 3.0))
-        with patch("time.monotonic", lambda: clock[0]):
-            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._graphql(self._client(opener), 5.0)
-        self.assertEqual("DEADLINE", raised.exception.kind)
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            refusal = self._refusal(opener, 5.0)
+        self.assertEqual("DEADLINE", refusal.kind)
 
     def test_a_deadline_bound_body_reads_no_more_than_its_size_bound(self) -> None:
         clock = [0.0]
         limit = analyzer_deepsource._MAX_RESPONSE_BYTES
         response = _TimedResponse([b"x" * (1 << 20)] * 6, clock, 0.0)
-        with patch("time.monotonic", lambda: clock[0]):
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            client = self._client(_TimedOpener(response))
             with self.assertRaisesRegex(
                 analyzer_deepsource.ProviderReadFailure, "exceeds bounded size"
             ):
-                self._graphql(self._client(_TimedOpener(response)), 50.0)
+                self._graphql(client, 50.0)
         # The shared exchange refuses once one chunk takes the body past the cap.
         self.assertLessEqual(
             response.given,
@@ -3163,10 +3172,9 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                 clock[0] += timeout
                 raise TimeoutError("timed out")
 
-        with patch("time.monotonic", lambda: clock[0]):
-            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._graphql(self._client(_SlowOpener()), 5.0)
-        self.assertEqual("DEADLINE", raised.exception.kind)
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            refusal = self._refusal(_SlowOpener(), 5.0)
+        self.assertEqual("DEADLINE", refusal.kind)
 
     def test_a_deadline_that_is_not_finite_opens_no_connection(self) -> None:
         class _FailOpener:
@@ -3175,11 +3183,8 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
 
         for value in (float("nan"), float("inf")):
             with self.subTest(deadline=value):
-                with self.assertRaises(
-                    analyzer_deepsource.ProviderReadFailure
-                ) as raised:
-                    self._graphql(self._client(_FailOpener()), value)
-                self.assertEqual("ERROR", raised.exception.kind)
+                refusal = self._refusal(_FailOpener(), value)
+                self.assertEqual("ERROR", refusal.kind)
 
     def _elapsed_until_refused(self, opener: object) -> tuple[float, str]:
         client = self._client(opener)
@@ -3217,28 +3222,43 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                 return {}
 
         opener = _TimedOpener(_LateHeaders(self._BODY, clock, 0.0))
-        with patch("time.monotonic", lambda: clock[0]):
-            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._graphql(self._client(opener), 5.0)
-        self.assertEqual("DEADLINE", raised.exception.kind)
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            refusal = self._refusal(opener, 5.0)
+        self.assertEqual("DEADLINE", refusal.kind)
 
     def test_a_wrapped_timeout_is_the_deadline(self) -> None:
         class _WrappedTimeout:
             def open(self, _request: object, timeout: float) -> object:
                 raise urllib.error.URLError(TimeoutError("timed out"))
 
-        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-            self._graphql(self._client(_WrappedTimeout()), time.monotonic() + 5.0)
-        self.assertEqual("DEADLINE", raised.exception.kind)
+        deadline = time.monotonic() + 5.0
+        refusal = self._refusal(_WrappedTimeout(), deadline)
+        self.assertEqual("DEADLINE", refusal.kind)
 
     def test_a_request_the_exchange_did_not_send_is_unavailable(self) -> None:
         refused = analyzer_deepsource.github_rest.NotSent("16 earlier requests")
         with patch.object(
             analyzer_deepsource.github_rest, "exchange", side_effect=refused
         ):
-            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
-                self._graphql(self._client(object()), time.monotonic() + 5.0)
-        self.assertEqual("UNAVAILABLE", raised.exception.kind)
+            deadline = time.monotonic() + 5.0
+            refusal = self._refusal(object(), deadline)
+        self.assertEqual("UNAVAILABLE", refusal.kind)
+
+    def test_a_graphql_errors_answer_is_refused(self) -> None:
+        # A partial answer, data with errors, is no read, with or without a deadline
+        # (round-3 mutant: the decode helper's refusal had no test of its own).
+        body = (b'{"data": {"run": null}, "errors": [{"message": "partial"}]}',)
+        for deadline in (None, time.monotonic() + 5.0):
+            with self.subTest(deadline=deadline):
+                client = self._client(_TimedOpener(_TimedResponse(body, [0.0], 0.0)))
+                with self.assertRaisesRegex(
+                    analyzer_deepsource.ProviderReadFailure, "returned errors"
+                ):
+                    client.graphql(
+                        analyzer_deepsource._RUN_QUERY,
+                        {"runUid": "x", "cursor": None},
+                        deadline=deadline,
+                    )
 
 
 if __name__ == "__main__":

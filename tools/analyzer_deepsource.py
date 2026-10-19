@@ -36,6 +36,9 @@ _MAX_PAGES = 100
 # waiting at the deadline (PAO R0-DEADLINE-01, 6267919955). Its abandoned workers
 # are this adapter's own, so a stalling DeepSource cannot exhaust another's cap.
 _EXCHANGE_WORKERS: list[threading.Thread] = []
+_DEADLINE_PASSED = "DeepSource read deadline passed"
+_API_UNAVAILABLE = "DeepSource API unavailable"
+_RESPONSE_TOO_LARGE = "DeepSource API response exceeds bounded size"
 _EXCHANGE_POLICY = github_rest.Policy(
     timeout_seconds=_TIMEOUT_SECONDS,
     max_response_bytes=_MAX_RESPONSE_BYTES,
@@ -254,8 +257,12 @@ def _remaining(deadline: float) -> float:
         raise ProviderReadFailure("ERROR", "DeepSource read deadline is not finite")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise ProviderReadFailure("DEADLINE", "DeepSource read deadline passed")
+        raise _deadline_passed()
     return remaining
+
+
+def _deadline_passed() -> ProviderReadFailure:
+    return ProviderReadFailure("DEADLINE", _DEADLINE_PASSED)
 
 
 def _now() -> str:
@@ -332,6 +339,18 @@ class DeepSourceGraphQLClient:
             raise ProviderReadFailure(
                 "ERROR", "DeepSource unsupported GraphQL read operation"
             )
+        document = _graphql_document(
+            self._exchange(self._request(query, variables), deadline)
+        )
+        if deadline is not None and time.monotonic() >= deadline:
+            # An answer finished after the deadline is no read within it (Sourcery
+            # and CodeAnt on #441).
+            raise _deadline_passed()
+        return document
+
+    def _request(
+        self, query: str, variables: Mapping[str, Any]
+    ) -> urllib.request.Request:
         payload = json.dumps(
             {"query": query, "variables": dict(variables)},
             sort_keys=True,
@@ -350,81 +369,85 @@ class DeepSourceGraphQLClient:
             },
         )
         request.add_unredirected_header("Authorization", f"Bearer {self._token}")
+        return request
+
+    def _exchange(
+        self, request: urllib.request.Request, deadline: float | None
+    ) -> bytes:
+        """The answer's bytes, each transport failure reported as its kind."""
+
         try:
             if deadline is None:
                 with self._opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
-                    raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                    raw: bytes = response.read(_MAX_RESPONSE_BYTES + 1)
             else:
                 raw, _headers = github_rest.exchange(
                     self._opener, request, _remaining(deadline), _EXCHANGE_POLICY
                 )
         except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                raise ProviderReadFailure(
-                    "AUTH", "DeepSource authentication unavailable", status=exc.code
-                ) from exc
-            if exc.code == 429:
-                raise ProviderReadFailure(
-                    "RATE_LIMIT", "DeepSource API rate limited", status=exc.code
-                ) from exc
-            raise ProviderReadFailure(
-                "UNAVAILABLE", f"DeepSource API HTTP {exc.code}", status=exc.code
-            ) from exc
+            raise _http_failure(exc) from exc
         except github_rest.ResponseTooLarge as exc:
-            raise ProviderReadFailure(
-                "ERROR", "DeepSource API response exceeds bounded size"
-            ) from exc
+            raise ProviderReadFailure("ERROR", _RESPONSE_TOO_LARGE) from exc
         except github_rest.NotSent as exc:
             # Earlier stalled exchanges still hold the cap: nothing was sent.
-            raise ProviderReadFailure(
-                "UNAVAILABLE", "DeepSource API unavailable"
-            ) from exc
+            raise ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE) from exc
         except github_rest.GitHubReadError as exc:
             # The shared exchange's own bound, which the deadline set.
-            raise ProviderReadFailure(
-                "DEADLINE", "DeepSource read deadline passed"
-            ) from exc
+            raise _deadline_passed() from exc
         # URLError is an OSError.
         except (OSError, http.client.HTTPException) as exc:
-            timed_out = isinstance(exc, TimeoutError) or isinstance(
-                getattr(exc, "reason", None), TimeoutError
-            )
-            if deadline is not None and (timed_out or time.monotonic() >= deadline):
-                # A timeout the deadline set is the deadline, not an outage: the
-                # exchange gives each receive half the budget left (Decision 0100).
-                raise ProviderReadFailure(
-                    "DEADLINE", "DeepSource read deadline passed"
-                ) from exc
-            raise ProviderReadFailure(
-                "UNAVAILABLE", "DeepSource API unavailable"
-            ) from exc
+            raise _transport_failure(exc, deadline) from exc
         except ValueError:
             # HTTP header validation can include credential bytes in its error.
             raise ProviderReadFailure(
                 "ERROR", "DeepSource request failed validation"
             ) from None
         if len(raw) > _MAX_RESPONSE_BYTES:
-            raise ProviderReadFailure(
-                "ERROR", "DeepSource API response exceeds bounded size"
-            )
-        try:
-            document = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProviderReadFailure(
-                "ERROR", "DeepSource API returned invalid JSON"
-            ) from exc
-        if not isinstance(document, Mapping):
-            raise ProviderReadFailure(
-                "ERROR", "DeepSource GraphQL response must be an object"
-            )
-        errors = document.get("errors")
-        if errors:
-            raise ProviderReadFailure("ERROR", "DeepSource GraphQL returned errors")
-        if deadline is not None and time.monotonic() >= deadline:
-            # An answer finished after the deadline is no read within it (Sourcery
-            # and CodeAnt on #441).
-            raise ProviderReadFailure("DEADLINE", "DeepSource read deadline passed")
-        return document
+            raise ProviderReadFailure("ERROR", _RESPONSE_TOO_LARGE)
+        return raw
+
+
+def _http_failure(exc: urllib.error.HTTPError) -> ProviderReadFailure:
+    if exc.code in {401, 403}:
+        return ProviderReadFailure(
+            "AUTH", "DeepSource authentication unavailable", status=exc.code
+        )
+    if exc.code == 429:
+        return ProviderReadFailure(
+            "RATE_LIMIT", "DeepSource API rate limited", status=exc.code
+        )
+    return ProviderReadFailure(
+        "UNAVAILABLE", f"DeepSource API HTTP {exc.code}", status=exc.code
+    )
+
+
+def _transport_failure(
+    exc: OSError | http.client.HTTPException, deadline: float | None
+) -> ProviderReadFailure:
+    timed_out = isinstance(exc, TimeoutError) or isinstance(
+        getattr(exc, "reason", None), TimeoutError
+    )
+    if deadline is not None and (timed_out or time.monotonic() >= deadline):
+        # A timeout the deadline set is the deadline, not an outage: the exchange
+        # gives each receive half the budget left (Decision 0100).
+        return _deadline_passed()
+    return ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE)
+
+
+def _graphql_document(raw: bytes) -> Mapping[str, Any]:
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderReadFailure(
+            "ERROR", "DeepSource API returned invalid JSON"
+        ) from exc
+    if not isinstance(document, Mapping):
+        raise ProviderReadFailure(
+            "ERROR", "DeepSource GraphQL response must be an object"
+        )
+    if document.get("errors"):
+        raise ProviderReadFailure("ERROR", "DeepSource GraphQL returned errors")
+    return document
 
 
 def _mapping(value: object, label: str) -> Mapping[str, Any]:
@@ -1379,6 +1402,8 @@ def diff_local_from_github(
 _DISCOVERY_SCHEMA = "gnostoa.deepsource-capability-discovery/v1"
 _DISCOVERY_BINDING = "CURRENT_NOT_RUN_BOUND"
 _DISCOVERY_DEADLINE_SECONDS = 300.0
+_ANALYZER_VERSION = "analyzer.version"
+_ANALYZER_NUM_ISSUES = "analyzer.numIssues"
 # A value the read never reached, distinct from any the provider gave.
 _UNREAD: object = object()
 _DISCOVERY_UNKNOWN = (
@@ -1426,62 +1451,97 @@ def _discovery_page(
     return page
 
 
+class _ConnectionPages:
+    """One paginated connection, read page by page: the owner must not change between
+    pages, the cursor must advance, a total must be given or missing from the first
+    page on, a node's identity must not repeat, and the provider's total must be given
+    and met."""
+
+    def __init__(
+        self,
+        label: str,
+        owner: Callable[[Mapping[str, Any]], object],
+        identity: Callable[[Mapping[str, Any]], str],
+    ) -> None:
+        self.label = label
+        self.owner = owner
+        self.identity = identity
+        self.nodes: list[Mapping[str, Any]] = []
+        self.seen: set[str] = set()
+        self.cursor: str | None = None
+        self.expected: int | None = None
+        self.total_seen = False
+        self.first: object = _UNREAD
+        self.first_total: bool | None = None
+
+    def take(self, record: Mapping[str, Any], connection: object) -> bool:
+        """Check one page and keep its nodes; whether another page follows."""
+
+        self._check_owner(record)
+        previous = self.cursor
+        page_nodes, total, has_next, self.cursor = _page(connection, self.label)
+        if has_next and self.cursor == previous:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {self.label} pagination did not advance"
+            )
+        self._check_total(total)
+        for node in page_nodes:
+            self._keep(node)
+        return has_next
+
+    def _check_owner(self, record: Mapping[str, Any]) -> None:
+        current = self.owner(record)
+        if self.first is _UNREAD:
+            self.first = current
+        elif current != self.first:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {self.label} owner changed during pagination"
+            )
+
+    def _check_total(self, total: int | None) -> None:
+        if self.first_total is None:
+            self.first_total = total is not None
+        elif (total is not None) != self.first_total:
+            # A total missing from the first page and given later is a change too
+            # (Sourcery on #441).
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {self.label} total availability changed"
+            )
+        self.expected, self.total_seen = _tracked_total(
+            total, self.expected, self.total_seen, self.label
+        )
+
+    def _keep(self, node: Mapping[str, Any]) -> None:
+        key = self.identity(node)
+        if key in self.seen:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {self.label} repeats the identity {key}"
+            )
+        self.seen.add(key)
+        self.nodes.append(node)
+
+    def finish(self) -> list[Mapping[str, Any]]:
+        if not self.total_seen:
+            raise _DiscoveryIncomplete("TOTAL_UNAVAILABLE")
+        if self.expected != len(self.nodes):
+            raise _DiscoveryIncomplete("TOTAL_MISMATCH")
+        return self.nodes
+
+
 def _connection_nodes(
     fetch: Callable[[str | None], tuple[Mapping[str, Any], object]],
     label: str,
     owner: Callable[[Mapping[str, Any]], object],
     identity: Callable[[Mapping[str, Any]], str],
 ) -> list[Mapping[str, Any]]:
-    """Every node of one paginated connection. `fetch(cursor)` gives the page's
-    owning record and its connection; the owner must not change between pages, the
-    cursor must advance, a node's identity must not repeat, and the provider's total
-    must be given and met."""
+    """Every node of one paginated connection, at most `_MAX_PAGES` pages of it.
+    `fetch(cursor)` gives the page's owning record and its connection."""
 
-    nodes: list[Mapping[str, Any]] = []
-    seen: set[str] = set()
-    cursor: str | None = None
-    expected: int | None = None
-    total_seen = False
-    first: object = _UNREAD
-    first_total: bool | None = None
+    pages = _ConnectionPages(label, owner, identity)
     for _ in range(_MAX_PAGES):
-        record, connection = fetch(cursor)
-        current = owner(record)
-        if first is _UNREAD:
-            first = current
-        elif current != first:
-            raise ProviderReadFailure(
-                "ERROR", f"DeepSource {label} owner changed during pagination"
-            )
-        previous = cursor
-        page_nodes, total, has_next, cursor = _page(connection, label)
-        if has_next and cursor == previous:
-            raise ProviderReadFailure(
-                "ERROR", f"DeepSource {label} pagination did not advance"
-            )
-        if first_total is None:
-            first_total = total is not None
-        elif (total is not None) != first_total:
-            # A total missing from the first page and given later is a change too
-            # (Sourcery on #441).
-            raise ProviderReadFailure(
-                "ERROR", f"DeepSource {label} total availability changed"
-            )
-        expected, total_seen = _tracked_total(total, expected, total_seen, label)
-        for node in page_nodes:
-            key = identity(node)
-            if key in seen:
-                raise ProviderReadFailure(
-                    "ERROR", f"DeepSource {label} repeats the identity {key}"
-                )
-            seen.add(key)
-            nodes.append(node)
-        if not has_next:
-            if not total_seen:
-                raise _DiscoveryIncomplete("TOTAL_UNAVAILABLE")
-            if expected != len(nodes):
-                raise _DiscoveryIncomplete("TOTAL_MISMATCH")
-            return nodes
+        record, connection = fetch(pages.cursor)
+        if not pages.take(record, connection):
+            return pages.finish()
     raise ProviderReadFailure("ERROR", f"DeepSource {label} pagination exceeded bound")
 
 
@@ -1579,12 +1639,12 @@ def _repository_state(
                 {
                     "shortcode": _text(node.get("shortcode"), "analyzer.shortcode"),
                     "version": _optional_text(
-                        _selected(node, "version", "analyzer.version"),
-                        "analyzer.version",
+                        _selected(node, "version", _ANALYZER_VERSION),
+                        _ANALYZER_VERSION,
                     ),
                     "num_issues": _optional_integer(
-                        _selected(node, "numIssues", "analyzer.numIssues"),
-                        "analyzer.numIssues",
+                        _selected(node, "numIssues", _ANALYZER_NUM_ISSUES),
+                        _ANALYZER_NUM_ISSUES,
                     ),
                 }
                 for node in analyzers
@@ -1669,11 +1729,11 @@ def _analyzer_catalogue(
     def owner(analyzer: Mapping[str, Any]) -> tuple[object, object]:
         identity = (
             _optional_text(
-                _selected(analyzer, "version", "analyzer.version"), "analyzer.version"
+                _selected(analyzer, "version", _ANALYZER_VERSION), _ANALYZER_VERSION
             ),
             _optional_integer(
-                _selected(analyzer, "numIssues", "analyzer.numIssues"),
-                "analyzer.numIssues",
+                _selected(analyzer, "numIssues", _ANALYZER_NUM_ISSUES),
+                _ANALYZER_NUM_ISSUES,
             ),
         )
         observed.setdefault("identity", identity)
