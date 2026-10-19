@@ -3261,6 +3261,29 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                         deadline=deadline,
                     )
 
+    def test_an_undecodable_answer_is_an_error_not_a_crash(self) -> None:
+        # CodeAnt on #441: json.loads can also raise RecursionError (deep nesting) or a
+        # plain ValueError (the integer-digit limit). Each is an unusable answer.
+        bodies = {
+            "deep nesting": (b"[" * 100_000 + b"]" * 100_000,),
+            "an integer past the digit limit": (b'{"data": ' + b"9" * 5_000 + b"}",),
+        }
+        for label, body in bodies.items():
+            for deadline in (None, time.monotonic() + 5.0):
+                with self.subTest(body=label, deadline=deadline):
+                    client = self._client(
+                        _TimedOpener(_TimedResponse(body, [0.0], 0.0))
+                    )
+                    with self.assertRaises(
+                        analyzer_deepsource.ProviderReadFailure
+                    ) as raised:
+                        client.graphql(
+                            analyzer_deepsource._RUN_QUERY,
+                            {"runUid": "x", "cursor": None},
+                            deadline=deadline,
+                        )
+                    self.assertEqual("ERROR", raised.exception.kind)
+
 
 if __name__ == "__main__":
     unittest.main()

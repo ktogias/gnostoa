@@ -37,6 +37,7 @@ _MAX_PAGES = 100
 # are this adapter's own, so a stalling DeepSource cannot exhaust another's cap.
 _EXCHANGE_WORKERS: list[threading.Thread] = []
 _DEADLINE_PASSED = "DeepSource read deadline passed"
+_DEADLINE_BUDGET = "DeepSource read did not finish within its deadline budget"
 _API_UNAVAILABLE = "DeepSource API unavailable"
 _RESPONSE_TOO_LARGE = "DeepSource API response exceeds bounded size"
 _EXCHANGE_POLICY = github_rest.Policy(
@@ -392,8 +393,11 @@ class DeepSourceGraphQLClient:
             # Earlier stalled exchanges still hold the cap: nothing was sent.
             raise ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE) from exc
         except github_rest.GitHubReadError as exc:
-            # The shared exchange's own bound, which the deadline set.
-            raise _deadline_passed() from exc
+            # The shared exchange's own bound, which the deadline set: its wait for
+            # the whole budget, or its stop at half of it, which keeps the receive
+            # that straddles the stop inside the deadline (Decision 0100). Either is
+            # the read not finishing within its deadline (CodeAnt on #441).
+            raise ProviderReadFailure("DEADLINE", _DEADLINE_BUDGET) from exc
         # URLError is an OSError.
         except (OSError, http.client.HTTPException) as exc:
             raise _transport_failure(exc, deadline) from exc
@@ -435,9 +439,12 @@ def _transport_failure(
 
 
 def _graphql_document(raw: bytes) -> Mapping[str, Any]:
+    # The shared decode names every failure as one unusable answer: a non-UTF-8 body,
+    # deep nesting's RecursionError and the integer-digit limit's ValueError among
+    # them, and a `null` body (Decision 0100; CodeAnt on #441).
     try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = github_rest.decode_json(raw, _GRAPHQL_URL)
+    except github_rest.MalformedAnswer as exc:
         raise ProviderReadFailure(
             "ERROR", "DeepSource API returned invalid JSON"
         ) from exc
