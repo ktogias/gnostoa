@@ -5,6 +5,7 @@ import http.client
 import inspect
 import io
 import json
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -2253,7 +2254,14 @@ class CapabilityFake:
         deadline: float | None = None,
     ) -> Mapping[str, Any]:
         values = dict(variables)
-        kind = next(k for k in _KINDS if k in query)
+        # As the real client refuses an unadmitted query, the fake refuses one it does
+        # not answer, by name (Amazon Q on #441).
+        kind = next((k for k in _KINDS if k in query), None)
+        if kind is None:
+            raise AssertionError(f"the fake answers no such query: {query[:60]!r}")
+        if kind != "AnalyzerCatalogue" and values.get("login") != "ktogias":
+            # A reader asking for another account gets no answer (Cubic on #441).
+            raise AssertionError(f"the fake answers no account {values.get('login')!r}")
         self.calls.append((kind, values))
         self.deadlines.append(deadline)
         if self.clock is not None:
@@ -2449,6 +2457,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
                 "configuration",
                 "analyzers",
                 "ignore_rules",
+                "activated",
                 "effective_configuration",
                 "unknown",
             },
@@ -2847,6 +2856,144 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
                     ],
                 )
 
+    def test_the_fake_refuses_a_query_it_does_not_answer(self) -> None:
+        with self.assertRaisesRegex(AssertionError, "answers no such query"):
+            CapabilityFake(stable()).graphql(analyzer_deepsource._RUN_QUERY, {})
+
+    def test_a_deadline_that_is_not_a_finite_positive_number_is_refused(self) -> None:
+        # Amazon Q on #441: a non-positive budget; and NaN or an infinite one would
+        # never stop a read, since no comparison with NaN is true.
+        for value in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(deadline_seconds=value):
+                fake = CapabilityFake(stable())
+                with self.assertRaises(ValueError):
+                    self._read(fake, deadline_seconds=value)
+                self.assertEqual([], fake.calls)
+
+    def test_a_late_last_request_is_never_complete(self) -> None:
+        # Sourcery on #441: every request starts in the budget, the last ends past it.
+        fake = CapabilityFake(stable())
+        clock = [0.0]
+        fake.clock, fake.cost = clock, 1.9
+        with patch("time.monotonic", lambda: clock[0]):
+            receipt = self._read(fake, deadline_seconds=10.0)
+        self.assertEqual(6, len(fake.calls))
+        self.assertEqual(
+            ("INCOMPLETE", "DEADLINE"),
+            (receipt["coverage"]["status"], receipt["coverage"].get("reason")),
+        )
+
+    def test_a_total_that_appears_on_a_later_page_is_refused(self) -> None:
+        # Sourcery on #441: a total missing from the first page and given later.
+        first = catalogue_page(
+            [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+            num_issues=3,
+            has_next=True,
+            cursor="c1",
+        )
+        first["data"]["analyzer"]["issues"]["totalCount"] = None
+        record = self._status({("AnalyzerCatalogue", "python", None): first})
+        self.assertEqual("ERROR", record["status"])
+
+    def test_an_omitted_selected_field_is_refused(self) -> None:
+        # Sourcery on #441: an omitted field is no explicit null.
+        def without(page: dict[str, Any], *path: str) -> dict[str, Any]:
+            node: Any = page
+            for key in path[:-1]:
+                node = node[int(key)] if isinstance(node, list) else node[key]
+            del node[path[-1]]
+            return page
+
+        repo = ("data", "repository")
+        cases: dict[str, dict[tuple[str, str, str | None], Any]] = {
+            "configJson": {
+                ("RepositoryAnalyzers", "gnostoa", None): without(
+                    analyzers_page(), *repo, "configJson"
+                )
+            },
+            "an analyzer's version": {
+                ("RepositoryAnalyzers", "gnostoa", None): without(
+                    analyzers_page(),
+                    *repo,
+                    "enabledAnalyzers",
+                    "edges",
+                    "0",
+                    "node",
+                    "version",
+                )
+            },
+            "an ignore rule's filePath": {
+                ("RepositoryIgnoreRules", "gnostoa", None): ignore_page(
+                    [
+                        {
+                            k: v
+                            for k, v in ignore_rule("rule-1").items()
+                            if k != "filePath"
+                        }
+                    ]
+                )
+            },
+        }
+        for label, override in cases.items():
+            with self.subTest(field=label):
+                self.assertEqual("ERROR", self._status(override)["status"])
+
+    def test_catalogues_read_before_a_failure_are_kept(self) -> None:
+        # Codex and Sourcery on #441: a later failure keeps what was read whole.
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                [analyzer(), analyzer("shell", num_issues=1)]
+            ),
+            ("AnalyzerCatalogue", "shell", None): failure,
+        }
+        receipt = self._read(CapabilityFake(stable(overrides)))
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+        self.assertEqual(["python"], [a["shortcode"] for a in receipt["analyzers"]])
+        self.assertEqual(3, len(receipt["analyzers"][0]["catalogue"]))
+        self.assertEqual(3, receipt["coverage"]["count"])
+
+    def test_a_catalogue_that_fails_conversion_counts_nothing(self) -> None:
+        entry = catalogue_issue("PTC-W0063")
+        entry["isRecommended"] = "yes"
+        last = catalogue_page([entry], num_issues=3, total=3)
+        record = self._status({("AnalyzerCatalogue", "python", "c1"): last})
+        self.assertEqual(("ERROR", 0), (record["status"], record["count"]))
+
+    def test_the_activation_state_is_reported(self) -> None:
+        self.assertIs(
+            True, self._read(CapabilityFake(stable())).get("activated", "no key")
+        )
+        page = analyzers_page()
+        page["data"]["repository"]["isActivated"] = False
+        receipt = self._read(
+            CapabilityFake(stable({("RepositoryAnalyzers", "gnostoa", None): page}))
+        )
+        self.assertIs(False, receipt.get("activated", "no key"))
+
+    def test_the_missing_snapshot_is_named_as_unknown(self) -> None:
+        # Sourcery on #441: the API has no snapshot or generation token, so a
+        # catalogue changed within one version and size cannot be detected.
+        unknown = self._read(CapabilityFake(stable()))["unknown"]
+        self.assertTrue(any("snapshot" in item for item in unknown), unknown)
+
+    def test_the_catalogue_entries_are_bounded(self) -> None:
+        # CodeAnt on #441: bounds per connection alone allow a huge result.
+        with patch.object(
+            analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 2, create=True
+        ):
+            record = self._read(CapabilityFake(stable()))["coverage"]
+        self.assertEqual(
+            ("INCOMPLETE", "BUDGET"), (record["status"], record.get("reason"))
+        )
+
+    def test_the_fake_refuses_another_account(self) -> None:
+        with self.assertRaisesRegex(AssertionError, "answers no account"):
+            CapabilityFake(stable()).graphql(
+                analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY,
+                {"name": "gnostoa", "login": "other", "cursor": None},
+            )
+
 
 class _TimedResponse:
     """A response whose body arrives in pieces, each moving the clock."""
@@ -2893,6 +3040,49 @@ class _TimedOpener:
         return self.response
 
 
+class _DripRaw(io.RawIOBase):
+    """One byte per receive, after a real pause from byte `slow_from` on."""
+
+    def __init__(self, data: bytes, slow_from: int, delay: float) -> None:
+        self.data, self.position = data, 0
+        self.slow_from, self.delay = slow_from, delay
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        if self.position >= len(self.data):
+            return 0
+        if self.position >= self.slow_from:
+            time.sleep(self.delay)
+        buffer[0] = self.data[self.position]
+        self.position += 1
+        return 1
+
+
+class _DripSocket:
+    def __init__(self, data: bytes, slow_from: int, delay: float) -> None:
+        self.raw = _DripRaw(data, slow_from, delay)
+
+    def makefile(self, *_args: object, **_kwargs: object) -> io.BufferedReader:
+        return io.BufferedReader(self.raw)
+
+
+class _ParsingOpener:
+    """A real http.client parser over a dripping socket, inside `open()` as urllib
+    has it: the status line and headers are parsed before `open()` returns."""
+
+    def __init__(self, data: bytes, slow_from: int, delay: float) -> None:
+        self.data, self.slow_from, self.delay = data, slow_from, delay
+
+    def open(self, _request: object, timeout: float) -> http.client.HTTPResponse:
+        response = http.client.HTTPResponse(
+            _DripSocket(self.data, self.slow_from, self.delay)  # type: ignore[arg-type]
+        )
+        response.begin()
+        return response
+
+
 class DeepSourceClientDeadlineTests(unittest.TestCase):
     """The client's optional deadline (#389 F3 R0, Router 6267325366): absent, every
     existing read is unchanged; given, it bounds the connection and the body."""
@@ -2937,7 +3127,10 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
         opener = _TimedOpener(_TimedResponse(self._BODY, clock, 0.0))
         with patch("time.monotonic", lambda: clock[0]):
             self._graphql(self._client(opener), 5.0)
-        self.assertEqual([5.0], opener.timeouts)
+        # The shared exchange gives each receive half the budget left (Decision 0100).
+        [timeout] = opener.timeouts
+        self.assertLessEqual(timeout, 5.0)
+        self.assertGreater(timeout, 0.0)
 
     def test_a_body_that_arrives_past_the_deadline_is_refused(self) -> None:
         clock = [0.0]
@@ -2956,7 +3149,11 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                 analyzer_deepsource.ProviderReadFailure, "exceeds bounded size"
             ):
                 self._graphql(self._client(_TimedOpener(response)), 50.0)
-        self.assertEqual(limit + 1, response.given)
+        # The shared exchange refuses once one chunk takes the body past the cap.
+        self.assertLessEqual(
+            response.given,
+            limit + analyzer_deepsource._EXCHANGE_POLICY.read_chunk_bytes,
+        )
 
     def test_a_timeout_at_the_deadline_is_the_deadline(self) -> None:
         clock = [0.0]
@@ -2970,6 +3167,78 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
             with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
                 self._graphql(self._client(_SlowOpener()), 5.0)
         self.assertEqual("DEADLINE", raised.exception.kind)
+
+    def test_a_deadline_that_is_not_finite_opens_no_connection(self) -> None:
+        class _FailOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError("no connection may open without a finite deadline")
+
+        for value in (float("nan"), float("inf")):
+            with self.subTest(deadline=value):
+                with self.assertRaises(
+                    analyzer_deepsource.ProviderReadFailure
+                ) as raised:
+                    self._graphql(self._client(_FailOpener()), value)
+                self.assertEqual("ERROR", raised.exception.kind)
+
+    def _elapsed_until_refused(self, opener: object) -> tuple[float, str]:
+        client = self._client(opener)
+        started = time.monotonic()
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+            self._graphql(client, started + 0.3)
+        return time.monotonic() - started, raised.exception.kind
+
+    def test_slow_headers_are_bounded_by_the_deadline(self) -> None:
+        # PAO R0-DEADLINE-01 (6267919955): the status line and headers drip inside
+        # open(), one byte per receive, each well inside its socket timeout.
+        data = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"
+        elapsed, kind = self._elapsed_until_refused(_ParsingOpener(data, 0, 0.03))
+        self.assertEqual("DEADLINE", kind)
+        self.assertLess(elapsed, 1.0)
+
+    def test_slow_chunk_framing_is_bounded_by_the_deadline(self) -> None:
+        # PAO R0-DEADLINE-01: a chunk-size extension drips inside one read1.
+        head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        data = head + b"2;" + b"x" * 40 + b"\r\n{}\r\n0\r\n\r\n"
+        elapsed, kind = self._elapsed_until_refused(
+            _ParsingOpener(data, len(head), 0.03)
+        )
+        self.assertEqual("DEADLINE", kind)
+        self.assertLess(elapsed, 1.0)
+
+    def test_an_answer_finished_after_the_deadline_is_refused(self) -> None:
+        # Sourcery and CodeAnt on #441: the exchange ends, but past the deadline.
+        clock = [0.0]
+
+        class _LateHeaders(_TimedResponse):
+            @property
+            def headers(self) -> dict[str, str]:
+                clock[0] += 10.0
+                return {}
+
+        opener = _TimedOpener(_LateHeaders(self._BODY, clock, 0.0))
+        with patch("time.monotonic", lambda: clock[0]):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._graphql(self._client(opener), 5.0)
+        self.assertEqual("DEADLINE", raised.exception.kind)
+
+    def test_a_wrapped_timeout_is_the_deadline(self) -> None:
+        class _WrappedTimeout:
+            def open(self, _request: object, timeout: float) -> object:
+                raise urllib.error.URLError(TimeoutError("timed out"))
+
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+            self._graphql(self._client(_WrappedTimeout()), time.monotonic() + 5.0)
+        self.assertEqual("DEADLINE", raised.exception.kind)
+
+    def test_a_request_the_exchange_did_not_send_is_unavailable(self) -> None:
+        refused = analyzer_deepsource.github_rest.NotSent("16 earlier requests")
+        with patch.object(
+            analyzer_deepsource.github_rest, "exchange", side_effect=refused
+        ):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._graphql(self._client(object()), time.monotonic() + 5.0)
+        self.assertEqual("UNAVAILABLE", raised.exception.kind)
 
 
 if __name__ == "__main__":
