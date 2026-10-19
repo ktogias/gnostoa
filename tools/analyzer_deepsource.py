@@ -1425,7 +1425,7 @@ _DISCOVERY_UNKNOWN = (
 _MAX_CATALOGUE_ENTRIES = 20_000
 
 
-class _DiscoveryIncomplete(Exception):
+class _DiscoveryIncomplete(RuntimeError):
     """A read that stopped short of a provable answer, by its named reason."""
 
     def __init__(self, reason: str) -> None:
@@ -1621,6 +1621,12 @@ def _repository_state(
             )
         if not settings:
             configuration = _selected(repository, "configJson", "repository.configJson")
+            # DeepSource documents it as the .deepsource.toml "represented as a JSON
+            # object", nullable (Codex on #441).
+            if configuration is not None and type(configuration) is not dict:
+                raise ProviderReadFailure(
+                    "ERROR", "DeepSource repository.configJson is not an object"
+                )
             _canonical(configuration)
             settings["activated"] = activated
             settings["configuration"] = configuration
@@ -1823,11 +1829,12 @@ def read_capability_discovery(
     login, short = name.split("/")
     read = _DiscoveryRead(login, short, time.monotonic() + deadline_seconds)
     observed_at = _now()
+    # What the read never reached is null, never an empty list (revix on #441).
     state: dict[str, Any] = {
         "activated": None,
         "configuration": _UNREAD,
-        "analyzers": [],
-        "ignore_rules": [],
+        "analyzers": None,
+        "ignore_rules": None,
     }
     try:
         first = _repository_state(client, read, state)

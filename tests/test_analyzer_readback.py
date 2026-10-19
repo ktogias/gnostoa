@@ -3034,7 +3034,8 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
             receipt["configuration"],
         )
         self.assertIs(True, receipt["activated"])
-        self.assertEqual([], receipt["analyzers"])
+        # The enabled analyzers were not read whole, so they are null, never empty.
+        self.assertIsNone(receipt["analyzers"])
 
     def test_the_configuration_digest_is_the_shared_canonical_one(self) -> None:
         # revix on #441 (rule canonical-json-digests): canonical JSON and digests come
@@ -3096,6 +3097,47 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         receipt = self._paged_configuration(later)
         self.assertEqual("COMPLETE", receipt["coverage"]["status"])
         self.assertEqual({"state": "ABSENT"}, receipt["configuration"])
+
+    def test_a_configuration_that_is_not_an_object_is_refused(self) -> None:
+        # Codex on #441 (4317067622): DeepSource documents configJson as the
+        # .deepsource.toml "represented as a JSON object", so a scalar or an array is
+        # malformed, never a present configuration.
+        for value in ([{"name": "python"}], "version = 1", 1, True):
+            with self.subTest(value=value):
+                page = analyzers_page(config=value)
+                record = self._status({("RepositoryAnalyzers", "gnostoa", None): page})
+                self.assertEqual("ERROR", record["status"])
+
+    def test_lists_the_read_never_reached_are_null_not_empty(self) -> None:
+        # revix on #441 (4317057984, rule fail-closed-unknown-evidence): an unread list
+        # is never an empty one.
+        ticks = iter([0.0] + [1000.0] * 50)
+        with patch("time.monotonic", side_effect=ticks):
+            stopped = self._read(CapabilityFake(stable()), deadline_seconds=10.0)
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        later = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                            [analyzer()], total=2, has_next=True, cursor="a1"
+                        ),
+                        ("RepositoryAnalyzers", "gnostoa", "a1"): failure,
+                    }
+                )
+            )
+        )
+        for receipt in (stopped, later):
+            with self.subTest(reason=receipt["coverage"].get("reason")):
+                self.assertIsNone(receipt["analyzers"])
+                self.assertIsNone(receipt["ignore_rules"])
+
+    def test_the_discovery_stop_is_a_domain_error(self) -> None:
+        # revix on #441 (4317057997, rule domain-exception-per-module): the module's
+        # errors derive from RuntimeError, as ProviderReadFailure does.
+        self.assertTrue(
+            issubclass(analyzer_deepsource._DiscoveryIncomplete, RuntimeError)
+        )
 
 
 class _TimedResponse:
