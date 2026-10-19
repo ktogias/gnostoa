@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import re
 import stat
@@ -76,7 +77,7 @@ def _git_result(
     """One Git child of `root`, classified: GIT_TIMEOUT past `timeout`, and GIT_IO when
     Git cannot run."""
     try:
-        return subprocess.run(
+        return subprocess.run(  # nosec B603 B607 -- a fixed Git argv, no shell; `git` from the host's trusted PATH, as before this module's narrowing
             ["git", "-c", f"safe.directory={root}", "-C", str(root), *arguments],
             check=False,
             capture_output=True,
@@ -249,7 +250,7 @@ def _bind_gitfile(root: Path, end: float | None, timeout: float | None) -> None:
     declare `root` (has_git_metadata)."""
     git_metadata = root / ".git"
 
-    def located(arguments: list[str], purpose: str) -> Path:
+    def located(arguments: list[str], purpose: str, *, entry: bool = False) -> Path:
         answer = _git_answer(
             root,
             arguments,
@@ -261,7 +262,10 @@ def _bind_gitfile(root: Path, end: float | None, timeout: float | None) -> None:
                 f"Git gave no answer to {purpose} in {root}", category="GIT_FAILED"
             )
         # A relative answer is relative to Git's working directory, `root`.
-        return Path(root, answer).resolve()
+        path = Path(root, answer)
+        # An entry keeps its own name unresolved, so the reader still sees a symlink
+        # in its place (the PAO's NA-BP-01 on #436); only its directory is resolved.
+        return path.parent.resolve() / path.name if entry else path.resolve()
 
     git_dir = located(["rev-parse", "--absolute-git-dir"], "locate the Git directory")
     common = located(
@@ -269,7 +273,9 @@ def _bind_gitfile(root: Path, end: float | None, timeout: float | None) -> None:
     )
     if git_dir != common:
         record = located(
-            ["rev-parse", "--git-path", "gitdir"], "locate the worktree back-pointer"
+            ["rev-parse", "--git-path", "gitdir"],
+            "locate the worktree back-pointer",
+            entry=True,
         )
         # Trimmed as Git's own reader trims it; a relative record is relative to its
         # worktree directory.
@@ -302,12 +308,17 @@ def _bind_gitfile(root: Path, end: float | None, timeout: float | None) -> None:
 def _worktree_back_pointer(record: Path, git_metadata: Path) -> bytes:
     """A linked worktree's `gitdir` record, read once and bounded: a regular file of at
     most _WORKTREE_RECORD_BYTES, opened without blocking, so a FIFO in its place cannot
-    stall the read. A missing, irregular or oversized record is UNSAFE_PATH, never
-    absence; one that cannot be read is GIT_METADATA_IO."""
+    stall the read, and without following a symlink in its place, an unsafe entry
+    whatever it names (the owner's N-a; cubic and the PAO's NA-BP-01 on #436). A
+    missing, irregular or oversized record is UNSAFE_PATH, never absence; one that
+    cannot be read is GIT_METADATA_IO."""
     try:
         descriptor = os.open(
             record,
-            os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
         )
     except FileNotFoundError:
         raise RepositoryScopeError(
@@ -316,6 +327,12 @@ def _worktree_back_pointer(record: Path, git_metadata: Path) -> bytes:
             category="UNSAFE_PATH",
         ) from None
     except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise RepositoryScopeError(
+                f"the worktree back-pointer {record} is not a regular file: it is a "
+                "symbolic link",
+                category="UNSAFE_PATH",
+            ) from None
         raise RepositoryScopeError(
             f"cannot read the worktree back-pointer {record}: {exc}",
             category="GIT_METADATA_IO",

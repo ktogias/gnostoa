@@ -528,6 +528,24 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 ("oversized", b"/" * 5000 + b"\n", "larger than"),
                 ("a directory", Path.mkdir, "not a regular file"),
                 ("a FIFO", os.mkfifo, "not a regular file"),
+                # A symlink in the record's place is an unsafe entry, whatever it names
+                # (the owner's N-a 6241486091; cubic and the PAO's NA-BP-01 on #436).
+                (
+                    "a symlink to a FIFO",
+                    lambda entry: (
+                        os.mkfifo(entry.with_name("gitdir.fifo")),
+                        entry.symlink_to(entry.with_name("gitdir.fifo")),
+                    ),
+                    "not a regular file",
+                ),
+                (
+                    "a symlink to a regular record naming this root",
+                    lambda entry: (
+                        entry.with_name("gitdir.target").write_bytes(original),
+                        entry.symlink_to(entry.with_name("gitdir.target")),
+                    ),
+                    "not a regular file",
+                ),
             ):
                 with self.subTest(label):
                     replace(content)
@@ -748,14 +766,17 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = self._tracked_repository(Path(directory))
             with self.subTest("a positive remainder"):
+                # A budget well above two real Git reads plus the 0.3 s inspection, so
+                # a loaded worker cannot fail it; the remainder is still pinned
+                # (CodeAnt on #436).
                 with mock.patch.object(Path, "lstat", autospec=True, side_effect=slow):
                     started = time.monotonic()
-                    paths, seen = self._enumerate_recording_git(root, timeout=2.5)
+                    paths, seen = self._enumerate_recording_git(root, timeout=10.0)
                 self.assertEqual([Path("tracked.md")], paths)
                 self.assertEqual(2, len(seen))
-                self.assertLessEqual(seen[0], 2.5 - 0.3)
+                self.assertLessEqual(seen[0], 10.0 - 0.3)
                 self.assertLess(seen[1], seen[0])
-                self.assertLess(time.monotonic() - started, 2.5)
+                self.assertLess(time.monotonic() - started, 10.0)
             spent: list[object] = []
             run = subprocess.run
 
