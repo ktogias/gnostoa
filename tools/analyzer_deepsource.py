@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import http.client
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -26,6 +28,9 @@ _TOKEN_ENV = "DEEPSOURCE_API_TOKEN"  # nosec B105 -- environment variable name, 
 _TIMEOUT_SECONDS = 30
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 100
+# A deadline-bound read takes its body this many bytes at a time, one socket
+# operation each (#389 F3 R0).
+_READ_CHUNK_BYTES = 65_536
 _COMPLETED_RUN_STATUSES = frozenset({"SUCCESS", "FAILURE"})
 _COMPLETED_CHECK_STATUSES = frozenset({"SUCCESS", "FAILURE", "NEUTRAL"})
 _DEEPSOURCE_STATUS = re.compile(r"^DeepSource: (?P<analyzer>[^/]+)$")
@@ -113,7 +118,95 @@ query AnalyzerCheckIssues($id: ID!, $cursor: String) {
 """
 
 
-_ADMITTED_GRAPHQL_READ_QUERIES = frozenset({_RUN_QUERY, _CHECK_QUERY})
+# The capability discovery's three reads (#389 F3 R0): the repository's current
+# configuration and enabled analyzers, its ignore rules, and one analyzer's issue
+# catalogue. Each pages one connection, so every connection is bound on its own (PAO
+# 6267150750, R0-SNAP-01).
+_REPOSITORY_ANALYZERS_QUERY = """
+query RepositoryAnalyzers($name: String!, $login: String!, $cursor: String) {
+  repository(name: $name, login: $login, vcsProvider: GITHUB) {
+    name
+    isActivated
+    configJson
+    account {
+      login
+      vcsProvider
+    }
+    enabledAnalyzers(first: 100, after: $cursor) {
+      totalCount
+      edges {
+        node {
+          shortcode
+          version
+          numIssues
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_REPOSITORY_IGNORE_RULES_QUERY = """
+query RepositoryIgnoreRules($name: String!, $login: String!, $cursor: String) {
+  repository(name: $name, login: $login, vcsProvider: GITHUB) {
+    name
+    account {
+      login
+      vcsProvider
+    }
+    ignoreRules(first: 100, after: $cursor) {
+      totalCount
+      edges {
+        node {
+          id
+          level
+          type
+          filePath
+          globPattern
+          issue { shortcode }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_ANALYZER_CATALOGUE_QUERY = """
+query AnalyzerCatalogue($shortcode: String!, $cursor: String) {
+  analyzer(shortcode: $shortcode) {
+    shortcode
+    version
+    numIssues
+    issues(first: 100, after: $cursor) {
+      totalCount
+      edges {
+        node {
+          shortcode
+          title
+          category
+          severity
+          isRecommended
+          tags
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+
+_ADMITTED_GRAPHQL_READ_QUERIES = frozenset(
+    {
+        _RUN_QUERY,
+        _CHECK_QUERY,
+        _REPOSITORY_ANALYZERS_QUERY,
+        _REPOSITORY_IGNORE_RULES_QUERY,
+        _ANALYZER_CATALOGUE_QUERY,
+    }
+)
 
 
 class ProviderReadFailure(RuntimeError):
@@ -127,6 +220,45 @@ class GraphQLReader(Protocol):
     def graphql(
         self, query: str, variables: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
+
+
+class DeadlineGraphQLReader(Protocol):
+    """A reader that bounds each request's own work by an absolute deadline."""
+
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
+def _remaining(deadline: float) -> float:
+    """The budget left before `deadline`, on the monotonic clock; none left stops the
+    read."""
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ProviderReadFailure("DEADLINE", "DeepSource read deadline passed")
+    return remaining
+
+
+def _read_by(response: Any, deadline: float) -> bytes:
+    """The body, one socket operation at a time, with no operation started after the
+    deadline. Each operation waits at most the connection's timeout, which the
+    caller set to no more than the budget left when the request began."""
+
+    body = bytearray()
+    while len(body) <= _MAX_RESPONSE_BYTES:
+        _remaining(deadline)
+        chunk = response.read1(
+            min(_READ_CHUNK_BYTES, _MAX_RESPONSE_BYTES + 1 - len(body))
+        )
+        if not chunk:
+            break
+        body.extend(chunk)
+    return bytes(body)
 
 
 def _now() -> str:
@@ -186,11 +318,25 @@ class DeepSourceGraphQLClient:
     def from_environment(cls) -> DeepSourceGraphQLClient:
         return cls(os.environ.get(_TOKEN_ENV, ""))
 
-    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        """One admitted read. Without `deadline`, as every existing read has it; with
+        one, no connection opens after it, the connection's timeout is at most the
+        budget left, and the body is read one bounded socket operation at a time
+        (#389 F3 R0, Router 6267325366)."""
+
         if query not in _ADMITTED_GRAPHQL_READ_QUERIES:
             raise ProviderReadFailure(
                 "ERROR", "DeepSource unsupported GraphQL read operation"
             )
+        timeout: float = _TIMEOUT_SECONDS
+        if deadline is not None:
+            timeout = min(timeout, _remaining(deadline))
         payload = json.dumps(
             {"query": query, "variables": dict(variables)},
             sort_keys=True,
@@ -210,8 +356,12 @@ class DeepSourceGraphQLClient:
         )
         request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         try:
-            with self._opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+            with self._opener.open(request, timeout=timeout) as response:
+                raw = (
+                    response.read(_MAX_RESPONSE_BYTES + 1)
+                    if deadline is None
+                    else _read_by(response, deadline)
+                )
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
                 raise ProviderReadFailure(
@@ -226,6 +376,11 @@ class DeepSourceGraphQLClient:
             ) from exc
         # URLError is an OSError.
         except (OSError, http.client.HTTPException) as exc:
+            if deadline is not None and time.monotonic() >= deadline:
+                # A timeout the deadline set is the deadline, not an outage.
+                raise ProviderReadFailure(
+                    "DEADLINE", "DeepSource read deadline passed"
+                ) from exc
             raise ProviderReadFailure(
                 "UNAVAILABLE", "DeepSource API unavailable"
             ) from exc
@@ -1197,3 +1352,393 @@ def diff_local_from_github(
             ),
             findings=[],
         )
+
+
+# The capability discovery (#389 F3 R0; Router 6266752276 and 6267131349, PAO
+# 6267150750). It is the repository's state when read: the API exposes no run's own
+# configuration, analyzer versions or rules, so the receipt is never a past run's
+# capability, and how the configuration selects issues stays unproven.
+_DISCOVERY_SCHEMA = "gnostoa.deepsource-capability-discovery/v1"
+_DISCOVERY_BINDING = "CURRENT_NOT_RUN_BOUND"
+_DISCOVERY_DEADLINE_SECONDS = 300.0
+# A value the read never reached, distinct from any the provider gave.
+_UNREAD: object = object()
+_DISCOVERY_UNKNOWN = (
+    "how the configuration and each analyzer's meta options select its issues",
+    "the configuration, analyzer versions and rules that any past run used",
+    "repository settings that the API does not expose",
+)
+
+
+class _DiscoveryIncomplete(Exception):
+    """A read that stopped short of a provable answer, by its named reason."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _DiscoveryRead:
+    __slots__ = ("count", "deadline", "login", "name", "pages")
+
+    def __init__(self, login: str, name: str, deadline: float) -> None:
+        self.login = login
+        self.name = name
+        self.deadline = deadline
+        self.pages = _Pages()
+        self.count = 0
+
+
+def _discovery_page(
+    client: DeadlineGraphQLReader,
+    read: _DiscoveryRead,
+    query: str,
+    variables: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    # A spent deadline reads no further page.
+    if time.monotonic() >= read.deadline:
+        raise _DiscoveryIncomplete("DEADLINE")
+    page = client.graphql(query, variables, deadline=read.deadline)
+    read.pages.count += 1
+    return page
+
+
+def _connection_nodes(
+    fetch: Callable[[str | None], tuple[Mapping[str, Any], object]],
+    label: str,
+    owner: Callable[[Mapping[str, Any]], object],
+    identity: Callable[[Mapping[str, Any]], str],
+) -> list[Mapping[str, Any]]:
+    """Every node of one paginated connection. `fetch(cursor)` gives the page's
+    owning record and its connection; the owner must not change between pages, the
+    cursor must advance, a node's identity must not repeat, and the provider's total
+    must be given and met."""
+
+    nodes: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    cursor: str | None = None
+    expected: int | None = None
+    total_seen = False
+    first: object = _UNREAD
+    for _ in range(_MAX_PAGES):
+        record, connection = fetch(cursor)
+        current = owner(record)
+        if first is _UNREAD:
+            first = current
+        elif current != first:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {label} owner changed during pagination"
+            )
+        previous = cursor
+        page_nodes, total, has_next, cursor = _page(connection, label)
+        if has_next and cursor == previous:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource {label} pagination did not advance"
+            )
+        expected, total_seen = _tracked_total(total, expected, total_seen, label)
+        for node in page_nodes:
+            key = identity(node)
+            if key in seen:
+                raise ProviderReadFailure(
+                    "ERROR", f"DeepSource {label} repeats the identity {key}"
+                )
+            seen.add(key)
+            nodes.append(node)
+        if not has_next:
+            if not total_seen:
+                raise _DiscoveryIncomplete("TOTAL_UNAVAILABLE")
+            if expected != len(nodes):
+                raise _DiscoveryIncomplete("TOTAL_MISMATCH")
+            return nodes
+    raise ProviderReadFailure("ERROR", f"DeepSource {label} pagination exceeded bound")
+
+
+def _discovery_repository(
+    page: Mapping[str, Any], read: _DiscoveryRead
+) -> Mapping[str, Any]:
+    repository = _mapping(
+        _mapping(page.get("data"), "data").get("repository"), "repository"
+    )
+    account = _mapping(repository.get("account"), "repository.account")
+    if (
+        _text(repository.get("name"), "repository name") != read.name
+        or _text(account.get("login"), "repository account login") != read.login
+        or _text(account.get("vcsProvider"), "repository provider") != "GITHUB"
+    ):
+        raise ProviderReadFailure("ERROR", "DeepSource answered for another repository")
+    return repository
+
+
+def _optional_text(value: object, label: str) -> str | None:
+    return None if value is None else _text(value, label)
+
+
+def _optional_integer(value: object, label: str) -> int | None:
+    return None if value is None else _integer(value, label)
+
+
+def _canonical(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _repository_state(
+    client: DeadlineGraphQLReader, read: _DiscoveryRead
+) -> dict[str, Any]:
+    """The repository's configuration, enabled analyzers and ignore rules, read
+    whole."""
+
+    variables = {"name": read.name, "login": read.login}
+    settings: dict[str, Any] = {}
+
+    def analyzers_page(cursor: str | None) -> tuple[Mapping[str, Any], object]:
+        page = _discovery_page(
+            client, read, _REPOSITORY_ANALYZERS_QUERY, {**variables, "cursor": cursor}
+        )
+        repository = _discovery_repository(page, read)
+        activated = repository.get("isActivated")
+        if type(activated) is not bool:
+            raise ProviderReadFailure(
+                "ERROR", "DeepSource repository.isActivated is malformed"
+            )
+        settings.setdefault("activated", activated)
+        settings.setdefault("configuration", repository.get("configJson"))
+        return repository, repository.get("enabledAnalyzers")
+
+    analyzers = _connection_nodes(
+        analyzers_page,
+        "enabledAnalyzers",
+        lambda r: (r.get("isActivated"), _canonical(r.get("configJson"))),
+        lambda node: _text(node.get("shortcode"), "analyzer.shortcode"),
+    )
+
+    def ignore_page(cursor: str | None) -> tuple[Mapping[str, Any], object]:
+        page = _discovery_page(
+            client,
+            read,
+            _REPOSITORY_IGNORE_RULES_QUERY,
+            {**variables, "cursor": cursor},
+        )
+        repository = _discovery_repository(page, read)
+        return repository, repository.get("ignoreRules")
+
+    rules = _connection_nodes(
+        ignore_page,
+        "ignoreRules",
+        lambda _r: None,
+        lambda node: _text(node.get("id"), "ignoreRule.id"),
+    )
+    return {
+        "activated": settings["activated"],
+        "configuration": settings["configuration"],
+        "analyzers": sorted(
+            (
+                {
+                    "shortcode": _text(node.get("shortcode"), "analyzer.shortcode"),
+                    "version": _optional_text(node.get("version"), "analyzer.version"),
+                    "num_issues": _optional_integer(
+                        node.get("numIssues"), "analyzer.numIssues"
+                    ),
+                }
+                for node in analyzers
+            ),
+            key=lambda entry: entry["shortcode"],
+        ),
+        "ignore_rules": sorted(
+            (
+                {
+                    "id": _text(node.get("id"), "ignoreRule.id"),
+                    "level": _text(node.get("level"), "ignoreRule.level"),
+                    "type": _text(node.get("type"), "ignoreRule.type"),
+                    "issue": _text(
+                        _mapping(node.get("issue"), "ignoreRule.issue").get(
+                            "shortcode"
+                        ),
+                        "ignoreRule.issue.shortcode",
+                    ),
+                    "file_path": _optional_text(
+                        node.get("filePath"), "ignoreRule.filePath"
+                    ),
+                    "glob_pattern": _optional_text(
+                        node.get("globPattern"), "ignoreRule.globPattern"
+                    ),
+                }
+                for node in rules
+            ),
+            key=lambda entry: entry["id"],
+        ),
+    }
+
+
+def _catalogue_issue(node: Mapping[str, Any]) -> dict[str, Any]:
+    recommended = node.get("isRecommended")
+    if type(recommended) is not bool:
+        raise ProviderReadFailure(
+            "ERROR", "DeepSource issue.isRecommended is malformed"
+        )
+    tags = node.get("tags")
+    if not isinstance(tags, list):
+        raise ProviderReadFailure("ERROR", "DeepSource issue.tags is malformed")
+    return {
+        "shortcode": _text(node.get("shortcode"), "issue.shortcode"),
+        "title": _text(node.get("title"), "issue.title"),
+        "category": _text(node.get("category"), "issue.category"),
+        "severity": _text(node.get("severity"), "issue.severity"),
+        "is_recommended": recommended,
+        "tags": [_text(tag, "issue.tag") for tag in tags],
+    }
+
+
+def _analyzer_catalogue(
+    client: DeadlineGraphQLReader, read: _DiscoveryRead, enabled: Mapping[str, Any]
+) -> dict[str, Any]:
+    """One enabled analyzer's whole catalogue, at the version and size the
+    repository state gave it."""
+
+    shortcode = enabled["shortcode"]
+
+    def catalogue_page(cursor: str | None) -> tuple[Mapping[str, Any], object]:
+        page = _discovery_page(
+            client,
+            read,
+            _ANALYZER_CATALOGUE_QUERY,
+            {"shortcode": shortcode, "cursor": cursor},
+        )
+        node = _mapping(page.get("data"), "data").get("analyzer")
+        if node is None:
+            raise ProviderReadFailure(
+                "ERROR", f"DeepSource has no catalogue for the enabled {shortcode}"
+            )
+        analyzer = _mapping(node, "analyzer")
+        if _text(analyzer.get("shortcode"), "analyzer.shortcode") != shortcode:
+            raise ProviderReadFailure(
+                "ERROR", "DeepSource answered for another analyzer"
+            )
+        return analyzer, analyzer.get("issues")
+
+    observed: dict[str, Any] = {}
+
+    def owner(analyzer: Mapping[str, Any]) -> tuple[object, object]:
+        identity = (
+            _optional_text(analyzer.get("version"), "analyzer.version"),
+            _optional_integer(analyzer.get("numIssues"), "analyzer.numIssues"),
+        )
+        observed.setdefault("identity", identity)
+        return identity
+
+    nodes = _connection_nodes(
+        catalogue_page,
+        "analyzer.issues",
+        owner,
+        lambda node: _text(node.get("shortcode"), "issue.shortcode"),
+    )
+    version, num_issues = observed["identity"]
+    if version is None or num_issues is None:
+        raise _DiscoveryIncomplete("ANALYZER_IDENTITY_UNAVAILABLE")
+    if (version, num_issues) != (enabled["version"], enabled["num_issues"]):
+        raise _DiscoveryIncomplete("CAPABILITY_STATE_CHANGED")
+    if num_issues != len(nodes):
+        raise _DiscoveryIncomplete("TOTAL_MISMATCH")
+    read.count += len(nodes)
+    return {
+        **enabled,
+        "catalogue": sorted(
+            (_catalogue_issue(node) for node in nodes),
+            key=lambda entry: entry["shortcode"],
+        ),
+    }
+
+
+def _configuration(value: object) -> dict[str, Any]:
+    """The configuration as the API gave it. An absent one is never an empty one,
+    and one the read never reached is neither."""
+
+    if value is _UNREAD:
+        return {"state": "UNREAD"}
+    if value is None:
+        return {"state": "ABSENT"}
+    return {
+        "state": "PRESENT",
+        "sha256": hashlib.sha256(_canonical(value).encode("ascii")).hexdigest(),
+        "json": value,
+    }
+
+
+def read_capability_discovery(
+    client: DeadlineGraphQLReader,
+    repository: str,
+    *,
+    deadline_seconds: float = _DISCOVERY_DEADLINE_SECONDS,
+) -> dict[str, Any]:
+    """The repository's current DeepSource capability: its configuration, enabled
+    analyzers and ignore rules, read before and after every enabled analyzer's issue
+    catalogue. COMPLETE only when each connection is read whole and the two
+    repository reads agree; it stays CURRENT_NOT_RUN_BOUND, and the effective
+    configuration UNPROVEN."""
+
+    name = normalize_repository(repository)
+    login, short = name.split("/")
+    read = _DiscoveryRead(login, short, time.monotonic() + deadline_seconds)
+    observed_at = _now()
+    state: dict[str, Any] = {
+        "configuration": _UNREAD,
+        "analyzers": [],
+        "ignore_rules": [],
+    }
+    try:
+        state = _repository_state(client, read)
+        analyzers = [
+            _analyzer_catalogue(client, read, enabled) for enabled in state["analyzers"]
+        ]
+        state = {**state, "analyzers": analyzers}
+        again = _repository_state(client, read)
+        before = (
+            state["activated"],
+            _canonical(state["configuration"]),
+            [
+                (a["shortcode"], a["version"], a["num_issues"])
+                for a in state["analyzers"]
+            ],
+            state["ignore_rules"],
+        )
+        after = (
+            again["activated"],
+            _canonical(again["configuration"]),
+            [
+                (a["shortcode"], a["version"], a["num_issues"])
+                for a in again["analyzers"]
+            ],
+            again["ignore_rules"],
+        )
+        if before != after:
+            raise _DiscoveryIncomplete("CAPABILITY_STATE_CHANGED")
+        record = coverage("COMPLETE", pages=read.pages.count, count=read.count)
+    except _DiscoveryIncomplete as stopped:
+        record = coverage(
+            "INCOMPLETE",
+            pages=read.pages.count,
+            count=read.count,
+            reason=stopped.reason,
+        )
+    except ProviderReadFailure as failure:
+        record = (
+            coverage(
+                "INCOMPLETE",
+                pages=read.pages.count,
+                count=read.count,
+                reason="DEADLINE",
+            )
+            if failure.kind == "DEADLINE"
+            else _failure_coverage(failure, pages=read.pages.count, count=read.count)
+        )
+    return {
+        "schema": _DISCOVERY_SCHEMA,
+        "binding": _DISCOVERY_BINDING,
+        "repository": name,
+        "observed_at": observed_at,
+        "coverage": record,
+        "configuration": _configuration(state["configuration"]),
+        "analyzers": [a for a in state["analyzers"] if "catalogue" in a],
+        "ignore_rules": state["ignore_rules"],
+        "effective_configuration": "UNPROVEN",
+        "unknown": list(_DISCOVERY_UNKNOWN),
+    }

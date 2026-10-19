@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import inspect
 import io
@@ -7,8 +8,9 @@ import json
 import unittest
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+from unittest.mock import patch
 
 from tools import analyzer_codacy, analyzer_deepsource, analyzer_readback
 
@@ -2214,6 +2216,760 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn(sentinel, serialized)
         self.assertNotIn("DEEPSOURCE_API_TOKEN", json.dumps(document))
         self.assertNotIn("CODACY_API_TOKEN", json.dumps(document))
+
+
+# #389 F3 R0: the capability discovery, relocated from the RED module
+# test_analyzer_deepsource_capability.py (#389 6267244226, fence 992192d7...) as the
+# Router chose (6267325366).
+REPOSITORY = "ktogias/gnostoa"
+_KINDS = ("RepositoryAnalyzers", "RepositoryIgnoreRules", "AnalyzerCatalogue")
+_QUERIES = (
+    "_REPOSITORY_ANALYZERS_QUERY",
+    "_REPOSITORY_IGNORE_RULES_QUERY",
+    "_ANALYZER_CATALOGUE_QUERY",
+)
+
+
+class CapabilityFake:
+    """Answers the three discovery queries by (kind, key, cursor). A list value is
+    consumed one call at a time, so a second pass can see a changed state; an
+    exception value is raised."""
+
+    def __init__(self, responses: Mapping[tuple[str, str, str | None], Any]) -> None:
+        self.responses = {
+            k: (list(v) if isinstance(v, list) else v) for k, v in responses.items()
+        }
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.deadlines: list[float | None] = []
+        # A clock to move per answer, so a request can take time (Router 6267325366).
+        self.clock: list[float] | None = None
+        self.cost = 0.0
+
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        values = dict(variables)
+        kind = next(k for k in _KINDS if k in query)
+        self.calls.append((kind, values))
+        self.deadlines.append(deadline)
+        if self.clock is not None:
+            self.clock[0] += self.cost
+        key = (
+            values.get("shortcode")
+            if kind == "AnalyzerCatalogue"
+            else values.get("name")
+        )
+        answer = self.responses[(kind, str(key), values.get("cursor"))]
+        if isinstance(answer, list):
+            answer = answer.pop(0) if len(answer) > 1 else answer[0]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+def _connection(
+    nodes: list[dict[str, Any]], total: int | None, has_next: bool, cursor: str | None
+) -> dict[str, Any]:
+    return {
+        "totalCount": total,
+        "edges": [{"node": node} for node in nodes],
+        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+    }
+
+
+def analyzers_page(
+    analyzers: list[dict[str, Any]] | None = None,
+    *,
+    total: int | None = None,
+    has_next: bool = False,
+    cursor: str | None = None,
+    config: Any = None,
+    name: str = "gnostoa",
+    login: str = "ktogias",
+) -> dict[str, Any]:
+    nodes = [analyzer()] if analyzers is None else analyzers
+    return {
+        "data": {
+            "repository": {
+                "name": name,
+                "isActivated": True,
+                "configJson": {"version": 1, "analyzers": [{"name": "python"}]}
+                if config is None
+                else config,
+                "account": {"login": login, "vcsProvider": "GITHUB"},
+                "enabledAnalyzers": _connection(
+                    nodes, len(nodes) if total is None else total, has_next, cursor
+                ),
+            }
+        }
+    }
+
+
+def ignore_page(
+    rules: list[dict[str, Any]] | None = None,
+    *,
+    total: int | None = None,
+    has_next: bool = False,
+    cursor: str | None = None,
+    name: str = "gnostoa",
+) -> dict[str, Any]:
+    nodes = [] if rules is None else rules
+    return {
+        "data": {
+            "repository": {
+                "name": name,
+                "account": {"login": "ktogias", "vcsProvider": "GITHUB"},
+                "ignoreRules": _connection(
+                    nodes, len(nodes) if total is None else total, has_next, cursor
+                ),
+            }
+        }
+    }
+
+
+def catalogue_page(
+    issues: list[dict[str, Any]],
+    *,
+    shortcode: str = "python",
+    version: str | None = "1.0.0",
+    num_issues: int | None = None,
+    total: int | None = None,
+    has_next: bool = False,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "data": {
+            "analyzer": {
+                "shortcode": shortcode,
+                "version": version,
+                "numIssues": len(issues) if num_issues is None else num_issues,
+                "issues": _connection(
+                    issues, len(issues) if total is None else total, has_next, cursor
+                ),
+            }
+        }
+    }
+
+
+def analyzer(
+    shortcode: str = "python", version: str | None = "1.0.0", num_issues: int = 3
+) -> dict[str, Any]:
+    return {"shortcode": shortcode, "version": version, "numIssues": num_issues}
+
+
+def catalogue_issue(shortcode: str) -> dict[str, Any]:
+    return {
+        "shortcode": shortcode,
+        "title": f"Issue {shortcode}",
+        "category": "BUG_RISK",
+        "severity": "MAJOR",
+        "isRecommended": True,
+        "tags": ["python"],
+    }
+
+
+def ignore_rule(identifier: str, issue: str = "PYL-W0212") -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "level": "REPOSITORY",
+        "type": "FOREVER",
+        "filePath": None,
+        "globPattern": None,
+        "issue": {"shortcode": issue},
+    }
+
+
+def stable(
+    overrides: Mapping[tuple[str, str, str | None], Any] | None = None,
+) -> dict[tuple[str, str, str | None], Any]:
+    """One analyzer with a three-issue catalogue over two pages and one ignore rule,
+    the same on both passes."""
+    responses: dict[tuple[str, str, str | None], Any] = {
+        ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(),
+        ("RepositoryIgnoreRules", "gnostoa", None): ignore_page(
+            [ignore_rule("rule-1")]
+        ),
+        ("AnalyzerCatalogue", "python", None): catalogue_page(
+            [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+            num_issues=3,
+            total=3,
+            has_next=True,
+            cursor="c1",
+        ),
+        ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
+            [catalogue_issue("PTC-W0063")], num_issues=3, total=3
+        ),
+    }
+    responses.update(overrides or {})
+    return responses
+
+
+class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
+    """#389 F3 R0: the capability discovery (Router 6266752276, 6267131349 and
+    6267325366; PAO 6267150750). It is CURRENT_NOT_RUN_BOUND, never a past run's
+    capability, and its effective configuration stays UNPROVEN."""
+
+    def _read(self, fake: CapabilityFake, **kwargs: Any) -> dict[str, Any]:
+        reader = getattr(analyzer_deepsource, "read_capability_discovery", None)
+        if reader is None:
+            self.fail("no capability discovery read exists in analyzer_deepsource")
+        result: dict[str, Any] = reader(fake, REPOSITORY, **kwargs)
+        return result
+
+    def test_the_three_queries_are_admitted_read_only_literals(self) -> None:
+        for name in _QUERIES:
+            with self.subTest(query=name):
+                query = getattr(analyzer_deepsource, name, None)
+                self.assertIsInstance(query, str, f"{name} is not defined")
+                self.assertIn(query, analyzer_deepsource._ADMITTED_GRAPHQL_READ_QUERIES)
+                self.assertTrue(query.lstrip().startswith("query "))
+                self.assertNotIn("mutation", query)
+                # Exact-literal admission: a variant is still refused.
+                client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
+                with self.assertRaisesRegex(
+                    analyzer_deepsource.ProviderReadFailure,
+                    "unsupported GraphQL read operation",
+                ):
+                    client.graphql(query + " ", {})
+
+    def test_a_stable_complete_read(self) -> None:
+        fake = CapabilityFake(stable())
+        receipt = self._read(fake)
+        self.assertEqual(
+            {
+                "schema",
+                "binding",
+                "repository",
+                "observed_at",
+                "coverage",
+                "configuration",
+                "analyzers",
+                "ignore_rules",
+                "effective_configuration",
+                "unknown",
+            },
+            set(receipt),
+        )
+        self.assertEqual("CURRENT_NOT_RUN_BOUND", receipt["binding"])
+        self.assertEqual("UNPROVEN", receipt["effective_configuration"])
+        self.assertTrue(receipt["unknown"])
+        self.assertEqual("COMPLETE", receipt["coverage"]["status"])
+        self.assertEqual(REPOSITORY, receipt["repository"])
+        [entry] = receipt["analyzers"]
+        self.assertEqual(
+            ("python", "1.0.0", 3),
+            (entry["shortcode"], entry["version"], entry["num_issues"]),
+        )
+        self.assertEqual(
+            ["PTC-W0063", "PYL-W0212", "TYP-050"],
+            sorted(issue["shortcode"] for issue in entry["catalogue"]),
+        )
+        self.assertEqual(["rule-1"], [rule["id"] for rule in receipt["ignore_rules"]])
+        config = {"version": 1, "analyzers": [{"name": "python"}]}
+        canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual("PRESENT", receipt["configuration"]["state"])
+        self.assertEqual(
+            hashlib.sha256(canonical).hexdigest(), receipt["configuration"]["sha256"]
+        )
+        # The repository state is read twice: before and after the catalogues.
+        kinds = [kind for kind, _ in fake.calls]
+        self.assertEqual(2, kinds.count("RepositoryAnalyzers"))
+        self.assertEqual(2, kinds.count("RepositoryIgnoreRules"))
+        self.assertGreater(
+            max(i for i, k in enumerate(kinds) if k == "RepositoryAnalyzers"),
+            max(i for i, k in enumerate(kinds) if k == "AnalyzerCatalogue"),
+        )
+
+    def test_an_absent_configuration_is_never_an_empty_one(self) -> None:
+        page = analyzers_page()
+        page["data"]["repository"]["configJson"] = None
+        receipt = self._read(
+            CapabilityFake(stable({("RepositoryAnalyzers", "gnostoa", None): page}))
+        )
+        self.assertEqual({"state": "ABSENT"}, receipt["configuration"])
+        self.assertEqual("UNPROVEN", receipt["effective_configuration"])
+
+    def test_a_short_or_mismatched_catalogue_is_incomplete(self) -> None:
+        cases = {
+            "fewer collected than totalCount": catalogue_page(
+                [catalogue_issue("PTC-W0063")], num_issues=3, total=4
+            ),
+            "numIssues disagrees with totalCount": catalogue_page(
+                [catalogue_issue("PTC-W0063")], num_issues=5, total=3
+            ),
+        }
+        for label, last in cases.items():
+            with self.subTest(case=label):
+                responses = stable({("AnalyzerCatalogue", "python", "c1"): last})
+                if label == "fewer collected than totalCount":
+                    responses[("AnalyzerCatalogue", "python", None)] = catalogue_page(
+                        [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+                        num_issues=3,
+                        total=4,
+                        has_next=True,
+                        cursor="c1",
+                    )
+                receipt = self._read(CapabilityFake(responses))
+                self.assertNotEqual("COMPLETE", receipt["coverage"]["status"])
+
+    def test_a_missing_total_is_incomplete(self) -> None:
+        page = catalogue_page([catalogue_issue("PTC-W0063")], num_issues=3)
+        page["data"]["analyzer"]["issues"]["totalCount"] = None
+        first = catalogue_page(
+            [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+            num_issues=3,
+            has_next=True,
+            cursor="c1",
+        )
+        first["data"]["analyzer"]["issues"]["totalCount"] = None
+        receipt = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("AnalyzerCatalogue", "python", None): first,
+                        ("AnalyzerCatalogue", "python", "c1"): page,
+                    }
+                )
+            )
+        )
+        self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
+
+    def test_an_analyzer_version_change_within_the_catalogue_is_refused(self) -> None:
+        last = catalogue_page(
+            [catalogue_issue("PTC-W0063")], version="1.0.1", num_issues=3, total=3
+        )
+        receipt = self._read(
+            CapabilityFake(stable({("AnalyzerCatalogue", "python", "c1"): last}))
+        )
+        self.assertNotEqual("COMPLETE", receipt["coverage"]["status"])
+
+    def test_a_changed_enabled_analyzer_set_on_the_second_pass_is_incomplete(
+        self,
+    ) -> None:
+        # PAO R0-SNAP-01: version and configJson stay the same.
+        second = analyzers_page([analyzer(), analyzer("shell", num_issues=0)])
+        receipt = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("RepositoryAnalyzers", "gnostoa", None): [
+                            analyzers_page(),
+                            second,
+                        ]
+                    }
+                )
+            )
+        )
+        self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
+
+    def test_a_changed_ignore_rule_set_on_the_second_pass_is_incomplete(self) -> None:
+        # PAO R0-SNAP-01: version and configJson stay the same.
+        receipt = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("RepositoryIgnoreRules", "gnostoa", None): [
+                            ignore_page([ignore_rule("rule-1")]),
+                            ignore_page(
+                                [
+                                    ignore_rule("rule-1"),
+                                    ignore_rule("rule-2", "TYP-050"),
+                                ]
+                            ),
+                        ]
+                    }
+                )
+            )
+        )
+        self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
+
+    def test_duplicate_identities_are_refused(self) -> None:
+        cases = {
+            "issue": {
+                ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
+                    [catalogue_issue("TYP-050")], num_issues=3, total=3
+                )
+            },
+            "ignore rule": {
+                ("RepositoryIgnoreRules", "gnostoa", None): ignore_page(
+                    [ignore_rule("rule-1"), ignore_rule("rule-1", "TYP-050")]
+                )
+            },
+            "analyzer": {
+                ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                    [analyzer(), analyzer()]
+                )
+            },
+        }
+        for label, override in cases.items():
+            with self.subTest(duplicate=label):
+                receipt = self._read(CapabilityFake(stable(override)))
+                self.assertEqual("ERROR", receipt["coverage"]["status"])
+
+    def test_pagination_that_does_not_advance_or_never_ends_is_refused(self) -> None:
+        loop = catalogue_page(
+            [catalogue_issue("PTC-W0063")],
+            num_issues=3,
+            total=3,
+            has_next=True,
+            cursor="c1",
+        )
+        receipt = self._read(
+            CapabilityFake(stable({("AnalyzerCatalogue", "python", "c1"): loop}))
+        )
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+
+    def test_a_graphql_error_or_an_unavailable_provider_is_never_complete(self) -> None:
+        for kind, expected in (
+            ("ERROR", "ERROR"),
+            ("AUTH", "UNAVAILABLE"),
+            ("RATE_LIMIT", "RATE_LIMITED"),
+        ):
+            with self.subTest(kind=kind):
+                failure = analyzer_deepsource.ProviderReadFailure(
+                    kind, "DeepSource GraphQL returned errors"
+                )
+                receipt = self._read(
+                    CapabilityFake(
+                        stable({("AnalyzerCatalogue", "python", "c1"): failure})
+                    )
+                )
+                self.assertEqual(expected, receipt["coverage"]["status"])
+
+    def test_another_repository_in_the_answer_is_refused(self) -> None:
+        receipt = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                            name="other"
+                        )
+                    }
+                )
+            )
+        )
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+
+    def test_an_enabled_analyzer_without_a_catalogue_is_refused(self) -> None:
+        receipt = self._read(
+            CapabilityFake(
+                stable(
+                    {
+                        ("AnalyzerCatalogue", "python", None): {
+                            "data": {"analyzer": None}
+                        }
+                    }
+                )
+            )
+        )
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+
+    def test_a_spent_deadline_reads_no_further_page(self) -> None:
+        fake = CapabilityFake(stable())
+        ticks = iter([0.0, 0.0, 1000.0] + [1000.0] * 50)
+        with patch("time.monotonic", lambda: next(ticks)):
+            receipt = self._read(fake, deadline_seconds=10.0)
+        self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
+        self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
+        self.assertLessEqual(len(fake.calls), 2)
+        # The repository state was never read whole, so its configuration is
+        # neither present nor absent.
+        self.assertEqual({"state": "UNREAD"}, receipt["configuration"])
+
+    def test_the_deadline_reaches_every_request_and_stops_a_slow_read(self) -> None:
+        # Router 6267325366: the whole-read deadline covers each request's own work,
+        # so every request is given it, and a read whose requests take the budget
+        # stops with no request after it.
+        fake = CapabilityFake(stable())
+        clock = [0.0]
+        fake.clock, fake.cost = clock, 6.0
+        with patch("time.monotonic", lambda: clock[0]):
+            receipt = self._read(fake, deadline_seconds=10.0)
+        self.assertEqual([10.0] * len(fake.calls), fake.deadlines)
+        self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
+        self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
+        self.assertEqual(2, len(fake.calls))
+
+    def _status(
+        self, overrides: Mapping[tuple[str, str, str | None], Any]
+    ) -> dict[str, Any]:
+        coverage_record: dict[str, Any] = self._read(CapabilityFake(stable(overrides)))[
+            "coverage"
+        ]
+        return coverage_record
+
+    def test_a_cursor_that_does_not_advance_stops_at_once(self) -> None:
+        stuck = catalogue_page([], num_issues=3, total=3, has_next=True, cursor="c1")
+        fake = CapabilityFake(stable({("AnalyzerCatalogue", "python", "c1"): stuck}))
+        receipt = self._read(fake)
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+        self.assertEqual(2, [kind for kind, _ in fake.calls].count("AnalyzerCatalogue"))
+
+    def test_a_missing_total_is_named(self) -> None:
+        page = analyzers_page()
+        page["data"]["repository"]["enabledAnalyzers"]["totalCount"] = None
+        record = self._status({("RepositoryAnalyzers", "gnostoa", None): page})
+        self.assertEqual(
+            ("INCOMPLETE", "TOTAL_UNAVAILABLE"), (record["status"], record["reason"])
+        )
+
+    def test_a_connection_past_the_page_bound_is_refused(self) -> None:
+        bound = analyzer_deepsource._MAX_PAGES
+        overrides: dict[tuple[str, str, str | None], Any] = {}
+        for index in range(bound + 1):
+            cursor = None if index == 0 else f"c{index}"
+            overrides[("AnalyzerCatalogue", "python", cursor)] = catalogue_page(
+                [catalogue_issue(f"PY-{index}")],
+                num_issues=bound + 2,
+                total=bound + 2,
+                has_next=True,
+                cursor=f"c{index + 1}",
+            )
+        fake = CapabilityFake(stable(overrides))
+        receipt = self._read(fake)
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+        self.assertEqual(
+            bound, [kind for kind, _ in fake.calls].count("AnalyzerCatalogue")
+        )
+
+    def test_another_account_or_provider_in_the_answer_is_refused(self) -> None:
+        for field, value in (("login", "other"), ("vcsProvider", "GITLAB")):
+            with self.subTest(field=field):
+                page = analyzers_page()
+                page["data"]["repository"]["account"][field] = value
+                record = self._status({("RepositoryAnalyzers", "gnostoa", None): page})
+                self.assertEqual("ERROR", record["status"])
+
+    def test_a_malformed_activation_flag_is_refused(self) -> None:
+        page = analyzers_page()
+        page["data"]["repository"]["isActivated"] = "yes"
+        self.assertEqual(
+            "ERROR",
+            self._status({("RepositoryAnalyzers", "gnostoa", None): page})["status"],
+        )
+
+    def test_a_catalogue_for_another_analyzer_is_refused(self) -> None:
+        other = catalogue_page(
+            [catalogue_issue("SH-1")], shortcode="shell", num_issues=3, total=3
+        )
+        self.assertEqual(
+            "ERROR",
+            self._status({("AnalyzerCatalogue", "python", None): other})["status"],
+        )
+
+    def test_an_unknown_analyzer_version_is_incomplete(self) -> None:
+        unknown = analyzers_page([analyzer(version=None)])
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("RepositoryAnalyzers", "gnostoa", None): unknown,
+            ("AnalyzerCatalogue", "python", None): catalogue_page(
+                [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+                version=None,
+                num_issues=3,
+                total=3,
+                has_next=True,
+                cursor="c1",
+            ),
+            ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
+                [catalogue_issue("PTC-W0063")], version=None, num_issues=3, total=3
+            ),
+        }
+        record = self._status(overrides)
+        self.assertEqual(
+            ("INCOMPLETE", "ANALYZER_IDENTITY_UNAVAILABLE"),
+            (record["status"], record["reason"]),
+        )
+
+    def test_a_catalogue_at_another_version_than_enabled_is_incomplete(self) -> None:
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("AnalyzerCatalogue", "python", None): catalogue_page(
+                [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+                version="2.0.0",
+                num_issues=3,
+                total=3,
+                has_next=True,
+                cursor="c1",
+            ),
+            ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
+                [catalogue_issue("PTC-W0063")], version="2.0.0", num_issues=3, total=3
+            ),
+        }
+        record = self._status(overrides)
+        self.assertEqual(
+            ("INCOMPLETE", "CAPABILITY_STATE_CHANGED"),
+            (record["status"], record["reason"]),
+        )
+
+    def test_a_catalogue_shorter_than_its_analyzer_size_is_incomplete(self) -> None:
+        # The connection's total is met, but the analyzer says it has four issues.
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                [analyzer(num_issues=4)]
+            ),
+            ("AnalyzerCatalogue", "python", None): catalogue_page(
+                [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+                num_issues=4,
+                total=3,
+                has_next=True,
+                cursor="c1",
+            ),
+            ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
+                [catalogue_issue("PTC-W0063")], num_issues=4, total=3
+            ),
+        }
+        record = self._status(overrides)
+        self.assertEqual(
+            ("INCOMPLETE", "TOTAL_MISMATCH"), (record["status"], record["reason"])
+        )
+
+    def test_a_client_deadline_stop_is_incomplete_not_an_error(self) -> None:
+        stopped = analyzer_deepsource.ProviderReadFailure(
+            "DEADLINE", "DeepSource read deadline passed"
+        )
+        record = self._status({("AnalyzerCatalogue", "python", "c1"): stopped})
+        self.assertEqual(
+            ("INCOMPLETE", "DEADLINE"), (record["status"], record["reason"])
+        )
+
+    def test_a_malformed_catalogue_entry_is_refused(self) -> None:
+        for field, value in (("isRecommended", "yes"), ("tags", "python")):
+            with self.subTest(field=field):
+                entry = catalogue_issue("PTC-W0063")
+                entry[field] = value
+                last = catalogue_page([entry], num_issues=3, total=3)
+                self.assertEqual(
+                    "ERROR",
+                    self._status({("AnalyzerCatalogue", "python", "c1"): last})[
+                        "status"
+                    ],
+                )
+
+
+class _TimedResponse:
+    """A response whose body arrives in pieces, each moving the clock."""
+
+    def __init__(
+        self, pieces: Sequence[bytes], clock: list[float], cost: float
+    ) -> None:
+        self.pieces = list(pieces)
+        self.clock = clock
+        self.cost = cost
+        self.given = 0
+
+    def __enter__(self) -> _TimedResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def _next(self, size: int = -1) -> bytes:
+        self.clock[0] += self.cost
+        if not self.pieces:
+            return b""
+        piece = self.pieces.pop(0)
+        if 0 <= size < len(piece):
+            piece, rest = piece[:size], piece[size:]
+            self.pieces.insert(0, rest)
+        self.given += len(piece)
+        return piece
+
+    def read(self, _size: int = -1) -> bytes:
+        return b"".join(iter(self._next, b""))
+
+    def read1(self, size: int = -1) -> bytes:
+        return self._next(size)
+
+
+class _TimedOpener:
+    def __init__(self, response: _TimedResponse) -> None:
+        self.response = response
+        self.timeouts: list[float] = []
+
+    def open(self, _request: object, timeout: float) -> _TimedResponse:
+        self.timeouts.append(timeout)
+        return self.response
+
+
+class DeepSourceClientDeadlineTests(unittest.TestCase):
+    """The client's optional deadline (#389 F3 R0, Router 6267325366): absent, every
+    existing read is unchanged; given, it bounds the connection and the body."""
+
+    _BODY = (b'{"data": ', b'{"run": null}}')
+
+    def _client(self, opener: object) -> analyzer_deepsource.DeepSourceGraphQLClient:
+        client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
+        client._opener = opener  # type: ignore[assignment]
+        return client
+
+    def _graphql(
+        self, client: analyzer_deepsource.DeepSourceGraphQLClient, deadline: float
+    ) -> Mapping[str, Any]:
+        query = analyzer_deepsource._RUN_QUERY
+        try:
+            return client.graphql(
+                query, {"runUid": "x", "cursor": None}, deadline=deadline
+            )  # type: ignore[call-arg]
+        except TypeError:
+            self.fail("the client takes no deadline")
+
+    def test_without_a_deadline_the_timeout_is_unchanged(self) -> None:
+        clock = [0.0]
+        opener = _TimedOpener(_TimedResponse(self._BODY, clock, 0.0))
+        client = self._client(opener)
+        client.graphql(analyzer_deepsource._RUN_QUERY, {"runUid": "x", "cursor": None})
+        self.assertEqual([30], opener.timeouts)
+
+    def test_a_spent_deadline_opens_no_connection(self) -> None:
+        class _FailOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError("no connection may open after the deadline")
+
+        with patch("time.monotonic", lambda: 100.0):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._graphql(self._client(_FailOpener()), 50.0)
+        self.assertEqual("DEADLINE", raised.exception.kind)
+
+    def test_the_connection_timeout_never_exceeds_the_budget_left(self) -> None:
+        clock = [0.0]
+        opener = _TimedOpener(_TimedResponse(self._BODY, clock, 0.0))
+        with patch("time.monotonic", lambda: clock[0]):
+            self._graphql(self._client(opener), 5.0)
+        self.assertEqual([5.0], opener.timeouts)
+
+    def test_a_body_that_arrives_past_the_deadline_is_refused(self) -> None:
+        clock = [0.0]
+        opener = _TimedOpener(_TimedResponse(self._BODY, clock, 3.0))
+        with patch("time.monotonic", lambda: clock[0]):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._graphql(self._client(opener), 5.0)
+        self.assertEqual("DEADLINE", raised.exception.kind)
+
+    def test_a_deadline_bound_body_reads_no_more_than_its_size_bound(self) -> None:
+        clock = [0.0]
+        limit = analyzer_deepsource._MAX_RESPONSE_BYTES
+        response = _TimedResponse([b"x" * (1 << 20)] * 6, clock, 0.0)
+        with patch("time.monotonic", lambda: clock[0]):
+            with self.assertRaisesRegex(
+                analyzer_deepsource.ProviderReadFailure, "exceeds bounded size"
+            ):
+                self._graphql(self._client(_TimedOpener(response)), 50.0)
+        self.assertEqual(limit + 1, response.given)
+
+    def test_a_timeout_at_the_deadline_is_the_deadline(self) -> None:
+        clock = [0.0]
+
+        class _SlowOpener:
+            def open(self, _request: object, timeout: float) -> object:
+                clock[0] += timeout
+                raise TimeoutError("timed out")
+
+        with patch("time.monotonic", lambda: clock[0]):
+            with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+                self._graphql(self._client(_SlowOpener()), 5.0)
+        self.assertEqual("DEADLINE", raised.exception.kind)
 
 
 if __name__ == "__main__":
