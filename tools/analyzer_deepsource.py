@@ -388,13 +388,14 @@ class DeepSourceGraphQLClient:
             else:
                 # Each request's limit comes from the shared owner: at most the 30 s
                 # ceiling and at most the budget left, and none starts without
-                # budget. Which of the two set it decides what a timeout means; a
-                # tie is the budget's (CodeAnt 4317340803, Router 6274471644).
-                _remaining(deadline)
+                # budget. Which of the two set it, when it was chosen, decides what a
+                # timeout means; a tie is the budget's (CodeAnt 4317340803, Router
+                # 6274471644, Cubic 4317833156).
+                budget = _remaining(deadline)
                 limit = github_rest.request_timeout(deadline, _EXCHANGE_POLICY)
                 if limit <= 0:
                     raise _deadline_passed()
-                ceiling = limit < deadline - time.monotonic()
+                ceiling = limit == _EXCHANGE_POLICY.timeout_seconds and limit < budget
                 raw, _headers = github_rest.exchange(
                     self._opener, request, limit, _EXCHANGE_POLICY
                 )
@@ -449,13 +450,16 @@ def _transport_failure(
     timed_out = isinstance(exc, TimeoutError) or isinstance(
         getattr(exc, "reason", None), TimeoutError
     )
-    if deadline is not None and (
-        (timed_out and not ceiling) or time.monotonic() >= deadline
+    if (
+        deadline is not None
+        and timed_out
+        and (not ceiling or time.monotonic() >= deadline)
     ):
         # A timeout the budget set is the deadline, not an outage: the exchange
         # gives each receive half the limit (Decision 0100). One the 30 s ceiling
-        # set, before the deadline, is the provider not answering (Router
-        # 6274471644).
+        # set is the provider not answering, unless it is seen after the deadline
+        # (Router 6274471644). Any other failure is the transport's, whenever it
+        # is seen (Claude on #441).
         return _deadline_passed()
     return ProviderReadFailure("UNAVAILABLE", _API_UNAVAILABLE)
 
@@ -1758,6 +1762,15 @@ def _analyzer_catalogue(
     repository state gave it."""
 
     shortcode = enabled["shortcode"]
+    # Before any catalogue request (Router 6275423919): an enabled analyzer of
+    # unknown version or size cannot be bound to a catalogue, which is not a state
+    # change (revix on #441), and a COMPLETE catalogue must equal its declared size,
+    # so one that cannot fit the remaining budget is refused unread (revix). The
+    # count is charged only for a catalogue read and converted whole.
+    if enabled["version"] is None or enabled["num_issues"] is None:
+        raise _DiscoveryIncomplete("ANALYZER_IDENTITY_UNAVAILABLE")
+    if read.count + enabled["num_issues"] > _MAX_CATALOGUE_ENTRIES:
+        raise _DiscoveryIncomplete("BUDGET")
 
     def catalogue_page(cursor: str | None) -> tuple[Mapping[str, Any], object]:
         page = _discovery_page(

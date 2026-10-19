@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from unittest.mock import patch
 
-from tools import analyzer_codacy, analyzer_deepsource, analyzer_readback
+from tools import analyzer_codacy, analyzer_deepsource, analyzer_readback, github_rest
 
 HEAD = "a" * 40
 OTHER_HEAD = "b" * 40
@@ -2273,7 +2273,11 @@ class CapabilityFake:
         )
         answer = self.responses[(kind, str(key), values.get("cursor"))]
         if isinstance(answer, list):
-            answer = answer.pop(0) if len(answer) > 1 else answer[0]
+            # One answer per request: a read that asks more than the test gave fails
+            # (Amazon Q on #441), never silently reusing the last.
+            if not answer:
+                raise AssertionError(f"the fake has no more answers for {kind} {key!r}")
+            answer = answer.pop(0)
         if isinstance(answer, BaseException):
             raise answer
         return answer
@@ -2805,6 +2809,38 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
             (record["status"], record["reason"]),
         )
 
+    def test_a_catalogue_of_unknown_identity_is_incomplete(self) -> None:
+        # The enabled side is known, so the catalogue reaches the read; its own
+        # unknown version or size still cannot be bound (the pre-check covers only
+        # the enabled side, Router 6275423919).
+        for field in ("version", "numIssues"):
+            with self.subTest(field=field):
+                pages = []
+                for page in (
+                    catalogue_page(
+                        [catalogue_issue("PYL-W0212"), catalogue_issue("TYP-050")],
+                        num_issues=3,
+                        total=3,
+                        has_next=True,
+                        cursor="c1",
+                    ),
+                    catalogue_page(
+                        [catalogue_issue("PTC-W0063")], num_issues=3, total=3
+                    ),
+                ):
+                    page["data"]["analyzer"][field] = None
+                    pages.append(page)
+                record = self._status(
+                    {
+                        ("AnalyzerCatalogue", "python", None): pages[0],
+                        ("AnalyzerCatalogue", "python", "c1"): pages[1],
+                    }
+                )
+                self.assertEqual(
+                    ("INCOMPLETE", "ANALYZER_IDENTITY_UNAVAILABLE"),
+                    (record["status"], record["reason"]),
+                )
+
     def test_a_catalogue_at_another_version_than_enabled_is_incomplete(self) -> None:
         overrides: dict[tuple[str, str, str | None], Any] = {
             ("AnalyzerCatalogue", "python", None): catalogue_page(
@@ -3139,6 +3175,88 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
             issubclass(analyzer_deepsource._DiscoveryIncomplete, RuntimeError)
         )
 
+    def test_the_fake_refuses_a_request_its_answers_do_not_cover(self) -> None:
+        # Amazon Q on #441 (4317793141): a list answer is consumed one per request,
+        # so a read that makes more requests than the test gave fails, instead of
+        # silently reusing the last answer.
+        page = analyzers_page()
+        fake = CapabilityFake({("RepositoryAnalyzers", "gnostoa", None): [page]})
+        variables = {"name": "gnostoa", "login": "ktogias", "cursor": None}
+        query = analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY
+        self.assertIs(page, fake.graphql(query, variables))
+        with self.assertRaisesRegex(AssertionError, "no more answers"):
+            fake.graphql(query, variables)
+
+    def _catalogue_calls(self, fake: CapabilityFake) -> list[str]:
+        return [str(v["shortcode"]) for k, v in fake.calls if k == "AnalyzerCatalogue"]
+
+    def test_an_enabled_analyzer_of_unknown_identity_is_named_so(self) -> None:
+        # revix on #441 (4317819965), Router 6275423919: an enabled analyzer whose
+        # version or size is unknown cannot be bound to a catalogue, which is not a
+        # state change, and its catalogue is never requested.
+        for enabled in (analyzer(version=None), {**analyzer(), "numIssues": None}):
+            with self.subTest(enabled=enabled):
+                fake = CapabilityFake(
+                    stable(
+                        {
+                            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                                [enabled]
+                            )
+                        }
+                    )
+                )
+                record = self._read(fake)["coverage"]
+                self.assertEqual("INCOMPLETE", record["status"])
+                self.assertEqual("ANALYZER_IDENTITY_UNAVAILABLE", record["reason"])
+                self.assertEqual([], self._catalogue_calls(fake))
+
+    def _two_catalogues(self, ruby_size: int) -> CapabilityFake:
+        """python (3 entries, from `stable`) then ruby, declaring `ruby_size`."""
+        ruby = catalogue_page(
+            [catalogue_issue(f"RB-{i}") for i in range(ruby_size)],
+            shortcode="ruby",
+            num_issues=ruby_size,
+            total=ruby_size,
+        )
+        return CapabilityFake(
+            stable(
+                {
+                    ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                        [analyzer(), analyzer("ruby", num_issues=ruby_size)]
+                    ),
+                    ("AnalyzerCatalogue", "ruby", None): ruby,
+                }
+            )
+        )
+
+    def test_a_catalogue_that_cannot_fit_is_never_requested(self) -> None:
+        # revix on #441 (4317819958), Router 6275423919: a COMPLETE catalogue must
+        # equal its declared size, so one that cannot fit is refused unread.
+        fake = CapabilityFake(stable())
+        with patch.object(analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 2):
+            record = self._read(fake)["coverage"]
+        self.assertEqual("BUDGET", record["reason"])
+        self.assertEqual([], self._catalogue_calls(fake))
+
+    def test_a_later_catalogue_that_cannot_fit_keeps_the_earlier_one(self) -> None:
+        fake = self._two_catalogues(3)
+        with patch.object(analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 5):
+            receipt = self._read(fake)
+        self.assertEqual("BUDGET", receipt["coverage"]["reason"])
+        self.assertNotIn("ruby", self._catalogue_calls(fake))
+        self.assertEqual(["python"], [a["shortcode"] for a in receipt["analyzers"]])
+        self.assertEqual(3, receipt["coverage"]["count"])
+
+    def test_a_catalogue_that_fills_the_budget_exactly_is_read(self) -> None:
+        fake = self._two_catalogues(2)
+        with patch.object(analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 5):
+            receipt = self._read(fake)
+        self.assertEqual("COMPLETE", receipt["coverage"]["status"])
+        self.assertEqual(
+            ["python", "ruby"], [a["shortcode"] for a in receipt["analyzers"]]
+        )
+        self.assertEqual(5, receipt["coverage"]["count"])
+
 
 class _TimedResponse:
     """A response whose body arrives in pieces, each moving the clock."""
@@ -3448,7 +3566,6 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         """Run one deadline-bound read with the shared exchange replaced by `answer`
         (a callable taking the limit), on the patched clock. Returns the exchange
         stand-in and the refusal, if any."""
-        github_rest = analyzer_deepsource.github_rest
         refusal: analyzer_deepsource.ProviderReadFailure | None = None
         with (
             patch("time.monotonic", side_effect=lambda: clock[0]),
@@ -3486,7 +3603,6 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
                 self.assertAlmostEqual(expected, self._limit(budget), places=9)
 
     def test_the_limit_comes_from_the_shared_owner(self) -> None:
-        github_rest = analyzer_deepsource.github_rest
         with patch.object(
             github_rest, "request_timeout", wraps=github_rest.request_timeout
         ) as owner:
@@ -3502,15 +3618,14 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         ):
             with self.subTest(deadline=deadline):
                 exchange, refusal = self._call(deadline, [0.0], lambda _limit: None)
-                self.assertIsNotNone(refusal)
-                assert refusal is not None
+                if refusal is None:
+                    self.fail("the read was not refused")
                 self.assertEqual(kind, refusal.kind)
                 exchange.assert_not_called()
 
     def test_a_limit_spent_before_the_exchange_starts_none(self) -> None:
         # The budget is checked, then time passes before the limit is chosen.
         ticks = iter([0.0] + [10.0] * 20)
-        github_rest = analyzer_deepsource.github_rest
         with (
             patch("time.monotonic", side_effect=lambda: next(ticks)),
             patch.object(
@@ -3543,14 +3658,13 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         _exchange, refusal = self._call(
             deadline, self._clock, self._failing(error, at=at)
         )
-        self.assertIsNotNone(refusal)
-        assert refusal is not None
+        if refusal is None:
+            self.fail("the read was not refused")
         return refusal.kind
 
     def test_a_timeout_the_ceiling_set_before_the_deadline_is_unavailable(
         self,
     ) -> None:
-        github_rest = analyzer_deepsource.github_rest
         for error in (
             github_rest.GitHubReadError("timed out", in_flight=True),
             TimeoutError("timed out"),
@@ -3562,7 +3676,6 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
     def test_a_timeout_the_budget_set_is_the_deadline(self) -> None:
         # Including one observed before the absolute instant: the shared exchange's
         # half-budget receive and body stop end early by design (Decision 0100).
-        github_rest = analyzer_deepsource.github_rest
         for budget in (10.0, 30.0):
             for error in (
                 github_rest.GitHubReadError("timed out", in_flight=True),
@@ -3573,7 +3686,6 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
                     self.assertEqual("DEADLINE", self._kind(budget, error))
 
     def test_a_ceiling_timeout_seen_after_the_deadline_is_the_deadline(self) -> None:
-        github_rest = analyzer_deepsource.github_rest
         for error in (
             github_rest.GitHubReadError("timed out", in_flight=True),
             TimeoutError("timed out"),
@@ -3582,7 +3694,6 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
                 self.assertEqual("DEADLINE", self._kind(300.0, error, at=301.0))
 
     def test_other_failures_keep_their_kind(self) -> None:
-        github_rest = analyzer_deepsource.github_rest
         for error, kind in (
             (github_rest.NotSent("16 earlier requests"), "UNAVAILABLE"),
             (github_rest.ResponseTooLarge("too large"), "ERROR"),
@@ -3590,6 +3701,62 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         ):
             with self.subTest(error=type(error).__name__):
                 self.assertEqual(kind, self._kind(300.0, error))
+
+    def _kind_on(
+        self, deadline: float, ticks: list[float], error: BaseException
+    ) -> str:
+        """The refusal's kind on a clock that reads `ticks` in turn, then holds."""
+        reads = iter(ticks)
+        last = [ticks[-1]]
+
+        def now() -> float:
+            last[0] = next(reads, last[0])
+            return last[0]
+
+        refusal: analyzer_deepsource.ProviderReadFailure | None = None
+        with (
+            patch("time.monotonic", side_effect=now),
+            patch.object(github_rest, "exchange", side_effect=error),
+        ):
+            try:
+                self._client().graphql(
+                    analyzer_deepsource._RUN_QUERY,
+                    {"runUid": "x", "cursor": None},
+                    deadline=deadline,
+                )
+            except analyzer_deepsource.ProviderReadFailure as failure:
+                refusal = failure
+        if refusal is None:
+            self.fail("the read was not refused")
+        return refusal.kind
+
+    def test_the_bound_is_the_one_in_force_when_the_limit_was_chosen(self) -> None:
+        # Cubic on #441 (4317833156): more than 30 s remained when the limit was
+        # chosen, so the ceiling set it, even if less remains a moment later.
+        timeout = github_rest.GitHubReadError("timed out", in_flight=True)
+        self.assertEqual(
+            "UNAVAILABLE", self._kind_on(30.0001, [0.0, 0.00005, 0.0002], timeout)
+        )
+
+    def test_time_passing_while_the_limit_is_chosen_keeps_the_budget_bound(
+        self,
+    ) -> None:
+        # Less than 30 s remained, so the budget set the limit, although the limit
+        # is then a little less than the budget first measured.
+        timeout = github_rest.GitHubReadError("timed out", in_flight=True)
+        self.assertEqual("DEADLINE", self._kind_on(10.0, [0.0, 1.0, 1.0], timeout))
+
+    def test_a_non_timeout_failure_keeps_its_kind_after_the_deadline(self) -> None:
+        # Claude on #441 (6275394096, finding 1), Router 6274471644 ("no blanket
+        # rewriting of provider errors into timeouts"): a connection failure seen
+        # after the deadline is still the transport failing, not the budget.
+        for budget, at in ((300.0, 301.0), (10.0, 11.0)):
+            for error in (
+                ConnectionResetError("reset"),
+                http.client.BadStatusLine("garbled"),
+            ):
+                with self.subTest(budget=budget, error=type(error).__name__):
+                    self.assertEqual("UNAVAILABLE", self._kind(budget, error, at=at))
 
 
 if __name__ == "__main__":
