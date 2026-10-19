@@ -2685,9 +2685,21 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
         self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
         self.assertLessEqual(len(fake.calls), 2)
-        # The repository state was never read whole, so its configuration is
-        # neither present nor absent.
+        # The first repository page was read before the deadline stopped the read,
+        # so what it returned is kept (CodeAnt on #441), with coverage INCOMPLETE.
+        self.assertEqual("PRESENT", receipt["configuration"]["state"])
+        self.assertIs(True, receipt["activated"])
+
+    def test_a_read_stopped_before_any_page_keeps_nothing(self) -> None:
+        fake = CapabilityFake(stable())
+        ticks = iter([0.0] + [1000.0] * 50)
+        with patch("time.monotonic", side_effect=ticks):
+            receipt = self._read(fake, deadline_seconds=10.0)
+        self.assertEqual([], fake.calls)
+        self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
+        # Nothing was read, so the configuration is neither present nor absent.
         self.assertEqual({"state": "UNREAD"}, receipt["configuration"])
+        self.assertIsNone(receipt["activated"])
 
     def test_the_deadline_reaches_every_request_and_stops_a_slow_read(self) -> None:
         # Router 6267325366: the whole-read deadline covers each request's own work,
@@ -2995,6 +3007,33 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
                 analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY,
                 {"name": "gnostoa", "login": "other", "cursor": None},
             )
+
+    def test_what_the_first_repository_page_gave_is_kept_on_a_later_failure(
+        self,
+    ) -> None:
+        # CodeAnt on #441: a failure after the first enabled-analyzers page kept
+        # nothing it had returned, and reported the configuration as UNREAD.
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                [analyzer()], total=2, has_next=True, cursor="a1"
+            ),
+            ("RepositoryAnalyzers", "gnostoa", "a1"): failure,
+        }
+        receipt = self._read(CapabilityFake(stable(overrides)))
+        self.assertEqual("ERROR", receipt["coverage"]["status"])
+        config = {"version": 1, "analyzers": [{"name": "python"}]}
+        canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(
+            {
+                "state": "PRESENT",
+                "sha256": hashlib.sha256(canonical).hexdigest(),
+                "json": config,
+            },
+            receipt["configuration"],
+        )
+        self.assertIs(True, receipt["activated"])
+        self.assertEqual([], receipt["analyzers"])
 
 
 class _TimedResponse:

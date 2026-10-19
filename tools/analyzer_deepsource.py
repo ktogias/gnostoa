@@ -1590,10 +1590,13 @@ def _canonical(value: object) -> str:
 
 
 def _repository_state(
-    client: DeadlineGraphQLReader, read: _DiscoveryRead
+    client: DeadlineGraphQLReader,
+    read: _DiscoveryRead,
+    observed: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The repository's configuration, enabled analyzers and ignore rules, read
-    whole."""
+    whole. What the first page returns is also given to `observed` at once, so a
+    later failure keeps it (CodeAnt on #441)."""
 
     variables = {"name": read.name, "login": read.login}
     settings: dict[str, Any] = {}
@@ -1608,11 +1611,13 @@ def _repository_state(
             raise ProviderReadFailure(
                 "ERROR", "DeepSource repository.isActivated is malformed"
             )
-        settings.setdefault("activated", activated)
-        settings.setdefault(
-            "configuration",
-            _selected(repository, "configJson", "repository.configJson"),
-        )
+        if not settings:
+            settings["activated"] = activated
+            settings["configuration"] = _selected(
+                repository, "configJson", "repository.configJson"
+            )
+            if observed is not None:
+                observed.update(settings)
         return repository, repository.get("enabledAnalyzers")
 
     analyzers = _connection_nodes(
@@ -1812,7 +1817,7 @@ def read_capability_discovery(
         "ignore_rules": [],
     }
     try:
-        first = _repository_state(client, read)
+        first = _repository_state(client, read, state)
         state = {**first, "analyzers": []}
         # Each catalogue is kept as soon as it is read whole, so a later failure keeps
         # what was read (Codex and Sourcery on #441).
