@@ -542,14 +542,36 @@ def release(error: urllib.error.HTTPError) -> None:
         error.close()
 
 
+class RequestLimit(NamedTuple):
+    """One request's limit, and whether the policy's cap set it (Decision 0100)."""
+
+    seconds: float
+    ceiling: bool
+
+
+def request_limit(
+    deadline: float | None, policy: Policy = DEFAULT_POLICY
+) -> RequestLimit:
+    """Return one request's limit and whether the cap set it, from one observation.
+
+    The seconds are ``request_timeout``'s. ``ceiling`` is true only when the cap
+    strictly set them: a tie with the budget is the budget's, and a floor at or above
+    the cap leaves no ceiling. Without a deadline the cap applies, with no clock read
+    and no floor (#441, so a consumer never infers the bound from another clock read).
+    """
+    cap = float(policy.timeout_seconds)
+    if deadline is None:
+        return RequestLimit(cap, True)
+    remaining = deadline - time.monotonic()
+    floor = policy.min_request_seconds
+    return RequestLimit(
+        max(floor, min(cap, remaining)), remaining > cap and floor < cap
+    )
+
+
 def request_timeout(deadline: float | None, policy: Policy = DEFAULT_POLICY) -> float:
     """Return one request's timeout, never longer than the budget that remains."""
-    if deadline is None:
-        return float(policy.timeout_seconds)
-    return max(
-        policy.min_request_seconds,
-        min(float(policy.timeout_seconds), deadline - time.monotonic()),
-    )
+    return request_limit(deadline, policy).seconds
 
 
 def bounded_pause(seconds: float, deadline: float | None) -> float:
