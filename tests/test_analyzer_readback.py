@@ -3606,10 +3606,13 @@ class CapabilityContractTests(unittest.TestCase):
         tools = [
             {"ref": "tl_a", "label": "go", "release": "2.1", "rule_total": 2},
             {"ref": "tl_b", "label": "rust", "release": "0.9", "rule_total": 2},
+            # Never reached, so the name's UNREAD state is held (revix on #444).
+            {"ref": "tl_c", "label": "zig", "release": "0.1", "rule_total": 1},
         ]
         rules = {
             "tl_a": [{"key": "GO-1"}, {"key": "GO-2"}],
             "tl_b": [{"key": "RS-1"}, {"key": "RS-2"}],
+            "tl_c": [{"key": "ZG-1"}],
         }
         record = _offset_capability(
             _OffsetRestFake(
@@ -3618,7 +3621,7 @@ class CapabilityContractTests(unittest.TestCase):
         )
         inventory = self._inventory(record)
         self.assertEqual(
-            [("go", "COMPLETE"), ("rust", "PARTIAL")],
+            [("go", "COMPLETE"), ("rust", "PARTIAL"), ("zig", "UNREAD")],
             [(a["id"], a["state"]) for a in inventory["analyzers"]],
         )
         self.assertFalse(inventory["complete"])
@@ -3842,6 +3845,20 @@ class CapabilityContractTests(unittest.TestCase):
         record = _offset_capability(_OffsetRestFake(tools, rules))
         with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
             parse(MappingProxyType(record))
+
+    def test_a_record_must_be_its_own_json_form(self) -> None:
+        # cubic on #444: JSON turns a non-string key into a string and a tuple into an
+        # array, so a record holding either is not its own JSON form. One invariant
+        # refuses the whole class, not each case.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+        for native in ({1: "x"}, {"pair": (1, 2)}, {"nested": {2: "y"}}):
+            with self.subTest(native=repr(native)):
+                with self.assertRaisesRegex(
+                    analyzer_readback.AnalyzerReadbackError, "not its own JSON form"
+                ):
+                    build(**{**fields, "native": native})
 
     def test_the_offset_fixture_refuses_a_short_read(self) -> None:
         # Amazon Q 4326119660: an empty page before its total is a fixture failure, so

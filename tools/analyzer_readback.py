@@ -759,11 +759,16 @@ def build_capability(
     if native is not None:
         record["native"] = dict(_mapping(native, "capability native"))
     try:
-        canonical_json(record)
+        text = canonical_json(record)
     except (TypeError, ValueError, RecursionError) as exc:
         # A value JSON cannot hold, or one nested past the stack, is a contract
         # refusal too (Amazon Q and CodeAnt on #444).
         raise AnalyzerReadbackError("capability record is not canonical JSON") from exc
+    if json.loads(text) != record:
+        # JSON turns a non-string key into a string and a tuple into an array; a
+        # record holding either is not its own JSON form, so it is refused as one
+        # class rather than case by case (cubic on #444).
+        raise AnalyzerReadbackError("capability is not its own JSON form")
     return record
 
 
