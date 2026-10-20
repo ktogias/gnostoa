@@ -1431,5 +1431,93 @@ class SonarCloudClientTests(unittest.TestCase):
         )
 
 
+API_URL = "https://api.github.com/repos/ktogias/gnostoa/pulls/312"
+
+
+class SonarCloudPullRequestUrlTests(unittest.TestCase):
+    """#389 F3 (Router 6270535242, finding 6270401248): SonarCloud records a pull
+    request's URL in either GitHub form, the HTML page's or the API resource's. Both
+    name this repository's pull request; every other URL is refused."""
+
+    def test_the_api_form_with_a_finding_is_bound_and_complete(self) -> None:
+        client = _SonarFake(
+            [_listing(_entry(url=API_URL)), _listing(_entry(url=API_URL))],
+            {1: _page([_issue("AaEDxiUuswWGEwq5tyXk", 396)], total=1)},
+        )
+        document = _read(client)
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual(
+            {"status": "COMPLETE", "pages": 5, "count": 1, "total": 1},
+            document["coverage"],
+        )
+        self.assertEqual(
+            ["AaEDxiUuswWGEwq5tyXk"], [f["id"] for f in document["findings"]]
+        )
+        self.assertEqual(HEAD, document["observed_head"])
+
+    def test_the_api_form_with_no_finding_is_complete(self) -> None:
+        client = _SonarFake(
+            [_listing(_entry(url=API_URL)), _listing(_entry(url=API_URL))],
+            {1: _page([], total=0)},
+        )
+        document = _read(client)
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual([], document["findings"])
+
+    def test_either_form_with_a_trailing_slash_is_complete(self) -> None:
+        for url in (
+            "https://github.com/ktogias/gnostoa/pull/312/",
+            API_URL + "/",
+        ):
+            with self.subTest(url=url):
+                client = _SonarFake(
+                    [_listing(_entry(url=url)), _listing(_entry(url=url))],
+                    {1: _page([], total=0)},
+                )
+                self.assertEqual("COMPLETE", _read(client)["coverage"]["status"])
+
+    def test_another_identity_in_either_form_is_refused(self) -> None:
+        for url in (
+            "https://api.github.com/repos/other/gnostoa/pulls/312",
+            "https://api.github.com/repos/ktogias/other/pulls/312",
+            "https://api.github.com/repos/ktogias/gnostoa/pulls/313",
+            "https://github.com/ktogias/gnostoa/pull/313",
+            "https://api.github.com/repos/ktogias/gnostoa/pull/312",
+            "https://github.com/ktogias/gnostoa/pulls/312",
+            "https://api.github.com.example/repos/ktogias/gnostoa/pulls/312",
+            "http://api.github.com/repos/ktogias/gnostoa/pulls/312",
+            "https://api.github.com:8443/repos/ktogias/gnostoa/pulls/312",
+            "https://user@api.github.com/repos/ktogias/gnostoa/pulls/312",
+            API_URL + "?x=1",
+            API_URL + "#f",
+            "https://api.github.com/repos/ktogias/gnostoa/pulls/312/files",
+        ):
+            with self.subTest(url=url):
+                client = _SonarFake(
+                    [_listing(_entry(url=url))], {1: _page([], total=0)}
+                )
+                document = _read(client)
+                self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+                self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+
+    def test_the_api_form_with_another_head_is_a_subject_mismatch(self) -> None:
+        client = _SonarFake(
+            [_listing(_entry(OTHER_HEAD, url=API_URL))], {1: _page([], total=0)}
+        )
+        document = _read(client)
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("SUBJECT_MISMATCH", document["coverage"]["reason"])
+
+    def test_the_api_form_with_an_unfinished_run_is_in_progress(self) -> None:
+        client = _SonarFake(
+            [_listing(_entry(url=API_URL)), _listing(_entry(url=API_URL))],
+            {1: _page(_issues("open", 3), total=3)},
+        )
+        document = _read(client, [_check(status="in_progress", conclusion=None)])
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("ANALYSIS_IN_PROGRESS", document["coverage"]["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

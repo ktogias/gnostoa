@@ -224,7 +224,10 @@ class _Analysis(NamedTuple):
 class _Subject(NamedTuple):
     project: str
     pull: str
-    href: str
+    # The pull request's URL in each form SonarCloud records: GitHub's HTML page and
+    # its API resource, both derived from the normalized repository and number
+    # (#389 F3, Router 6270535242).
+    hrefs: frozenset[str]
 
 
 def _subject(repository: str, pull_number: int) -> _Subject:
@@ -238,7 +241,12 @@ def _subject(repository: str, pull_number: int) -> _Subject:
     return _Subject(
         sonarcloud_scope.project_key(f"{owner}/{name}"),
         str(pull_number),
-        f"https://github.com/{normalized}/pull/{pull_number}",
+        frozenset(
+            {
+                f"https://github.com/{normalized}/pull/{pull_number}",
+                f"https://api.github.com/repos/{normalized}/pulls/{pull_number}",
+            }
+        ),
     )
 
 
@@ -279,7 +287,7 @@ def _analysis(document: Mapping[str, Any], subject: _Subject) -> _Analysis | Non
     if len(matches) > 1:
         raise ProviderReadFailure("ERROR", "SonarCloud lists the pull request twice")
     entry = matches[0]
-    if _text(entry.get("url"), "pull request URL").rstrip("/") != subject.href:
+    if _text(entry.get("url"), "pull request URL").rstrip("/") not in subject.hrefs:
         raise ProviderReadFailure(
             "ERROR", "SonarCloud's pull request is not this repository's"
         )
