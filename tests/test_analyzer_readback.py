@@ -3631,12 +3631,18 @@ class CapabilityContractTests(unittest.TestCase):
 
     def test_an_analysis_id_alone_never_makes_a_record_run_bound(self) -> None:
         build = self._api(analyzer_readback, "build_capability")
+        parse = self._api(analyzer_readback, "parse_capability")
         tools, rules = _rest_tools()
         fields = {**self._fields(_offset_capability(_OffsetRestFake(tools, rules)))}
-        fields["binding"] = "RUN_BOUND"
         fields["native"] = {"analysis_id": "an_8Hk2"}
+        # With the valid binding kept, an analysis id leaves the record unbound, and a
+        # parse keeps it so (revix on #444).
+        record = build(**{**fields, "binding": "CURRENT_NOT_RUN_BOUND"})
+        self.assertEqual("CURRENT_NOT_RUN_BOUND", record["binding"])
+        self.assertEqual("CURRENT_NOT_RUN_BOUND", parse(record)["binding"])
+        # RUN_BOUND itself is not a value, whatever the native fields hold.
         with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
-            build(**fields)
+            build(**{**fields, "binding": "RUN_BOUND"})
 
     # L3, L2: a closed record that agrees with its coverage.
 
