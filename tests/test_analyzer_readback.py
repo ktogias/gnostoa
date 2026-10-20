@@ -3603,8 +3603,10 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
                 self.assertAlmostEqual(expected, self._limit(budget), places=9)
 
     def test_the_limit_comes_from_the_shared_owner(self) -> None:
+        # The limit and its governing bound come from the shared owner's one
+        # observation (#441 R3, Decision 0100 addendum).
         with patch.object(
-            github_rest, "request_timeout", wraps=github_rest.request_timeout
+            github_rest, "request_limit", wraps=github_rest.request_limit
         ) as owner:
             self._limit(300.0)
         owner.assert_called_once_with(300.0, analyzer_deepsource._EXCHANGE_POLICY)
@@ -3739,6 +3741,20 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         self.assertEqual(
             "UNAVAILABLE", self._kind_on(30.0001, [0.0, 0.00005, 0.0002], timeout)
         )
+
+    def test_a_moving_tie_is_the_budgets(self) -> None:
+        # PAO R0-BOUND-SOURCE-01: 30.001 s remained at the adapter's own read, exactly
+        # 30.000 at the shared owner's, so the budget set the limit (a tie), and a
+        # timeout seen before the deadline is DEADLINE (Router 6274471644).
+        for error in (
+            github_rest.GitHubReadError("timed out", in_flight=True),
+            TimeoutError("timed out"),
+            urllib.error.URLError(TimeoutError("timed out")),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual(
+                    "DEADLINE", self._kind_on(100.0, [69.999, 70.000, 85.1], error)
+                )
 
     def test_time_passing_while_the_limit_is_chosen_keeps_the_budget_bound(
         self,

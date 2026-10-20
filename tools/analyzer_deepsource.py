@@ -388,14 +388,14 @@ class DeepSourceGraphQLClient:
             else:
                 # Each request's limit comes from the shared owner: at most the 30 s
                 # ceiling and at most the budget left, and none starts without
-                # budget. Which of the two set it, when it was chosen, decides what a
-                # timeout means; a tie is the budget's (CodeAnt 4317340803, Router
-                # 6274471644, Cubic 4317833156).
-                budget = _remaining(deadline)
-                limit = github_rest.request_timeout(deadline, _EXCHANGE_POLICY)
+                # budget. Whether the ceiling set it decides what a timeout means; a
+                # tie is the budget's. The owner says so from the same observation
+                # that chose the limit, so no second clock read can disagree (CodeAnt
+                # 4317340803, Router 6274471644, PAO R0-BOUND-SOURCE-01).
+                _remaining(deadline)
+                limit, ceiling = github_rest.request_limit(deadline, _EXCHANGE_POLICY)
                 if limit <= 0:
                     raise _deadline_passed()
-                ceiling = limit == _EXCHANGE_POLICY.timeout_seconds and limit < budget
                 raw, _headers = github_rest.exchange(
                     self._opener, request, limit, _EXCHANGE_POLICY
                 )
