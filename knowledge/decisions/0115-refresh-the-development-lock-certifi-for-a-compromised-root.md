@@ -130,8 +130,9 @@ the finding. The newest release, 2026.10.19, is also the advisory's fix version.
    | after | SHA-256 `2a941975aa8210ce2ac54ed56377d63f4d3e9162a4a9df4c6289073202fbb805`: **exit 0**, no known vulnerability | unchanged: exit 0 |
 
 4. **The resolution is proved, and the proof names its environment.** In an image built
-   from the previous lock (installed `certifi 2026.7.22`), this command resolves with
-   `--require-hashes` in force:
+   from the previous lock (installed `certifi 2026.7.22`), this command resolves. The
+   command passes no hash flag itself: `--require-hashes` and `--only-binary :all:` are in
+   force through the lock's own option lines 6 and 5, which `--requirement` reads.
 
    ```
    python -m pip install --dry-run --quiet --report /tmp/pip-resolution.json \
