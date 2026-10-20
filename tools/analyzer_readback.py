@@ -793,7 +793,13 @@ def parse_capability(value: object) -> dict[str, Any]:
         unknown=record["unknown"],
         native=record.get("native"),
     )
-    if canonical_json(rebuilt) != canonical_json(record):
+    try:
+        recorded = canonical_json(record)
+    except (TypeError, ValueError, RecursionError) as exc:
+        # A record that is not plain JSON, such as a read-only mapping, is refused by
+        # the contract, never by a raw error (CodeAnt on #444).
+        raise AnalyzerReadbackError("capability is not canonical JSON") from exc
+    if canonical_json(rebuilt) != recorded:
         raise AnalyzerReadbackError("capability is not what its contract builds")
     return rebuilt
 

@@ -10,6 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -3832,6 +3833,15 @@ class CapabilityContractTests(unittest.TestCase):
         with patch.object(analyzer_readback, "canonical_json", overflow):
             with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
                 build(**fields)
+
+    def test_a_record_that_is_not_plain_json_is_refused_on_parse(self) -> None:
+        # CodeAnt on #444: a read-only mapping passes the closed-key check but is not
+        # JSON, so parsing it is a contract refusal, never a raw TypeError.
+        parse = self._api(analyzer_readback, "parse_capability")
+        tools, rules = _rest_tools()
+        record = _offset_capability(_OffsetRestFake(tools, rules))
+        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+            parse(MappingProxyType(record))
 
     def test_the_offset_fixture_refuses_a_short_read(self) -> None:
         # Amazon Q 4326119660: an empty page before its total is a fixture failure, so
