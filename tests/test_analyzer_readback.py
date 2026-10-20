@@ -3330,9 +3330,15 @@ def _offset_all(
     while True:
         page = fake.get(path, offset=offset)
         read.pages += 1
+        if not page["items"] and offset < page["total"]:
+            # A short read is the fixture's failure, never a smaller inventory
+            # (Amazon Q on #444).
+            raise AssertionError(
+                "the offset provider gave an empty page before its total"
+            )
         items.extend(page["items"])
         offset += len(page["items"])
-        if offset >= page["total"] or not page["items"]:
+        if offset >= page["total"]:
             return items
 
 
@@ -3380,7 +3386,8 @@ def _offset_capability(fake: _OffsetRestFake) -> dict[str, Any]:
             {
                 "id": str(x["ref"]),
                 "rule": str(x["rule_key"]),
-                "scope": x.get("path_glob"),
+                "path": None,
+                "glob": x.get("path_glob"),
             }
             for x in _offset_all(fake, read, "/exclusions")
         ]
@@ -3771,6 +3778,54 @@ class CapabilityContractTests(unittest.TestCase):
             analyzer_readback.AnalyzerReadbackError, "not what its contract builds"
         ):
             parse(unsorted)
+
+    # Review round 1 (Amazon Q on #444).
+
+    def test_an_ignore_rule_keeps_both_its_path_and_glob(self) -> None:
+        # Amazon Q 4326119611: a rule with both a file path and a glob kept only one.
+        both = {
+            **ignore_rule("rule-1"),
+            "filePath": "tools/a.py",
+            "globPattern": "tools/**",
+        }
+        receipt = self._discover(
+            CapabilityFake(
+                stable(
+                    {("RepositoryIgnoreRules", "gnostoa", None): ignore_page([both])}
+                )
+            )
+        )
+        [rule] = self._neutral(receipt)["ignore_rules"]["rules"]
+        self.assertEqual(
+            ("tools/a.py", "tools/**"),
+            (rule.get("path"), rule.get("glob")),
+            "an ignore rule's path or glob is dropped",
+        )
+
+    def test_a_record_that_is_not_json_is_refused_by_contract(self) -> None:
+        # Amazon Q 4326119628: a value JSON cannot hold is a contract refusal, never a
+        # raw ValueError or TypeError.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+        for value in (float("nan"), {1, 2}):
+            with self.subTest(native=type(value).__name__):
+                with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+                    build(**{**fields, "native": {"value": value}})
+
+    def test_the_offset_fixture_refuses_a_short_read(self) -> None:
+        # Amazon Q 4326119660: an empty page before its total is a fixture failure, so
+        # the test-only translator never under-reads silently.
+        class _Short(_OffsetRestFake):
+            def get(self, path: str, *, offset: int) -> Mapping[str, Any]:
+                answer = dict(super().get(path, offset=offset))
+                if path == "/tools":
+                    answer["total"] = 5
+                return answer
+
+        tools, rules = _rest_tools()
+        with self.assertRaisesRegex(AssertionError, "empty page before its total"):
+            _offset_capability(_Short(tools, rules, limit=5))
 
     # L11: characterized as they are, with no cap selected (Router 6276781659).
 

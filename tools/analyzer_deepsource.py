@@ -2020,7 +2020,8 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
                 {
                     "id": rule["id"],
                     "rule": rule["issue"],
-                    "scope": rule["glob_pattern"] or rule["file_path"],
+                    "path": rule["file_path"],
+                    "glob": rule["glob_pattern"],
                 }
                 for rule in rules
             ],

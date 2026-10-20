@@ -660,10 +660,13 @@ def _ignore_rules(value: object) -> dict[str, Any]:
         {
             "id": _required_text(item["id"], "ignore rule id"),
             "rule": _required_text(item["rule"], "ignore rule target"),
-            "scope": _optional_text(item["scope"], "ignore rule scope"),
+            # A path and a glob are each kept, never one for the other (Amazon Q on
+            # #444).
+            "path": _optional_text(item["path"], "ignore rule path"),
+            "glob": _optional_text(item["glob"], "ignore rule glob"),
         }
         for item in (
-            _closed(entry, "ignore rule", frozenset({"id", "rule", "scope"}))
+            _closed(entry, "ignore rule", frozenset({"id", "rule", "path", "glob"}))
             for entry in _array(record["rules"], "capability ignore rules")
         )
     ]
@@ -743,7 +746,11 @@ def build_capability(
     }
     if native is not None:
         record["native"] = dict(_mapping(native, "capability native"))
-    json.loads(canonical_json(record))
+    try:
+        canonical_json(record)
+    except (TypeError, ValueError) as exc:
+        # A value JSON cannot hold is a contract refusal too (Amazon Q on #444).
+        raise AnalyzerReadbackError("capability record is not canonical JSON") from exc
     return record
 
 
