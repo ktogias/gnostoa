@@ -3848,9 +3848,9 @@ class CapabilityContractTests(unittest.TestCase):
         # JSON, so parsing it is a contract refusal, never a raw TypeError.
         parse = self._api(analyzer_readback, "parse_capability")
         tools, rules = _rest_tools()
-        record = _offset_capability(_OffsetRestFake(tools, rules))
+        proxy = MappingProxyType(_offset_capability(_OffsetRestFake(tools, rules)))
         with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
-            parse(MappingProxyType(record))
+            parse(proxy)
 
     def test_a_record_must_be_its_own_json_form(self) -> None:
         # cubic on #444: JSON turns a non-string key into a string and a tuple into an
@@ -3877,8 +3877,9 @@ class CapabilityContractTests(unittest.TestCase):
                 return answer
 
         tools, rules = _rest_tools()
+        short = _Short(tools, rules, limit=5)
         with self.assertRaisesRegex(AssertionError, "empty page before its total"):
-            _offset_capability(_Short(tools, rules, limit=5))
+            _offset_capability(short)
 
     # Review round 2 (Codex 4326137385 and Sourcery 4326145486 / 4326145497 on #444).
 

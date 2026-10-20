@@ -469,6 +469,7 @@ CAPABILITY_BINDINGS = frozenset({"CURRENT_NOT_RUN_BOUND", "UNKNOWN"})
 CATALOGUE_STATES = frozenset({"COMPLETE", "PARTIAL", "UNREAD"})
 # What a provider said of its configuration: never reached, not offered, none, or one.
 CONFIGURATION_STATES = frozenset({"UNREAD", "UNSUPPORTED", "ABSENT", "PRESENT"})
+_IGNORE_RULES = "capability ignore rules"
 _INVENTORY_STATUSES = COVERAGE_STATUSES | {"UNREAD"}
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CAPABILITY_KEYS = frozenset(
@@ -650,8 +651,8 @@ def _catalogue(
 
 
 def _ignore_rules(value: object) -> dict[str, Any]:
-    record = _closed(value, "capability ignore rules", frozenset({"status", "rules"}))
-    status = _inventory_status(record["status"], "capability ignore rules")
+    record = _closed(value, _IGNORE_RULES, frozenset({"status", "rules"}))
+    status = _inventory_status(record["status"], _IGNORE_RULES)
     if status != "COMPLETE":
         if record["rules"] is not None:
             raise AnalyzerReadbackError("ignore rules not read whole are unknown")
@@ -665,7 +666,7 @@ def _ignore_rules(value: object) -> dict[str, Any]:
                 frozenset({"native"}),
             )
         )
-        for entry in _array(record["rules"], "capability ignore rules")
+        for entry in _array(record["rules"], _IGNORE_RULES)
     ]
     return {"status": status, "rules": _unique_sorted(rules, "id", "ignore rules")}
 
