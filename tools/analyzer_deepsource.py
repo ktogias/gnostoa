@@ -1461,7 +1461,7 @@ class _DiscoveryIncomplete(RuntimeError):
 
 
 class _DiscoveryRead:
-    __slots__ = ("count", "deadline", "login", "name", "pages")
+    __slots__ = ("count", "deadline", "login", "name", "pages", "requests")
 
     def __init__(self, login: str, name: str, deadline: float) -> None:
         self.login = login
@@ -1469,6 +1469,8 @@ class _DiscoveryRead:
         self.deadline = deadline
         self.pages = _Pages()
         self.count = 0
+        # Requests sent, whether or not a page came back (Codex and Sourcery on #444).
+        self.requests = 0
 
 
 def _discovery_page(
@@ -1480,6 +1482,7 @@ def _discovery_page(
     # A spent deadline reads no further page.
     if time.monotonic() >= read.deadline:
         raise _DiscoveryIncomplete("DEADLINE")
+    read.requests += 1
     page = client.graphql(query, variables, deadline=read.deadline)
     read.pages.count += 1
     return page
@@ -1888,14 +1891,14 @@ def read_capability_discovery(
         # Each catalogue is kept as soon as it is read whole, so a later failure keeps
         # what was read (Codex and Sourcery on #441).
         for enabled in first["analyzers"]:
-            requested = read.pages.count
+            requested = read.requests
             try:
                 state["analyzers"].append(_analyzer_catalogue(client, read, enabled))
             except (_DiscoveryIncomplete, ProviderReadFailure):
                 # A catalogue a request was made for, but not read whole, is partly
                 # read; one refused before any request was never read (Router
                 # 6292521425).
-                if read.pages.count > requested:
+                if read.requests > requested:
                     state["catalogue_partial"] = enabled["shortcode"]
                 raise
         again = _repository_state(client, read)
@@ -2022,6 +2025,9 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
                     "rule": rule["issue"],
                     "path": rule["file_path"],
                     "glob": rule["glob_pattern"],
+                    # DeepSource's own terms, kept and never interpreted (Sourcery on
+                    # #444).
+                    "native": {"level": rule["level"], "type": rule["type"]},
                 }
                 for rule in rules
             ],

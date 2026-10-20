@@ -3827,6 +3827,46 @@ class CapabilityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "empty page before its total"):
             _offset_capability(_Short(tools, rules, limit=5))
 
+    # Review round 2 (Codex 4326137385 and Sourcery 4326145486 / 4326145497 on #444).
+
+    def test_a_catalogue_whose_first_request_fails_is_partly_read(self) -> None:
+        # A request was sent and failed before any page came back: it was attempted,
+        # so the catalogue is PARTIAL, never UNREAD.
+        failure = analyzer_deepsource.ProviderReadFailure("UNAVAILABLE", "down")
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            **_analyzers_pages(["python", "shell"], num_issues=3),
+            ("AnalyzerCatalogue", "shell", None): failure,
+        }
+        receipt = self._discover(CapabilityFake(stable(overrides)))
+        self.assertEqual(
+            "shell",
+            receipt.get("catalogue_partial"),
+            "a catalogue whose first request failed is reported never requested",
+        )
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("shell", "PARTIAL")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+
+    def test_an_ignore_rule_keeps_its_native_attributes(self) -> None:
+        # A rule's level and type are kept as the provider's own attributes, which the
+        # neutral contract carries and never interprets.
+        rule = {**ignore_rule("rule-1"), "level": "FILE", "type": "TEMPORARY"}
+        receipt = self._discover(
+            CapabilityFake(
+                stable(
+                    {("RepositoryIgnoreRules", "gnostoa", None): ignore_page([rule])}
+                )
+            )
+        )
+        [neutral] = self._neutral(receipt)["ignore_rules"]["rules"]
+        self.assertEqual(
+            {"level": "FILE", "type": "TEMPORARY"},
+            neutral.get("native"),
+            "an ignore rule's level and type are dropped",
+        )
+
     # L11: characterized as they are, with no cap selected (Router 6276781659).
 
     def test_whole_read_calls_count_every_page_of_both_snapshots(self) -> None:

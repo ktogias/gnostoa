@@ -657,20 +657,32 @@ def _ignore_rules(value: object) -> dict[str, Any]:
             raise AnalyzerReadbackError("ignore rules not read whole are unknown")
         return {"status": status, "rules": None}
     rules = [
-        {
-            "id": _required_text(item["id"], "ignore rule id"),
-            "rule": _required_text(item["rule"], "ignore rule target"),
-            # A path and a glob are each kept, never one for the other (Amazon Q on
-            # #444).
-            "path": _optional_text(item["path"], "ignore rule path"),
-            "glob": _optional_text(item["glob"], "ignore rule glob"),
-        }
-        for item in (
-            _closed(entry, "ignore rule", frozenset({"id", "rule", "path", "glob"}))
-            for entry in _array(record["rules"], "capability ignore rules")
+        _ignore_rule(
+            _closed(
+                entry,
+                "ignore rule",
+                frozenset({"id", "rule", "path", "glob"}),
+                frozenset({"native"}),
+            )
         )
+        for entry in _array(record["rules"], "capability ignore rules")
     ]
     return {"status": status, "rules": _unique_sorted(rules, "id", "ignore rules")}
+
+
+def _ignore_rule(item: Mapping[str, Any]) -> dict[str, Any]:
+    rule: dict[str, Any] = {
+        "id": _required_text(item["id"], "ignore rule id"),
+        "rule": _required_text(item["rule"], "ignore rule target"),
+        # A path and a glob are each kept, never one for the other (Amazon Q on #444).
+        "path": _optional_text(item["path"], "ignore rule path"),
+        "glob": _optional_text(item["glob"], "ignore rule glob"),
+    }
+    if "native" in item:
+        # A provider's own terms for a rule, such as its level or duration: carried,
+        # and never interpreted here (Sourcery on #444).
+        rule["native"] = dict(_mapping(item["native"], "ignore rule native"))
+    return rule
 
 
 def build_capability(
