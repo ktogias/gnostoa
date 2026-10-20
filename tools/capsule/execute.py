@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import tarfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from tools import exact_tree
 from tools.capsule import lock as lock_module
 from tools.capsule import profiles
 from tools.capsule.authority import LaunchAuthority
@@ -43,22 +42,20 @@ class ExecutionResult:
 
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination.parent / f"{destination.name}.tar"
+    """The execution capsule's base tree, exactly, through the shared owner (#389 F3
+    S2 A). A fresh project is written and proved by its identity. A reused one keeps
+    its run's outputs, but its tracked source must still be the frozen tree
+    (S2-A3-02): the newly necessary refusal. The lock's execution artifacts are the
+    base subject's generated paths, which the tree never tracks, so they are never
+    compared."""
+    limits = exact_tree.Limits.within()
     try:
-        with archive.open("wb") as handle:
-            subprocess.run(
-                ["git", "-C", str(repo), "archive", "--format=tar", tree],
-                check=True,
-                stdout=handle,
-                env=_GIT_ENV,
-            )
-        if not hasattr(tarfile, "data_filter"):
-            raise ExecuteError("tarfile-data-filter-unavailable")
-        with tarfile.open(archive) as handle:
-            handle.extractall(destination, filter="data")
-    finally:
-        archive.unlink(missing_ok=True)
+        if any(destination.iterdir()):
+            exact_tree.verify_tracked(repo, tree, destination, limits=limits)
+        else:
+            exact_tree.materialize(repo, tree, destination, limits=limits)
+    except exact_tree.ExactTreeError as exc:
+        raise ExecuteError(f"execution-subject-{exc.code}: {exc}") from exc
 
 
 def materialize_capsule(
@@ -85,8 +82,7 @@ def materialize_capsule(
         path.mkdir(parents=True, exist_ok=True)
 
     store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
-    if not any(project.iterdir()):
-        _materialize(Path(task["source_repository"]), task["base_tree"], project)
+    _materialize(Path(task["source_repository"]), task["base_tree"], project)
 
     for artifact in cast(
         Sequence[Mapping[str, str]], task.get("stored_artifacts") or []

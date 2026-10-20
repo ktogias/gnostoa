@@ -822,6 +822,55 @@ class StaleMaterializationTests(CapsuleFixture):
         )
 
 
+class SourceMetadataTests(CapsuleFixture):
+    """#389 F3 S2 A (S2-A3-01, Router 6297725852): preparation never runs a driver
+    that the source repository's own configuration names, on either the
+    materialization or the identity check, even one that leaves the bytes unchanged."""
+
+    def test_preparation_never_runs_a_source_repository_filter_driver(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        base = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        marker = self.root / "filter-driver-ran"
+        git(repo, "config", "filter.probe.smudge", f"sh -c 'touch {marker}; cat'")
+        git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
+        compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, base, base))),
+            self.workspace,
+            offline=True,
+        )
+        self.assertFalse(marker.exists(), "a source repository's driver ran")
+
+
+class ExecutionProjectReuseTests(CapsuleFixture):
+    """#389 F3 S2 A (S2-A3-02, Router 6297725852): a re-prepare that reuses the
+    execution project checks its tracked source against the frozen base tree."""
+
+    def test_a_reused_execution_project_whose_tracked_source_changed_is_refused(
+        self,
+    ) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        base = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        spec = self.base_spec(repo, base, base)
+        compiler.prepare(load_spec(self.write_spec(spec)), self.workspace, offline=True)
+        [project] = list(self.workspace.rglob("execution/project"))
+        (project / "src/pkg/__init__.py").write_text("tampered = True\n")
+        second = compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+        self.assertIn(
+            "execution-project-identity-mismatch",
+            [b["code"] for b in second.blockers],
+        )
+
+
 class StageCompletionTests(CapsuleFixture):
     def test_an_entered_but_incomplete_stage_is_never_reused(self) -> None:
         ledger = stages.StageLedger(root=self.workspace)
@@ -1128,6 +1177,70 @@ class LockExecutionTests(CapsuleFixture):
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
         project = Path(next(iter(outcome.runs.values()))["project_root"])
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
+
+    # #389 F3 S2 A (S2-A3-01/02, Router 6297725852): the execution capsule is the
+    # source tree's exact bytes. Metadata in the source repository that is not part of
+    # the tree (info/attributes, a local filter driver) never changes or runs on it.
+
+    def test_execution_capsule_keeps_every_tracked_file_whatever_the_source_metadata(
+        self,
+    ) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        repo = self.root / "s"
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text(
+            "src/pkg/__init__.py export-ignore\n"
+        )
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        self.assertTrue(
+            (project / "src/pkg/__init__.py").is_file(),
+            "the source repository's metadata dropped a tracked file",
+        )
+        base = git(repo, "rev-parse", "HEAD~1")
+        self.assertEqual(
+            git(repo, "show", f"{base}:src/pkg/__init__.py"),
+            (project / "src/pkg/__init__.py").read_text().strip(),
+        )
+
+    def test_a_reused_capsule_keeps_its_run_outputs(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        first = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        project = Path(next(iter(first.runs.values()))["project_root"])
+        (project / "run-output.log").write_text("made by a previous run\n")
+        again = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(again.status, "MATERIALISED", again.blockers)
+
+    def test_a_reused_capsule_whose_tracked_source_changed_is_refused(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        first = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        project = Path(next(iter(first.runs.values()))["project_root"])
+        (project / "src/pkg/__init__.py").write_text("tampered = True\n")
+        again = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertNotEqual(again.status, "MATERIALISED", "a tampered capsule ran")
+        self.assertIn("capsule-not-materialisable", [b["code"] for b in again.blockers])
+
+    def test_execution_never_runs_a_source_repository_filter_driver(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        repo = self.root / "s"
+        marker = self.root / "filter-driver-ran"
+        git(repo, "config", "filter.probe.smudge", f"sh -c 'touch {marker}; cat'")
+        git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
+        execute.execute_lock(result.lock_path, self.workspace / "exec", dry_run=True)
+        self.assertFalse(marker.exists(), "a source repository's driver ran")
 
     def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
         """Qualification-domain artifacts must not reach the executor capsule."""

@@ -14,13 +14,12 @@ import json
 import shutil
 import stat
 import subprocess
-import tarfile
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
+from tools import exact_tree
 from tools.capsule import (
     adapters,
     certificates,
@@ -95,86 +94,33 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination.parent / f"{destination.name}.tar"
+    """Write the frozen tree's exact bytes through the shared owner (#389 F3 S2 A): no
+    archive, attribute or configured driver touches them."""
     try:
-        with archive.open("wb") as handle:
-            subprocess.run(
-                ["git", "-C", str(repo), "archive", "--format=tar", tree],
-                check=True,
-                stdout=handle,
-                env=_GIT_ENV,
-            )
-        if not hasattr(tarfile, "data_filter"):
-            # PEP 706 landed in 3.12 and was backported to 3.11.4. Refuse rather than
-            # extract a subject tree without the hardened member filter.
-            raise CompileError("tarfile-data-filter-unavailable")
-        with tarfile.open(archive) as handle:
-            handle.extractall(destination, filter="data")
-    finally:
-        archive.unlink(missing_ok=True)
+        exact_tree.materialize(
+            repo, tree, destination, limits=exact_tree.Limits.within()
+        )
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-materialisable: {exc}") from exc
 
 
 def _frozen_tree_paths(repo: Path, tree: str) -> frozenset[str]:
     """Every path the frozen Git tree carries. The source of truth about absence."""
-    listed = subprocess.run(
-        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", tree],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_GIT_ENV,
-    )
-    return frozenset(line for line in listed.stdout.splitlines() if line)
+    try:
+        return exact_tree.tree_paths(repo, tree, limits=exact_tree.Limits.within())
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-listable: {exc}") from exc
 
 
 def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> str:
-    """Independently reconstruct the Git tree identity of a materialised directory."""
-    with tempfile.TemporaryDirectory() as scratch:
-        index = Path(scratch) / "index"
-        env = {**_GIT_ENV, "GIT_INDEX_FILE": str(index)}
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "--work-tree",
-                str(worktree),
-                "add",
-                "-A",
-                "--force",
-            ],
-            check=True,
-            capture_output=True,
-            env=env,
+    """Independently reconstruct the Git tree identity of a materialised directory, in
+    this process, so no configured driver runs on it (S2-A3-01)."""
+    try:
+        return exact_tree.observed_tree(
+            repo, worktree, limits=exact_tree.Limits.within(), ignore=ignore
         )
-        if ignore:
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "rm",
-                    "--cached",
-                    # Index-only, and forced: without -f git refuses to drop a path
-                    # whose staged content differs from HEAD, which silently left the
-                    # generated artifact in the reconstructed tree whenever the same
-                    # path happened to be tracked at HEAD.
-                    "-f",
-                    "-q",
-                    "--ignore-unmatch",
-                    *ignore,
-                ],
-                check=True,
-                capture_output=True,
-                env=env,
-            )
-        return subprocess.run(
-            ["git", "-C", str(repo), "write-tree"],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        ).stdout.strip()
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-observable: {exc}") from exc
 
 
 def _materialize_verified(
@@ -193,7 +139,19 @@ def _materialize_verified(
     """
     destination = root / f"{kind}-{tree}"
     if not destination.exists() or not any(destination.iterdir()):
-        _materialize(repo, tree, destination)
+        try:
+            _materialize(repo, tree, destination)
+        except CompileError as exc:
+            # A tree the shared owner cannot represent exactly, or cannot write within
+            # its bounds, is refused as this subject's identity, fail-closed.
+            blockers.append(
+                {
+                    "task": task_id,
+                    "code": "materialised-subject-identity-mismatch",
+                    "detail": f"{kind} subject cannot be materialised exactly: {exc}",
+                }
+            )
+            return None
     observed = _observed_tree(repo, destination)
     if observed != tree:
         # A rerun sees the subject as preparation left it. This compiler's own
@@ -619,8 +577,24 @@ def _prepare_task(
     )
     # The executor gets its own materialisation of BASE only. It is never a view of
     # the private subject directory, which also holds the known-correct reference.
-    if not any(layout["execution_project"].iterdir()):
-        _materialize(repo, task.source.base_tree, layout["execution_project"])
+    project = layout["execution_project"]
+    try:
+        if any(project.iterdir()):
+            # A re-prepare reuses the execution project. Its tracked source must still
+            # be the frozen base tree; a run's own outputs are left alone (S2-A3-02).
+            exact_tree.verify_tracked(
+                repo, task.source.base_tree, project, limits=exact_tree.Limits.within()
+            )
+        else:
+            _materialize(repo, task.source.base_tree, project)
+    except (CompileError, exact_tree.ExactTreeError) as exc:
+        blockers.append(
+            {
+                "task": task.id,
+                "code": "execution-project-identity-mismatch",
+                "detail": f"the execution project is not the frozen base tree: {exc}",
+            }
+        )
 
     oracle_sha256 = digest_path(task.oracle_path)
     if task.oracle_sha256 and task.oracle_sha256 != oracle_sha256:
