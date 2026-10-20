@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
+from itertools import pairwise
 from typing import Any
 
 SCHEMA = "gnostoa-analyzer-readback/v1"
@@ -451,6 +452,354 @@ def parse_bundle(value: object) -> dict[str, Any]:
     else:
         _check_incomplete(bundle, readbacks)
     return {**bundle, "readbacks": readbacks}
+
+
+# The private capability record (#389 F3 R0b; Router 6269272533 and entry
+# 6292521425). An analyzer provider's current capability: the analyzers it has
+# enabled, each one's rule catalogue, its ignore rules and whether a configuration is
+# present. It is not bound to a head, so it is never a readback; its catalogues are an
+# observed inventory, never the effective rule selection or an assurance claim. Each
+# adapter translates its native discovery into it; nothing here branches on one.
+CAPABILITY_SCHEMA = "gnostoa-analyzer-capability/v1"
+# An analysis or run id alone never binds a capability to a run (Router 6269272533):
+# no provider evidence of that binding is admitted, so RUN_BOUND is not a value.
+CAPABILITY_BINDINGS = frozenset({"CURRENT_NOT_RUN_BOUND", "UNKNOWN"})
+# A catalogue read whole, one a request was made for but not read whole, or one never
+# requested. Unknown is never an empty COMPLETE catalogue (Router 6280406609).
+CATALOGUE_STATES = frozenset({"COMPLETE", "PARTIAL", "UNREAD"})
+# What a provider said of its configuration: never reached, not offered, none, or one.
+CONFIGURATION_STATES = frozenset({"UNREAD", "UNSUPPORTED", "ABSENT", "PRESENT"})
+_INVENTORY_STATUSES = COVERAGE_STATUSES | {"UNREAD"}
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CAPABILITY_KEYS = frozenset(
+    {
+        "schema",
+        "provider",
+        "adapter",
+        "repository",
+        "observed_at",
+        "binding",
+        "coverage",
+        "configuration",
+        "activated",
+        "enabled",
+        "catalogues",
+        "ignore_rules",
+        "effective_configuration",
+        "unknown",
+    }
+)
+_CAPABILITY_OPTIONAL_KEYS = frozenset({"native"})
+
+
+def _closed(
+    value: object,
+    label: str,
+    required: frozenset[str],
+    optional: frozenset[str] = frozenset(),
+) -> Mapping[str, Any]:
+    record = _mapping(value, label)
+    keys = set(record)
+    if not required <= keys or keys - required - optional:
+        raise AnalyzerReadbackError(f"{label} has missing or unknown fields")
+    return record
+
+
+def _array(value: object, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise AnalyzerReadbackError(f"{label} must be an array")
+    return value
+
+
+def _unique_sorted(
+    items: list[dict[str, Any]], key: str, label: str
+) -> list[dict[str, Any]]:
+    ordered = sorted(items, key=lambda item: item[key])
+    for first, second in pairwise(ordered):
+        if first[key] == second[key]:
+            raise AnalyzerReadbackError(f"{label} repeats the identity {first[key]!r}")
+    return ordered
+
+
+def _capability_coverage(value: object) -> dict[str, Any]:
+    record = _closed(
+        value,
+        "capability coverage",
+        frozenset({"status", "pages", "count"}),
+        frozenset({"total", "reason"}),
+    )
+    status = record["status"]
+    if not isinstance(status, str):
+        raise AnalyzerReadbackError("coverage status is unsupported")
+    return coverage(
+        status,
+        pages=record["pages"],
+        count=record["count"],
+        total=record.get("total"),
+        reason=record.get("reason"),
+    )
+
+
+def _capability_configuration(value: object) -> dict[str, Any]:
+    record = _closed(
+        value, "capability configuration", frozenset({"state"}), frozenset({"digest"})
+    )
+    state = record["state"]
+    if not isinstance(state, str) or state not in CONFIGURATION_STATES:
+        raise AnalyzerReadbackError("capability configuration state is unsupported")
+    if state != "PRESENT":
+        if "digest" in record:
+            raise AnalyzerReadbackError("only a present configuration has a digest")
+        return {"state": state}
+    digest = _required_text(record.get("digest"), "capability configuration digest")
+    if _DIGEST.fullmatch(digest) is None:
+        raise AnalyzerReadbackError("capability configuration digest is not sha256")
+    return {"state": state, "digest": digest}
+
+
+def _inventory_status(value: object, label: str) -> str:
+    if not isinstance(value, str) or value not in _INVENTORY_STATUSES:
+        raise AnalyzerReadbackError(f"{label} status is unsupported")
+    return value
+
+
+def _enabled(value: object) -> dict[str, Any]:
+    record = _closed(value, "capability enabled", frozenset({"status", "analyzers"}))
+    status = _inventory_status(record["status"], "capability enabled")
+    if status != "COMPLETE":
+        # Descriptors not read whole are unknown, never an empty inventory.
+        if record["analyzers"] is not None:
+            raise AnalyzerReadbackError(
+                "an enabled list not read whole has no analyzers"
+            )
+        return {"status": status, "analyzers": None}
+    analyzers = [
+        {
+            "id": _required_text(item["id"], "enabled analyzer id"),
+            "version": _optional_text(item["version"], "enabled analyzer version"),
+            "declared_entries": None
+            if item["declared_entries"] is None
+            else _nonnegative_int(item["declared_entries"], "enabled analyzer entries"),
+        }
+        for item in (
+            _closed(
+                entry,
+                "enabled analyzer",
+                frozenset({"id", "version", "declared_entries"}),
+            )
+            for entry in _array(record["analyzers"], "capability enabled analyzers")
+        )
+    ]
+    return {
+        "status": status,
+        "analyzers": _unique_sorted(analyzers, "id", "enabled analyzers"),
+    }
+
+
+def _catalogue(
+    value: object, enabled: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    record = _closed(
+        value,
+        "capability catalogue",
+        frozenset({"analyzer", "state", "version", "entries"}),
+    )
+    analyzer = _required_text(record["analyzer"], "catalogue analyzer")
+    descriptor = enabled.get(analyzer)
+    if descriptor is None:
+        raise AnalyzerReadbackError(
+            f"a catalogue names no enabled analyzer: {analyzer!r}"
+        )
+    state = record["state"]
+    if not isinstance(state, str) or state not in CATALOGUE_STATES:
+        raise AnalyzerReadbackError("catalogue state is unsupported")
+    version = _optional_text(record["version"], "catalogue version")
+    if version != descriptor["version"]:
+        raise AnalyzerReadbackError("a catalogue's version is not its analyzer's")
+    if state != "COMPLETE":
+        if record["entries"] is not None:
+            raise AnalyzerReadbackError("only a catalogue read whole has entries")
+        return {
+            "analyzer": analyzer,
+            "state": state,
+            "version": version,
+            "entries": None,
+        }
+    if descriptor["declared_entries"] is None:
+        raise AnalyzerReadbackError("a catalogue of unknown size cannot be complete")
+    entries = [
+        {
+            "id": _required_text(item["id"], "catalogue entry id"),
+            "title": _optional_text(item.get("title"), "catalogue entry title"),
+        }
+        for item in (
+            _closed(entry, "catalogue entry", frozenset({"id"}), frozenset({"title"}))
+            for entry in _array(record["entries"], "catalogue entries")
+        )
+    ]
+    if len(entries) != descriptor["declared_entries"]:
+        raise AnalyzerReadbackError(
+            "a complete catalogue disagrees with its declared size"
+        )
+    return {
+        "analyzer": analyzer,
+        "state": state,
+        "version": version,
+        "entries": _unique_sorted(entries, "id", "catalogue entries"),
+    }
+
+
+def _ignore_rules(value: object) -> dict[str, Any]:
+    record = _closed(value, "capability ignore rules", frozenset({"status", "rules"}))
+    status = _inventory_status(record["status"], "capability ignore rules")
+    if status != "COMPLETE":
+        if record["rules"] is not None:
+            raise AnalyzerReadbackError("ignore rules not read whole are unknown")
+        return {"status": status, "rules": None}
+    rules = [
+        {
+            "id": _required_text(item["id"], "ignore rule id"),
+            "rule": _required_text(item["rule"], "ignore rule target"),
+            "scope": _optional_text(item["scope"], "ignore rule scope"),
+        }
+        for item in (
+            _closed(entry, "ignore rule", frozenset({"id", "rule", "scope"}))
+            for entry in _array(record["rules"], "capability ignore rules")
+        )
+    ]
+    return {"status": status, "rules": _unique_sorted(rules, "id", "ignore rules")}
+
+
+def build_capability(
+    *,
+    provider: object,
+    adapter: object,
+    repository: object,
+    observed_at: object,
+    binding: object,
+    coverage: object,
+    configuration: object,
+    activated: object,
+    enabled: object,
+    catalogues: object,
+    ignore_rules: object,
+    unknown: object,
+    native: object = None,
+) -> dict[str, Any]:
+    """One capability record from an adapter's translation, or a refusal. Its
+    coverage is the whole read's: COMPLETE only when every part was read whole, and
+    its count is the entries of the catalogues read whole."""
+
+    if not isinstance(binding, str) or binding not in CAPABILITY_BINDINGS:
+        raise AnalyzerReadbackError("capability binding is unsupported")
+    if activated is not None and type(activated) is not bool:
+        raise AnalyzerReadbackError("capability activation must be a boolean or null")
+    read = _capability_coverage(coverage)
+    inventory = _enabled(enabled)
+    descriptors = {item["id"]: item for item in inventory["analyzers"] or []}
+    catalogue_list = [
+        _catalogue(item, descriptors)
+        for item in _array(catalogues, "capability catalogues")
+    ]
+    catalogue_list = _unique_sorted(catalogue_list, "analyzer", "capability catalogues")
+    if [item["analyzer"] for item in catalogue_list] != sorted(descriptors):
+        # Each enabled analyzer has one catalogue state, and none is invented.
+        raise AnalyzerReadbackError("catalogues are not one per enabled analyzer")
+    rules = _ignore_rules(ignore_rules)
+    config = _capability_configuration(configuration)
+    entries = sum(
+        len(item["entries"]) for item in catalogue_list if item["entries"] is not None
+    )
+    if read["count"] != entries:
+        raise AnalyzerReadbackError(
+            "capability coverage count is not its catalogue entries"
+        )
+    if read["status"] == "COMPLETE" and (
+        inventory["status"] != "COMPLETE"
+        or rules["status"] != "COMPLETE"
+        or config["state"] == "UNREAD"
+        or any(item["state"] != "COMPLETE" for item in catalogue_list)
+    ):
+        raise AnalyzerReadbackError("complete capability coverage has an unread part")
+    record: dict[str, Any] = {
+        "schema": CAPABILITY_SCHEMA,
+        "provider": _required_text(provider, "capability provider"),
+        "adapter": _required_text(adapter, "capability adapter"),
+        "repository": normalize_repository(repository),
+        "observed_at": _required_text(observed_at, "capability observed at"),
+        "binding": binding,
+        "coverage": read,
+        "configuration": config,
+        "activated": activated,
+        "enabled": inventory,
+        "catalogues": catalogue_list,
+        "ignore_rules": rules,
+        # A catalogue inventory never proves which rules a run applies.
+        "effective_configuration": "UNPROVEN",
+        "unknown": [
+            _required_text(item, "capability unknown")
+            for item in _array(unknown, "capability unknown")
+        ],
+    }
+    if native is not None:
+        record["native"] = dict(_mapping(native, "capability native"))
+    json.loads(canonical_json(record))
+    return record
+
+
+def parse_capability(value: object) -> dict[str, Any]:
+    """A recorded capability, accepted only when `build_capability` rebuilds it
+    exactly from its own fields, as `parse_readback` does a readback."""
+
+    record = _closed(value, "capability", _CAPABILITY_KEYS, _CAPABILITY_OPTIONAL_KEYS)
+    if record["schema"] != CAPABILITY_SCHEMA:
+        raise AnalyzerReadbackError(f"capability schema must be {CAPABILITY_SCHEMA!r}")
+    if record["effective_configuration"] != "UNPROVEN":
+        raise AnalyzerReadbackError(
+            "a capability never proves its effective configuration"
+        )
+    rebuilt = build_capability(
+        provider=record["provider"],
+        adapter=record["adapter"],
+        repository=record["repository"],
+        observed_at=record["observed_at"],
+        binding=record["binding"],
+        coverage=record["coverage"],
+        configuration=record["configuration"],
+        activated=record["activated"],
+        enabled=record["enabled"],
+        catalogues=record["catalogues"],
+        ignore_rules=record["ignore_rules"],
+        unknown=record["unknown"],
+        native=record.get("native"),
+    )
+    if canonical_json(rebuilt) != canonical_json(record):
+        raise AnalyzerReadbackError("capability is not what its contract builds")
+    return rebuilt
+
+
+def catalogue_inventory(value: object) -> dict[str, Any]:
+    """The neutral reading of a capability record: whether its enabled list is known,
+    and each enabled analyzer's catalogue state and entry identities. It reads only
+    the contract's own fields, never a provider's."""
+
+    record = parse_capability(value)
+    return {
+        "enabled": record["enabled"]["status"],
+        "analyzers": [
+            {
+                "id": item["analyzer"],
+                "version": item["version"],
+                "state": item["state"],
+                "entries": None
+                if item["entries"] is None
+                else [entry["id"] for entry in item["entries"]],
+            }
+            for item in record["catalogues"]
+        ],
+        "complete": record["coverage"]["status"] == "COMPLETE",
+        "reason": record["coverage"].get("reason"),
+    }
 
 
 def _check_bound(

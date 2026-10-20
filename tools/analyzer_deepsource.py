@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from . import github_rest
 from .analyzer_readback import (
     AnalyzerReadbackError,
+    build_capability,
     build_readback,
     coverage,
     deduplicate_findings,
@@ -1671,6 +1672,25 @@ def _repository_state(
         ),
         lambda node: _text(node.get("shortcode"), "analyzer.shortcode"),
     )
+    descriptors: list[dict[str, Any]] = [
+        {
+            "shortcode": _text(node.get("shortcode"), "analyzer.shortcode"),
+            "version": _optional_text(
+                _selected(node, "version", _ANALYZER_VERSION),
+                _ANALYZER_VERSION,
+            ),
+            "num_issues": _optional_integer(
+                _selected(node, "numIssues", _ANALYZER_NUM_ISSUES),
+                _ANALYZER_NUM_ISSUES,
+            ),
+        }
+        for node in analyzers
+    ]
+    enabled = sorted(descriptors, key=lambda entry: entry["shortcode"])
+    if observed is not None:
+        # The enabled list read whole is kept when the ignore rules then fail (Router
+        # 6280406609): it is known, and the catalogues are not.
+        observed["enabled_analyzers"] = enabled
 
     def ignore_page(cursor: str | None) -> tuple[Mapping[str, Any], object]:
         page = _discovery_page(
@@ -1691,23 +1711,7 @@ def _repository_state(
     return {
         "activated": settings["activated"],
         "configuration": settings["configuration"],
-        "analyzers": sorted(
-            (
-                {
-                    "shortcode": _text(node.get("shortcode"), "analyzer.shortcode"),
-                    "version": _optional_text(
-                        _selected(node, "version", _ANALYZER_VERSION),
-                        _ANALYZER_VERSION,
-                    ),
-                    "num_issues": _optional_integer(
-                        _selected(node, "numIssues", _ANALYZER_NUM_ISSUES),
-                        _ANALYZER_NUM_ISSUES,
-                    ),
-                }
-                for node in analyzers
-            ),
-            key=lambda entry: entry["shortcode"],
-        ),
+        "analyzers": enabled,
         "ignore_rules": sorted(
             (
                 {
@@ -1870,14 +1874,30 @@ def read_capability_discovery(
         "configuration": _UNREAD,
         "analyzers": None,
         "ignore_rules": None,
+        "enabled_analyzers": None,
+        "catalogue_partial": None,
     }
     try:
         first = _repository_state(client, read, state)
-        state = {**first, "analyzers": []}
+        state = {
+            **first,
+            "analyzers": [],
+            "enabled_analyzers": first["analyzers"],
+            "catalogue_partial": None,
+        }
         # Each catalogue is kept as soon as it is read whole, so a later failure keeps
         # what was read (Codex and Sourcery on #441).
         for enabled in first["analyzers"]:
-            state["analyzers"].append(_analyzer_catalogue(client, read, enabled))
+            requested = read.pages.count
+            try:
+                state["analyzers"].append(_analyzer_catalogue(client, read, enabled))
+            except (_DiscoveryIncomplete, ProviderReadFailure):
+                # A catalogue a request was made for, but not read whole, is partly
+                # read; one refused before any request was never read (Router
+                # 6292521425).
+                if read.pages.count > requested:
+                    state["catalogue_partial"] = enabled["shortcode"]
+                raise
         again = _repository_state(client, read)
         before = (
             state["activated"],
@@ -1931,6 +1951,80 @@ def read_capability_discovery(
         "analyzers": state["analyzers"],
         "ignore_rules": state["ignore_rules"],
         "activated": state["activated"],
+        "enabled_analyzers": state["enabled_analyzers"],
+        "catalogue_partial": state["catalogue_partial"],
         "effective_configuration": "UNPROVEN",
         "unknown": list(_DISCOVERY_UNKNOWN),
     }
+
+
+_CAPABILITY_ADAPTER = "deepsource-capability/v1"
+
+
+def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
+    """The discovery, translated into the neutral capability record. Every enabled
+    analyzer gets one catalogue state: read whole, partly read or never read."""
+
+    enabled = discovery["enabled_analyzers"]
+    whole = {entry["shortcode"]: entry for entry in discovery["analyzers"] or []}
+    catalogues = [
+        {
+            "analyzer": entry["shortcode"],
+            "state": "COMPLETE"
+            if entry["shortcode"] in whole
+            else "PARTIAL"
+            if entry["shortcode"] == discovery["catalogue_partial"]
+            else "UNREAD",
+            "version": entry["version"],
+            "entries": [
+                {"id": issue["shortcode"], "title": issue["title"]}
+                for issue in whole[entry["shortcode"]]["catalogue"]
+            ]
+            if entry["shortcode"] in whole
+            else None,
+        }
+        for entry in enabled or []
+    ]
+    configuration = discovery["configuration"]
+    rules = discovery["ignore_rules"]
+    return build_capability(
+        provider="deepsource",
+        adapter=_CAPABILITY_ADAPTER,
+        repository=discovery["repository"],
+        observed_at=discovery["observed_at"],
+        binding=discovery["binding"],
+        coverage=discovery["coverage"],
+        configuration={
+            k: v for k, v in configuration.items() if k in {"state", "digest"}
+        },
+        activated=discovery["activated"],
+        enabled={
+            "status": "UNREAD" if enabled is None else "COMPLETE",
+            "analyzers": None
+            if enabled is None
+            else [
+                {
+                    "id": entry["shortcode"],
+                    "version": entry["version"],
+                    "declared_entries": entry["num_issues"],
+                }
+                for entry in enabled
+            ],
+        },
+        catalogues=catalogues,
+        ignore_rules={
+            "status": "UNREAD" if rules is None else "COMPLETE",
+            "rules": None
+            if rules is None
+            else [
+                {
+                    "id": rule["id"],
+                    "rule": rule["issue"],
+                    "scope": rule["glob_pattern"] or rule["file_path"],
+                }
+                for rule in rules
+            ],
+        },
+        unknown=discovery["unknown"],
+        native={"schema": discovery["schema"]},
+    )
