@@ -58,15 +58,24 @@ x-project-knowledge:
 ## Context
 
 `requirements/development.lock` pinned `certifi==2026.7.22`. Advisory
-GHSA-6q48-6c7w-9gw2 (critical) reports that certifi versions before 2026.10.18 bundle
-the `emSign ECC Root CA - G3` root certificate, and that eight eMudhra intermediate CA
-certificates chaining to it were compromised. A process trusting that bundle would accept
-certificates issued under a compromised intermediate.
+GHSA-6q48-6c7w-9gw2 (critical) reports that certifi bundles the `emSign ECC Root CA - G3`
+root certificate, and that eight eMudhra intermediate CA certificates chaining to it were
+compromised. A process trusting that bundle would accept certificates issued under a
+compromised intermediate.
+
+Because the advisory page can change, its content is bound to a retained snapshot.
+`GET /advisories/GHSA-6q48-6c7w-9gw2` on GitHub's REST API was retrieved at
+2026-10-20T21:48:11Z: 2,302 bytes, SHA-256
+`744e6f07692b60127a7de335386ad71a2b6e27a27f6879d969ec6fc81a9705b7`. It records severity
+`critical`, publication at 2026-10-20T19:35:05Z, no withdrawal, and for `certifi` the
+vulnerable range `>= 2019.03.09, < 2026.10.19` with first patched version `2026.10.19`.
 
 `ci/verify extended` fails its `development_audit` quality gate as a result, on main and
-on every candidate, because the pin is byte-identical everywhere. The runtime lock does
-not pin `certifi`, so the published runtime image never carried this bundle: the
-exposure is the development and CI toolchain only.
+on every candidate, because the pin is byte-identical everywhere. The runtime lock is
+unchanged and declares no `certifi`. That is a declaration, not an observation of any
+image. Following Decision 0055, whether a published runtime image carried this bundle is
+**UNKNOWN** here: no acquisition-bound inventory of a runtime image was observed. What
+this change remediates, and demonstrates, is the development and CI toolchain.
 
 This changes the toolchain's certificate trust, so it is a `critical` change (owner
 selection #389 6301549275, superseding an earlier `normal`). It is its own change, the
@@ -102,16 +111,22 @@ the finding. The newest release, 2026.10.19, is also the advisory's fix version.
    | SHA-256, computed locally | `42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b`, matching the index's listed digest |
    | metadata | `Name: certifi`, `Version: 2026.10.19`, `Requires-Python: >=3.7`, which covers the supported 3.11 and 3.12 |
    | index status | not yanked; the newest certifi release |
-   | the fix itself | the bundled `certifi/cacert.pem` **no longer contains** `emSign ECC Root CA - G3`. The pinned 2026.7.22 wheel (SHA-256 `62f22742…`, the lock's current hash) **does** contain it |
+   | the fix itself | the bundled `certifi/cacert.pem` **no longer contains** `emSign ECC Root CA - G3`. The previous lock's 2026.7.22 wheel (SHA-256 `62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775`) **does** contain it |
 
-3. **The audit is recorded before and after, bound to the exact locks.** The command is
-   `python -m pip_audit --no-deps --strict --progress-spinner off --requirement <lock>`.
+3. **The audit is recorded before and after, bound to the exact locks.** The commands are,
+   literally:
+
+   ```
+   python -m pip_audit --no-deps --strict --progress-spinner off --requirement requirements/development.lock
+   python -m pip_audit --no-deps --strict --progress-spinner off --requirement requirements/runtime.lock
+   ```
+
    The environment is Python 3.12.14 and `pip-audit` 2.10.1, in the repository's
    `development` image.
 
    | | development lock | runtime lock |
    |---|---|---|
-   | before, main `37f220e4` | SHA-256 `2bf56715…`: **exit 1**, `certifi 2026.7.22 GHSA-6q48-6c7w-9gw2`, fix `2026.10.19` | SHA-256 `35e36da5…`: exit 0, no known vulnerability |
+   | before, main `37f220e44478c3d7fcb6462111865bb750df420d` | SHA-256 `2bf56715ff49de345619f1a9946cd90ba9b89c654f9d4ea6292615c867bf64fa`: **exit 1**, `certifi 2026.7.22 GHSA-6q48-6c7w-9gw2`, fix `2026.10.19` | SHA-256 `35e36da52f8b4fa19bfe4239d0918ebdb0b0a09b2ad72d087fb345b6f41a02ed`: exit 0, no known vulnerability |
    | after | SHA-256 `2a941975aa8210ce2ac54ed56377d63f4d3e9162a4a9df4c6289073202fbb805`: **exit 0**, no known vulnerability | unchanged: exit 0 |
 
 4. **The resolution is proved, and the proof names its environment.** In an image built
