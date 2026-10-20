@@ -3664,7 +3664,13 @@ class CapabilityContractTests(unittest.TestCase):
         fields["catalogues"] = [
             {**fields["catalogues"][0], "state": "UNREAD", "entries": None}
         ]
-        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+        # The count agrees with the entries read whole (none), so only the unread
+        # part can refuse it, not the count guard (revix on #444).
+        fields["coverage"] = {**fields["coverage"], "count": 0}
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "complete capability coverage has an unread part",
+        ):
             build(**fields)
 
     def test_the_record_refuses_each_contradiction(self) -> None:
@@ -3813,6 +3819,20 @@ class CapabilityContractTests(unittest.TestCase):
                 with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
                     build(**{**fields, "native": {"value": value}})
 
+    def test_a_record_nested_past_the_stack_is_refused_by_contract(self) -> None:
+        # CodeAnt on #444: serialization that overflows the stack (measured at about
+        # 100,000 levels) is a contract refusal, never a raw RecursionError.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+
+        def overflow(_value: object) -> str:
+            raise RecursionError("maximum recursion depth exceeded")
+
+        with patch.object(analyzer_readback, "canonical_json", overflow):
+            with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+                build(**fields)
+
     def test_the_offset_fixture_refuses_a_short_read(self) -> None:
         # Amazon Q 4326119660: an empty page before its total is a fixture failure, so
         # the test-only translator never under-reads silently.
@@ -3846,6 +3866,38 @@ class CapabilityContractTests(unittest.TestCase):
         inventory = self._inventory(self._neutral(receipt))
         self.assertEqual(
             [("python", "COMPLETE"), ("shell", "PARTIAL")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+
+    def test_a_catalogue_refused_by_the_budget_is_not_partly_read(self) -> None:
+        # Claude on #444: the budget pre-check refuses before any request, as the
+        # identity pre-check does, so the catalogue is UNREAD.
+        ruby = catalogue_page(
+            [catalogue_issue(f"RB-{i}") for i in range(3)],
+            shortcode="ruby",
+            num_issues=3,
+            total=3,
+        )
+        fake = CapabilityFake(
+            stable(
+                {
+                    ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                        [analyzer(), analyzer("ruby", num_issues=3)]
+                    ),
+                    ("AnalyzerCatalogue", "ruby", None): ruby,
+                }
+            )
+        )
+        with patch.object(analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 5):
+            receipt = self._discover(fake)
+        self.assertEqual("BUDGET", receipt["coverage"]["reason"])
+        self.assertNotIn(
+            "ruby", [v["shortcode"] for k, v in fake.calls if k == "AnalyzerCatalogue"]
+        )
+        self.assertIsNone(receipt["catalogue_partial"])
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("ruby", "UNREAD")],
             [(a["id"], a["state"]) for a in inventory["analyzers"]],
         )
 

@@ -760,8 +760,9 @@ def build_capability(
         record["native"] = dict(_mapping(native, "capability native"))
     try:
         canonical_json(record)
-    except (TypeError, ValueError) as exc:
-        # A value JSON cannot hold is a contract refusal too (Amazon Q on #444).
+    except (TypeError, ValueError, RecursionError) as exc:
+        # A value JSON cannot hold, or one nested past the stack, is a contract
+        # refusal too (Amazon Q and CodeAnt on #444).
         raise AnalyzerReadbackError("capability record is not canonical JSON") from exc
     return record
 

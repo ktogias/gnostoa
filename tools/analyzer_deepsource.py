@@ -1469,7 +1469,9 @@ class _DiscoveryRead:
         self.deadline = deadline
         self.pages = _Pages()
         self.count = 0
-        # Requests sent, whether or not a page came back (Codex and Sourcery on #444).
+        # Requests handed to the client, whether or not a page came back (Codex and
+        # Sourcery on #444). The client may still refuse one before sending it, at
+        # its own deadline check; it was requested all the same (Claude on #444).
         self.requests = 0
 
 
