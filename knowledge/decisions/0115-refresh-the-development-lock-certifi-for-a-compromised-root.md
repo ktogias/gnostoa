@@ -13,18 +13,21 @@ sources:
   - id: advisory
     resource: https://github.com/advisories/GHSA-6q48-6c7w-9gw2
     title: GHSA-6q48-6c7w-9gw2 (certifi)
+  - id: advisory-snapshot
+    resource: https://github.com/ktogias/gnostoa/issues/445#issuecomment-6303116167
+    title: The advisory snapshot's exact bytes, published with their extraction rule
   - id: owner-selection
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6301549275
     title: The owner's selection of Option A, class critical, and its execution boundary
   - id: route
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6301437613
-    title: The Router's separate admission choice for #445
+    title: "The Router's separate admission choice for #445"
   - id: prior-art
     resource: ./0095-refresh-vulnerable-development-dependency-pins.md
     title: The earlier refresh of a vulnerable development pin, reused as evidence pattern only
   - id: binding
     resource: https://github.com/ktogias/gnostoa/issues/445#issuecomment-6301702228
-    title: The Router's critical binding of #445 and its governing Decisions
+    title: "The Router's critical binding of #445 and its governing Decisions"
   - id: runtime-boundary
     resource: ./0055-separate-runtime-lock-declaration-validity-from-image-observation.md
     title: The runtime lock's declaration boundary, which this change leaves untouched
@@ -66,7 +69,9 @@ compromised intermediate.
 Because the advisory page can change, its content is bound to a retained snapshot.
 `GET /advisories/GHSA-6q48-6c7w-9gw2` on GitHub's REST API was retrieved at
 2026-10-20T21:48:11Z: 2,302 bytes, SHA-256
-`744e6f07692b60127a7de335386ad71a2b6e27a27f6879d969ec6fc81a9705b7`. It records severity
+`744e6f07692b60127a7de335386ad71a2b6e27a27f6879d969ec6fc81a9705b7`. Those exact bytes
+are published on the Work Item (#445 comment 6303116167, source `advisory-snapshot`),
+with the rule for extracting them, so the digest can be re-checked. It records severity
 `critical`, publication at 2026-10-20T19:35:05Z, no withdrawal, and for `certifi` the
 vulnerable range `>= 2019.03.09, < 2026.10.19` with first patched version `2026.10.19`.
 
