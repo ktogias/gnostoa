@@ -10,6 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -2462,6 +2463,8 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
                 "analyzers",
                 "ignore_rules",
                 "activated",
+                "enabled_analyzers",
+                "catalogue_partial",
                 "effective_configuration",
                 "unknown",
             },
@@ -3256,6 +3259,739 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
             ["python", "ruby"], [a["shortcode"] for a in receipt["analyzers"]]
         )
         self.assertEqual(5, receipt["coverage"]["count"])
+
+
+def _analyzers_pages(
+    shortcodes: Sequence[str], *, num_issues: int = 3
+) -> dict[tuple[str, str, str | None], Any]:
+    """The enabled-analyzer connection for `shortcodes`, 100 a page, as answers."""
+    nodes = [analyzer(s, num_issues=num_issues) for s in shortcodes]
+    if len(nodes) <= 100:
+        return {("RepositoryAnalyzers", "gnostoa", None): analyzers_page(nodes)}
+    return {
+        ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+            nodes[:100], total=len(nodes), has_next=True, cursor="e1"
+        ),
+        ("RepositoryAnalyzers", "gnostoa", "e1"): analyzers_page(
+            nodes[100:], total=len(nodes)
+        ),
+    }
+
+
+class _OffsetRestFake:
+    """A test-only provider of a materially different native shape (#285 RCA, Router
+    6269272533): offset pages rather than cursors, opaque non-numeric identities, a
+    rule count named apart from the rules, and exclusions rather than ignore rules.
+    `fail` names a path whose page at `fail_offset` raises."""
+
+    def __init__(
+        self,
+        tools: Sequence[Mapping[str, Any]],
+        rules: Mapping[str, Sequence[Mapping[str, Any]]],
+        exclusions: Sequence[Mapping[str, Any]] = (),
+        *,
+        limit: int = 2,
+        fail: str | None = None,
+        fail_offset: int = 0,
+    ) -> None:
+        self.collections: dict[str, list[Mapping[str, Any]]] = {
+            "/tools": list(tools),
+            "/exclusions": list(exclusions),
+        }
+        for ref, entries in rules.items():
+            self.collections[f"/tools/{ref}/rules"] = list(entries)
+        self.limit = limit
+        self.fail = fail
+        self.fail_offset = fail_offset
+        self.calls: list[tuple[str, int]] = []
+
+    def get(self, path: str, *, offset: int) -> Mapping[str, Any]:
+        self.calls.append((path, offset))
+        if path == self.fail and offset == self.fail_offset:
+            raise RuntimeError(f"offset provider failed at {path}")
+        items = self.collections[path]
+        return {
+            "items": items[offset : offset + self.limit],
+            "offset": offset,
+            "total": len(items),
+        }
+
+
+class _OffsetRead:
+    __slots__ = ("pages",)
+
+    def __init__(self) -> None:
+        self.pages = 0
+
+
+def _offset_all(
+    fake: _OffsetRestFake, read: _OffsetRead, path: str
+) -> list[Mapping[str, Any]]:
+    offset, items = 0, []
+    while True:
+        page = fake.get(path, offset=offset)
+        read.pages += 1
+        if not page["items"] and offset < page["total"]:
+            # A short read is the fixture's failure, never a smaller inventory
+            # (Amazon Q on #444).
+            raise AssertionError(
+                "the offset provider gave an empty page before its total"
+            )
+        items.extend(page["items"])
+        offset += len(page["items"])
+        if offset >= page["total"]:
+            return items
+
+
+def _offset_capability(fake: _OffsetRestFake) -> dict[str, Any]:
+    """The test-only translator: the offset provider's native answers, written into the
+    neutral capability record. Nothing here is shared with the DeepSource adapter."""
+
+    build = getattr(analyzer_readback, "build_capability", None)
+    if build is None:
+        raise AssertionError("missing capability: analyzer_readback.build_capability")
+    read = _OffsetRead()
+    enabled: list[dict[str, Any]] | None = None
+    catalogues: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] | None = None
+    entries = 0
+    record: dict[str, Any]
+    try:
+        tools = _offset_all(fake, read, "/tools")
+        enabled = [
+            {
+                "id": str(t["label"]),
+                "version": t.get("release"),
+                "declared_entries": t.get("rule_total"),
+            }
+            for t in tools
+        ]
+        catalogues = [
+            {
+                "analyzer": e["id"],
+                "state": "UNREAD",
+                "version": e["version"],
+                "entries": None,
+            }
+            for e in enabled
+        ]
+        for tool, slot in zip(tools, catalogues, strict=True):
+            slot["state"] = "PARTIAL"
+            native = _offset_all(fake, read, f"/tools/{tool['ref']}/rules")
+            slot["entries"] = [
+                {"id": str(r["key"]), "title": r.get("summary")} for r in native
+            ]
+            slot["state"] = "COMPLETE"
+            entries += len(native)
+        rules = [
+            {
+                "id": str(x["ref"]),
+                "rule": str(x["rule_key"]),
+                "path": None,
+                "glob": x.get("path_glob"),
+            }
+            for x in _offset_all(fake, read, "/exclusions")
+        ]
+        record = analyzer_readback.coverage("COMPLETE", pages=read.pages, count=entries)
+    except RuntimeError:
+        for slot in catalogues:
+            if slot["state"] == "PARTIAL":
+                slot["entries"] = None
+        record = analyzer_readback.coverage(
+            "ERROR", pages=read.pages, count=entries, reason="PROVIDER_ERROR"
+        )
+    result: dict[str, Any] = build(
+        provider="offset-rest-test",
+        adapter="test-offset-rest/v1",
+        repository=REPOSITORY,
+        observed_at=OBSERVED,
+        binding="CURRENT_NOT_RUN_BOUND",
+        coverage=record,
+        configuration={"state": "UNSUPPORTED"},
+        activated=None,
+        enabled={
+            "status": "COMPLETE" if enabled is not None else "UNREAD",
+            "analyzers": enabled,
+        },
+        catalogues=catalogues,
+        ignore_rules={
+            "status": "COMPLETE" if rules is not None else "UNREAD",
+            "rules": rules,
+        },
+        unknown=["how this provider's configuration selects its rules"],
+    )
+    return result
+
+
+def _rest_tools() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """The offset provider's view of `stable()`: python 1.0.0 with its three issues,
+    under opaque identities and other field names."""
+    tools = [
+        {"ref": "tl_7Qx-python", "label": "python", "release": "1.0.0", "rule_total": 3}
+    ]
+    rules = {
+        "tl_7Qx-python": [
+            {"key": "TYP-050", "summary": "Issue TYP-050"},
+            {"key": "PYL-W0212", "summary": "Issue PYL-W0212"},
+            {"key": "PTC-W0063", "summary": "Issue PTC-W0063"},
+        ]
+    }
+    return tools, rules
+
+
+class CapabilityContractTests(unittest.TestCase):
+    """#389 F3 R0b (Router 6269272533, entry 6292521425): one private neutral
+    capability contract in analyzer_readback, fed by the DeepSource adapter and by a
+    materially different test-only translator, and read by one unchanged consumer.
+    Enabled descriptors are retained apart from catalogues (Router 6280406609)."""
+
+    def _discover(self, fake: CapabilityFake) -> dict[str, Any]:
+        result: dict[str, Any] = analyzer_deepsource.read_capability_discovery(
+            fake, REPOSITORY
+        )
+        return result
+
+    def _api(self, module: Any, name: str) -> Any:
+        found = getattr(module, name, None)
+        if found is None:
+            self.fail(f"missing capability: {module.__name__}.{name}")
+        return found
+
+    def _inventory(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = self._api(analyzer_readback, "catalogue_inventory")(
+            record
+        )
+        return result
+
+    def _neutral(self, discovery: Mapping[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = self._api(analyzer_deepsource, "capability_record")(
+            discovery
+        )
+        return result
+
+    # L6: enabled descriptors read whole survive a later failure.
+
+    def test_enabled_analyzers_read_whole_survive_an_ignore_rule_failure(self) -> None:
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        for n in (0, 3, 101):
+            with self.subTest(enabled=n):
+                names = [f"an{i:03d}" for i in range(n)]
+                overrides = {
+                    **_analyzers_pages(names),
+                    ("RepositoryIgnoreRules", "gnostoa", None): failure,
+                }
+                fake = CapabilityFake(stable(overrides))
+                receipt = self._discover(fake)
+                self.assertEqual("ERROR", receipt["coverage"]["status"])
+                self.assertEqual(
+                    names,
+                    [a["shortcode"] for a in receipt.get("enabled_analyzers") or []]
+                    if receipt.get("enabled_analyzers") is not None
+                    else None,
+                    "the enabled descriptors read whole are lost",
+                )
+                # No catalogue was reached, and none is invented empty.
+                self.assertIsNone(receipt["analyzers"])
+                self.assertEqual(
+                    [], [k for k, _ in fake.calls if k == "AnalyzerCatalogue"]
+                )
+                neutral = self._neutral(receipt)
+                inventory = self._inventory(neutral)
+                self.assertEqual("COMPLETE", inventory["enabled"])
+                self.assertEqual(
+                    [(name, "UNREAD") for name in names],
+                    [(a["id"], a["state"]) for a in inventory["analyzers"]],
+                )
+                self.assertFalse(inventory["complete"])
+
+    def test_an_enabled_list_never_read_is_unknown_not_empty(self) -> None:
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        unread = self._discover(
+            CapabilityFake(stable({("RepositoryAnalyzers", "gnostoa", None): failure}))
+        )
+        empty = self._discover(
+            CapabilityFake(
+                stable(
+                    {
+                        **_analyzers_pages([]),
+                        ("RepositoryIgnoreRules", "gnostoa", None): failure,
+                    }
+                )
+            )
+        )
+        self.assertIsNone(unread.get("enabled_analyzers", "no key"))
+        self.assertEqual([], empty.get("enabled_analyzers", "no key"))
+        self.assertEqual("UNREAD", self._inventory(self._neutral(unread))["enabled"])
+        self.assertEqual("COMPLETE", self._inventory(self._neutral(empty))["enabled"])
+
+    # L8: catalogue state, and the original reason kept.
+
+    def test_a_failed_catalogue_is_partly_read_and_later_ones_unread(self) -> None:
+        failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            **_analyzers_pages(["python", "shell", "zsh"], num_issues=3),
+            ("AnalyzerCatalogue", "shell", None): catalogue_page(
+                [catalogue_issue("SH-1"), catalogue_issue("SH-2")],
+                shortcode="shell",
+                num_issues=3,
+                total=3,
+                has_next=True,
+                cursor="s1",
+            ),
+            ("AnalyzerCatalogue", "shell", "s1"): failure,
+        }
+        fake = CapabilityFake(stable(overrides))
+        receipt = self._discover(fake)
+        self.assertEqual(
+            ("ERROR", "PROVIDER_ERROR"),
+            (receipt["coverage"]["status"], receipt["coverage"]["reason"]),
+        )
+        self.assertEqual(["python"], [a["shortcode"] for a in receipt["analyzers"]])
+        self.assertEqual(
+            "shell",
+            receipt.get("catalogue_partial"),
+            "a partly read catalogue is indistinguishable from one never reached",
+        )
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("shell", "PARTIAL"), ("zsh", "UNREAD")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+        self.assertEqual(
+            ["PTC-W0063", "PYL-W0212", "TYP-050"], inventory["analyzers"][0]["entries"]
+        )
+        self.assertIsNone(inventory["analyzers"][1]["entries"])
+        self.assertEqual("PROVIDER_ERROR", inventory["reason"])
+
+    def test_a_catalogue_refused_unread_is_not_partly_read(self) -> None:
+        overrides = {
+            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                [analyzer(), analyzer("ruby", version=None)]
+            )
+        }
+        receipt = self._discover(CapabilityFake(stable(overrides)))
+        self.assertEqual("ANALYZER_IDENTITY_UNAVAILABLE", receipt["coverage"]["reason"])
+        self.assertIsNone(receipt.get("catalogue_partial", "no key"))
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("ruby", "UNREAD")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+
+    # L4, L10: two native shapes, one unchanged consumer.
+
+    def test_both_providers_feed_one_unchanged_inventory(self) -> None:
+        deepsource = self._inventory(
+            self._neutral(self._discover(CapabilityFake(stable())))
+        )
+        tools, rules = _rest_tools()
+        exclusions = [{"ref": "ex_a1", "rule_key": "PYL-W0212", "path_glob": None}]
+        offset = self._inventory(
+            _offset_capability(_OffsetRestFake(tools, rules, exclusions))
+        )
+        self.assertTrue(deepsource["complete"])
+        self.assertEqual(deepsource, offset)
+
+    def test_reordering_and_opaque_renaming_do_not_change_the_inventory(self) -> None:
+        tools, rules = _rest_tools()
+        renamed = [{**tools[0], "ref": "zz_Op4que"}]
+        reordered = {"zz_Op4que": list(reversed(rules["tl_7Qx-python"]))}
+        first = self._inventory(_offset_capability(_OffsetRestFake(tools, rules)))
+        second = self._inventory(
+            _offset_capability(_OffsetRestFake(renamed, reordered, limit=1))
+        )
+        self.assertEqual(first, second)
+
+    def test_the_offset_provider_keeps_partial_and_unread_states(self) -> None:
+        tools = [
+            {"ref": "tl_a", "label": "go", "release": "2.1", "rule_total": 2},
+            {"ref": "tl_b", "label": "rust", "release": "0.9", "rule_total": 2},
+            # Never reached, so the name's UNREAD state is held (revix on #444).
+            {"ref": "tl_c", "label": "zig", "release": "0.1", "rule_total": 1},
+        ]
+        rules = {
+            "tl_a": [{"key": "GO-1"}, {"key": "GO-2"}],
+            "tl_b": [{"key": "RS-1"}, {"key": "RS-2"}],
+            "tl_c": [{"key": "ZG-1"}],
+        }
+        record = _offset_capability(
+            _OffsetRestFake(
+                tools, rules, limit=1, fail="/tools/tl_b/rules", fail_offset=1
+            )
+        )
+        inventory = self._inventory(record)
+        self.assertEqual(
+            [("go", "COMPLETE"), ("rust", "PARTIAL"), ("zig", "UNREAD")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+        self.assertFalse(inventory["complete"])
+        self.assertEqual("PROVIDER_ERROR", inventory["reason"])
+
+    # L5: binding.
+
+    def test_an_analysis_id_alone_never_makes_a_record_run_bound(self) -> None:
+        build = self._api(analyzer_readback, "build_capability")
+        parse = self._api(analyzer_readback, "parse_capability")
+        tools, rules = _rest_tools()
+        fields = {**self._fields(_offset_capability(_OffsetRestFake(tools, rules)))}
+        fields["native"] = {"analysis_id": "an_8Hk2"}
+        # With the valid binding kept, an analysis id leaves the record unbound, and a
+        # parse keeps it so (revix on #444).
+        record = build(**{**fields, "binding": "CURRENT_NOT_RUN_BOUND"})
+        self.assertEqual("CURRENT_NOT_RUN_BOUND", record["binding"])
+        self.assertEqual("CURRENT_NOT_RUN_BOUND", parse(record)["binding"])
+        # RUN_BOUND itself is not a value, whatever the native fields hold.
+        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+            build(**{**fields, "binding": "RUN_BOUND"})
+
+    # L3, L2: a closed record that agrees with its coverage.
+
+    def _fields(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            k: v
+            for k, v in record.items()
+            if k not in {"schema", "effective_configuration"}
+        }
+
+    def test_the_capability_record_is_closed(self) -> None:
+        parse = self._api(analyzer_readback, "parse_capability")
+        tools, rules = _rest_tools()
+        record = _offset_capability(_OffsetRestFake(tools, rules))
+        self.assertEqual("gnostoa-analyzer-capability/v1", record["schema"])
+        self.assertEqual("UNPROVEN", record["effective_configuration"])
+        self.assertEqual(record, parse(json.loads(json.dumps(record))))
+        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+            parse({**record, "extra": 1})
+        missing = dict(record)
+        del missing["enabled"]
+        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+            parse(missing)
+
+    def test_complete_coverage_with_an_unread_catalogue_is_refused(self) -> None:
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+        fields["catalogues"] = [
+            {**fields["catalogues"][0], "state": "UNREAD", "entries": None}
+        ]
+        # The count agrees with the entries read whole (none), so only the unread
+        # part can refuse it, not the count guard (revix on #444).
+        fields["coverage"] = {**fields["coverage"], "count": 0}
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "complete capability coverage has an unread part",
+        ):
+            build(**fields)
+
+    def test_the_record_refuses_each_contradiction(self) -> None:
+        # Each case breaks exactly one rule of a valid record, so each guard is held
+        # by its own case.
+        build = self._api(analyzer_readback, "build_capability")
+        parse = self._api(analyzer_readback, "parse_capability")
+        tools, rules = _rest_tools()
+        record = _offset_capability(_OffsetRestFake(tools, rules))
+        base = self._fields(record)
+        [descriptor] = base["enabled"]["analyzers"]
+        [catalogue] = base["catalogues"]
+        failed = {"status": "ERROR", "pages": 1, "count": 0, "reason": "PROVIDER_ERROR"}
+        cases: dict[str, tuple[dict[str, Any], str]] = {
+            "a digest on an absent configuration": (
+                {"configuration": {"state": "ABSENT", "digest": "sha256:" + "0" * 64}},
+                "only a present configuration",
+            ),
+            "a digest that is not sha256": (
+                {"configuration": {"state": "PRESENT", "digest": "md5:abc"}},
+                "not sha256",
+            ),
+            "analyzers on an enabled list not read whole": (
+                {
+                    "enabled": {"status": "UNREAD", "analyzers": [descriptor]},
+                    "catalogues": [],
+                    "coverage": failed,
+                },
+                "not read whole has no analyzers",
+            ),
+            "a catalogue at another version": (
+                {"catalogues": [{**catalogue, "version": "9.9"}]},
+                "version is not its analyzer's",
+            ),
+            "entries on a partly read catalogue": (
+                {
+                    "catalogues": [{**catalogue, "state": "PARTIAL"}],
+                    "coverage": failed,
+                },
+                "only a catalogue read whole has entries",
+            ),
+            "a complete catalogue of unknown size": (
+                {
+                    "enabled": {
+                        "status": "COMPLETE",
+                        "analyzers": [{**descriptor, "declared_entries": None}],
+                    }
+                },
+                "unknown size",
+            ),
+            "a complete catalogue short of its size": (
+                {
+                    "enabled": {
+                        "status": "COMPLETE",
+                        "analyzers": [{**descriptor, "declared_entries": 4}],
+                    }
+                },
+                "disagrees with its declared size",
+            ),
+            "rules on ignore rules not read whole": (
+                {
+                    "ignore_rules": {"status": "UNREAD", "rules": []},
+                    "coverage": {**failed, "count": 3},
+                },
+                "ignore rules not read whole",
+            ),
+            "an enabled analyzer without a catalogue state": (
+                {"catalogues": [], "coverage": failed},
+                "one per enabled analyzer",
+            ),
+            "a count that is not the entries read whole": (
+                {"coverage": {**failed, "count": 2}},
+                "count is not its catalogue entries",
+            ),
+            "complete coverage over unread ignore rules": (
+                {"ignore_rules": {"status": "UNREAD", "rules": None}},
+                "complete capability coverage has an unread part",
+            ),
+            "a provider-native field in a neutral descriptor": (
+                {
+                    "enabled": {
+                        "status": "COMPLETE",
+                        "analyzers": [{**descriptor, "shortcode": "python"}],
+                    }
+                },
+                "missing or unknown fields",
+            ),
+            "a repeated enabled analyzer": (
+                {
+                    "enabled": {
+                        "status": "COMPLETE",
+                        "analyzers": [descriptor, dict(descriptor)],
+                    }
+                },
+                "repeats the identity",
+            ),
+        }
+        for label, (change, message) in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaisesRegex(
+                    analyzer_readback.AnalyzerReadbackError, message
+                ):
+                    build(**{**base, **change})
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError, "never proves"
+        ):
+            parse({**record, "effective_configuration": "PROVEN"})
+        unsorted = json.loads(json.dumps(record))
+        unsorted["catalogues"][0]["entries"].reverse()
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError, "not what its contract builds"
+        ):
+            parse(unsorted)
+
+    # Review round 1 (Amazon Q on #444).
+
+    def test_an_ignore_rule_keeps_both_its_path_and_glob(self) -> None:
+        # Amazon Q 4326119611: a rule with both a file path and a glob kept only one.
+        both = {
+            **ignore_rule("rule-1"),
+            "filePath": "tools/a.py",
+            "globPattern": "tools/**",
+        }
+        receipt = self._discover(
+            CapabilityFake(
+                stable(
+                    {("RepositoryIgnoreRules", "gnostoa", None): ignore_page([both])}
+                )
+            )
+        )
+        [rule] = self._neutral(receipt)["ignore_rules"]["rules"]
+        self.assertEqual(
+            ("tools/a.py", "tools/**"),
+            (rule.get("path"), rule.get("glob")),
+            "an ignore rule's path or glob is dropped",
+        )
+
+    def test_a_record_that_is_not_json_is_refused_by_contract(self) -> None:
+        # Amazon Q 4326119628: a value JSON cannot hold is a contract refusal, never a
+        # raw ValueError or TypeError.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+        for value in (float("nan"), {1, 2}):
+            with self.subTest(native=type(value).__name__):
+                with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+                    build(**{**fields, "native": {"value": value}})
+
+    def test_a_record_nested_past_the_stack_is_refused_by_contract(self) -> None:
+        # CodeAnt on #444: serialization that overflows the stack (measured at about
+        # 100,000 levels) is a contract refusal, never a raw RecursionError.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+
+        def overflow(_value: object) -> str:
+            raise RecursionError("maximum recursion depth exceeded")
+
+        with patch.object(analyzer_readback, "canonical_json", overflow):
+            with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+                build(**fields)
+
+    def test_a_record_that_is_not_plain_json_is_refused_on_parse(self) -> None:
+        # CodeAnt on #444: a read-only mapping passes the closed-key check but is not
+        # JSON, so parsing it is a contract refusal, never a raw TypeError.
+        parse = self._api(analyzer_readback, "parse_capability")
+        tools, rules = _rest_tools()
+        proxy = MappingProxyType(_offset_capability(_OffsetRestFake(tools, rules)))
+        with self.assertRaises(analyzer_readback.AnalyzerReadbackError):
+            parse(proxy)
+
+    def test_a_record_must_be_its_own_json_form(self) -> None:
+        # cubic on #444: JSON turns a non-string key into a string and a tuple into an
+        # array, so a record holding either is not its own JSON form. One invariant
+        # refuses the whole class, not each case.
+        build = self._api(analyzer_readback, "build_capability")
+        tools, rules = _rest_tools()
+        fields = self._fields(_offset_capability(_OffsetRestFake(tools, rules)))
+        for native in ({1: "x"}, {"pair": (1, 2)}, {"nested": {2: "y"}}):
+            with self.subTest(native=repr(native)):
+                with self.assertRaisesRegex(
+                    analyzer_readback.AnalyzerReadbackError, "not its own JSON form"
+                ):
+                    build(**{**fields, "native": native})
+
+    def test_the_offset_fixture_refuses_a_short_read(self) -> None:
+        # Amazon Q 4326119660: an empty page before its total is a fixture failure, so
+        # the test-only translator never under-reads silently.
+        class _Short(_OffsetRestFake):
+            def get(self, path: str, *, offset: int) -> Mapping[str, Any]:
+                answer = dict(super().get(path, offset=offset))
+                if path == "/tools":
+                    answer["total"] = 5
+                return answer
+
+        tools, rules = _rest_tools()
+        short = _Short(tools, rules, limit=5)
+        with self.assertRaisesRegex(AssertionError, "empty page before its total"):
+            _offset_capability(short)
+
+    # Review round 2 (Codex 4326137385 and Sourcery 4326145486 / 4326145497 on #444).
+
+    def test_a_catalogue_whose_first_request_fails_is_partly_read(self) -> None:
+        # A request was sent and failed before any page came back: it was attempted,
+        # so the catalogue is PARTIAL, never UNREAD.
+        failure = analyzer_deepsource.ProviderReadFailure("UNAVAILABLE", "down")
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            **_analyzers_pages(["python", "shell"], num_issues=3),
+            ("AnalyzerCatalogue", "shell", None): failure,
+        }
+        receipt = self._discover(CapabilityFake(stable(overrides)))
+        self.assertEqual(
+            "shell",
+            receipt.get("catalogue_partial"),
+            "a catalogue whose first request failed is reported never requested",
+        )
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("shell", "PARTIAL")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+
+    def test_a_catalogue_refused_by_the_budget_is_not_partly_read(self) -> None:
+        # Claude on #444: the budget pre-check refuses before any request, as the
+        # identity pre-check does, so the catalogue is UNREAD.
+        ruby = catalogue_page(
+            [catalogue_issue(f"RB-{i}") for i in range(3)],
+            shortcode="ruby",
+            num_issues=3,
+            total=3,
+        )
+        fake = CapabilityFake(
+            stable(
+                {
+                    ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
+                        [analyzer(), analyzer("ruby", num_issues=3)]
+                    ),
+                    ("AnalyzerCatalogue", "ruby", None): ruby,
+                }
+            )
+        )
+        with patch.object(analyzer_deepsource, "_MAX_CATALOGUE_ENTRIES", 5):
+            receipt = self._discover(fake)
+        self.assertEqual("BUDGET", receipt["coverage"]["reason"])
+        self.assertNotIn(
+            "ruby", [v["shortcode"] for k, v in fake.calls if k == "AnalyzerCatalogue"]
+        )
+        self.assertIsNone(receipt["catalogue_partial"])
+        inventory = self._inventory(self._neutral(receipt))
+        self.assertEqual(
+            [("python", "COMPLETE"), ("ruby", "UNREAD")],
+            [(a["id"], a["state"]) for a in inventory["analyzers"]],
+        )
+
+    def test_an_ignore_rule_keeps_its_native_attributes(self) -> None:
+        # A rule's level and type are kept as the provider's own attributes, which the
+        # neutral contract carries and never interprets.
+        rule = {**ignore_rule("rule-1"), "level": "FILE", "type": "TEMPORARY"}
+        receipt = self._discover(
+            CapabilityFake(
+                stable(
+                    {("RepositoryIgnoreRules", "gnostoa", None): ignore_page([rule])}
+                )
+            )
+        )
+        [neutral] = self._neutral(receipt)["ignore_rules"]["rules"]
+        self.assertEqual(
+            {"level": "FILE", "type": "TEMPORARY"},
+            neutral.get("native"),
+            "an ignore rule's level and type are dropped",
+        )
+
+    # L11: characterized as they are, with no cap selected (Router 6276781659).
+
+    def test_whole_read_calls_count_every_page_of_both_snapshots(self) -> None:
+        for n in (0, 5, 101):
+            with self.subTest(enabled=n):
+                names = [f"an{i:03d}" for i in range(n)]
+                overrides: dict[tuple[str, str, str | None], Any] = {
+                    **_analyzers_pages(names, num_issues=0)
+                }
+                for name in names:
+                    overrides[("AnalyzerCatalogue", name, None)] = catalogue_page(
+                        [], shortcode=name, num_issues=0, total=0
+                    )
+                fake = CapabilityFake(stable(overrides))
+                receipt = self._discover(fake)
+                enabled_pages = 2 if n > 100 else 1
+                self.assertEqual("COMPLETE", receipt["coverage"]["status"])
+                # Two snapshots of the enabled and ignore-rule connections, and one
+                # request per empty catalogue, though it converts no entry.
+                self.assertEqual(2 * (enabled_pages + 1) + n, len(fake.calls))
+                self.assertEqual(len(fake.calls), receipt["coverage"]["pages"])
+                self.assertEqual(0, receipt["coverage"]["count"])
+
+    def test_a_page_larger_than_requested_is_materialized_whole(self) -> None:
+        # The streaming residual (Router 6275423919): a page is kept whole before its
+        # connection's total is checked, so an under-declared page size is not
+        # refused. Characterized, not changed, in R0b.
+        names = [f"an{i:03d}" for i in range(150)]
+        nodes = [analyzer(s, num_issues=0) for s in names]
+        overrides: dict[tuple[str, str, str | None], Any] = {
+            ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(nodes, total=150)
+        }
+        for name in names:
+            overrides[("AnalyzerCatalogue", name, None)] = catalogue_page(
+                [], shortcode=name, num_issues=0, total=0
+            )
+        receipt = self._discover(CapabilityFake(stable(overrides)))
+        self.assertEqual("COMPLETE", receipt["coverage"]["status"])
+        self.assertEqual(150, len(receipt["analyzers"]))
 
 
 class _TimedResponse:
