@@ -14,7 +14,6 @@ import errno
 import importlib.util
 import os
 import resource
-import shutil
 import stat
 import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
 import sys
@@ -901,14 +900,14 @@ class RoundThreeTests(ExactTreeFixture):
             [part for part in owner._GIT_OVERRIDES if "safe.directory" in part]
         )
 
-    # V: a failed bind leaves no stale record that a later reuse could accept.
+    # V: a failed bind leaves the published tree unbound, so no later reuse accepts it,
+    # for that tree or another. Under U0 no stale record is reset first, so this starts
+    # from a clean destination (Router #389 6321735932).
     def test_a_failed_bind_leaves_no_stale_record_to_reuse(self) -> None:
         owner = _owner()
         first = self.commit({"a.txt": b"a\n"})
         second = self.commit({"b.txt": b"b\n"})
         destination = self.root / "project"
-        owner.materialize_or_verify(self.repo, first, destination, limits=self.limits())
-        shutil.rmtree(destination)
         injected = owner.ExactTreeError("filesystem", "injected bind failure")
         limits = self.limits()
         with mock.patch.object(owner, "_bind", side_effect=injected):
@@ -922,6 +921,12 @@ class RoundThreeTests(ExactTreeFixture):
             "tree-mismatch",
             lambda: owner.materialize_or_verify(
                 self.repo, first, destination, limits=limits
+            ),
+        )
+        self.assertRefused(
+            "tree-mismatch",
+            lambda: owner.materialize_or_verify(
+                self.repo, second, destination, limits=limits
             ),
         )
 

@@ -385,6 +385,9 @@ class RoundTwelveReuseTests(ExactTreeFixture):
 
         with mock.patch("os.rename", side_effect=rename):
             self.assertRefused("tree-mismatch", self.reuse(empty, destination))
+        # The refused writer binds nothing, leaving the name to the winner (a kill
+        # case, added with the U0 mutants).
+        self.assertFalse((self.root / ".project.exact-tree").exists())
         self.assertRefused("tree-mismatch", self.reuse(empty, destination))
         self.assertEqual(b"b\n", (destination / "b.txt").read_bytes())
 
@@ -426,6 +429,30 @@ class RoundTwelveReuseTests(ExactTreeFixture):
             self.assertRefused("tree-mismatch", self.reuse(empty, destination))
         record = (self.root / ".project.exact-tree").read_text(encoding="ascii")
         self.assertIn(other, record)
+        self.reuse(other, destination)()
+
+    # G2: a winner accepted after the loser's first successful check, before the loser
+    # can touch the record, keeps its record byte for byte; the loser refuses, and the
+    # winner is reused (PAO #389 6321447589; Router 6321735932, U0).
+    def test_a_winner_accepted_after_the_losers_check_keeps_its_record(self) -> None:
+        owner, empty = _owner(), self.empty_tree()
+        other = self.commit({"b.txt": b"b\n"})
+        destination, record = self.root / "project", self.root / ".project.exact-tree"
+        real_check, raced = owner._still_published, []
+
+        def check(where: Path, binding: Any) -> None:
+            real_check(where, binding)
+            if not raced:
+                raced.append(record.read_bytes() if record.exists() else None)
+                self.reuse(other, destination)()
+                raced.append(record.read_bytes())
+
+        with mock.patch.object(owner, "_still_published", side_effect=check):
+            self.assertRefused("tree-mismatch", self.reuse(empty, destination))
+        self.assertIsNone(raced[0])
+        self.assertEqual(raced[1], record.read_bytes())
+        self.assertEqual(other, owner._bound_tree(destination).tree)
+        self.assertEqual(b"b\n", (destination / "b.txt").read_bytes())
         self.reuse(other, destination)()
 
     def swapping(
@@ -471,7 +498,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         for tree in ("a" * 40, "b" * 64):
             with self.subTest(len(tree)):
                 record = owner._Record(tree, 2**64 - 1, 2**64 - 2)
-                owner._unbind(destination)
+                (self.root / ".project.exact-tree").unlink(missing_ok=True)
                 owner._bind(destination, record)
                 self.assertEqual(record, owner._bound_tree(destination))
         written = (self.root / ".project.exact-tree").read_bytes()
@@ -541,16 +568,39 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         (destination / "out.txt").write_bytes(b"run output\n")
         _owner().materialize_or_verify(repo, tree, destination, limits=self.limits())
 
-    # G2: a stale record beside a removed destination does not block a fresh tree
-    # there, and the fresh tree is reused (a positive control).
-    def test_a_stale_record_does_not_block_a_fresh_tree(self) -> None:
+    # G2: a stale record beside an emptied or absent destination is kept and refuses;
+    # nothing is reset into a fresh binding (Router #389 6321735932, U0).
+    def test_a_stale_record_is_kept_and_refused(self) -> None:
         first, destination = self.commit({"a.txt": b"a\n"}), self.root / "project"
         second = self.commit({"b.txt": b"b\n"})
         self.reuse(first, destination)()
+        record = self.root / ".project.exact-tree"
+        written = record.read_bytes()
         for path in destination.iterdir():
             path.unlink()
-        self.reuse(second, destination)()
-        self.reuse(second, destination)()
+        before = os.lstat(destination)
+        self.assertRefused("tree-mismatch", self.reuse(second, destination))
+        after = os.lstat(destination)
+        self.assertEqual((before.st_dev, before.st_ino), (after.st_dev, after.st_ino))
+        self.assertEqual([], list(destination.iterdir()))
+        self.assertEqual(written, record.read_bytes())
+        destination.rmdir()
+        self.assertRefused("tree-mismatch", self.reuse(second, destination))
+        self.assertFalse(os.path.lexists(destination))
+        self.assertEqual(written, record.read_bytes())
+
+    # G2: a valid record lets its empty directory be reused as it is, with no output
+    # in it, rather than written afresh (Router #389 6321735932).
+    def test_a_valid_empty_destination_is_reused_as_it_is(self) -> None:
+        empty, destination = self.empty_tree(), self.root / "project"
+        self.reuse(empty, destination)()
+        record = self.root / ".project.exact-tree"
+        written, before = record.read_bytes(), os.lstat(destination)
+        self.reuse(empty, destination)()
+        after = os.lstat(destination)
+        self.assertEqual((before.st_dev, before.st_ino), (after.st_dev, after.st_ino))
+        self.assertEqual(written, record.read_bytes())
+        self.assertEqual([], list(destination.iterdir()))
 
     # G2: a short read still reads the whole record (a kill test, added with the
     # round-12 mutants).

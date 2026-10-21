@@ -1243,6 +1243,8 @@ def _bound_tree(destination: Path) -> _Record | None:
 
     try:
         parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
+    except FileNotFoundError:
+        return None
     except OSError as exc:
         raise _filesystem(exc) from exc
     try:
@@ -1281,25 +1283,6 @@ def _read_bounded(descriptor: int, limit: int) -> bytes | None:
         if len(data) > limit:
             return None
     return bytes(data)
-
-
-def _unbind(destination: Path) -> None:
-    """Remove the destination's record, if there is one."""
-
-    try:
-        parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise _filesystem(exc) from exc
-    try:
-        os.unlink(_record_name(destination), dir_fd=parent_fd)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        raise _filesystem(exc) from exc
-    finally:
-        os.close(parent_fd)
 
 
 def _bind(destination: Path, record: _Record) -> None:
@@ -1358,33 +1341,46 @@ def materialize_or_verify(
     names the same tree and the very directory now there, after checking its tracked
     paths through that same descriptor. A destination written for another tree, or
     another directory put in its place, is refused: a file that tree tracked, and this
-    one dropped, would otherwise survive the reuse. The identity is a check on a
-    supported local filesystem at that moment, not a lock on the name."""
+    one dropped, would otherwise survive the reuse. A record is never removed or reset:
+    one beside an absent or emptied destination that does not bind it refuses (Router
+    #389 6321735932, U0). The identity is a check on a supported local filesystem at
+    that moment, not a lock on the name."""
 
     _algorithm(tree)
     try:
         occupied = _occupied(destination)
+        present = occupied or os.path.lexists(destination)
     except OSError as exc:
         raise _filesystem(exc) from exc
-    if not occupied:
+    fresh = not present and _bound_tree(destination) is None
+    if present:
+        directories = _Directories(_open_root(destination))
+        try:
+            # The record is checked against the descriptor then verified, never
+            # against a second opening of the path (Router #389 6319318065, G2 I). An
+            # empty directory with no record is written afresh; one its record binds
+            # is reused as it is, outputs or none.
+            root_fd = directories.at("", create=False)
+            bound = _bound_tree(destination)
+            fresh = bound is None and not occupied
+            if not fresh:
+                if bound != _Record(tree, *_identity(root_fd)):
+                    raise ExactTreeError(
+                        "tree-mismatch", "the destination was written for another tree"
+                    )
+                _verify_in(repo, tree, directories, limits, frozenset(ignore))
+        except OSError as exc:
+            raise _filesystem(exc) from exc
+        finally:
+            directories.close()
+    elif not fresh:
+        raise ExactTreeError(
+            "tree-mismatch", "a record survives without its destination"
+        )
+    if fresh:
         _materialize(
             repo, tree, destination, limits, lambda record: _accept(destination, record)
         )
-        return
-    directories = _Directories(_open_root(destination))
-    try:
-        # The record is checked against the descriptor then verified, never against
-        # a second opening of the path (Router #389 6319318065, G2 I).
-        root_fd = directories.at("", create=False)
-        if _bound_tree(destination) != _Record(tree, *_identity(root_fd)):
-            raise ExactTreeError(
-                "tree-mismatch", "the destination was written for another tree"
-            )
-        _verify_in(repo, tree, directories, limits, frozenset(ignore))
-    except OSError as exc:
-        raise _filesystem(exc) from exc
-    finally:
-        directories.close()
 
 
 def _still_published(destination: Path, record: _Record) -> None:
@@ -1402,13 +1398,11 @@ def _still_published(destination: Path, record: _Record) -> None:
 
 def _accept(destination: Path, record: _Record) -> None:
     """Bind the directory just published at `destination`, while it is held open. A
-    writer whose directory another rename replaced is refused before it touches the
-    winner's record, and again after its own bind: it is never blessed (Router #389
-    6319318065, G2 I). A stale record is removed before the bind, so a failed bind
-    leaves the tree unbound, refused, never reused for the old tree (cubic
-    4335174301)."""
+    writer whose directory another rename replaced is refused, before its bind and
+    again after it: it is never blessed (Router #389 6319318065, G2 I). The bind is
+    create-only and nothing is removed first, so any record already there, stale or
+    another publisher's, is kept and this writer refuses (Router 6321735932, U0)."""
 
     _still_published(destination, record)
-    _unbind(destination)
     _bind(destination, record)
     _still_published(destination, record)
