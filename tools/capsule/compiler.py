@@ -14,13 +14,12 @@ import json
 import shutil
 import stat
 import subprocess
-import tarfile
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
+from tools import exact_tree
 from tools.capsule import (
     adapters,
     certificates,
@@ -95,86 +94,55 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination.parent / f"{destination.name}.tar"
+    """Write the frozen tree's exact bytes through the shared owner (#389 F3 S2 A): no
+    archive, attribute or configured driver touches them."""
     try:
-        with archive.open("wb") as handle:
-            subprocess.run(
-                ["git", "-C", str(repo), "archive", "--format=tar", tree],
-                check=True,
-                stdout=handle,
-                env=_GIT_ENV,
-            )
-        if not hasattr(tarfile, "data_filter"):
-            # PEP 706 landed in 3.12 and was backported to 3.11.4. Refuse rather than
-            # extract a subject tree without the hardened member filter.
-            raise CompileError("tarfile-data-filter-unavailable")
-        with tarfile.open(archive) as handle:
-            handle.extractall(destination, filter="data")
-    finally:
-        archive.unlink(missing_ok=True)
+        exact_tree.materialize(
+            repo, tree, destination, limits=exact_tree.Limits.within()
+        )
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-materialisable: {exc.code}") from exc
 
 
 def _frozen_tree_paths(repo: Path, tree: str) -> frozenset[str]:
     """Every path the frozen Git tree carries. The source of truth about absence."""
-    listed = subprocess.run(
-        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", tree],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_GIT_ENV,
-    )
-    return frozenset(line for line in listed.stdout.splitlines() if line)
+    try:
+        return exact_tree.tree_paths(repo, tree, limits=exact_tree.Limits.within())
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-listable: {exc.code}") from exc
 
 
 def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> str:
-    """Independently reconstruct the Git tree identity of a materialised directory."""
-    with tempfile.TemporaryDirectory() as scratch:
-        index = Path(scratch) / "index"
-        env = {**_GIT_ENV, "GIT_INDEX_FILE": str(index)}
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "--work-tree",
-                str(worktree),
-                "add",
-                "-A",
-                "--force",
-            ],
-            check=True,
-            capture_output=True,
-            env=env,
+    """Independently reconstruct the Git tree identity of a materialised directory, in
+    this process, so no configured driver runs on it (S2-A3-01)."""
+    try:
+        return exact_tree.observed_tree(
+            repo, worktree, limits=exact_tree.Limits.within(), ignore=ignore
         )
-        if ignore:
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "rm",
-                    "--cached",
-                    # Index-only, and forced: without -f git refuses to drop a path
-                    # whose staged content differs from HEAD, which silently left the
-                    # generated artifact in the reconstructed tree whenever the same
-                    # path happened to be tracked at HEAD.
-                    "-f",
-                    "-q",
-                    "--ignore-unmatch",
-                    *ignore,
-                ],
-                check=True,
-                capture_output=True,
-                env=env,
-            )
-        return subprocess.run(
-            ["git", "-C", str(repo), "write-tree"],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        ).stdout.strip()
+    except exact_tree.ExactTreeError as exc:
+        raise CompileError(f"subject-tree-not-observable: {exc.code}") from exc
+
+
+def _frozen_or_blocked(
+    repo: Path,
+    tree: str,
+    kind: str,
+    blockers: list[dict[str, object]],
+    task_id: str,
+) -> frozenset[str] | None:
+    """The subject's tracked paths, or a blocker when the shared owner cannot list the
+    tree within its bounds: `prepare` reports it instead of raising."""
+    try:
+        return _frozen_tree_paths(repo, tree)
+    except CompileError as exc:
+        blockers.append(
+            {
+                "task": task_id,
+                "code": "materialised-subject-identity-mismatch",
+                "detail": f"{kind} subject tree cannot be listed exactly: {exc}",
+            }
+        )
+        return None
 
 
 def _materialize_verified(
@@ -192,22 +160,62 @@ def _materialize_verified(
     run rather than trusted because it is non-empty.
     """
     destination = root / f"{kind}-{tree}"
-    if not destination.exists() or not any(destination.iterdir()):
-        _materialize(repo, tree, destination)
-    observed = _observed_tree(repo, destination)
-    if observed != tree:
-        # A rerun sees the subject as preparation left it. This compiler's own
-        # deterministic output is not evidence of tampering. But "declared by build
-        # configuration" is not enough on its own: a declared path that the frozen
-        # tree actually tracks is ordinary source, and excluding it would let a real
-        # mutation hide. Exclude only paths that are both declared and provably
-        # absent from the frozen tree, so tracked content stays fully verified.
-        frozen = _frozen_tree_paths(repo, tree)
-        generated = [
-            path for path in declared_generated_paths(destination) if path not in frozen
-        ]
-        if generated:
-            observed = _observed_tree(repo, destination, ignore=generated)
+    try:
+        retained = destination.exists() and any(destination.iterdir())
+    except OSError as exc:
+        # A destination that is not a readable directory is refused as this subject's
+        # identity, like a tree the owner cannot materialise (Q 4338237827).
+        blockers.append(
+            {
+                "task": task_id,
+                "code": "materialised-subject-identity-mismatch",
+                "detail": f"{kind} subject destination cannot be read: "
+                f"{type(exc).__name__}",
+            }
+        )
+        return None
+    if not retained:
+        try:
+            _materialize(repo, tree, destination)
+        except CompileError as exc:
+            # A tree the shared owner cannot represent exactly, or cannot write within
+            # its bounds, is refused as this subject's identity, fail-closed.
+            blockers.append(
+                {
+                    "task": task_id,
+                    "code": "materialised-subject-identity-mismatch",
+                    "detail": f"{kind} subject cannot be materialised exactly: {exc}",
+                }
+            )
+            return None
+    try:
+        observed = _observed_tree(repo, destination)
+        if observed != tree:
+            # A rerun sees the subject as preparation left it. This compiler's own
+            # deterministic output is not evidence of tampering. But "declared by
+            # build configuration" is not enough on its own: a declared path that the
+            # frozen tree actually tracks is ordinary source, and excluding it would
+            # let a real mutation hide. Exclude only paths that are both declared and
+            # provably absent from the frozen tree, so tracked content stays verified.
+            frozen = _frozen_tree_paths(repo, tree)
+            generated = [
+                path
+                for path in declared_generated_paths(destination)
+                if path not in frozen
+            ]
+            if generated:
+                observed = _observed_tree(repo, destination, ignore=generated)
+    except CompileError as exc:
+        # A reused subject the shared owner cannot observe within its bounds is
+        # refused as this subject's identity, like one it cannot materialise.
+        blockers.append(
+            {
+                "task": task_id,
+                "code": "materialised-subject-identity-mismatch",
+                "detail": f"{kind} subject cannot be observed exactly: {exc}",
+            }
+        )
+        return None
     if observed != tree:
         blockers.append(
             {
@@ -619,8 +627,22 @@ def _prepare_task(
     )
     # The executor gets its own materialisation of BASE only. It is never a view of
     # the private subject directory, which also holds the known-correct reference.
-    if not any(layout["execution_project"].iterdir()):
-        _materialize(repo, task.source.base_tree, layout["execution_project"])
+    project = layout["execution_project"]
+    try:
+        # A re-prepare reuses the execution project only if it was written for this
+        # base tree, and its tracked source must still be that tree; a run's own
+        # outputs are left alone (S2-A3-02).
+        exact_tree.materialize_or_verify(
+            repo, task.source.base_tree, project, limits=exact_tree.Limits.within()
+        )
+    except exact_tree.ExactTreeError as exc:
+        blockers.append(
+            {
+                "task": task.id,
+                "code": "execution-project-identity-mismatch",
+                "detail": f"the execution project is not the frozen base tree: {exc.code}",
+            }
+        )
 
     oracle_sha256 = digest_path(task.oracle_path)
     if task.oracle_sha256 and task.oracle_sha256 != oracle_sha256:
@@ -656,6 +678,22 @@ def _prepare_task(
                     }
                 )
 
+    base_frozen = (
+        _frozen_or_blocked(repo, task.source.base_tree, "base", blockers, task.id)
+        if base_dir is not None
+        else None
+    )
+    reference_frozen = (
+        _frozen_or_blocked(
+            reference_repo, task.reference.tree, "reference", blockers, task.id
+        )
+        if reference_dir is not None
+        else None
+    )
+    if base_frozen is None:
+        base_dir = None
+    if reference_frozen is None:
+        reference_dir = None
     if base_dir is None or reference_dir is None:
         return TaskResult(
             id=task.id,
@@ -677,11 +715,10 @@ def _prepare_task(
     # false and preparation would never run for the subject that needs it. The
     # per-subject application below then decides where generation actually happens.
     base_preparation = discover_preparation(
-        base_dir, frozen_paths=_frozen_tree_paths(repo, task.source.base_tree)
+        base_dir, frozen_paths=base_frozen or frozenset()
     )
     reference_preparation = discover_preparation(
-        reference_dir,
-        frozen_paths=_frozen_tree_paths(reference_repo, task.reference.tree),
+        reference_dir, frozen_paths=reference_frozen or frozenset()
     )
     preparation = _union_preparation(base_preparation, reference_preparation)
 
@@ -987,15 +1024,34 @@ def _apply_task_preparation(
             {"task": task.id, "code": "preparation-failed", "detail": str(exc)}
         )
         return
+    except CompileError as exc:
+        blockers.append(
+            {
+                "task": task.id,
+                "code": "materialised-subject-identity-mismatch",
+                "detail": f"a subject tree cannot be listed exactly: {exc}",
+            }
+        )
+        return
 
     # Both tracked trees must still reconstruct to their declared identities once
     # that subject's own generated artifacts are ignored: preparation adds, it never
     # edits the subject. Verified per subject, because a reference-side edit is no
     # less a modification than a base-side one.
     for kind, subject_dir, _commit, source_repo, subject_tree in subjects:
-        observed = _observed_tree(
-            source_repo, subject_dir, ignore=list(per_subject_generated[kind])
-        )
+        try:
+            observed = _observed_tree(
+                source_repo, subject_dir, ignore=list(per_subject_generated[kind])
+            )
+        except CompileError as exc:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "materialised-subject-identity-mismatch",
+                    "detail": f"{kind} subject cannot be observed exactly: {exc}",
+                }
+            )
+            return
         if observed != subject_tree:
             blockers.append(
                 {

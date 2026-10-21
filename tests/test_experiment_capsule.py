@@ -822,6 +822,55 @@ class StaleMaterializationTests(CapsuleFixture):
         )
 
 
+class SourceMetadataTests(CapsuleFixture):
+    """#389 F3 S2 A (S2-A3-01, Router 6297725852): preparation never runs a driver
+    that the source repository's own configuration names, on either the
+    materialization or the identity check, even one that leaves the bytes unchanged."""
+
+    def test_preparation_never_runs_a_source_repository_filter_driver(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        base = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        marker = self.root / "filter-driver-ran"
+        git(repo, "config", "filter.probe.smudge", f"sh -c 'touch {marker}; cat'")
+        git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
+        compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, base, base))),
+            self.workspace,
+            offline=True,
+        )
+        self.assertFalse(marker.exists(), "a source repository's driver ran")
+
+
+class ExecutionProjectReuseTests(CapsuleFixture):
+    """#389 F3 S2 A (S2-A3-02, Router 6297725852): a re-prepare that reuses the
+    execution project checks its tracked source against the frozen base tree."""
+
+    def test_a_reused_execution_project_whose_tracked_source_changed_is_refused(
+        self,
+    ) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        base = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        spec = self.base_spec(repo, base, base)
+        compiler.prepare(load_spec(self.write_spec(spec)), self.workspace, offline=True)
+        [project] = list(self.workspace.rglob("execution/project"))
+        (project / "src/pkg/__init__.py").write_text("tampered = True\n")
+        second = compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+        self.assertIn(
+            "execution-project-identity-mismatch",
+            [b["code"] for b in second.blockers],
+        )
+
+
 class StageCompletionTests(CapsuleFixture):
     def test_an_entered_but_incomplete_stage_is_never_reused(self) -> None:
         ledger = stages.StageLedger(root=self.workspace)
@@ -1128,6 +1177,70 @@ class LockExecutionTests(CapsuleFixture):
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
         project = Path(next(iter(outcome.runs.values()))["project_root"])
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
+
+    # #389 F3 S2 A (S2-A3-01/02, Router 6297725852): the execution capsule is the
+    # source tree's exact bytes. Metadata in the source repository that is not part of
+    # the tree (info/attributes, a local filter driver) never changes or runs on it.
+
+    def test_execution_capsule_keeps_every_tracked_file_whatever_the_source_metadata(
+        self,
+    ) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        repo = self.root / "s"
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text(
+            "src/pkg/__init__.py export-ignore\n"
+        )
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        self.assertTrue(
+            (project / "src/pkg/__init__.py").is_file(),
+            "the source repository's metadata dropped a tracked file",
+        )
+        base = git(repo, "rev-parse", "HEAD~1")
+        self.assertEqual(
+            git(repo, "show", f"{base}:src/pkg/__init__.py"),
+            (project / "src/pkg/__init__.py").read_text().strip(),
+        )
+
+    def test_a_reused_capsule_keeps_its_run_outputs(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        first = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        project = Path(next(iter(first.runs.values()))["project_root"])
+        (project / "run-output.log").write_text("made by a previous run\n")
+        again = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(again.status, "MATERIALISED", again.blockers)
+
+    def test_a_reused_capsule_whose_tracked_source_changed_is_refused(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        first = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        project = Path(next(iter(first.runs.values()))["project_root"])
+        (project / "src/pkg/__init__.py").write_text("tampered = True\n")
+        again = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertNotEqual(again.status, "MATERIALISED", "a tampered capsule ran")
+        self.assertIn("capsule-not-materialisable", [b["code"] for b in again.blockers])
+
+    def test_execution_never_runs_a_source_repository_filter_driver(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        repo = self.root / "s"
+        marker = self.root / "filter-driver-ran"
+        git(repo, "config", "filter.probe.smudge", f"sh -c 'touch {marker}; cat'")
+        git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
+        execute.execute_lock(result.lock_path, self.workspace / "exec", dry_run=True)
+        self.assertFalse(marker.exists(), "a source repository's driver ran")
 
     def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
         """Qualification-domain artifacts must not reach the executor capsule."""
@@ -1699,6 +1812,138 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
         identities = [entry.id for entry in result.run_plan.entries]
         self.assertEqual(len(set(identities)), len(identities))
+
+
+class RoundTwoConsumerTests(CapsuleFixture):
+    """#446 round 2 (#389 6311879794): the consumers' share of the recorded classes."""
+
+    def escaping_repo(self) -> tuple[Path, str]:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        (repo / "SECRET-LINK").symlink_to("../../outside")
+        self.commit(repo, {}, "escaping link")
+        return repo, git(repo, "rev-parse", "HEAD^{tree}")
+
+    # H: the executor carries no dead Git environment.
+    def test_the_executor_has_no_dead_git_environment(self) -> None:
+        self.assertFalse(hasattr(execute, "_GIT_ENV"))
+
+    # J: refusal details carry codes, never a tracked path or link target.
+    def test_an_executor_refusal_names_the_code_not_the_path(self) -> None:
+        repo, tree = self.escaping_repo()
+        project = self.root / "project"
+        project.mkdir()
+        with self.assertRaises(execute.ExecuteError) as raised:
+            execute._materialize(repo, tree, project)
+        self.assertIn("escaping-link", str(raised.exception))
+        self.assertNotIn("SECRET-LINK", str(raised.exception))
+        self.assertNotIn("outside", str(raised.exception))
+
+    def test_a_compiler_blocker_names_the_code_not_the_path(self) -> None:
+        repo, tree = self.escaping_repo()
+        blockers: list[dict[str, object]] = []
+        result = compiler._materialize_verified(
+            repo, tree, self.root / "subject", "base", blockers, "T1"
+        )
+        self.assertIsNone(result)
+        self.assertTrue(blockers)
+        for blocker in blockers:
+            self.assertNotIn("SECRET-LINK", str(blocker["detail"]))
+            self.assertNotIn("outside", str(blocker["detail"]))
+
+    # K: the executor's reused project is bound to the tree it was written for.
+    def test_a_project_written_for_one_tree_is_not_reused_for_another(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": "", "src/old.py": "dropped\n"}
+        )
+        first = git(repo, "rev-parse", "HEAD^{tree}")
+        (repo / "src" / "old.py").unlink()
+        self.commit(repo, {}, "drop old")
+        second = git(repo, "rev-parse", "HEAD^{tree}")
+        project = self.root / "project"
+        project.mkdir()
+        execute._materialize(repo, first, project)
+        with self.assertRaises(execute.ExecuteError):
+            execute._materialize(repo, second, project)
+
+    # K: a re-prepare for another base tree does not reuse the execution project
+    # (a kill test, added with the mutants).
+    def test_a_reprepare_for_another_base_tree_does_not_reuse_the_project(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": "", "src/old.py": "dropped\n"}
+        )
+        first = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, first, first))),
+            self.workspace,
+            offline=True,
+        )
+        (repo / "src" / "old.py").unlink()
+        second = self.commit(repo, {}, "drop old")
+        result = compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, second, second))),
+            self.workspace,
+            offline=True,
+        )
+        self.assertIn(
+            "execution-project-identity-mismatch", [b["code"] for b in result.blockers]
+        )
+
+    # N: a subject tree the owner cannot list becomes a blocker (a kill test).
+    def test_an_unlistable_subject_tree_is_a_blocker(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        blockers: list[dict[str, object]] = []
+        self.assertIsNone(
+            compiler._frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1")
+        )
+        self.assertEqual(
+            [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
+        )
+
+    # N: a reused subject the owner refuses becomes the blocker, not a traceback.
+    def test_a_reused_subject_past_the_cap_is_blocked_not_raised(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": "", "src/a.py": "a\n"})
+        tree = git(repo, "rev-parse", "HEAD^{tree}")
+        first: list[dict[str, object]] = []
+        self.assertIsNotNone(
+            compiler._materialize_verified(
+                repo, tree, self.root / "subject", "base", first, "T1"
+            )
+        )
+        from tools import exact_tree
+
+        tight = exact_tree.Limits(
+            deadline=exact_tree.time.monotonic() + 60, max_files=1, max_bytes=1 << 20
+        )
+        blockers: list[dict[str, object]] = []
+        with mock.patch.object(exact_tree.Limits, "within", return_value=tight):
+            result = compiler._materialize_verified(
+                repo, tree, self.root / "subject", "base", blockers, "T1"
+            )
+        self.assertIsNone(result)
+        self.assertIn(
+            "materialised-subject-identity-mismatch", [b["code"] for b in blockers]
+        )
+
+    # AZ (#446 round 12): a file in the subject's place is a blocker naming no path,
+    # not a traceback (Q 4338237827).
+    def test_a_file_in_the_subject_place_is_blocked_not_raised(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        tree = git(repo, "rev-parse", "HEAD^{tree}")
+        subject = self.root / "subject"
+        subject.mkdir()
+        (subject / f"base-{tree}").write_text("planted\n")
+        blockers: list[dict[str, object]] = []
+        result = compiler._materialize_verified(
+            repo, tree, subject, "base", blockers, "T1"
+        )
+        self.assertIsNone(result)
+        self.assertEqual(
+            [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
+        )
+        self.assertNotIn(str(subject), str(blockers[0]["detail"]))
 
 
 if __name__ == "__main__":
