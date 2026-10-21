@@ -1121,8 +1121,12 @@ def _bound_tree(destination: Path) -> str | None:
     except OSError as exc:
         raise _filesystem(exc) from exc
     try:
+        # Non-blocking, so a FIFO planted in the record's place is never waited on;
+        # the opened descriptor itself must be a regular file (Revix 4336631529).
         descriptor = os.open(
-            _record_name(destination), os.O_RDONLY | _O_NOFOLLOW, dir_fd=parent_fd
+            _record_name(destination),
+            os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK,
+            dir_fd=parent_fd,
         )
     except FileNotFoundError:
         return None
@@ -1131,6 +1135,8 @@ def _bound_tree(destination: Path) -> str | None:
     finally:
         os.close(parent_fd)
     try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ExactTreeError("unsafe-path", "the tree record is not a file")
         return os.read(descriptor, 130).decode("ascii", errors="replace").strip()
     finally:
         os.close(descriptor)

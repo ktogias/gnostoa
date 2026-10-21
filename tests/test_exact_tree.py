@@ -1436,5 +1436,37 @@ class RoundEightTests(ExactTreeFixture):
             )
 
 
+class RoundNineTests(ExactTreeFixture):
+    """#446 round 9 (#389 6315681106): one RED per recorded class, run before the fix."""
+
+    # AR: the tree-binding record is opened without blocking and must be a file.
+    def test_a_fifo_in_place_of_the_record_is_refused_not_waited_on(self) -> None:
+        owner = _owner()
+        destination = self.root / "project"
+        destination.mkdir()
+        (destination / "x.txt").write_bytes(b"x\n")
+        record = self.root / ".project.exact-tree"
+        os.mkfifo(record)
+        outcome: list[Any] = []
+
+        def bound() -> None:
+            try:
+                outcome.append(owner._bound_tree(destination))
+            except owner.ExactTreeError as exc:
+                outcome.append(exc.code)
+
+        reader = threading.Thread(target=bound, daemon=True)
+        reader.start()
+        reader.join(5)
+        waited = reader.is_alive()
+        if waited:
+            # A writer's open releases the waiting reader.
+            with contextlib.suppress(OSError):
+                os.close(os.open(record, os.O_WRONLY | os.O_NONBLOCK))
+            reader.join(5)
+        self.assertFalse(waited, "the record's open waited on a FIFO")
+        self.assertEqual(["unsafe-path"], outcome)
+
+
 if __name__ == "__main__":
     unittest.main()
