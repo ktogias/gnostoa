@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import importlib
+import importlib.util
 import os
 import resource
 import shutil
@@ -1268,6 +1268,31 @@ class RoundElevenTests(ExactTreeFixture):
                 lambda: _owner().materialize(self.repo, tree, out, limits=limits),
             )
         self.assertEqual(["a"], made)
+
+
+class RoundTwelveTests(ExactTreeFixture):
+    """#446 round 12: the reviews of the sealed c199bf12 (#389 6318984068)."""
+
+    # AY: a platform without an open flag the owner relies on refuses the module when
+    # it loads; it never runs without that flag's guarantee (Q 4338237790).
+    def test_a_platform_without_an_open_flag_is_refused(self) -> None:
+        source = _owner().__file__
+        for flag in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK"):
+            spec = importlib.util.spec_from_file_location("exact_tree_probe", source)
+            if spec is None or spec.loader is None:
+                self.fail("the owner's source cannot be loaded")
+            probe, saved = importlib.util.module_from_spec(spec), getattr(os, flag)
+            delattr(os, flag)
+            try:
+                with self.subTest(flag=flag):
+                    with (
+                        mock.patch.dict(sys.modules, {"exact_tree_probe": probe}),
+                        self.assertRaises(AttributeError) as raised,
+                    ):
+                        spec.loader.exec_module(probe)
+                    self.assertIn(flag, str(raised.exception))
+            finally:
+                setattr(os, flag, saved)
 
 
 if __name__ == "__main__":

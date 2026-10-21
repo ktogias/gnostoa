@@ -1927,6 +1927,24 @@ class RoundTwoConsumerTests(CapsuleFixture):
             "materialised-subject-identity-mismatch", [b["code"] for b in blockers]
         )
 
+    # AZ (#446 round 12): a file in the subject's place is a blocker naming no path,
+    # not a traceback (Q 4338237827).
+    def test_a_file_in_the_subject_place_is_blocked_not_raised(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        tree = git(repo, "rev-parse", "HEAD^{tree}")
+        subject = self.root / "subject"
+        subject.mkdir()
+        (subject / f"base-{tree}").write_text("planted\n")
+        blockers: list[dict[str, object]] = []
+        result = compiler._materialize_verified(
+            repo, tree, subject, "base", blockers, "T1"
+        )
+        self.assertIsNone(result)
+        self.assertEqual(
+            ["materialised-subject-identity-mismatch"], [b["code"] for b in blockers]
+        )
+        self.assertNotIn(str(subject), str(blockers[0]["detail"]))
+
 
 if __name__ == "__main__":
     unittest.main()

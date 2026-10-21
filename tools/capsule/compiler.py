@@ -160,7 +160,21 @@ def _materialize_verified(
     run rather than trusted because it is non-empty.
     """
     destination = root / f"{kind}-{tree}"
-    if not destination.exists() or not any(destination.iterdir()):
+    try:
+        retained = destination.exists() and any(destination.iterdir())
+    except OSError as exc:
+        # A destination that is not a readable directory is refused as this subject's
+        # identity, like a tree the owner cannot materialise (Q 4338237827).
+        blockers.append(
+            {
+                "task": task_id,
+                "code": "materialised-subject-identity-mismatch",
+                "detail": f"{kind} subject destination cannot be read: "
+                f"{type(exc).__name__}",
+            }
+        )
+        return None
+    if not retained:
         try:
             _materialize(repo, tree, destination)
         except CompileError as exc:

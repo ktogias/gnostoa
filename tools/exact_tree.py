@@ -56,9 +56,11 @@ _OBJECT_IDS = {
     "sha1": re.compile(r"\A[0-9a-f]{40}\Z"),
     "sha256": re.compile(r"\A[0-9a-f]{64}\Z"),
 }
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
-_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+# Required, never defaulted: a platform without one refuses the module rather than
+# running it without the no-follow, directory or non-blocking guarantee (Q 4338237790).
+_O_NOFOLLOW = os.O_NOFOLLOW
+_O_DIRECTORY = os.O_DIRECTORY
+_O_NONBLOCK = os.O_NONBLOCK
 _DIRECTORY_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW
 _RECORD_SUFFIX = ".exact-tree"
 # The repository's trusted executable lookup (AGENTS.md, ci/prepare-candidate).
