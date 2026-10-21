@@ -116,6 +116,7 @@ inherited, copied or loaded by adopting projects.
 - [Admit merges through a required, provider-neutral merge-admission verdict](decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)
 - [Read pull-request descriptions with a CommonMark parser](decisions/0113-read-pull-request-descriptions-with-a-commonmark-parser.md)
 - [Admit one bounded bootstrap for declaring each preparation workspace's own work tree](decisions/0114-admit-one-bounded-bootstrap-for-preparation-workspace-work-trees.md)
+- [Refresh the development lock's certifi for a compromised root certificate](decisions/0115-refresh-the-development-lock-certifi-for-a-compromised-root.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
