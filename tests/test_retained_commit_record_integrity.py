@@ -184,6 +184,14 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
 
         shutil.rmtree(self.workspace)
         shutil.copytree(old_snapshot, self.workspace)
+        # The restored copy's execution project is a new directory that its sibling
+        # record does not name, so reuse would refuse it before the hook below (#446
+        # round 12, G2 I; Router #389 6320567926). Only that derived cache and its
+        # record are dropped, and ordinary preparation writes it afresh; the retained
+        # state this race is about is left as it was copied.
+        project = self.workspace / "tasks" / "T1" / "execution" / "project"
+        shutil.rmtree(project)
+        (project.parent / ".project.exact-tree").unlink()
 
         torn: list[str] = []
         real_identity = compiler.preflight_candidate_identity
