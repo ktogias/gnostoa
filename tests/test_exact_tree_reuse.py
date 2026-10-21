@@ -18,6 +18,14 @@ from unittest import mock
 from test_exact_tree import ExactTreeFixture, _owner, git
 
 
+def _open_descriptors(case: unittest.TestCase) -> int:
+    """This process's open descriptors, as Linux and macOS both list them."""
+    for listing in ("/dev/fd", "/proc/self/fd"):
+        if os.path.isdir(listing):
+            return len(os.listdir(listing))
+    case.skipTest("this platform lists no open descriptors")
+
+
 class RoundFiveTests(ExactTreeFixture):
     """#446 round 5 (Router #389 6313854024, option A): a reused tracked link stays
     inside the root through the components actually on disk. RED first."""
@@ -52,11 +60,7 @@ class RoundFiveTests(ExactTreeFixture):
         )
 
     def open_descriptors(self) -> int:
-        """This process's open descriptors, as Linux and macOS both list them."""
-        for listing in ("/dev/fd", "/proc/self/fd"):
-            if os.path.isdir(listing):
-                return len(os.listdir(listing))
-        self.skipTest("this platform lists no open descriptors")
+        return _open_descriptors(self)
 
     def plant(self, destination: Path, name: str, pointed: Path | str) -> None:
         """An untracked link a run left behind, relative to where it sits."""
@@ -561,7 +565,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
     def test_binding_and_reuse_release_their_descriptors(self) -> None:
         owner, tree = _owner(), self.commit({"a.txt": b"a\n"})
         other, destination = self.commit({"b.txt": b"b\n"}), self.root / "project"
-        before = len(os.listdir("/proc/self/fd"))
+        before = _open_descriptors(self)
         self.reuse(tree, destination)()
         self.reuse(tree, destination)()
         self.assertRefused("tree-mismatch", self.reuse(other, destination))
@@ -569,7 +573,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         refusal = owner.ExactTreeError("filesystem", "injected bind failure")
         with mock.patch.object(owner, "_bind", side_effect=refusal):
             self.assertRefused("filesystem", self.reuse(tree, failed))
-        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+        self.assertEqual(before, _open_descriptors(self))
 
 
 if __name__ == "__main__":
