@@ -11,7 +11,8 @@ created only after the whole tree's links are shown to stay inside it.
 and modes: no Git command reads the directory and no driver runs. Its one Git child,
 `rev-parse --show-object-format`, reads only the object format. `verify_tracked`
 checks a reused directory against the tree's tracked paths only, and
-`materialize_or_verify` reuses only a directory that was written for the same tree.
+`materialize_or_verify` reuses only the very directory that was published for the
+same tree.
 Every Git child runs under one absolute deadline, through the shared bounded drain
 (#365), with an environment built here and never inherited. A refusal names its
 `code`; each consumer keeps its own wording, errors and outputs.
@@ -63,6 +64,14 @@ _O_DIRECTORY = os.O_DIRECTORY
 _O_NONBLOCK = os.O_NONBLOCK
 _DIRECTORY_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW
 _RECORD_SUFFIX = ".exact-tree"
+# The record's one format: its version, the tree, and the published directory's device
+# and inode (Router #389 6319318065, G2 I). Anything else binds nothing.
+_RECORD_VERSION = "gnostoa-exact-tree-record/v2"
+_RECORD_FORMAT = re.compile(
+    re.escape(_RECORD_VERSION)
+    + r" ([0-9a-f]{40}|[0-9a-f]{64}) (0|[1-9][0-9]{0,19}) (0|[1-9][0-9]{0,19})\n"
+)
+_RECORD_BYTES = 256
 # The repository's trusted executable lookup (AGENTS.md, ci/prepare-candidate).
 _TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 # Built here, never inherited: no caller GIT_DIR, index, config, attribute source or
@@ -423,11 +432,16 @@ def _step(cursor: _Cursor, part: str) -> tuple[str, str]:
 
 
 class _TreeCursor:
-    """The immutable tree: a component is a link when the tree has one at that path,
-    and is entered as written otherwise."""
+    """The immutable tree as written: a component is a link or a directory when the
+    tree has one at that path; otherwise the walk ends there, at a tracked file or at
+    nothing, as the kernel resolves the written tree (Router #389 6319318065, G1 W). A
+    component created later is the disk check's to find on reuse."""
 
-    def __init__(self, links: Mapping[str, str], parts: list[str]) -> None:
+    def __init__(
+        self, links: Mapping[str, str], directories: frozenset[str], parts: list[str]
+    ) -> None:
         self._links = links
+        self._directories = directories
         self._parts = parts
 
     def up(self) -> bool:
@@ -438,11 +452,12 @@ class _TreeCursor:
 
     def enter(self, name: str) -> tuple[str, str]:
         self._parts.append(name)
-        through = self._links.get("/".join(self._parts))
-        if through is None:
-            return "dir", ""
-        self._parts.pop()
-        return "link", through
+        path = "/".join(self._parts)
+        through = self._links.get(path)
+        if through is not None:
+            self._parts.pop()
+            return "link", through
+        return ("dir", "") if path in self._directories else ("end", "")
 
 
 class _DiskCursor:
@@ -486,12 +501,17 @@ class _DiskCursor:
 
 
 def _stays_inside(
-    path: str, links: Mapping[str, str], limits: Limits | None = None
+    path: str,
+    links: Mapping[str, str],
+    directories: frozenset[str],
+    limits: Limits | None = None,
 ) -> bool:
-    """Whether the link at `path` resolves inside the tree, through the tree's own
-    links."""
+    """Whether the link at `path` resolves inside the tree as written, through the
+    tree's own links and directories."""
 
-    return _resolve(_TreeCursor(links, path.split("/")[:-1]), links[path], limits)
+    return _resolve(
+        _TreeCursor(links, directories, path.split("/")[:-1]), links[path], limits
+    )
 
 
 def _resolves_on_disk(root_fd: int, path: str, target: str, limits: Limits) -> bool:
@@ -510,10 +530,22 @@ def _resolves_on_disk(root_fd: int, path: str, target: str, limits: Limits) -> b
         cursor.close()
 
 
-def _check_links(links: Mapping[str, str], limits: Limits | None = None) -> None:
+def _check_links(
+    links: Mapping[str, str], directories: frozenset[str], limits: Limits | None = None
+) -> None:
     for path in sorted(links):
-        if not _stays_inside(path, links, limits):
+        if not _stays_inside(path, links, directories, limits):
             raise ExactTreeError("escaping-link", "a link resolves outside the tree")
+
+
+def _tree_directories(entries: Iterable[_Entry]) -> frozenset[str]:
+    """Every directory the tree has: each proper prefix of a path it tracks."""
+
+    return frozenset(
+        "/".join(parts[:end])
+        for parts in (entry.path.split("/") for entry in entries)
+        for end in range(1, len(parts))
+    )
 
 
 class _Directories:
@@ -718,6 +750,16 @@ def materialize(
     private directory beside it and renamed into place; on any refusal only that
     private directory is removed, so the destination is left as it was found."""
 
+    return _materialize(repo, tree, destination, limits, None)
+
+
+def _materialize(
+    repo: Path,
+    tree: str,
+    destination: Path,
+    limits: Limits,
+    accept: Callable[[_Record], None] | None,
+) -> Materialized:
     _check_deadline(limits)
     algorithm = _algorithm(tree)
     try:
@@ -728,13 +770,21 @@ def materialize(
     except OSError as exc:
         raise _filesystem(exc) from exc
     try:
-        return _publish(repo, tree, algorithm, parent_fd, destination.name, limits)
+        return _publish(
+            repo, tree, algorithm, parent_fd, destination.name, limits, accept
+        )
     finally:
         os.close(parent_fd)
 
 
 def _publish(
-    repo: Path, tree: str, algorithm: str, parent_fd: int, name: str, limits: Limits
+    repo: Path,
+    tree: str,
+    algorithm: str,
+    parent_fd: int,
+    name: str,
+    limits: Limits,
+    accept: Callable[[_Record], None] | None,
 ) -> Materialized:
     staging = f".{name}.{secrets.token_hex(8)}.staging"
     try:
@@ -743,16 +793,25 @@ def _publish(
         os.mkdir(staging, 0o700, dir_fd=parent_fd)
     except OSError as exc:
         raise _filesystem(exc) from exc
+    held: list[int] = []
+    record: _Record | None = None
     try:
         directories = _Directories(os.open(staging, _DIRECTORY_FLAGS, dir_fd=parent_fd))
         try:
             result = _write_tree(repo, tree, algorithm, directories, limits)
             root_fd = directories.at("", create=False)
             os.fchmod(root_fd, _directory_mode(root_fd))
+            if accept is not None:
+                # Held open until its record is accepted, so the identity read here,
+                # before the rename, is never recycled for another directory
+                # meanwhile (Router #389 6319318065, G2 I).
+                held.append(os.dup(root_fd))
+                record = _Record(tree, *_identity(held[0]))
         finally:
             directories.close()
         os.rename(staging, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
     except OSError as exc:
+        _release(held)
         _discard(parent_fd, staging)
         if exc.errno in (errno.ENOTEMPTY, errno.EEXIST):
             raise ExactTreeError(
@@ -764,9 +823,30 @@ def _publish(
             ) from exc
         raise _filesystem(exc) from exc
     except BaseException:
+        _release(held)
         _discard(parent_fd, staging)
         raise
+    try:
+        if accept is not None and record is not None:
+            accept(record)
+    finally:
+        _release(held)
     return result
+
+
+def _release(held: list[int]) -> None:
+    while held:
+        os.close(held.pop())
+
+
+def _identity(descriptor: int) -> tuple[int, int]:
+    """The open directory's device and inode. A filesystem that gives it no inode is
+    refused: a record could not name the directory there (Router #389 6319318065)."""
+
+    info = os.fstat(descriptor)
+    if not info.st_ino:
+        raise ExactTreeError("identity-unavailable", "the directory has no inode")
+    return info.st_dev, info.st_ino
 
 
 def _directory_mode(dir_fd: int) -> int:
@@ -812,7 +892,7 @@ def _write_tree(
         writer.close()
     if not writer.done():
         raise ExactTreeError("git-failed", "cat-file stopped before every object")
-    _check_links(writer.links, limits)
+    _check_links(writer.links, _tree_directories(entries), limits)
     for path, target in sorted(writer.links.items()):
         _check_deadline(limits)
         parent, _, name = path.rpartition("/")
@@ -1062,31 +1142,44 @@ def verify_tracked(
     tracked links stay inside. Paths the tree does not track are not checked: a
     reused directory keeps its run's outputs (S2-A3-02)."""
 
-    algorithm = _algorithm(tree)
-    skipped = frozenset(ignore)
-    entries = _entries(repo, tree, limits)
+    _algorithm(tree)
     directories = _Directories(_open_root(root))
-    links: dict[str, str] = {}
     try:
-        budget = _Budget(limits)
-        for entry in entries:
-            if not _ignored(entry.path, skipped) and (
-                _tracked_oid(directories, entry, algorithm, budget, links) != entry.oid
-            ):
-                raise ExactTreeError("tree-mismatch", "a tracked path changed")
-        # The root's descriptor is held through both checks: the tree's own links,
-        # then the components actually on disk, which a run may have changed.
-        _check_links(links, limits)
-        root_fd = directories.at("", create=False)
-        for path in sorted(links):
-            if not _resolves_on_disk(root_fd, path, links[path], limits):
-                raise ExactTreeError(
-                    "escaping-link", "a link resolves outside the root on disk"
-                )
+        _verify_in(repo, tree, directories, limits, frozenset(ignore))
     except OSError as exc:
         raise _filesystem(exc) from exc
     finally:
         directories.close()
+
+
+def _verify_in(
+    repo: Path,
+    tree: str,
+    directories: _Directories,
+    limits: Limits,
+    skipped: frozenset[str],
+) -> None:
+    """`verify_tracked` within the root `directories` already holds, so a caller that
+    checked that descriptor verifies the very directory it checked."""
+
+    algorithm = _algorithm(tree)
+    entries = _entries(repo, tree, limits)
+    links: dict[str, str] = {}
+    budget = _Budget(limits)
+    for entry in entries:
+        if not _ignored(entry.path, skipped) and (
+            _tracked_oid(directories, entry, algorithm, budget, links) != entry.oid
+        ):
+            raise ExactTreeError("tree-mismatch", "a tracked path changed")
+    # The root's descriptor is held through both checks: the tree's own links,
+    # then the components actually on disk, which a run may have changed.
+    _check_links(links, _tree_directories(entries), limits)
+    root_fd = directories.at("", create=False)
+    for path in sorted(links):
+        if not _resolves_on_disk(root_fd, path, links[path], limits):
+            raise ExactTreeError(
+                "escaping-link", "a link resolves outside the root on disk"
+            )
 
 
 def _ignored(path: str, ignore: frozenset[str]) -> bool:
@@ -1131,8 +1224,22 @@ def _record_name(destination: Path) -> str:
     return f".{destination.name}{_RECORD_SUFFIX}"
 
 
-def _bound_tree(destination: Path) -> str | None:
-    """The tree a destination was written for, from its sibling record."""
+@dataclasses.dataclass(frozen=True)
+class _Record:
+    """The tree a destination was written for and the directory published for it,
+    by device and inode (Router #389 6319318065, G2 I)."""
+
+    tree: str
+    device: int
+    inode: int
+
+    def line(self) -> bytes:
+        return f"{_RECORD_VERSION} {self.tree} {self.device} {self.inode}\n".encode()
+
+
+def _bound_tree(destination: Path) -> _Record | None:
+    """The destination's sibling record, or None without one. A record that is not
+    exactly one current record, old, malformed or oversized, binds nothing."""
 
     try:
         parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
@@ -1155,9 +1262,25 @@ def _bound_tree(destination: Path) -> str | None:
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ExactTreeError("unsafe-path", "the tree record is not a file")
-        return os.read(descriptor, 130).decode("ascii", errors="replace").strip()
+        data = _read_bounded(descriptor, _RECORD_BYTES)
     finally:
         os.close(descriptor)
+    text = data.decode("ascii", errors="replace") if data is not None else ""
+    matched = _RECORD_FORMAT.fullmatch(text)
+    if matched is None:
+        raise ExactTreeError("tree-mismatch", "the record is not one current record")
+    return _Record(matched[1], int(matched[2]), int(matched[3]))
+
+
+def _read_bounded(descriptor: int, limit: int) -> bytes | None:
+    """The file's bytes to its end, or None past `limit` of them."""
+
+    data = bytearray()
+    while chunk := os.read(descriptor, limit + 1 - len(data)):
+        data += chunk
+        if len(data) > limit:
+            return None
+    return bytes(data)
 
 
 def _unbind(destination: Path) -> None:
@@ -1179,10 +1302,10 @@ def _unbind(destination: Path) -> None:
         os.close(parent_fd)
 
 
-def _bind(destination: Path, tree: str) -> None:
-    """Record which tree the destination was written for, beside it. The record is
-    published create-only: one another process wrote is refused and kept, never
-    replaced (Revix 4336850409)."""
+def _bind(destination: Path, record: _Record) -> None:
+    """Record, beside the destination, the tree it was written for and the directory
+    published for it. The record is published create-only: one another process wrote
+    is refused and kept, never replaced (Revix 4336850409)."""
 
     try:
         parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
@@ -1199,7 +1322,7 @@ def _bind(destination: Path, tree: str) -> None:
         )
         created = True
         try:
-            _write_all(descriptor, f"{tree}\n".encode("ascii"))
+            _write_all(descriptor, record.line())
         finally:
             os.close(descriptor)
         os.link(
@@ -1231,9 +1354,12 @@ def materialize_or_verify(
     ignore: Iterable[str] = (),
 ) -> None:
     """Materialize `tree` into an absent or empty `destination` and bind it to that
-    tree, or reuse a destination already bound to the same tree, after checking its
-    tracked paths. A destination written for another tree is refused: a file that
-    tree tracked, and this one dropped, would otherwise survive the reuse."""
+    tree and to the directory published for it, or reuse a destination whose record
+    names the same tree and the very directory now there, after checking its tracked
+    paths through that same descriptor. A destination written for another tree, or
+    another directory put in its place, is refused: a file that tree tracked, and this
+    one dropped, would otherwise survive the reuse. The identity is a check on a
+    supported local filesystem at that moment, not a lock on the name."""
 
     _algorithm(tree)
     try:
@@ -1241,15 +1367,48 @@ def materialize_or_verify(
     except OSError as exc:
         raise _filesystem(exc) from exc
     if not occupied:
-        # A record left beside an emptied destination is removed first, so a failed
-        # bind or a crash leaves the new tree unbound, refused, never reused for
-        # the old tree (cubic 4335174301).
-        _unbind(destination)
-        materialize(repo, tree, destination, limits=limits)
-        _bind(destination, tree)
-        return
-    if _bound_tree(destination) != tree:
-        raise ExactTreeError(
-            "tree-mismatch", "the destination was written for another tree"
+        _materialize(
+            repo, tree, destination, limits, lambda record: _accept(destination, record)
         )
-    verify_tracked(repo, tree, destination, limits=limits, ignore=ignore)
+        return
+    directories = _Directories(_open_root(destination))
+    try:
+        # The record is checked against the descriptor then verified, never against
+        # a second opening of the path (Router #389 6319318065, G2 I).
+        root_fd = directories.at("", create=False)
+        if _bound_tree(destination) != _Record(tree, *_identity(root_fd)):
+            raise ExactTreeError(
+                "tree-mismatch", "the destination was written for another tree"
+            )
+        _verify_in(repo, tree, directories, limits, frozenset(ignore))
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        directories.close()
+
+
+def _still_published(destination: Path, record: _Record) -> None:
+    """Refuse unless `destination`, unfollowed, is the directory `record` names."""
+
+    try:
+        info = os.lstat(destination)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    if (info.st_dev, info.st_ino) != (record.device, record.inode):
+        raise ExactTreeError(
+            "tree-mismatch", "another directory was published in its place"
+        )
+
+
+def _accept(destination: Path, record: _Record) -> None:
+    """Bind the directory just published at `destination`, while it is held open. A
+    writer whose directory another rename replaced is refused before it touches the
+    winner's record, and again after its own bind: it is never blessed (Router #389
+    6319318065, G2 I). A stale record is removed before the bind, so a failed bind
+    leaves the tree unbound, refused, never reused for the old tree (cubic
+    4335174301)."""
+
+    _still_published(destination, record)
+    _unbind(destination)
+    _bind(destination, record)
+    _still_published(destination, record)

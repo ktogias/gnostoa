@@ -1232,8 +1232,8 @@ class RoundElevenTests(ExactTreeFixture):
         with mock.patch(
             "os.write", side_effect=lambda fd, data: real_write(fd, bytes(data)[:5])
         ):
-            owner._bind(destination, "a" * 40)
-        self.assertEqual("a" * 40, owner._bound_tree(destination))
+            owner._bind(destination, owner._Record("a" * 40, 1, 2))
+        self.assertEqual(owner._Record("a" * 40, 1, 2), owner._bound_tree(destination))
 
     # AW: a link target holding a NUL cannot be written exactly.
     def test_a_link_target_with_a_nul_is_refused(self) -> None:
