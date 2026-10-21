@@ -1941,7 +1941,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         )
         self.assertIsNone(result)
         self.assertEqual(
-            ["materialised-subject-identity-mismatch"], [b["code"] for b in blockers]
+            [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
         )
         self.assertNotIn(str(subject), str(blockers[0]["detail"]))
 
