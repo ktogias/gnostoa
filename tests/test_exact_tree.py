@@ -1,10 +1,10 @@
 """The exact commit-tree owner (#389 F3 S2 A, the owner's Option A 6268025835).
 
 One bounded owner materializes a Git tree's exact bytes and independently rebuilds a
-directory's tree identity, for the capsule compiler and executor first. It never
-reads the caller's or the repository's configuration or attributes, never runs a
-configured driver, and refuses what it cannot represent exactly (S2-MAT-01,
-S2-A3-01, Router 6267325366 and 6297725852).
+directory's tree identity, for the capsule compiler and executor first. No attribute
+or configured driver applies and the caller's environment is kept out; only the two
+plumbing commands read the repository's own configuration. It refuses what it cannot
+represent exactly (S2-MAT-01, S2-A3-01, Router 6267325366 and 6297725852).
 """
 
 from __future__ import annotations
@@ -164,6 +164,27 @@ class ExactTreeFixture(unittest.TestCase):
             return b""
 
         return git
+
+    def without_waiting(self, call: Any, fifo: Path) -> tuple[bool, list[Any]]:
+        """Run `call` in a thread: whether it waited on `fifo` past 5 s, and its result
+        or refusal code. A writer's open releases a reader that waits."""
+        outcome: list[Any] = []
+
+        def run() -> None:
+            try:
+                outcome.append(call())
+            except _owner().ExactTreeError as exc:
+                outcome.append(exc.code)
+
+        reader = threading.Thread(target=run, daemon=True)
+        reader.start()
+        reader.join(5)
+        waited = reader.is_alive()
+        if waited:
+            with contextlib.suppress(OSError):
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            reader.join(5)
+        return waited, outcome
 
     def blob(self, tree: str, path: str) -> bytes:
         return subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
@@ -1272,23 +1293,9 @@ class RoundSevenTests(ExactTreeFixture):
         os.mkfifo(root / "f")
         dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         limits = self.limits()
-        outcome: list[Any] = []
-
-        def read() -> None:
-            try:
-                outcome.append(owner._blob_id_at(dir_fd, "f", 1, "sha1", limits))
-            except owner.ExactTreeError as exc:
-                outcome.append(exc.code)
-
-        reader = threading.Thread(target=read, daemon=True)
-        reader.start()
-        reader.join(5)
-        waited = reader.is_alive()
-        if waited:
-            # A writer's open releases the waiting reader, which then reads nothing.
-            with contextlib.suppress(OSError):
-                os.close(os.open(root / "f", os.O_WRONLY | os.O_NONBLOCK))
-            reader.join(5)
+        waited, outcome = self.without_waiting(
+            lambda: owner._blob_id_at(dir_fd, "f", 1, "sha1", limits), root / "f"
+        )
         os.close(dir_fd)
         self.assertFalse(waited, "the open waited on a FIFO")
         self.assertEqual(["tree-mismatch"], outcome)
@@ -1326,15 +1333,15 @@ class RoundSevenTests(ExactTreeFixture):
         owner = _owner()
         tree = self.commit({"a.txt": b"a\n"})
         destination = self.root / "project"
-        real_rename = os.rename
+        real_link = os.link
 
         def failing(source: Any, target: Any, *args: Any, **kwargs: Any) -> None:
             if os.fspath(target).endswith(".exact-tree"):
                 raise OSError(errno.EIO, "injected")
-            real_rename(source, target, *args, **kwargs)
+            real_link(source, target, *args, **kwargs)
 
         limits = self.limits()
-        with mock.patch("os.rename", side_effect=failing):
+        with mock.patch("os.link", side_effect=failing):
             self.assertRefused(
                 "filesystem",
                 lambda: owner.materialize_or_verify(
@@ -1447,25 +1454,27 @@ class RoundNineTests(ExactTreeFixture):
         (destination / "x.txt").write_bytes(b"x\n")
         record = self.root / ".project.exact-tree"
         os.mkfifo(record)
-        outcome: list[Any] = []
-
-        def bound() -> None:
-            try:
-                outcome.append(owner._bound_tree(destination))
-            except owner.ExactTreeError as exc:
-                outcome.append(exc.code)
-
-        reader = threading.Thread(target=bound, daemon=True)
-        reader.start()
-        reader.join(5)
-        waited = reader.is_alive()
-        if waited:
-            # A writer's open releases the waiting reader.
-            with contextlib.suppress(OSError):
-                os.close(os.open(record, os.O_WRONLY | os.O_NONBLOCK))
-            reader.join(5)
+        waited, outcome = self.without_waiting(
+            lambda: owner._bound_tree(destination), record
+        )
         self.assertFalse(waited, "the record's open waited on a FIFO")
         self.assertEqual(["unsafe-path"], outcome)
+
+
+class RoundTenTests(ExactTreeFixture):
+    """#446 round 10 (#389 6316110363): one RED per recorded class, run first."""
+
+    # AS: a record another process wrote is refused and kept, never replaced.
+    def test_a_concurrent_record_is_refused_not_replaced(self) -> None:
+        owner = _owner()
+        destination = self.root / "project"
+        destination.mkdir()
+        record = self.root / ".project.exact-tree"
+        record.write_text("another\n", encoding="ascii")
+        self.assertRefused("tree-mismatch", lambda: owner._bind(destination, "a" * 40))
+        self.assertEqual("another\n", record.read_text(encoding="ascii"))
+        names = [p.name for p in self.root.iterdir() if ".exact-tree." in p.name]
+        self.assertEqual([], names)
 
 
 if __name__ == "__main__":

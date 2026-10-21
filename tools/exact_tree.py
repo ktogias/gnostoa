@@ -1162,7 +1162,9 @@ def _unbind(destination: Path) -> None:
 
 
 def _bind(destination: Path, tree: str) -> None:
-    """Record which tree the destination was written for, atomically, beside it."""
+    """Record which tree the destination was written for, beside it. The record is
+    published create-only: one another process wrote is refused and kept, never
+    replaced (Revix 4336850409)."""
 
     try:
         parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
@@ -1182,20 +1184,23 @@ def _bind(destination: Path, tree: str) -> None:
             os.write(descriptor, f"{tree}\n".encode("ascii"))
         finally:
             os.close(descriptor)
-        os.rename(
+        os.link(
             temporary,
             _record_name(destination),
             src_dir_fd=parent_fd,
             dst_dir_fd=parent_fd,
+            follow_symlinks=False,
         )
+    except FileExistsError as exc:
+        raise ExactTreeError("tree-mismatch", "a record is already there") from exc
     except OSError as exc:
-        # Only the temporary record this call created is removed, and a failure to
-        # remove it never replaces the refusal (Revix 4336200053).
+        raise _filesystem(exc) from exc
+    finally:
+        # Only the temporary name this call created is removed, on every path, and a
+        # failure to remove it never replaces the refusal (Revix 4336200053).
         if created:
             with contextlib.suppress(OSError):
                 os.unlink(temporary, dir_fd=parent_fd)
-        raise _filesystem(exc) from exc
-    finally:
         os.close(parent_fd)
 
 
