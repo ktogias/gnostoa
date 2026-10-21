@@ -8,7 +8,8 @@ touches what is already there. Every path below the caller's own parent is opene
 relative to a directory descriptor and never followed: a link the tree carries is
 created only after the whole tree's links are shown to stay inside it.
 `observed_tree` computes a directory's tree identity in this process, from its bytes
-and modes, so no Git command and no driver runs on that path either. `verify_tracked`
+and modes: no Git command reads the directory and no driver runs. Its one Git child,
+`rev-parse --show-object-format`, reads only the object format. `verify_tracked`
 checks a reused directory against the tree's tracked paths only, and
 `materialize_or_verify` reuses only a directory that was written for the same tree.
 Every Git child runs under one absolute deadline, through the shared bounded drain
@@ -19,6 +20,7 @@ Every Git child runs under one absolute deadline, through the shared bounded dra
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -56,6 +58,7 @@ _OBJECT_IDS = {
 }
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 _DIRECTORY_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW
 _RECORD_SUFFIX = ".exact-tree"
 # The repository's trusted executable lookup (AGENTS.md, ci/prepare-candidate).
@@ -695,7 +698,9 @@ def _publish(
 ) -> Materialized:
     staging = f".{name}.{secrets.token_hex(8)}.staging"
     try:
-        os.mkdir(staging, 0o700, dir_fd=parent_fd)
+        # Created as the nested directories are, so the materialized root has their
+        # mode; it is private by its random name and writable only by its owner.
+        os.mkdir(staging, 0o755, dir_fd=parent_fd)
     except OSError as exc:
         raise _filesystem(exc) from exc
     try:
@@ -794,8 +799,9 @@ def observed_tree(
     repo: Path, root: Path, *, limits: Limits, ignore: Iterable[str] = ()
 ) -> str:
     """The tree identity of `root`'s files, computed here from their bytes and modes:
-    no Git command and no driver runs. `ignore` names relative paths, and the
-    subtrees under them, that the identity leaves out."""
+    no Git command reads the directory and no driver runs; the one child,
+    `rev-parse --show-object-format`, reads only the object format. `ignore` names
+    relative paths, and the subtrees under them, that the identity leaves out."""
 
     _check_deadline(limits)
     output = _git(repo, ["rev-parse", "--show-object-format"], limits=limits, cap=64)
@@ -968,9 +974,13 @@ def _blob_id_at(
 
     digest = hashlib.new(algorithm)
     digest.update(f"blob {size}\0".encode("ascii"))
-    descriptor = os.open(name, os.O_RDONLY | _O_NOFOLLOW, dir_fd=dir_fd)
+    # Non-blocking, so a FIFO swapped in after the caller's stat is never waited on;
+    # the opened descriptor itself must be a regular file (Revix 4336200032).
+    descriptor = os.open(name, os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=dir_fd)
     total = 0
     try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ExactTreeError("tree-mismatch", "a file changed while it was read")
         while total <= size:
             _check_deadline(limits)
             chunk = os.read(descriptor, min(_CHUNK, size + 1 - total))
@@ -1114,6 +1124,7 @@ def _bind(destination: Path, tree: str) -> None:
     except OSError as exc:
         raise _filesystem(exc) from exc
     temporary = f"{_record_name(destination)}.{secrets.token_hex(8)}"
+    created = False
     try:
         descriptor = os.open(
             temporary,
@@ -1121,6 +1132,7 @@ def _bind(destination: Path, tree: str) -> None:
             0o644,
             dir_fd=parent_fd,
         )
+        created = True
         try:
             os.write(descriptor, f"{tree}\n".encode("ascii"))
         finally:
@@ -1132,6 +1144,11 @@ def _bind(destination: Path, tree: str) -> None:
             dst_dir_fd=parent_fd,
         )
     except OSError as exc:
+        # Only the temporary record this call created is removed, and a failure to
+        # remove it never replaces the refusal (Revix 4336200053).
+        if created:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary, dir_fd=parent_fd)
         raise _filesystem(exc) from exc
     finally:
         os.close(parent_fd)

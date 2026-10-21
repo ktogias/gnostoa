@@ -9,13 +9,19 @@ S2-A3-01, Router 6267325366 and 6297725852).
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import importlib
 import os
+import resource
 import shutil
+import stat
 import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
+import sys
 import tempfile
+import threading
 import time
+import traceback
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -34,6 +40,14 @@ _ENV = {
     "GIT_CONFIG_SYSTEM": "/dev/null",
     # The repository's trusted executable lookup (AGENTS.md), as the owner uses it.
     "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+    # No automatic housekeeping in the fixture repositories: a commit otherwise spawns
+    # a detached `git maintenance run --auto`, which can still write into `.git` while
+    # a test's cleanup removes it (python-compatibility 3.12, job 119192065066).
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "gc.auto",
+    "GIT_CONFIG_VALUE_0": "0",
+    "GIT_CONFIG_KEY_1": "maintenance.auto",
+    "GIT_CONFIG_VALUE_1": "false",
 }
 # The suppression markers the Popen line must carry, built so that this module never
 # writes a marker itself: merge admission reads every marker an added line holds (M13).
@@ -45,14 +59,19 @@ _NOSEMGREP = "no" + "semgrep: " + _SEMGREP_RULE
 _NOSEC_B603 = "#" + " nosec B603 -- "
 
 
-def git(repo: Path, *args: str, stdin: bytes | None = None) -> str:
+def git(
+    repo: Path,
+    *args: str,
+    stdin: bytes | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     return (
         subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
             ["git", "-C", str(repo), *args],
             check=True,
             capture_output=True,
             input=stdin,
-            env=_ENV,
+            env=_ENV if env is None else env,
         )
         .stdout.decode()
         .strip()
@@ -784,12 +803,20 @@ class RoundThreeTests(ExactTreeFixture):
 
     # T: the observed walk is bounded: no recursion, a deadline per entry, a budget.
     def test_a_tree_deeper_than_the_recursion_limit_is_materialized(self) -> None:
-        deep = "d/" * 700 + "f.txt"
-        tree = self.commit({deep: b"deep\n"})
+        # The recursion limit is lowered below the tree's depth for the call, so a walk
+        # that recursed per level would fail; 200 levels stay within macOS's PATH_MAX
+        # and its default of 256 descriptors (Revix 4336200061).
+        depth = 200
+        tree = self.commit({"d/" * depth + "f.txt": b"deep\n"})
         destination = self.root / "out"
-        result = _owner().materialize(
-            self.repo, tree, destination, limits=self.limits()
-        )
+        limits = self.limits()
+        previous = sys.getrecursionlimit()
+        sys.setrecursionlimit(len(traceback.extract_stack()) + 100)
+        try:
+            self.assertLess(sys.getrecursionlimit(), depth)
+            result = _owner().materialize(self.repo, tree, destination, limits=limits)
+        finally:
+            sys.setrecursionlimit(previous)
         self.assertEqual(tree, result.tree)
 
     def test_a_flood_of_empty_directories_holds_at_the_bound_and_is_refused_past_it(
@@ -1217,6 +1244,123 @@ class RoundSixTests(ExactTreeFixture):
                 self.repo, tree, root, limits=limits, ignore=("ge",)
             ),
         )
+
+
+class RoundSevenTests(ExactTreeFixture):
+    """#446 round 7 (#389 6314724299): one RED per recorded class, run before the fix."""
+
+    # AJ: a FIFO swapped in for a file is refused, never waited on.
+    def test_a_fifo_in_place_of_a_file_is_refused_not_waited_on(self) -> None:
+        owner = _owner()
+        root = self.root / "fifo-root"
+        root.mkdir()
+        os.mkfifo(root / "f")
+        dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        limits = self.limits()
+        outcome: list[Any] = []
+
+        def read() -> None:
+            try:
+                outcome.append(owner._blob_id_at(dir_fd, "f", 1, "sha1", limits))
+            except owner.ExactTreeError as exc:
+                outcome.append(exc.code)
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(5)
+        waited = reader.is_alive()
+        if waited:
+            # A writer's open releases the waiting reader, which then reads nothing.
+            with contextlib.suppress(OSError):
+                os.close(os.open(root / "f", os.O_WRONLY | os.O_NONBLOCK))
+            reader.join(5)
+        os.close(dir_fd)
+        self.assertFalse(waited, "the open waited on a FIFO")
+        self.assertEqual(["tree-mismatch"], outcome)
+
+    def test_a_fifo_in_place_of_an_empty_file_is_not_its_blob(self) -> None:
+        # Kill test, added with the round-7 mutants: opened without blocking, a FIFO
+        # with no writer reads as empty, so only the type of the opened descriptor
+        # tells it from an empty file.
+        owner = _owner()
+        root = self.root / "fifo-root"
+        root.mkdir()
+        os.mkfifo(root / "f")
+        dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        limits = self.limits()
+        try:
+            self.assertRefused(
+                "tree-mismatch",
+                lambda: owner._blob_id_at(dir_fd, "f", 0, "sha1", limits),
+            )
+        finally:
+            os.close(dir_fd)
+
+    # AL: the materialized root has the mode a nested directory gets.
+    def test_the_materialized_root_has_the_mode_of_a_nested_directory(self) -> None:
+        tree = self.commit({"d/a.txt": b"a\n"})
+        destination = self.root / "out"
+        _owner().materialize(self.repo, tree, destination, limits=self.limits())
+        self.assertEqual(
+            stat.S_IMODE((destination / "d").stat().st_mode),
+            stat.S_IMODE(destination.stat().st_mode),
+        )
+
+    # AM: a failed bind leaves no temporary record beside the destination.
+    def test_a_failed_bind_leaves_no_temporary_record(self) -> None:
+        owner = _owner()
+        tree = self.commit({"a.txt": b"a\n"})
+        destination = self.root / "project"
+        real_rename = os.rename
+
+        def failing(source: Any, target: Any, *args: Any, **kwargs: Any) -> None:
+            if os.fspath(target).endswith(".exact-tree"):
+                raise OSError(errno.EIO, "injected")
+            real_rename(source, target, *args, **kwargs)
+
+        limits = self.limits()
+        with mock.patch("os.rename", side_effect=failing):
+            self.assertRefused(
+                "filesystem",
+                lambda: owner.materialize_or_verify(
+                    self.repo, tree, destination, limits=limits
+                ),
+            )
+        leftovers = [p.name for p in self.root.iterdir() if ".exact-tree" in p.name]
+        self.assertEqual([], leftovers)
+
+    def test_the_identity_walk_holds_one_descriptor_per_level(self) -> None:
+        # Kill test, added with the round-7 mutants: with the soft descriptor limit
+        # between one and two descriptors per level, a tree materializes only if
+        # the write's directory chain is released before the identity walk.
+        depth = 200
+        tree = self.commit({"d/" * depth + "f.txt": b"deep\n"})
+        destination = self.root / "out"
+        limits = self.limits()
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        listing = "/dev/fd" if os.path.isdir("/dev/fd") else "/proc/self/fd"
+        if not os.path.isdir(listing):
+            self.skipTest("this platform lists no open descriptors")
+        ceiling = len(os.listdir(listing)) + depth + 60
+        if soft != resource.RLIM_INFINITY and soft < ceiling:
+            self.skipTest("the descriptor limit is already below the test's ceiling")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (ceiling, hard))
+        try:
+            result = _owner().materialize(self.repo, tree, destination, limits=limits)
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+        self.assertEqual(tree, result.tree)
+
+    # AI: a fixture commit spawns no detached housekeeping into a directory that the
+    # test's cleanup removes (python-compatibility 3.12, job 119192065066).
+    def test_a_fixture_commit_spawns_no_background_maintenance(self) -> None:
+        trace = self.root / "git.trace"
+        (self.repo / "a.txt").write_bytes(b"a\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "c", env={**_ENV, "GIT_TRACE": str(trace)})
+        traced = trace.read_text(encoding="utf-8")
+        self.assertNotIn("maintenance run --auto", traced)
+        self.assertNotIn("gc --auto", traced)
 
 
 if __name__ == "__main__":
