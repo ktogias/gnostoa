@@ -133,7 +133,15 @@ def _check_deadline(limits: Limits) -> None:
         raise ExactTreeError("deadline", "the operation's deadline has passed")
 
 
+_EXHAUSTED = frozenset({errno.EMFILE, errno.ENFILE})
+
+
 def _filesystem(exc: OSError) -> ExactTreeError:
+    """The refusal for a filesystem failure. Running out of descriptors is named: the
+    descriptors held grow with the tree's depth, one per level (Revix 4335451516)."""
+
+    if exc.errno in _EXHAUSTED:
+        return ExactTreeError("cap-descriptors", type(exc).__name__)
     return ExactTreeError("filesystem", type(exc).__name__)
 
 
@@ -178,13 +186,15 @@ def _git(
 
 
 def _start(repo: Path, args: list[str], stdin: int | None) -> subprocess.Popen[bytes]:
-    executable = _git_executable()
-    argv = [executable, "-C", str(repo), *_GIT_OVERRIDES, *args]
+    """Git runs in the repository as its working directory, as `-C` would place it,
+    so its argv holds only fixed tokens and canonical object ids (S6350)."""
+
+    argv = [_git_executable(), *_GIT_OVERRIDES, *args]
     try:
-        # A fixed git argv, no shell, a trusted environment (Bandit B603, Semgrep).
-        return subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        return subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- a fixed git argv, no shell, a trusted environment
             argv,
             shell=False,
+            cwd=repo,
             env=_GIT_ENV,
             stdin=subprocess.DEVNULL if stdin is None else stdin,
             stdout=subprocess.PIPE,
@@ -192,6 +202,8 @@ def _start(repo: Path, args: list[str], stdin: int | None) -> subprocess.Popen[b
             close_fds=True,
         )
     except OSError as exc:
+        if exc.errno in _EXHAUSTED:
+            raise _filesystem(exc) from exc
         raise ExactTreeError(
             "git-failed", f"cannot start git ({type(exc).__name__})"
         ) from exc
@@ -221,13 +233,16 @@ def _drain(
 
 
 def _raise_for(drained: bounded_process.Drained, name: str) -> None:
-    if drained.outcome == "unexpected":
+    if drained.outcome == "unexpected" and isinstance(
+        drained.exception, ExactTreeError
+    ):
         # The sink's own refusal (an object that is not its id, a malformed header,
-        # a failed write) keeps its code; the child is already reaped.
-        if isinstance(drained.exception, ExactTreeError):
-            raise drained.exception
-        if isinstance(drained.exception, OSError):
-            raise _filesystem(drained.exception) from drained.exception
+        # a failed write, which the sink converts itself) keeps its code; the child
+        # is already reaped. The drain files any OSError under "error".
+        raise drained.exception
+    if drained.outcome == "error" and drained.error is not None:
+        if drained.error.errno in _EXHAUSTED:
+            raise _filesystem(drained.error) from drained.error
     if drained.outcome == "deadline":
         raise ExactTreeError("deadline", f"git {name} did not finish in time")
     if drained.outcome == "cap":
@@ -422,6 +437,15 @@ class _BatchWriter:
         self.files = 0
 
     def __call__(self, chunk: bytes) -> None:
+        """Take one chunk of the batch output. A filesystem failure while writing is
+        converted here, so it keeps its meaning past the drain (Revix 4335451516)."""
+
+        try:
+            self._take(chunk)
+        except OSError as exc:
+            raise _filesystem(exc) from exc
+
+    def _take(self, chunk: bytes) -> None:
         self._buffer.extend(chunk)
         while self._buffer:
             if self._entry is None:
@@ -733,28 +757,37 @@ def _observed(
     budget = _Budget(limits)
     stack = [_Level(root_fd, "", b"", _pending(root_fd, budget))]
     try:
-        while True:
-            level = stack[-1]
-            if level.pending:
-                step = _observed_row(
-                    level, level.pending.pop(), algorithm, budget, ignore
-                )
-                if isinstance(step, _Level):
-                    stack.append(step)
-                elif step is not None:
-                    level.rows.append(step)
-                continue
-            stack.pop()
-            if stack:
-                os.close(level.fd)
-            oid = _tree_of(level.rows, algorithm)
-            if not stack:
-                return oid if oid is not None else _object_id(algorithm, "tree", b"")
-            if oid is not None:
-                stack[-1].rows.append((level.raw + b"/", _row(_TREE, level.raw, oid)))
+        while len(stack) > 1 or stack[0].pending:
+            if stack[-1].pending:
+                _descend(stack, algorithm, budget, ignore)
+            else:
+                _ascend(stack, algorithm)
     finally:
         for level in stack[1:]:
             os.close(level.fd)
+    oid = _tree_of(stack[0].rows, algorithm)
+    return oid if oid is not None else _object_id(algorithm, "tree", b"")
+
+
+def _descend(
+    stack: list[_Level], algorithm: str, budget: _Budget, ignore: frozenset[str]
+) -> None:
+    level = stack[-1]
+    step = _observed_row(level, level.pending.pop(), algorithm, budget, ignore)
+    if isinstance(step, _Level):
+        stack.append(step)
+    elif step is not None:
+        level.rows.append(step)
+
+
+def _ascend(stack: list[_Level], algorithm: str) -> None:
+    """Close a finished directory and give its parent its tree row."""
+
+    level = stack.pop()
+    os.close(level.fd)
+    oid = _tree_of(level.rows, algorithm)
+    if oid is not None:
+        stack[-1].rows.append((level.raw + b"/", _row(_TREE, level.raw, oid)))
 
 
 def _tree_of(rows: list[tuple[bytes, bytes]], algorithm: str) -> str | None:

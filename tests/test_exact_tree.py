@@ -9,8 +9,10 @@ S2-A3-01, Router 6267325366 and 6297725852).
 
 from __future__ import annotations
 
+import errno
 import importlib
 import os
+import shutil
 import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
 import tempfile
 import time
@@ -30,6 +32,14 @@ _ENV = {
     # The repository's trusted executable lookup (AGENTS.md), as the owner uses it.
     "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
 }
+# The suppression markers the Popen line must carry, built so that this module never
+# writes a marker itself: merge admission reads every marker an added line holds (M13).
+_SEMGREP_RULE = (
+    "python.lang.security.audit."
+    "dangerous-subprocess-use-audit.dangerous-subprocess-use-audit"
+)
+_NOSEMGREP = "no" + "semgrep: " + _SEMGREP_RULE
+_NOSEC_B603 = "#" + " nosec B603 -- "
 
 
 def git(repo: Path, *args: str, stdin: bytes | None = None) -> str:
@@ -773,13 +783,9 @@ class RoundThreeTests(ExactTreeFixture):
     def test_the_popen_call_carries_its_semgrep_justification_on_its_line(
         self,
     ) -> None:
-        rule = (
-            "nosemgrep: python.lang.security.audit."
-            "dangerous-subprocess-use-audit.dangerous-subprocess-use-audit"
-        )
         source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
-        self.assertTrue(lines and all(rule in line for line in lines), lines)
+        self.assertTrue(lines and all(_NOSEMGREP in line for line in lines), lines)
 
     # T: the observed walk is bounded: no recursion, a deadline per entry, a budget.
     def test_a_tree_deeper_than_the_recursion_limit_is_materialized(self) -> None:
@@ -844,9 +850,7 @@ class RoundThreeTests(ExactTreeFixture):
         second = self.commit({"b.txt": b"b\n"})
         destination = self.root / "project"
         owner.materialize_or_verify(self.repo, first, destination, limits=self.limits())
-        for path in sorted(destination.rglob("*"), reverse=True):
-            path.rmdir() if path.is_dir() else path.unlink()
-        destination.rmdir()
+        shutil.rmtree(destination)
         injected = owner.ExactTreeError("filesystem", "injected bind failure")
         limits = self.limits()
         with mock.patch.object(owner, "_bind", side_effect=injected):
@@ -862,6 +866,117 @@ class RoundThreeTests(ExactTreeFixture):
                 self.repo, first, destination, limits=limits
             ),
         )
+
+
+class RoundFourTests(ExactTreeFixture):
+    """#446 round 4 (#389 6313297746): one RED per recorded class, run before the fix."""
+
+    assertRefused = RoundTwoTests.assertRefused
+
+    # X (S6350): the repository is Git's working directory, never an argument.
+    def test_the_repository_reaches_git_as_its_working_directory_not_its_argv(
+        self,
+    ) -> None:
+        owner = _owner()
+        tree = self.commit({"a.txt": b"a\n"})
+        seen: list[tuple[list[str], Any]] = []
+
+        def popen(argv: list[str], **kwargs: Any) -> Any:
+            seen.append((list(argv), kwargs.get("cwd")))
+            raise OSError("stop")
+
+        limits = self.limits()
+        with mock.patch("subprocess.Popen", side_effect=popen):
+            self.assertRefused(
+                "git-failed", lambda: owner.tree_paths(self.repo, tree, limits=limits)
+            )
+        self.assertTrue(seen, "git was never started")
+        argv, cwd = seen[0]
+        self.assertFalse([part for part in argv if str(self.repo) in part], argv)
+        self.assertNotIn("-C", argv)
+        self.assertIsNotNone(cwd)
+        self.assertEqual(os.fspath(self.repo), os.fspath(cwd))
+
+    # AA (M13): each suppression on the Popen line carries its reason.
+    def test_the_popen_suppressions_carry_their_reason(self) -> None:
+        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        lines = [line for line in source if "subprocess.Popen(" in line]
+        self.assertTrue(lines, "no Popen line")
+        for line in lines:
+            self.assertIn(f"{_NOSEMGREP}  {_NOSEC_B603}", line)
+            self.assertTrue(line.split(_NOSEC_B603, 1)[1].strip(), line)
+
+    # AB: descriptor exhaustion is a named refusal, wherever it happens.
+    def test_descriptor_exhaustion_is_named(self) -> None:
+        owner = _owner()
+        for number in (errno.EMFILE, errno.ENFILE):
+            with self.subTest(errno=number):
+                refusal = owner._filesystem(OSError(number, "exhausted"))
+                self.assertEqual("cap-descriptors", refusal.code)
+
+    def test_a_sinks_own_os_error_keeps_its_meaning(self) -> None:
+        tree = self.commit({"a.txt": b"a\n"})
+        real_open = os.open
+
+        def exhausted(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if flags & os.O_CREAT and kwargs.get("dir_fd") is not None:
+                raise OSError(errno.EMFILE, "Too many open files")
+            return real_open(path, flags, *args, **kwargs)
+
+        destination = self.root / "out"
+        limits = self.limits()
+        with mock.patch("os.open", side_effect=exhausted):
+            self.assertRefused(
+                "cap-descriptors",
+                lambda: _owner().materialize(
+                    self.repo, tree, destination, limits=limits
+                ),
+            )
+        self.assertFalse(destination.exists())
+
+    # Kill tests, added with the round-4 mutants: the sink's other failures, and
+    # exhaustion at the other two points.
+    def test_a_sinks_other_os_error_is_a_filesystem_refusal(self) -> None:
+        tree = self.commit({"a.txt": b"a\n"})
+        real_open = os.open
+
+        def denied(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if flags & os.O_CREAT and kwargs.get("dir_fd") is not None:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return real_open(path, flags, *args, **kwargs)
+
+        destination = self.root / "out"
+        limits = self.limits()
+        with mock.patch("os.open", side_effect=denied):
+            self.assertRefused(
+                "filesystem",
+                lambda: _owner().materialize(
+                    self.repo, tree, destination, limits=limits
+                ),
+            )
+
+    def test_exhaustion_starting_git_is_named(self) -> None:
+        tree = self.commit({"a.txt": b"a\n"})
+        limits = self.limits()
+        with mock.patch(
+            "subprocess.Popen", side_effect=OSError(errno.EMFILE, "Too many open files")
+        ):
+            self.assertRefused(
+                "cap-descriptors",
+                lambda: _owner().tree_paths(self.repo, tree, limits=limits),
+            )
+
+    def test_exhaustion_inside_the_drain_is_named(self) -> None:
+        tree = self.commit({"a.txt": b"a\n"})
+        limits = self.limits()
+        with mock.patch(
+            "selectors.DefaultSelector",
+            side_effect=OSError(errno.EMFILE, "Too many open files"),
+        ):
+            self.assertRefused(
+                "cap-descriptors",
+                lambda: _owner().tree_paths(self.repo, tree, limits=limits),
+            )
 
 
 if __name__ == "__main__":
