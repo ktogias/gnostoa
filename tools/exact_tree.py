@@ -2,20 +2,29 @@
 identity (#389 F3 S2 A; the owner's Option A 6268025835, Router 6297725852).
 
 `materialize` writes a tree's blobs as the object database holds them: no archive, no
-attribute, no filter and no configured driver ever touches them. `observed_tree`
-computes a directory's tree identity in this process, from its bytes and modes, so no
-Git command and no driver runs on that path either. `verify_tracked` checks a reused
-directory against the tree's tracked paths only. Every Git child runs under one
-absolute deadline, through the shared bounded drain (#365), with an environment built
-here and never inherited. Each consumer keeps its own wording, errors and outputs.
+attribute, no filter and no configured driver ever touches them. It writes into a
+private directory beside the destination and renames it into place, so a refusal never
+touches what is already there. Every path below the caller's own parent is opened
+relative to a directory descriptor and never followed: a link the tree carries is
+created only after the whole tree's links are shown to stay inside it.
+`observed_tree` computes a directory's tree identity in this process, from its bytes
+and modes, so no Git command and no driver runs on that path either. `verify_tracked`
+checks a reused directory against the tree's tracked paths only, and
+`materialize_or_verify` reuses only a directory that was written for the same tree.
+Every Git child runs under one absolute deadline, through the shared bounded drain
+(#365), with an environment built here and never inherited. A refusal names its
+`code`; each consumer keeps its own wording, errors and outputs.
 """
 
 from __future__ import annotations
 
+import collections
 import dataclasses
+import errno
 import hashlib
 import os
-import posixpath
+import re
+import secrets
 import shutil
 import stat
 import subprocess  # nosec B404 -- a fixed git argv, no shell, a trusted environment
@@ -34,15 +43,27 @@ DEFAULT_MAX_BYTES = 4 << 30
 _REAP_SECONDS = 5.0
 _LISTING_BYTES_PER_FILE = 4_352
 _HEADER_BYTES_PER_OBJECT = 160
+_CHUNK = 1 << 20
+_LINK_HOPS = 40
 _FILE = "100644"
 _EXECUTABLE = "100755"
 _LINK = "120000"
 _TREE = "40000"
 _BLOB_MODES = frozenset({_FILE, _EXECUTABLE, _LINK})
+_OBJECT_IDS = {
+    "sha1": re.compile(r"\A[0-9a-f]{40}\Z"),
+    "sha256": re.compile(r"\A[0-9a-f]{64}\Z"),
+}
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_DIRECTORY_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW
+_RECORD_SUFFIX = ".exact-tree"
+# The repository's trusted executable lookup (AGENTS.md, ci/prepare-candidate).
+_TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 # Built here, never inherited: no caller GIT_DIR, index, config, attribute source or
 # replacement object reaches a child (S2-A3-01).
 _GIT_ENV = {
-    "PATH": "/usr/bin:/bin",
+    "PATH": _TRUSTED_PATH,
     "LC_ALL": "C",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -75,7 +96,7 @@ class Limits:
     def __post_init__(self) -> None:
         for name in ("max_files", "max_bytes"):
             value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            if type(value) is not int or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
 
     @classmethod
@@ -108,6 +129,17 @@ def _check_deadline(limits: Limits) -> None:
         raise ExactTreeError("deadline", "the operation's deadline has passed")
 
 
+def _filesystem(exc: OSError) -> ExactTreeError:
+    return ExactTreeError("filesystem", type(exc).__name__)
+
+
+def _git_executable() -> str:
+    found = shutil.which("git", path=_TRUSTED_PATH)
+    if found is None or not os.path.isabs(found):
+        raise ExactTreeError("git-failed", "git is not on the trusted lookup")
+    return found
+
+
 def _git(
     repo: Path,
     args: list[str],
@@ -118,24 +150,36 @@ def _git(
     stdin: int | None = None,
 ) -> bytes:
     """One bounded Git child under the operation's deadline. Its stdout goes to `sink`
-    when given, else is returned; stderr is kept for the failure only."""
-
-    _check_deadline(limits)
-    out = bytearray()
-    err = bytearray()
-
-    def receive(stream: str, chunk: bytes) -> None:
-        if stream == "stderr":
-            err.extend(chunk)
-        elif sink is not None:
-            sink(chunk)
-        else:
-            out.extend(chunk)
+    when given, else is returned; stderr is kept for the failure only. `stdin`, when
+    given, is closed here on every path, the early deadline exit included."""
 
     try:
+        _check_deadline(limits)
+        process = _start(repo, args, stdin)
+    finally:
+        if stdin is not None:
+            os.close(stdin)
+    out = bytearray()
+
+    def receive(stream: str, chunk: bytes) -> None:
+        if stream == "stdout":
+            if sink is not None:
+                sink(chunk)
+            else:
+                out.extend(chunk)
+
+    drained = _drain(process, receive, limits, cap)
+    _raise_for(drained, args[0])
+    return bytes(out)
+
+
+def _start(repo: Path, args: list[str], stdin: int | None) -> subprocess.Popen[bytes]:
+    executable = _git_executable()
+    argv = [executable, "-C", str(repo), *_GIT_OVERRIDES, *args]
+    try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit -- fixed git argv, no shell
-        process = subprocess.Popen(
-            ["git", "-C", str(repo), *_GIT_OVERRIDES, *args],
+        return subprocess.Popen(  # nosec B603 -- fixed git argv, no shell, trusted env
+            argv,
             shell=False,
             env=_GIT_ENV,
             stdin=subprocess.DEVNULL if stdin is None else stdin,
@@ -147,18 +191,22 @@ def _git(
         raise ExactTreeError(
             "git-failed", f"cannot start git ({type(exc).__name__})"
         ) from exc
-    finally:
-        if stdin is not None:
-            os.close(stdin)
-    if process.stdout is None or process.stderr is None:
-        bounded_process.reap(process, timeout=_REAP_SECONDS)
-        raise ExactTreeError("git-failed", f"git {args[0]} pipes are unavailable")
-    streams: Mapping[str, IO[bytes]] = {
-        "stdout": process.stdout,
-        "stderr": process.stderr,
-    }
+
+
+def _drain(
+    process: subprocess.Popen[bytes],
+    receive: Callable[[str, bytes], None],
+    limits: Limits,
+    cap: int,
+) -> bounded_process.Drained:
     try:
-        drained = bounded_process.drain(
+        if process.stdout is None or process.stderr is None:
+            raise ExactTreeError("git-failed", "git pipes are unavailable")
+        streams: Mapping[str, IO[bytes]] = {
+            "stdout": process.stdout,
+            "stderr": process.stderr,
+        }
+        return bounded_process.drain(
             process, streams, receive, deadline=limits.deadline, cap=cap
         )
     finally:
@@ -166,22 +214,34 @@ def _git(
         for stream in (process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
-    if drained.outcome == "unexpected" and isinstance(
-        drained.exception, ExactTreeError
-    ):
-        # The sink's own refusal (an escaping link, a blob that is not its id): the
-        # child is reaped above, and the refusal keeps its code.
-        raise drained.exception
+
+
+def _raise_for(drained: bounded_process.Drained, name: str) -> None:
+    if drained.outcome == "unexpected":
+        # The sink's own refusal (an object that is not its id, a malformed header,
+        # a failed write) keeps its code; the child is already reaped.
+        if isinstance(drained.exception, ExactTreeError):
+            raise drained.exception
+        if isinstance(drained.exception, OSError):
+            raise _filesystem(drained.exception) from drained.exception
     if drained.outcome == "deadline":
-        raise ExactTreeError("deadline", f"git {args[0]} did not finish in time")
+        raise ExactTreeError("deadline", f"git {name} did not finish in time")
     if drained.outcome == "cap":
-        raise ExactTreeError("cap-bytes", f"git {args[0]} output exceeds the bound")
+        raise ExactTreeError("cap-bytes", f"git {name} output exceeds the bound")
     if drained.outcome != "exited" or drained.returncode != 0:
         raise ExactTreeError(
-            "git-failed",
-            f"git {args[0]} failed ({drained.outcome}, {drained.returncode})",
+            "git-failed", f"git {name} failed ({drained.outcome}, {drained.returncode})"
         )
-    return bytes(out)
+
+
+def _algorithm(oid: object) -> str:
+    """The object format of a full, lowercase Git object id. Anything else, an
+    option-shaped value included, is refused before it can reach a Git argv."""
+
+    for name, pattern in _OBJECT_IDS.items():
+        if isinstance(oid, str) and pattern.fullmatch(oid):
+            return name
+    raise ExactTreeError("unsupported-entry", "the id is not a Git object id")
 
 
 def _valid_path(path: str) -> bool:
@@ -191,10 +251,29 @@ def _valid_path(path: str) -> bool:
     return all(part not in ("", ".", "..") and part.lower() != ".git" for part in parts)
 
 
+def _entry(record: bytes, algorithm: str) -> _Entry:
+    meta, tab, raw_path = record.partition(b"\t")
+    try:
+        mode, kind, oid = meta.decode("ascii").split(" ")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ExactTreeError("git-failed", "malformed ls-tree record") from exc
+    path = os.fsdecode(raw_path)
+    if (
+        not tab
+        or kind != "blob"
+        or mode not in _BLOB_MODES
+        or not _valid_path(path)
+        or not _OBJECT_IDS[algorithm].fullmatch(oid)
+    ):
+        raise ExactTreeError("unsupported-entry", f"a {mode} {kind} entry")
+    return _Entry(mode, oid, path)
+
+
 def _entries(repo: Path, tree: str, limits: Limits) -> list[_Entry]:
+    algorithm = _algorithm(tree)
     listing = _git(
         repo,
-        ["ls-tree", "-r", "-z", "--full-tree", tree],
+        ["ls-tree", "-r", "-z", "--full-tree", "--end-of-options", tree],
         limits=limits,
         cap=(limits.max_files + 1) * _LISTING_BYTES_PER_FILE,
     )
@@ -202,12 +281,7 @@ def _entries(repo: Path, tree: str, limits: Limits) -> list[_Entry]:
     for record in listing.split(b"\0"):
         if not record:
             continue
-        meta, _, raw_path = record.partition(b"\t")
-        mode, kind, oid = meta.decode("ascii").split(" ")
-        path = os.fsdecode(raw_path)
-        if kind != "blob" or mode not in _BLOB_MODES or not _valid_path(path):
-            raise ExactTreeError("unsupported-entry", f"{mode} {kind} entry {path!r}")
-        entries.append(_Entry(mode, oid, path))
+        entries.append(_entry(record, algorithm))
         if len(entries) > limits.max_files:
             raise ExactTreeError("cap-files", f"more than {limits.max_files} files")
     return entries
@@ -219,14 +293,6 @@ def tree_paths(repo: Path, tree: str, *, limits: Limits) -> frozenset[str]:
     return frozenset(entry.path for entry in _entries(repo, tree, limits))
 
 
-def _algorithm(oid: str) -> str:
-    if len(oid) == 40:
-        return "sha1"
-    if len(oid) == 64:
-        return "sha256"
-    raise ExactTreeError("unsupported-entry", f"object id {oid!r} has no known format")
-
-
 def _object_id(algorithm: str, kind: str, body: bytes) -> str:
     digest = hashlib.new(algorithm)
     digest.update(f"{kind} {len(body)}\0".encode("ascii"))
@@ -234,18 +300,77 @@ def _object_id(algorithm: str, kind: str, body: bytes) -> str:
     return digest.hexdigest()
 
 
-def _escapes(path: str, target: str) -> bool:
+def _stays_inside(path: str, links: Mapping[str, str]) -> bool:
+    """Whether the link at `path` resolves inside the tree, following the tree's own
+    links as the kernel would, component by component and within `_LINK_HOPS`. A
+    lexical check is not enough: `d/l -> ..` with `m -> d/l/..` reaches the parent."""
+
+    target = links[path]
     if not target or target.startswith("/"):
-        return True
-    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(path), target))
-    return resolved == ".." or resolved.startswith("../")
+        return False
+    parts = path.split("/")[:-1]
+    pending = collections.deque(target.split("/"))
+    hops = 1
+    while pending:
+        part = pending.popleft()
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return False
+            parts.pop()
+            continue
+        parts.append(part)
+        through = links.get("/".join(parts))
+        if through is None:
+            continue
+        hops += 1
+        if hops > _LINK_HOPS or not through or through.startswith("/"):
+            return False
+        parts.pop()
+        pending.extendleft(reversed(through.split("/")))
+    return True
+
+
+def _check_links(links: Mapping[str, str]) -> None:
+    for path in sorted(links):
+        if not _stays_inside(path, links):
+            raise ExactTreeError("escaping-link", "a link resolves outside the tree")
+
+
+class _Directories:
+    """Directory descriptors below one root, each opened relative to its parent and
+    never through a link: a symlinked component is refused, not followed."""
+
+    def __init__(self, root_fd: int) -> None:
+        self._open: dict[str, int] = {"": root_fd}
+
+    def at(self, relative: str, *, create: bool) -> int:
+        if relative in self._open:
+            return self._open[relative]
+        parent, _, name = relative.rpartition("/")
+        parent_fd = self.at(parent, create=create)
+        if create:
+            try:
+                os.mkdir(name, 0o755, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+        descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+        self._open[relative] = descriptor
+        return descriptor
+
+    def close(self) -> None:
+        for descriptor in self._open.values():
+            os.close(descriptor)
+        self._open.clear()
 
 
 class _BatchWriter:
-    """Writes `git cat-file --batch` output, streamed, into the destination: each
-    object's bytes go to its entry's file as they arrive."""
+    """Writes `git cat-file --batch` output, streamed, beneath the directories: each
+    object's bytes go to its entry's file as they arrive. Links are only collected
+    here; they are created once the whole tree's links are shown to stay inside."""
 
-    def __init__(self, root: Path, entries: list[_Entry], algorithm: str) -> None:
+    def __init__(self, root: object, entries: list[_Entry], algorithm: str) -> None:
         self._root = root
         self._pending = iter(entries)
         self._algorithm = algorithm
@@ -255,8 +380,8 @@ class _BatchWriter:
         self._handle: int | None = None
         self._digest: hashlib._Hash | None = None
         self._link = bytearray()
+        self.links: dict[str, str] = {}
         self.files = 0
-        self.bytes = 0
 
     def __call__(self, chunk: bytes) -> None:
         self._buffer.extend(chunk)
@@ -278,23 +403,30 @@ class _BatchWriter:
                 self._finish()
 
     def _begin(self, header: bytes) -> None:
+        try:
+            oid, kind, size_text = header.decode("ascii").split(" ")
+            size = int(size_text)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ExactTreeError("git-failed", "malformed cat-file header") from exc
         entry = next(self._pending, None)
-        oid, kind, size = header.decode("ascii").split(" ")
-        if entry is None or oid != entry.oid or kind != "blob":
+        if entry is None or oid != entry.oid or kind != "blob" or size < 0:
             raise ExactTreeError("git-failed", "cat-file answered another object")
-        self._entry, self._remaining = entry, int(size)
+        self._entry, self._remaining = entry, size
         self._digest = hashlib.new(self._algorithm)
         self._digest.update(f"blob {size}\0".encode("ascii"))
         if entry.mode != _LINK:
-            target = self._root / entry.path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            if not isinstance(self._root, _Directories):
+                raise ExactTreeError("git-failed", "no destination to write into")
+            parent, _, name = entry.path.rpartition("/")
+            parent_fd = self._root.at(parent, create=True)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW
             mode = 0o755 if entry.mode == _EXECUTABLE else 0o644
-            self._handle = os.open(target, flags, mode)
+            self._handle = os.open(name, flags, mode, dir_fd=parent_fd)
             os.fchmod(self._handle, mode)
 
     def _write(self, part: bytes) -> None:
-        assert self._digest is not None and self._entry is not None
+        if self._digest is None:
+            raise ExactTreeError("git-failed", "cat-file bytes before a header")
         self._digest.update(part)
         self._remaining -= len(part)
         if self._handle is None:
@@ -306,20 +438,18 @@ class _BatchWriter:
             view = view[written:]
 
     def _finish(self) -> None:
-        assert self._digest is not None and self._entry is not None
-        entry = self._entry
+        entry, digest = self._entry, self._digest
+        if entry is None or digest is None:
+            raise ExactTreeError(
+                "git-failed", "cat-file ended an object it never began"
+            )
         if self._handle is not None:
             os.close(self._handle)
             self._handle = None
-        if self._digest.hexdigest() != entry.oid:
-            raise ExactTreeError("tree-mismatch", f"{entry.path!r} is not its blob")
+        if digest.hexdigest() != entry.oid:
+            raise ExactTreeError("tree-mismatch", "an object is not its blob")
         if entry.mode == _LINK:
-            target = os.fsdecode(bytes(self._link))
-            if _escapes(entry.path, target):
-                raise ExactTreeError("escaping-link", f"{entry.path!r} -> {target!r}")
-            link = self._root / entry.path
-            link.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(target, link)
+            self.links[entry.path] = os.fsdecode(bytes(self._link))
             self._link.clear()
         self.files += 1
         self._entry, self._digest = None, None
@@ -348,54 +478,97 @@ def _object_list(entries: Iterable[_Entry]) -> int:
         return os.dup(handle.fileno())
 
 
+def _occupied(destination: Path) -> bool:
+    """Whether `destination` holds anything. It must be absent or an empty real
+    directory; a link in its place is refused, never followed."""
+
+    try:
+        info = os.lstat(destination)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        raise ExactTreeError("unsafe-path", "the destination is a link")
+    if not stat.S_ISDIR(info.st_mode):
+        raise ExactTreeError("destination-not-empty", "the destination is a file")
+    descriptor = os.open(destination, _DIRECTORY_FLAGS)
+    try:
+        with os.scandir(descriptor) as listing:
+            return any(True for _ in listing)
+    finally:
+        os.close(descriptor)
+
+
 def materialize(
     repo: Path, tree: str, destination: Path, *, limits: Limits
 ) -> Materialized:
     """Write `tree`'s exact bytes into `destination`, which must be absent or empty,
-    and prove it by its independently computed identity. On any refusal the
-    destination is left as it was found."""
+    and prove it by its independently computed identity. The bytes are written into a
+    private directory beside it and renamed into place; on any refusal only that
+    private directory is removed, so the destination is left as it was found."""
 
     _check_deadline(limits)
-    created = not destination.exists()
-    if not created and (not destination.is_dir() or any(destination.iterdir())):
-        raise ExactTreeError("destination-not-empty", str(destination))
-    destination.mkdir(parents=True, exist_ok=True)
-    try:
-        return _materialize(repo, tree, destination, limits)
-    except BaseException:
-        _restore(destination, created)
-        raise
-
-
-def _restore(destination: Path, created: bool) -> None:
-    if created:
-        shutil.rmtree(destination, ignore_errors=True)
-        return
-    for child in destination.iterdir():
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child, ignore_errors=True)
-        else:
-            child.unlink(missing_ok=True)
-
-
-def _materialize(
-    repo: Path, tree: str, destination: Path, limits: Limits
-) -> Materialized:
     algorithm = _algorithm(tree)
+    try:
+        if _occupied(destination):
+            raise ExactTreeError("destination-not-empty", "the destination holds files")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    try:
+        return _publish(repo, tree, algorithm, parent_fd, destination.name, limits)
+    finally:
+        os.close(parent_fd)
+
+
+def _publish(
+    repo: Path, tree: str, algorithm: str, parent_fd: int, name: str, limits: Limits
+) -> Materialized:
+    staging = f".{name}.{secrets.token_hex(8)}.staging"
+    try:
+        os.mkdir(staging, 0o700, dir_fd=parent_fd)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    try:
+        directories = _Directories(os.open(staging, _DIRECTORY_FLAGS, dir_fd=parent_fd))
+        try:
+            result = _write_tree(repo, tree, algorithm, directories, limits)
+        finally:
+            directories.close()
+        os.rename(staging, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    except OSError as exc:
+        _discard(parent_fd, staging)
+        if exc.errno in (errno.ENOTEMPTY, errno.EEXIST):
+            raise ExactTreeError(
+                "destination-not-empty", "the destination filled"
+            ) from exc
+        if exc.errno == errno.ENOTDIR:
+            raise ExactTreeError(
+                "unsafe-path", "the destination is not a directory"
+            ) from exc
+        raise _filesystem(exc) from exc
+    except BaseException:
+        _discard(parent_fd, staging)
+        raise
+    return result
+
+
+def _discard(parent_fd: int, staging: str) -> None:
+    """Remove the private directory. A failure here never replaces the refusal being
+    raised, and it cannot leave bytes at the destination, which was never written."""
+
+    try:
+        shutil.rmtree(staging, dir_fd=parent_fd)
+    except OSError:
+        pass
+
+
+def _write_tree(
+    repo: Path, tree: str, algorithm: str, directories: _Directories, limits: Limits
+) -> Materialized:
     entries = _entries(repo, tree, limits)
-    sizes = _git(
-        repo,
-        ["cat-file", "--batch-check=%(objectsize)"],
-        limits=limits,
-        cap=(len(entries) + 1) * 32,
-        stdin=_object_list(entries),
-    ).split()
-    if len(sizes) != len(entries) or not all(size.isdigit() for size in sizes):
-        raise ExactTreeError("git-failed", "cat-file did not size every object")
-    total = sum(int(size) for size in sizes)
-    if total > limits.max_bytes:
-        raise ExactTreeError("cap-bytes", f"{total} bytes exceed {limits.max_bytes}")
-    writer = _BatchWriter(destination, entries, algorithm)
+    total = _total_size(repo, entries, limits)
+    writer = _BatchWriter(directories, entries, algorithm)
     try:
         _git(
             repo,
@@ -409,12 +582,43 @@ def _materialize(
         writer.close()
     if not writer.done():
         raise ExactTreeError("git-failed", "cat-file stopped before every object")
-    observed = _observed(destination, algorithm, limits, frozenset())
+    _check_links(writer.links)
+    for path, target in sorted(writer.links.items()):
+        parent, _, name = path.rpartition("/")
+        os.symlink(target, name, dir_fd=directories.at(parent, create=True))
+    observed = _observed(
+        directories.at("", create=False), algorithm, limits, frozenset()
+    )
     if observed != tree:
         raise ExactTreeError(
             "tree-mismatch", f"materialized {observed}, expected {tree}"
         )
     return Materialized(tree, writer.files, total)
+
+
+def _total_size(repo: Path, entries: list[_Entry], limits: Limits) -> int:
+    sizes = _git(
+        repo,
+        ["cat-file", "--batch-check=%(objectsize)"],
+        limits=limits,
+        cap=(len(entries) + 1) * 32,
+        stdin=_object_list(entries),
+    ).split()
+    if len(sizes) != len(entries) or not all(size.isdigit() for size in sizes):
+        raise ExactTreeError("git-failed", "cat-file did not size every object")
+    total = sum(int(size) for size in sizes)
+    if total > limits.max_bytes:
+        raise ExactTreeError("cap-bytes", f"{total} bytes exceed {limits.max_bytes}")
+    return total
+
+
+def _open_root(root: Path) -> int:
+    try:
+        return os.open(root, _DIRECTORY_FLAGS)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ExactTreeError("unsafe-path", "the root is not a directory") from exc
+        raise _filesystem(exc) from exc
 
 
 def observed_tree(
@@ -426,11 +630,16 @@ def observed_tree(
 
     _check_deadline(limits)
     output = _git(repo, ["rev-parse", "--show-object-format"], limits=limits, cap=64)
-    name = output.decode("ascii").strip()
-    algorithm = {"sha1": "sha1", "sha256": "sha256"}.get(name)
-    if algorithm is None:
-        raise ExactTreeError("unsupported-entry", f"object format {name!r}")
-    return _observed(root, algorithm, limits, frozenset(ignore))
+    name = output.decode("ascii", errors="replace").strip()
+    if name not in _OBJECT_IDS:
+        raise ExactTreeError("unsupported-entry", "an unknown object format")
+    root_fd = _open_root(root)
+    try:
+        return _observed(root_fd, name, limits, frozenset(ignore))
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        os.close(root_fd)
 
 
 class _Budget:
@@ -454,69 +663,102 @@ class _Budget:
 
 
 def _observed(
-    root: Path, algorithm: str, limits: Limits, ignore: frozenset[str]
+    root_fd: int, algorithm: str, limits: Limits, ignore: frozenset[str]
 ) -> str:
-    oid = _observed_dir(root, "", algorithm, _Budget(limits), ignore)
+    oid = _observed_dir(root_fd, "", algorithm, _Budget(limits), ignore)
     return oid if oid is not None else _object_id(algorithm, "tree", b"")
 
 
+def _names(dir_fd: int) -> list[str]:
+    """A directory's entries, listed through a fresh descriptor opened relative to the
+    held one. A long-held directory descriptor can serve a stale listing: measured on
+    #446, a scan of it missed entries created after it was opened."""
+
+    fresh = os.open(".", os.O_RDONLY | _O_DIRECTORY, dir_fd=dir_fd)
+    try:
+        with os.scandir(fresh) as listing:
+            return [entry.name for entry in listing]
+    finally:
+        os.close(fresh)
+
+
 def _observed_dir(
-    directory: Path,
-    prefix: str,
-    algorithm: str,
-    budget: _Budget,
-    ignore: frozenset[str],
+    dir_fd: int, prefix: str, algorithm: str, budget: _Budget, ignore: frozenset[str]
 ) -> str | None:
-    rows: list[tuple[bytes, bytes]] = []
-    with os.scandir(directory) as listing:
-        children = sorted(listing, key=lambda item: os.fsencode(item.name))
-    for child in children:
-        relative = f"{prefix}{child.name}"
-        if relative in ignore:
-            continue
-        if child.name.lower() == ".git":
-            raise ExactTreeError("unsupported-entry", f"{relative!r} is Git metadata")
-        info = child.stat(follow_symlinks=False)
-        name = os.fsencode(child.name)
-        if stat.S_ISLNK(info.st_mode):
-            target = os.fsencode(os.readlink(child.path))
-            budget.take(len(target))
-            rows.append(
-                (name, _row(_LINK, name, _object_id(algorithm, "blob", target)))
-            )
-        elif stat.S_ISREG(info.st_mode):
-            budget.take(info.st_size)
-            mode = _EXECUTABLE if info.st_mode & stat.S_IXUSR else _FILE
-            rows.append((name, _row(mode, name, _blob_id(child.path, algorithm))))
-        elif stat.S_ISDIR(info.st_mode):
-            sub = _observed_dir(
-                Path(child.path), f"{relative}/", algorithm, budget, ignore
-            )
-            if sub is not None:
-                rows.append((name + b"/", _row(_TREE, name, sub)))
-        else:
-            raise ExactTreeError("unsupported-entry", f"{relative!r} is not a file")
+    names = sorted(_names(dir_fd), key=os.fsencode)
+    rows = [
+        row
+        for name in names
+        if (row := _observed_row(dir_fd, name, prefix, algorithm, budget, ignore))
+    ]
     if not rows:
         return None
     body = b"".join(row for _, row in sorted(rows, key=lambda item: item[0]))
     return _object_id(algorithm, "tree", body)
 
 
+def _observed_row(
+    dir_fd: int,
+    name: str,
+    prefix: str,
+    algorithm: str,
+    budget: _Budget,
+    ignore: frozenset[str],
+) -> tuple[bytes, bytes] | None:
+    relative = f"{prefix}{name}"
+    if relative in ignore:
+        return None
+    if name.lower() == ".git":
+        raise ExactTreeError("unsupported-entry", "Git metadata in the directory")
+    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    raw = os.fsencode(name)
+    if stat.S_ISLNK(info.st_mode):
+        target = os.fsencode(os.readlink(name, dir_fd=dir_fd))
+        budget.take(len(target))
+        return raw, _row(_LINK, raw, _object_id(algorithm, "blob", target))
+    if stat.S_ISREG(info.st_mode):
+        budget.take(info.st_size)
+        mode = _EXECUTABLE if info.st_mode & stat.S_IXUSR else _FILE
+        oid = _blob_id_at(dir_fd, name, info.st_size, algorithm, budget.limits)
+        return raw, _row(mode, raw, oid)
+    if stat.S_ISDIR(info.st_mode):
+        child = os.open(name, _DIRECTORY_FLAGS, dir_fd=dir_fd)
+        try:
+            sub = _observed_dir(child, f"{relative}/", algorithm, budget, ignore)
+        finally:
+            os.close(child)
+        return None if sub is None else (raw + b"/", _row(_TREE, raw, sub))
+    raise ExactTreeError("unsupported-entry", "an entry that is not a file")
+
+
 def _row(mode: str, name: bytes, oid: str) -> bytes:
     return mode.encode("ascii") + b" " + name + b"\0" + bytes.fromhex(oid)
 
 
-def _blob_id(path: str, algorithm: str) -> str:
-    size = os.lstat(path).st_size
+def _blob_id_at(
+    dir_fd: int, name: str, size: int, algorithm: str, limits: Limits
+) -> str:
+    """The blob id of a file of the recorded `size`. It reads at most one byte past
+    that size, checks the deadline before every read, and refuses a file whose size
+    changed while it was read."""
+
     digest = hashlib.new(algorithm)
     digest.update(f"blob {size}\0".encode("ascii"))
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    descriptor = os.open(name, os.O_RDONLY | _O_NOFOLLOW, dir_fd=dir_fd)
+    total = 0
     try:
-        while chunk := os.read(descriptor, 1 << 20):
-            digest.update(chunk)
+        while total <= size:
+            _check_deadline(limits)
+            chunk = os.read(descriptor, min(_CHUNK, size + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total <= size:
+                digest.update(chunk)
     finally:
         os.close(descriptor)
+    if total != size:
+        raise ExactTreeError("tree-mismatch", "a file changed while it was read")
     return digest.hexdigest()
 
 
@@ -524,35 +766,142 @@ def verify_tracked(
     repo: Path, tree: str, root: Path, *, limits: Limits, ignore: Iterable[str] = ()
 ) -> None:
     """Refuse `root` unless every path `tree` tracks, outside `ignore`, is present with
-    its exact bytes and mode. Paths the tree does not track are not checked: a reused
-    directory keeps its run's outputs (S2-A3-02)."""
+    its exact bytes and mode, reached without following any link, and unless its
+    tracked links stay inside. Paths the tree does not track are not checked: a
+    reused directory keeps its run's outputs (S2-A3-02)."""
 
     algorithm = _algorithm(tree)
     skipped = frozenset(ignore)
-    budget = _Budget(limits)
-    for entry in _entries(repo, tree, limits):
-        if entry.path in skipped:
-            continue
-        path = root / entry.path
+    entries = _entries(repo, tree, limits)
+    directories = _Directories(_open_root(root))
+    links: dict[str, str] = {}
+    try:
+        budget = _Budget(limits)
+        for entry in entries:
+            if entry.path not in skipped and (
+                _tracked_oid(directories, entry, algorithm, budget, links) != entry.oid
+            ):
+                raise ExactTreeError("tree-mismatch", "a tracked path changed")
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        directories.close()
+    _check_links(links)
+
+
+def _tracked_oid(
+    directories: _Directories,
+    entry: _Entry,
+    algorithm: str,
+    budget: _Budget,
+    links: dict[str, str],
+) -> str:
+    parent, _, name = entry.path.rpartition("/")
+    try:
+        dir_fd = directories.at(parent, create=False)
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
+            raise ExactTreeError("tree-mismatch", "a tracked path is missing") from exc
+        raise
+    if entry.mode == _LINK:
+        if not stat.S_ISLNK(info.st_mode):
+            raise ExactTreeError("tree-mismatch", "a tracked link is not a link")
+        target = os.readlink(name, dir_fd=dir_fd)
+        budget.take(len(os.fsencode(target)))
+        links[entry.path] = target
+        return _object_id(algorithm, "blob", os.fsencode(target))
+    if not stat.S_ISREG(info.st_mode):
+        raise ExactTreeError("tree-mismatch", "a tracked file is not a file")
+    mode = _EXECUTABLE if info.st_mode & stat.S_IXUSR else _FILE
+    if mode != entry.mode:
+        raise ExactTreeError("tree-mismatch", "a tracked file changed mode")
+    budget.take(info.st_size)
+    return _blob_id_at(dir_fd, name, info.st_size, algorithm, budget.limits)
+
+
+def _record_name(destination: Path) -> str:
+    return f".{destination.name}{_RECORD_SUFFIX}"
+
+
+def _bound_tree(destination: Path) -> str | None:
+    """The tree a destination was written for, from its sibling record."""
+
+    try:
+        parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    try:
+        descriptor = os.open(
+            _record_name(destination), os.O_RDONLY | _O_NOFOLLOW, dir_fd=parent_fd
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        os.close(parent_fd)
+    try:
+        return os.read(descriptor, 130).decode("ascii", errors="replace").strip()
+    finally:
+        os.close(descriptor)
+
+
+def _bind(destination: Path, tree: str) -> None:
+    """Record which tree the destination was written for, atomically, beside it."""
+
+    try:
+        parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    temporary = f"{_record_name(destination)}.{secrets.token_hex(8)}"
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+            0o644,
+            dir_fd=parent_fd,
+        )
         try:
-            info = os.lstat(path)
-        except FileNotFoundError:
-            raise ExactTreeError(
-                "tree-mismatch", f"{entry.path!r} is missing"
-            ) from None
-        if entry.mode == _LINK:
-            if not stat.S_ISLNK(info.st_mode):
-                raise ExactTreeError("tree-mismatch", f"{entry.path!r} is not a link")
-            target = os.fsencode(os.readlink(path))
-            budget.take(len(target))
-            oid = _object_id(algorithm, "blob", target)
-        else:
-            if not stat.S_ISREG(info.st_mode):
-                raise ExactTreeError("tree-mismatch", f"{entry.path!r} is not a file")
-            mode = _EXECUTABLE if info.st_mode & stat.S_IXUSR else _FILE
-            if mode != entry.mode:
-                raise ExactTreeError("tree-mismatch", f"{entry.path!r} changed mode")
-            budget.take(info.st_size)
-            oid = _blob_id(str(path), algorithm)
-        if oid != entry.oid:
-            raise ExactTreeError("tree-mismatch", f"{entry.path!r} changed")
+            os.write(descriptor, f"{tree}\n".encode("ascii"))
+        finally:
+            os.close(descriptor)
+        os.rename(
+            temporary,
+            _record_name(destination),
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        os.close(parent_fd)
+
+
+def materialize_or_verify(
+    repo: Path,
+    tree: str,
+    destination: Path,
+    *,
+    limits: Limits,
+    ignore: Iterable[str] = (),
+) -> None:
+    """Materialize `tree` into an absent or empty `destination` and bind it to that
+    tree, or reuse a destination already bound to the same tree, after checking its
+    tracked paths. A destination written for another tree is refused: a file that
+    tree tracked, and this one dropped, would otherwise survive the reuse."""
+
+    _algorithm(tree)
+    try:
+        occupied = _occupied(destination)
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    if not occupied:
+        materialize(repo, tree, destination, limits=limits)
+        _bind(destination, tree)
+        return
+    if _bound_tree(destination) != tree:
+        raise ExactTreeError(
+            "tree-mismatch", "the destination was written for another tree"
+        )
+    verify_tracked(repo, tree, destination, limits=limits, ignore=ignore)

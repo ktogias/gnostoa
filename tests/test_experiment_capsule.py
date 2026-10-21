@@ -1814,5 +1814,119 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(len(set(identities)), len(identities))
 
 
+class RoundTwoConsumerTests(CapsuleFixture):
+    """#446 round 2 (#389 6311879794): the consumers' share of the recorded classes."""
+
+    def escaping_repo(self) -> tuple[Path, str]:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        (repo / "SECRET-LINK").symlink_to("../../outside")
+        self.commit(repo, {}, "escaping link")
+        return repo, git(repo, "rev-parse", "HEAD^{tree}")
+
+    # H: the executor carries no dead Git environment.
+    def test_the_executor_has_no_dead_git_environment(self) -> None:
+        self.assertFalse(hasattr(execute, "_GIT_ENV"))
+
+    # J: refusal details carry codes, never a tracked path or link target.
+    def test_an_executor_refusal_names_the_code_not_the_path(self) -> None:
+        repo, tree = self.escaping_repo()
+        project = self.root / "project"
+        project.mkdir()
+        with self.assertRaises(execute.ExecuteError) as raised:
+            execute._materialize(repo, tree, project)
+        self.assertIn("escaping-link", str(raised.exception))
+        self.assertNotIn("SECRET-LINK", str(raised.exception))
+        self.assertNotIn("outside", str(raised.exception))
+
+    def test_a_compiler_blocker_names_the_code_not_the_path(self) -> None:
+        repo, tree = self.escaping_repo()
+        blockers: list[dict[str, object]] = []
+        result = compiler._materialize_verified(
+            repo, tree, self.root / "subject", "base", blockers, "T1"
+        )
+        self.assertIsNone(result)
+        self.assertTrue(blockers)
+        for blocker in blockers:
+            self.assertNotIn("SECRET-LINK", str(blocker["detail"]))
+            self.assertNotIn("outside", str(blocker["detail"]))
+
+    # K: the executor's reused project is bound to the tree it was written for.
+    def test_a_project_written_for_one_tree_is_not_reused_for_another(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": "", "src/old.py": "dropped\n"}
+        )
+        first = git(repo, "rev-parse", "HEAD^{tree}")
+        (repo / "src" / "old.py").unlink()
+        self.commit(repo, {}, "drop old")
+        second = git(repo, "rev-parse", "HEAD^{tree}")
+        project = self.root / "project"
+        project.mkdir()
+        execute._materialize(repo, first, project)
+        with self.assertRaises(execute.ExecuteError):
+            execute._materialize(repo, second, project)
+
+    # K: a re-prepare for another base tree does not reuse the execution project
+    # (a kill test, added with the mutants).
+    def test_a_reprepare_for_another_base_tree_does_not_reuse_the_project(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": "", "src/old.py": "dropped\n"}
+        )
+        first = git(repo, "rev-parse", "HEAD")
+        (self.root / "oracle.py").write_text(
+            "def test_discriminates():\n    assert True\n"
+        )
+        compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, first, first))),
+            self.workspace,
+            offline=True,
+        )
+        (repo / "src" / "old.py").unlink()
+        second = self.commit(repo, {}, "drop old")
+        result = compiler.prepare(
+            load_spec(self.write_spec(self.base_spec(repo, second, second))),
+            self.workspace,
+            offline=True,
+        )
+        self.assertIn(
+            "execution-project-identity-mismatch", [b["code"] for b in result.blockers]
+        )
+
+    # N: a subject tree the owner cannot list becomes a blocker (a kill test).
+    def test_an_unlistable_subject_tree_is_a_blocker(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
+        blockers: list[dict[str, object]] = []
+        self.assertIsNone(
+            compiler._frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1")
+        )
+        self.assertEqual(
+            ["materialised-subject-identity-mismatch"], [b["code"] for b in blockers]
+        )
+
+    # N: a reused subject the owner refuses becomes the blocker, not a traceback.
+    def test_a_reused_subject_past_the_cap_is_blocked_not_raised(self) -> None:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": "", "src/a.py": "a\n"})
+        tree = git(repo, "rev-parse", "HEAD^{tree}")
+        first: list[dict[str, object]] = []
+        self.assertIsNotNone(
+            compiler._materialize_verified(
+                repo, tree, self.root / "subject", "base", first, "T1"
+            )
+        )
+        from tools import exact_tree
+
+        tight = exact_tree.Limits(
+            deadline=exact_tree.time.monotonic() + 60, max_files=1, max_bytes=1 << 20
+        )
+        blockers: list[dict[str, object]] = []
+        with mock.patch.object(exact_tree.Limits, "within", return_value=tight):
+            result = compiler._materialize_verified(
+                repo, tree, self.root / "subject", "base", blockers, "T1"
+            )
+        self.assertIsNone(result)
+        self.assertIn(
+            "materialised-subject-identity-mismatch", [b["code"] for b in blockers]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

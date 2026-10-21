@@ -20,12 +20,6 @@ from tools.capsule import lock as lock_module
 from tools.capsule import profiles
 from tools.capsule.authority import LaunchAuthority
 
-_GIT_ENV = {
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "PATH": "/usr/bin:/bin",
-}
-
 
 class ExecuteError(RuntimeError):
     """The lock cannot be executed as frozen."""
@@ -43,19 +37,18 @@ class ExecutionResult:
 
 def _materialize(repo: Path, tree: str, destination: Path) -> None:
     """The execution capsule's base tree, exactly, through the shared owner (#389 F3
-    S2 A). A fresh project is written and proved by its identity. A reused one keeps
-    its run's outputs, but its tracked source must still be the frozen tree
-    (S2-A3-02): the newly necessary refusal. The lock's execution artifacts are the
-    base subject's generated paths, which the tree never tracks, so they are never
-    compared."""
-    limits = exact_tree.Limits.within()
+    S2 A). A fresh project is written, proved by its identity and bound to its tree.
+    A reused one keeps its run's outputs, but it must have been written for this same
+    tree and its tracked source must still be it (S2-A3-02): a project written for
+    another tree could keep a file that tree tracked and this one dropped. The lock's
+    execution artifacts are the base subject's generated paths, which the tree never
+    tracks, so they are never compared. A refusal names its code only."""
     try:
-        if any(destination.iterdir()):
-            exact_tree.verify_tracked(repo, tree, destination, limits=limits)
-        else:
-            exact_tree.materialize(repo, tree, destination, limits=limits)
+        exact_tree.materialize_or_verify(
+            repo, tree, destination, limits=exact_tree.Limits.within()
+        )
     except exact_tree.ExactTreeError as exc:
-        raise ExecuteError(f"execution-subject-{exc.code}: {exc}") from exc
+        raise ExecuteError(f"execution-subject-{exc.code}") from exc
 
 
 def materialize_capsule(
