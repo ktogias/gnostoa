@@ -78,6 +78,13 @@ _GIT_ENV = {
     # pinned: it is an allowlist that disables the ownership check, which applies at
     # its strictest while no global or system configuration is read (#389 6312793333).
     "GIT_OPTIONAL_LOCKS": "0",
+    # No child fetches a missing object: a promisor remote in the repository's own
+    # configuration could otherwise run its command (CodeAnt 4337243054, measured).
+    # The empty allow-list refuses every transport before any protocol configuration
+    # is read, the repository's own `protocol.<name>.allow` included (PAO 6317385619);
+    # the lazy-fetch flag stops the fetch itself where Git honours it.
+    "GIT_ALLOW_PROTOCOL": "",
+    "GIT_NO_LAZY_FETCH": "1",
 }
 _GIT_OVERRIDES = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 
@@ -627,10 +634,7 @@ class _BatchWriter:
         if self._handle is None:
             self._link.extend(part)
             return
-        view = memoryview(part)
-        while view:
-            written = os.write(self._handle, view)
-            view = view[written:]
+        _write_all(self._handle, part)
 
     def _finish(self) -> None:
         entry, digest = self._entry, self._digest
@@ -644,6 +648,9 @@ class _BatchWriter:
         if digest.hexdigest() != entry.oid:
             raise ExactTreeError("tree-mismatch", "an object is not its blob")
         if entry.mode == _LINK:
+            if b"\0" in self._link:
+                # No link can hold a NUL, so the tree cannot be written exactly.
+                raise ExactTreeError("unsupported-entry", "a link target holds a NUL")
             self.links[entry.path] = os.fsdecode(bytes(self._link))
             self._link.clear()
         self.files += 1
@@ -660,6 +667,14 @@ class _BatchWriter:
             and not self._buffer
             and next(self._pending, None) is None
         )
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    """Write all of `data`: `os.write` may write short without raising."""
+
+    view = memoryview(data)
+    while view:
+        view = view[os.write(descriptor, view) :]
 
 
 def _object_list(entries: Iterable[_Entry]) -> int:
@@ -797,6 +812,7 @@ def _write_tree(
         raise ExactTreeError("git-failed", "cat-file stopped before every object")
     _check_links(writer.links, limits)
     for path, target in sorted(writer.links.items()):
+        _check_deadline(limits)
         parent, _, name = path.rpartition("/")
         os.symlink(target, name, dir_fd=directories.at(parent, create=True))
     observed = _observed(
@@ -1181,7 +1197,7 @@ def _bind(destination: Path, tree: str) -> None:
         )
         created = True
         try:
-            os.write(descriptor, f"{tree}\n".encode("ascii"))
+            _write_all(descriptor, f"{tree}\n".encode("ascii"))
         finally:
             os.close(descriptor)
         os.link(
