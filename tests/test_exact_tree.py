@@ -9,6 +9,7 @@ S2-A3-01, Router 6267325366 and 6297725852).
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import importlib
 import os
@@ -977,6 +978,198 @@ class RoundFourTests(ExactTreeFixture):
                 "cap-descriptors",
                 lambda: _owner().tree_paths(self.repo, tree, limits=limits),
             )
+
+
+class RoundFiveTests(ExactTreeFixture):
+    """#446 round 5 (Router #389 6313854024, option A): a reused tracked link stays
+    inside the root through the components actually on disk. RED first."""
+
+    assertRefused = RoundTwoTests.assertRefused
+    link_tree = RoundTwoTests.link_tree
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = self.root / "outside"
+        (self.outside / "dir").mkdir(parents=True)
+        (self.outside / "secret").write_bytes(b"secret\n")
+        self.count = 0
+
+    def reused(
+        self,
+        links: dict[str, str],
+        files: dict[str, bytes] | None = None,
+        *,
+        ignore: tuple[str, ...] = (),
+    ) -> tuple[str, Path]:
+        tree = self.link_tree(links, {"keep.txt": b"k\n", **(files or {})})
+        self.count += 1
+        destination = self.root / f"project-{self.count}"
+        _owner().materialize_or_verify(
+            self.repo, tree, destination, limits=self.limits(), ignore=ignore
+        )
+        return tree, destination
+
+    def again(
+        self, tree: str, destination: Path, *, ignore: tuple[str, ...] = ()
+    ) -> None:
+        _owner().materialize_or_verify(
+            self.repo, tree, destination, limits=self.limits(), ignore=ignore
+        )
+
+    def plant(self, destination: Path, name: str, pointed: Path | str) -> None:
+        """An untracked link a run left behind, relative to where it sits."""
+        link = destination / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        target = (
+            pointed
+            if isinstance(pointed, str)
+            else os.path.relpath(pointed, link.parent)
+        )
+        os.symlink(target, link)
+
+    # The two supplied escapes (Revix 4335680236).
+    def test_a_reused_tracked_link_cannot_escape_through_an_untracked_link(
+        self,
+    ) -> None:
+        for target, pointed in (
+            ("u/secret", self.outside),
+            ("u", self.outside / "secret"),
+        ):
+            with self.subTest(target=target):
+                tree, destination = self.reused({"t": target})
+                self.plant(destination, "u", pointed)
+                self.assertRefused(
+                    "escaping-link",
+                    lambda tree=tree, destination=destination: self.again(
+                        tree, destination
+                    ),
+                )
+
+    def test_a_deeper_mixed_chain_cannot_escape(self) -> None:
+        # d/t -> ../a/b/x, where a is the tracked link a -> real and real/b is an
+        # untracked link out of the root.
+        tree, destination = self.reused(
+            {"a": "real", "d/t": "../a/b/x"},
+            {"real/f.txt": b"f\n", "d/g.txt": b"g\n"},
+        )
+        self.plant(destination, "real/b", self.outside)
+        self.assertRefused("escaping-link", lambda: self.again(tree, destination))
+
+    def test_a_physical_parent_through_an_untracked_link_cannot_escape(self) -> None:
+        # Lexically t -> u/../outside/secret stays inside; with u -> . the physical
+        # parent of u is above the root.
+        tree, destination = self.reused({"t": "u/../outside/secret"})
+        self.plant(destination, "u", ".")
+        self.assertRefused("escaping-link", lambda: self.again(tree, destination))
+
+    def test_a_loop_of_untracked_links_is_refused(self) -> None:
+        tree, destination = self.reused({"t": "u"})
+        self.plant(destination, "u", "v")
+        self.plant(destination, "v", "u")
+        self.assertRefused("escaping-link", lambda: self.again(tree, destination))
+
+    def test_an_unreadable_untracked_link_is_a_refusal_not_containment(self) -> None:
+        tree, destination = self.reused({"t": "u/x"})
+        (destination / "real").mkdir()
+        (destination / "real" / "x").write_bytes(b"x\n")
+        self.plant(destination, "u", "real")
+        real_readlink = os.readlink
+
+        def refused(path: Any, *args: Any, **kwargs: Any) -> str:
+            if os.fspath(path) == "u":
+                raise PermissionError(13, "Permission denied")
+            return real_readlink(path, *args, **kwargs)
+
+        with mock.patch("os.readlink", side_effect=refused):
+            self.assertRefused("filesystem", lambda: self.again(tree, destination))
+
+    def test_the_on_disk_check_keeps_the_single_deadline(self) -> None:
+        owner = _owner()
+        resolver = getattr(owner, "_resolves_on_disk", None)
+        if resolver is None:
+            self.fail("missing capability: tools.exact_tree._resolves_on_disk")
+        _, destination = self.reused({"t": "u/x"})
+        self.plant(destination, "u", "real")
+        spent = self.limits(deadline=time.monotonic() - 1)
+        root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            self.assertRefused("deadline", lambda: resolver(root_fd, "t", "u/x", spent))
+        finally:
+            os.close(root_fd)
+
+    # Kill tests, added with the round-5 mutants and labelled as such.
+    def test_verify_tracked_refuses_a_lexical_escape_past_a_missing_component(
+        self,
+    ) -> None:
+        # On disk the missing component reaches nothing today; the tree's own check
+        # still refuses it, since creating `missing` later would carry t outside.
+        tree = self.link_tree({"t": "missing/../../outside"}, {"keep.txt": b"k\n"})
+        root = self.root / "reused"
+        root.mkdir()
+        (root / "keep.txt").write_bytes(b"k\n")
+        os.symlink("missing/../../outside", root / "t")
+        limits = self.limits()
+        self.assertRefused(
+            "escaping-link",
+            lambda: _owner().verify_tracked(self.repo, tree, root, limits=limits),
+        )
+
+    def test_an_unreadable_component_is_a_refusal_not_a_missing_one(self) -> None:
+        tree, destination = self.reused({"t": "u/x"})
+        (destination / "u").mkdir()
+        real_stat = os.stat
+
+        def refused(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if os.fspath(path) == "u":
+                raise PermissionError(13, "Permission denied")
+            return real_stat(path, *args, **kwargs)
+
+        with mock.patch("os.stat", side_effect=refused):
+            self.assertRefused("filesystem", lambda: self.again(tree, destination))
+
+    def test_an_absolute_untracked_link_on_a_tracked_path_is_refused(self) -> None:
+        tree, destination = self.reused({"t": "u/secret"})
+        self.plant(destination, "u", os.fspath(self.outside))
+        self.assertRefused("escaping-link", lambda: self.again(tree, destination))
+
+    # Falsifiers: legitimate reuse stays accepted.
+    def test_a_contained_untracked_link_on_a_tracked_path_is_kept(self) -> None:
+        tree, destination = self.reused({"t": "u/x"})
+        (destination / "real").mkdir()
+        (destination / "real" / "x").write_bytes(b"x\n")
+        self.plant(destination, "u", "real")
+        self.again(tree, destination)
+
+    def test_an_escaping_output_off_every_tracked_path_is_allowed(self) -> None:
+        tree, destination = self.reused({"t": "keep.txt"})
+        self.plant(destination, "venv/bin/python", "/usr/bin/env")
+        self.again(tree, destination)
+
+    def test_a_dangling_in_root_tracked_link_is_allowed(self) -> None:
+        tree, destination = self.reused({"t": "missing/x", "s": "build/out"})
+        (destination / "build").mkdir()
+        self.again(tree, destination)
+
+    def test_a_declared_generated_path_keeps_its_exclusion(self) -> None:
+        tree, destination = self.reused(
+            {"t": "gen.txt"}, {"gen.txt": b"tracked\n"}, ignore=("gen.txt",)
+        )
+        (destination / "gen.txt").write_bytes(b"generated by the run\n")
+        self.again(tree, destination, ignore=("gen.txt",))
+
+    def test_the_check_leaves_no_descriptor_behind(self) -> None:
+        tree, destination = self.reused({"t": "u/x", "w": "keep.txt"})
+        (destination / "real").mkdir()
+        (destination / "real" / "x").write_bytes(b"x\n")
+        self.plant(destination, "u", "real")
+        before = len(os.listdir("/proc/self/fd"))
+        self.again(tree, destination)
+        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+        os.unlink(destination / "u")
+        self.plant(destination, "u", self.outside)
+        with contextlib.suppress(_owner().ExactTreeError):
+            self.again(tree, destination)
+        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import IO
+from typing import IO, Protocol
 
 from tools import bounded_process
 
@@ -336,41 +336,138 @@ def _object_id(algorithm: str, kind: str, body: bytes) -> str:
     return digest.hexdigest()
 
 
-def _stays_inside(path: str, links: Mapping[str, str]) -> bool:
-    """Whether the link at `path` resolves inside the tree, following the tree's own
-    links as the kernel would, component by component and within `_LINK_HOPS`. A
-    lexical check is not enough: `d/l -> ..` with `m -> d/l/..` reaches the parent."""
+class _Cursor(Protocol):
+    """Where a link resolution stands: `up` steps to the parent, refusing above the
+    root; `enter` names a component's kind ("dir", "link" with its target, or "end"
+    when nothing below it can be reached) and moves into a directory."""
 
-    target = links[path]
+    def up(self) -> bool: ...
+
+    def enter(self, name: str) -> tuple[str, str]: ...
+
+
+def _resolve(cursor: _Cursor, target: str, limits: Limits | None) -> bool:
+    """Whether `target`, resolved from the cursor's position as the kernel would,
+    stays inside: component by component, through every link the cursor meets, within
+    `_LINK_HOPS`, never above the root and never to an absolute target. A lexical
+    check is not enough: `d/l -> ..` with `m -> d/l/..` reaches the parent."""
+
     if not target or target.startswith("/"):
         return False
-    parts = path.split("/")[:-1]
     pending = collections.deque(target.split("/"))
     hops = 1
     while pending:
+        if limits is not None:
+            _check_deadline(limits)
         part = pending.popleft()
         if part in ("", "."):
             continue
         if part == "..":
-            if not parts:
+            if not cursor.up():
                 return False
-            parts.pop()
             continue
-        parts.append(part)
-        through = links.get("/".join(parts))
-        if through is None:
+        kind, through = cursor.enter(part)
+        if kind == "end":
+            return True
+        if kind == "dir":
             continue
         hops += 1
         if hops > _LINK_HOPS or not through or through.startswith("/"):
             return False
-        parts.pop()
         pending.extendleft(reversed(through.split("/")))
     return True
 
 
-def _check_links(links: Mapping[str, str]) -> None:
+class _TreeCursor:
+    """The immutable tree: a component is a link when the tree has one at that path,
+    and is entered as written otherwise."""
+
+    def __init__(self, links: Mapping[str, str], parts: list[str]) -> None:
+        self._links = links
+        self._parts = parts
+
+    def up(self) -> bool:
+        if not self._parts:
+            return False
+        self._parts.pop()
+        return True
+
+    def enter(self, name: str) -> tuple[str, str]:
+        self._parts.append(name)
+        through = self._links.get("/".join(self._parts))
+        if through is None:
+            return "dir", ""
+        self._parts.pop()
+        return "link", through
+
+
+class _DiskCursor:
+    """The components actually on disk below the root's descriptor (Router #389
+    6313854024). Each real directory is opened relative to its parent without
+    following, so `..` is the physical parent; a link, tracked or untracked, is read
+    where it is met. Only a missing in-root component ends a resolution as reaching
+    nothing; every other failure is raised, never taken for containment."""
+
+    def __init__(self, root_fd: int) -> None:
+        self._root = root_fd
+        self._held: list[int] = []
+
+    def _here(self) -> int:
+        return self._held[-1] if self._held else self._root
+
+    def descend(self, name: str) -> None:
+        self._held.append(os.open(name, _DIRECTORY_FLAGS, dir_fd=self._here()))
+
+    def up(self) -> bool:
+        if not self._held:
+            return False
+        os.close(self._held.pop())
+        return True
+
+    def enter(self, name: str) -> tuple[str, str]:
+        try:
+            info = os.stat(name, dir_fd=self._here(), follow_symlinks=False)
+        except FileNotFoundError:
+            return "end", ""
+        if stat.S_ISLNK(info.st_mode):
+            return "link", os.readlink(name, dir_fd=self._here())
+        if stat.S_ISDIR(info.st_mode):
+            self.descend(name)
+            return "dir", ""
+        return "end", ""
+
+    def close(self) -> None:
+        while self._held:
+            os.close(self._held.pop())
+
+
+def _stays_inside(
+    path: str, links: Mapping[str, str], limits: Limits | None = None
+) -> bool:
+    """Whether the link at `path` resolves inside the tree, through the tree's own
+    links."""
+
+    return _resolve(_TreeCursor(links, path.split("/")[:-1]), links[path], limits)
+
+
+def _resolves_on_disk(root_fd: int, path: str, target: str, limits: Limits) -> bool:
+    """Whether the checked tracked link at `path`, with its checked `target` bytes,
+    resolves inside the root through the components on disk at verification time,
+    untracked links included. Its parent directories must still be real directories.
+    This is verification-time evidence, not a lock against links created later."""
+
+    cursor = _DiskCursor(root_fd)
+    try:
+        for name in path.split("/")[:-1]:
+            cursor.descend(name)
+        return _resolve(cursor, target, limits)
+    finally:
+        cursor.close()
+
+
+def _check_links(links: Mapping[str, str], limits: Limits | None = None) -> None:
     for path in sorted(links):
-        if not _stays_inside(path, links):
+        if not _stays_inside(path, links, limits):
             raise ExactTreeError("escaping-link", "a link resolves outside the tree")
 
 
@@ -644,7 +741,7 @@ def _write_tree(
         writer.close()
     if not writer.done():
         raise ExactTreeError("git-failed", "cat-file stopped before every object")
-    _check_links(writer.links)
+    _check_links(writer.links, limits)
     for path, target in sorted(writer.links.items()):
         parent, _, name = path.rpartition("/")
         os.symlink(target, name, dir_fd=directories.at(parent, create=True))
@@ -899,11 +996,19 @@ def verify_tracked(
                 _tracked_oid(directories, entry, algorithm, budget, links) != entry.oid
             ):
                 raise ExactTreeError("tree-mismatch", "a tracked path changed")
+        # The root's descriptor is held through both checks: the tree's own links,
+        # then the components actually on disk, which a run may have changed.
+        _check_links(links, limits)
+        root_fd = directories.at("", create=False)
+        for path in sorted(links):
+            if not _resolves_on_disk(root_fd, path, links[path], limits):
+                raise ExactTreeError(
+                    "escaping-link", "a link resolves outside the root on disk"
+                )
     except OSError as exc:
         raise _filesystem(exc) from exc
     finally:
         directories.close()
-    _check_links(links)
 
 
 def _tracked_oid(
