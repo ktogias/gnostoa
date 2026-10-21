@@ -165,7 +165,8 @@ def _git(
     stdin: int | None = None,
 ) -> bytes:
     """One bounded Git child under the operation's deadline. Its stdout goes to `sink`
-    when given, else is returned; stderr is kept for the failure only. `stdin`, when
+    when given, else is returned. Its stderr is drained and discarded: a refusal names
+    its code and outcome only, so no child text reaches a blocker. `stdin`, when
     given, is closed here on every path, the early deadline exit included."""
 
     try:
@@ -301,9 +302,37 @@ def _entry(record: bytes, algorithm: str) -> _Entry:
     return _Entry(mode, oid, path)
 
 
+class _Listing:
+    """`ls-tree -z` records parsed as they stream, refused at the first entry past the
+    file cap: the listing is never held as one buffer (Revix 4336441481)."""
+
+    def __init__(self, algorithm: str, max_files: int) -> None:
+        self._algorithm = algorithm
+        self._max_files = max_files
+        self._buffer = bytearray()
+        self.entries: list[_Entry] = []
+
+    def __call__(self, chunk: bytes) -> None:
+        self._buffer.extend(chunk)
+        while (end := self._buffer.find(b"\0")) >= 0:
+            record = bytes(self._buffer[:end])
+            del self._buffer[: end + 1]
+            if not record:
+                continue
+            self.entries.append(_entry(record, self._algorithm))
+            if len(self.entries) > self._max_files:
+                raise ExactTreeError("cap-files", f"more than {self._max_files} files")
+
+    def finish(self) -> list[_Entry]:
+        if self._buffer:
+            raise ExactTreeError("git-failed", "malformed ls-tree record")
+        return self.entries
+
+
 def _entries(repo: Path, tree: str, limits: Limits) -> list[_Entry]:
     algorithm = _algorithm(tree)
-    listing = _git(
+    listing = _Listing(algorithm, limits.max_files)
+    _git(
         repo,
         [
             "ls-tree",
@@ -315,15 +344,9 @@ def _entries(repo: Path, tree: str, limits: Limits) -> list[_Entry]:
         ],
         limits=limits,
         cap=(limits.max_files + 1) * _LISTING_BYTES_PER_FILE,
+        sink=listing,
     )
-    entries: list[_Entry] = []
-    for record in listing.split(b"\0"):
-        if not record:
-            continue
-        entries.append(_entry(record, algorithm))
-        if len(entries) > limits.max_files:
-            raise ExactTreeError("cap-files", f"more than {limits.max_files} files")
-    return entries
+    return listing.finish()
 
 
 def tree_paths(repo: Path, tree: str, *, limits: Limits) -> frozenset[str]:
@@ -698,15 +721,17 @@ def _publish(
 ) -> Materialized:
     staging = f".{name}.{secrets.token_hex(8)}.staging"
     try:
-        # Created as the nested directories are, so the materialized root has their
-        # mode; it is private by its random name and writable only by its owner.
-        os.mkdir(staging, 0o755, dir_fd=parent_fd)
+        # Owner-only while the tree is written into it (cubic 4336433759); once its
+        # identity is proved it gets the nested directories' mode (Revix 4336200044).
+        os.mkdir(staging, 0o700, dir_fd=parent_fd)
     except OSError as exc:
         raise _filesystem(exc) from exc
     try:
         directories = _Directories(os.open(staging, _DIRECTORY_FLAGS, dir_fd=parent_fd))
         try:
             result = _write_tree(repo, tree, algorithm, directories, limits)
+            root_fd = directories.at("", create=False)
+            os.fchmod(root_fd, _directory_mode(root_fd))
         finally:
             directories.close()
         os.rename(staging, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
@@ -725,6 +750,20 @@ def _publish(
         _discard(parent_fd, staging)
         raise
     return result
+
+
+def _directory_mode(dir_fd: int) -> int:
+    """The mode a new directory gets here, 0o755 under the process umask. It is read
+    from a probe made inside the private directory, so the umask is never changed."""
+
+    probe = f".mode-{secrets.token_hex(8)}"
+    os.mkdir(probe, 0o755, dir_fd=dir_fd)
+    try:
+        return stat.S_IMODE(
+            os.stat(probe, dir_fd=dir_fd, follow_symlinks=False).st_mode
+        )
+    finally:
+        os.rmdir(probe, dir_fd=dir_fd)
 
 
 def _discard(parent_fd: int, staging: str) -> None:

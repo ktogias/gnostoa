@@ -152,6 +152,19 @@ class ExactTreeFixture(unittest.TestCase):
 
         return build(entries)
 
+    def feeding(self, output: bytes) -> Any:
+        """A stand-in for the owner's Git child: it hands `output` to the child's sink
+        when it has one, as the real drain does, and returns it otherwise."""
+
+        def git(repo: Path, args: list[str], **kwargs: Any) -> bytes:
+            sink = kwargs.get("sink")
+            if sink is None:
+                return output
+            sink(output)
+            return b""
+
+        return git
+
     def blob(self, tree: str, path: str) -> bytes:
         return subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
             ["git", "-C", str(self.repo), "cat-file", "blob", f"{tree}:{path}"],
@@ -542,7 +555,7 @@ class RoundTwoTests(ExactTreeFixture):
         for listing in (b"100644 blob\ta.txt\0", b"\xff\xfe blob x\ta\0"):
             with (
                 self.subTest(listing=listing),
-                mock.patch.object(owner, "_git", return_value=listing),
+                mock.patch.object(owner, "_git", side_effect=self.feeding(listing)),
             ):
                 self.assertRefused(
                     "git-failed",
@@ -554,7 +567,9 @@ class RoundTwoTests(ExactTreeFixture):
         owner = _owner()
         tree = self.commit({"a.txt": b"a\n"})
         limits = self.limits()
-        with mock.patch.object(owner, "_git", return_value=b"100644 blob XYZ\ta.txt\0"):
+        with mock.patch.object(
+            owner, "_git", side_effect=self.feeding(b"100644 blob XYZ\ta.txt\0")
+        ):
             self.assertRefused(
                 "unsupported-entry",
                 lambda: owner.tree_paths(self.repo, tree, limits=limits),
@@ -569,7 +584,7 @@ class RoundTwoTests(ExactTreeFixture):
             listing = f"100644 {kind} {'a' * 40}\tx\0".encode()
             with (
                 self.subTest(kind=kind),
-                mock.patch.object(owner, "_git", return_value=listing),
+                mock.patch.object(owner, "_git", side_effect=self.feeding(listing)),
             ):
                 self.assertRefused(
                     "unsupported-entry",
@@ -1361,6 +1376,64 @@ class RoundSevenTests(ExactTreeFixture):
         traced = trace.read_text(encoding="utf-8")
         self.assertNotIn("maintenance run --auto", traced)
         self.assertNotIn("gc --auto", traced)
+
+
+class RoundEightTests(ExactTreeFixture):
+    """#446 round 8 (#389 6315273156): one RED per recorded class, run before the fix."""
+
+    # AO: the staging directory stays owner-only while the tree is written into it.
+    def test_the_staging_directory_is_owner_only_while_it_is_written(self) -> None:
+        owner = _owner()
+        tree = self.commit({"d/a.txt": b"a\n"})
+        destination = self.root / "out"
+        real_write_tree = owner._write_tree
+        seen: list[int] = []
+
+        def spy(
+            repo: Path, tree: str, algorithm: str, directories: Any, limits: Any
+        ) -> Any:
+            seen.append(
+                stat.S_IMODE(os.fstat(directories.at("", create=False)).st_mode)
+            )
+            return real_write_tree(repo, tree, algorithm, directories, limits)
+
+        with mock.patch.object(owner, "_write_tree", side_effect=spy):
+            owner.materialize(self.repo, tree, destination, limits=self.limits())
+        self.assertEqual(1, len(seen))
+        self.assertEqual(0, seen[0] & 0o077, oct(seen[0]))
+        self.assertEqual(
+            stat.S_IMODE((destination / "d").stat().st_mode),
+            stat.S_IMODE(destination.stat().st_mode),
+        )
+
+    # AQ: the listing streams into entries; it is never held as one buffer.
+    def test_the_listing_streams_into_entries(self) -> None:
+        owner = _owner()
+        tree = self.commit({"a.txt": b"a\n", "d/b.txt": b"b\n"})
+        real_git = owner._git
+        calls: list[tuple[str, bool]] = []
+
+        def spy(repo: Path, args: list[str], **kwargs: Any) -> Any:
+            calls.append((args[0], kwargs.get("sink") is not None))
+            return real_git(repo, args, **kwargs)
+
+        with mock.patch.object(owner, "_git", side_effect=spy):
+            paths = owner.tree_paths(self.repo, tree, limits=self.limits())
+        self.assertEqual(frozenset({"a.txt", "d/b.txt"}), paths)
+        self.assertIn(("ls-tree", True), calls)
+        self.assertNotIn(("ls-tree", False), calls)
+
+    def test_a_listing_that_ends_inside_a_record_is_a_refusal(self) -> None:
+        # Kill test, added with the round-8 mutants: `-z` ends every record with NUL,
+        # so bytes left over when the stream ends are a malformed record.
+        owner = _owner()
+        tree = self.commit({"a.txt": b"a\n"})
+        limits = self.limits()
+        unterminated = f"100644 blob {'a' * 40}\ta.txt".encode()
+        with mock.patch.object(owner, "_git", side_effect=self.feeding(unterminated)):
+            self.assertRefused(
+                "git-failed", lambda: owner.tree_paths(self.repo, tree, limits=limits)
+            )
 
 
 if __name__ == "__main__":
