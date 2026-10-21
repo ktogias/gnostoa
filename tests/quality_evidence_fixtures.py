@@ -4,6 +4,7 @@ inventory's test modules. It holds no test, so discovery runs none of it twice."
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import os
@@ -80,6 +81,17 @@ _DIAGNOSTIC_TESTS = (
 )
 
 
+def _fixture_git_env() -> dict[str, str]:
+    """The environment of the fixtures' own Git: the caller's, never its global or
+    system configuration, so a developer's ~/.gitconfig or /etc/gitconfig cannot run a
+    hook, sign or alias in a fixture repository (Revix on #450; #389 6327632965)."""
+    return {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+    }
+
+
 def _diagnostic_line(text: str, needle: str, after: str | None = None) -> int:
     start = 0
     lines = text.splitlines()
@@ -92,10 +104,9 @@ def _diagnostic_line(text: str, needle: str, after: str | None = None) -> int:
 # inventory is COMPLETE, however clean its subject looks. Its U1 (6225341677) adds the
 # import graph, which is not proven confined to the recorded tracked inputs.
 _SOURCE_BINDING_GAP = (
-    "source binding UNVERIFIED: no bounded check of the index's assume-unchanged and "
-    "skip-worktree entries, which can hide edits from git status; and the producers' "
-    "import graph is not proven confined to the recorded tracked inputs, so an "
-    "untracked module in the checkout can shape a diagnostic on a tracked path"
+    "source binding UNVERIFIED: the producers' installed environment and import graph "
+    "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
+    "are bound"
 )
 
 
@@ -175,10 +186,28 @@ class _DiagnosticFixture(unittest.TestCase):
                 *args,
             ],
             cwd=self.root,
+            env=_fixture_git_env(),
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    @staticmethod
+    def _then(real, failure):
+        """A side effect that answers through `real` once, then raises `failure`."""
+        calls: list[int] = []
+
+        def answer(*args, **kwargs):
+            calls.append(1)
+            if len(calls) > 1:
+                raise failure
+            return real(*args, **kwargs)
+
+        return answer
+
+    def _head(self) -> str:
+        """The fixture's current commit, the one a collection would freeze."""
+        return self._git("rev-parse", "HEAD")
 
     @staticmethod
     def _find(inventory: dict, tool: str, rule, path: str, line: int) -> list[dict]:
@@ -194,6 +223,13 @@ class _DiagnosticFixture(unittest.TestCase):
     @staticmethod
     def _read(path: Path) -> dict:
         return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+_EXTRA_COMPLEX = (
+    "\n\ndef extra(a: int) -> int:\n    total = 0\n"
+    + "".join(f"    if a > {n}:\n        total += 1\n" for n in range(16))
+    + "    return total\n"
+)
 
 
 class _DiagnosticInventoryFixture(_DiagnosticFixture):
@@ -283,13 +319,32 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "url": None,
         }
 
+    def _source_root(self, cwd) -> Path:
+        """The root the producers ran in: the run's staged copy of the frozen tree,
+        `<output>/<run>/source`, never the checkout (#389 F3 S2 B); or the fixture's
+        root, for a producer a test runs on it directly."""
+        output, cwd = self.output.resolve(), Path(cwd).resolve()
+        if not cwd.is_relative_to(output):
+            return self.root.resolve()
+        relative = cwd.relative_to(output)
+        return output / relative.parts[0] / relative.parts[1]
+
+    def _group(self, cwd) -> str:
+        """A producer's working directory, relative to the root it analyzed."""
+        return Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
+
+    def _staged_text(self, text: str, cwd) -> str:
+        """`text` as a producer run in `cwd` writes it: its absolute names under the
+        staged source it read, never the checkout (#389 F3 S2 B)."""
+        return text.replace(str(self.root.resolve()), str(self._source_root(cwd)))
+
     def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
             report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
             return 0, None, False
         if "mypy" in command:
-            prefix = Path(cwd).resolve().relative_to(self.root.resolve()).as_posix()
+            prefix = Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
             prefix = "" if prefix == "." else prefix + "/"
             if self.mypy_text is not None and not prefix:
                 report.write_text(self.mypy_text, encoding="utf-8")
@@ -304,12 +359,14 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             status = self.mypy_exit.get(prefix or ".", 1 if lines else 0)
             return status, None if status in (0, 1) else f"exited {status}", False
         if "ruff" in command:
-            report.write_text(
+            text = (
                 self.ruff_text
                 if self.ruff_text is not None
-                else json.dumps(self.ruff_records),
-                encoding="utf-8",
+                else json.dumps(self.ruff_records)
             )
+            # Ruff names the files it read absolutely, under the staged source the
+            # producers ran in, never the checkout (#389 F3 S2 B).
+            report.write_text(self._staged_text(text, cwd), encoding="utf-8")
             return self.ruff_exit, None, False
         raise AssertionError(f"unexpected producer: {command}")
 
@@ -354,13 +411,23 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         alone, and the streams they replaced: the boundary is exercised by injection,
         never by exhausting memory (the Router's L2, 6228117951 on #436)."""
         target = os.path.realpath(self.root / path)
+        # The same file in a run's staged source, `<output>/<run>/source/<path>`, the
+        # producers' root (#389 F3 S2 B); opened for reading alone.
+        staged = os.sep + os.path.join("source", path)
+        output = os.path.realpath(self.output) + os.sep
         failing: set[int] = set()
         streams: list[_RaisingRead] = []
         real_open, real_fdopen = os.open, os.fdopen
 
+        def matches(name, flags) -> bool:
+            if flags & (os.O_WRONLY | os.O_RDWR):
+                return False
+            real = os.path.realpath(name)
+            return real == target or (real.startswith(output) and real.endswith(staged))
+
         def opening(name, flags, *args, **kwargs):
             descriptor = real_open(name, flags, *args, **kwargs)
-            if os.path.realpath(name) == target:
+            if matches(name, flags):
                 failing.add(descriptor)
             else:
                 failing.discard(descriptor)
@@ -383,25 +450,41 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _opened_sources(self):
         """A patch recording which tracked sources are opened, and their list."""
         opened: list[str] = []
-        real_open = os.open
-        root = os.path.realpath(self.root)
+        real_open, real_metric = os.open, self.module._run_complexity
+        roots = [os.path.realpath(self.root)]
 
         def opening(name, flags, *args, **kwargs):
             path = os.path.realpath(name)
-            if path.startswith(root + os.sep) and path.endswith(".py"):
-                opened.append(os.path.relpath(path, root))
+            for root in roots[1:]:
+                if path.startswith(root + os.sep) and path.endswith(".py"):
+                    opened.append(os.path.relpath(path, root))
             return real_open(name, flags, *args, **kwargs)
 
-        return patch.object(self.module.os, "open", side_effect=opening), opened
+        def metric(root, *args, **kwargs):
+            roots.append(os.path.realpath(root))
+            try:
+                return real_metric(root, *args, **kwargs)
+            finally:
+                roots.pop()
+
+        @contextlib.contextmanager
+        def spying():
+            with (
+                patch.object(self.module.os, "open", side_effect=opening),
+                patch.object(self.module, "_run_complexity", side_effect=metric),
+            ):
+                yield
+
+        return spying(), opened
 
     def _with_a_real_main_mypy(self, script: str):
         """A patch of _bounded_run under which the main mypy group runs `script` in a
         real child, through the real runner; every other producer is the fake."""
         real = self.module._bounded_run
-        root = self.root.resolve()
 
         def run(command, **options):
-            main = Path(options["cwd"]).resolve() == root
+            cwd = Path(options["cwd"]).resolve()
+            main = cwd == self._source_root(cwd)
             if main and "mypy" in command and "--version" not in command:
                 return real([sys.executable, "-I", "-c", script], **options)
             return self._fake_run(command, **options)
@@ -586,8 +669,20 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _uncompared(self, base: str, reader=None) -> dict:
         """Collect against `base` and require the comparison's named gap: no diff
         read, no comparison published, every finding kept with in_diff null."""
-        spy = reader or self.module._diagnostic_git
-        with patch.object(self.module, "_diagnostic_git", side_effect=spy) as git:
+        real = self.module._diagnostic_git
+        chosen = reader or real
+        frozen = {"HEAD^{commit}", f"{self._head()}^{{tree}}"}
+
+        def comparison_only(root, deadline, *arguments, **options):
+            # The freeze reads the subject's own commit and tree; the reader under test
+            # answers the comparison's reads alone (#389 F3 S2 B).
+            if arguments[-1] in frozen:
+                return real(root, deadline, *arguments, **options)
+            return chosen(root, deadline, *arguments, **options)
+
+        with patch.object(
+            self.module, "_diagnostic_git", side_effect=comparison_only
+        ) as git:
             inventory = self._inventory(base=base)
         self.assertNotIn("diff", [call.args[2] for call in git.call_args_list])
         self.assertIsNone(inventory["scope"]["diff"])

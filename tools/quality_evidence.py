@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import bisect
+import contextlib
 import dataclasses
 import hashlib
 import importlib
@@ -13,6 +14,7 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -24,7 +26,7 @@ import uuid
 from collections.abc import Mapping
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, TextIO
+from typing import TYPE_CHECKING, Any, BinaryIO, TextIO
 from urllib.parse import quote, unquote, urlparse
 
 from tools import bounded_process, test_suite
@@ -49,6 +51,10 @@ from tools.requirements_lock import (
     normalized_distribution_name,
 )
 from tools.security_scan import SecurityScanError, scan_tracked_tree
+
+if TYPE_CHECKING:
+    # Only for its type: the default collection never imports the exact-tree owner.
+    from tools.exact_tree import Limits as _TreeLimits
 
 DEFAULT_COVERAGE_FLOOR = 65.0
 
@@ -1375,7 +1381,7 @@ def collect_quality_evidence(
 # COMPLETE in this slice: the source binding is UNVERIFIED (the Router's I3 and U1 on
 # #436), so the COMPLETE and PARTIAL statuses stay unreachable until it is proven.
 
-DIAGNOSTIC_SCHEMA = "gnostoa-diagnostic-inventory/v1"
+DIAGNOSTIC_SCHEMA = "gnostoa-diagnostic-inventory/v2"
 DIAGNOSTIC_INVENTORY = "diagnostic-inventory.json"
 # Provisional mappings, calibrated on #389's thirteen reference heads (6201413011) and not
 # qualified: a mapped code is evidence about a DeepSource rule, never a substitute for it.
@@ -1402,15 +1408,20 @@ _DECISIONS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHan
 
 @dataclasses.dataclass(frozen=True)
 class DiagnosticLimits:
-    """The finite bounds of one inventory: one deadline for every producer and Git
-    call, and caps on the tracked files, the findings, each producer's output and
-    each source that the complexity metric parses in this process."""
+    """The finite bounds of one inventory: one deadline for every producer, Git call,
+    enumeration, stage and identity read, and caps on the tracked Python files, the
+    findings, each producer's output and each source that the complexity metric
+    parses in this process. The whole frozen tree has its own file and byte caps,
+    the exact-tree owner's defaults, apart from the Python inputs `max_files`
+    counts (Router #389 6325382720, D2)."""
 
     max_files: int = 5_000
     max_findings: int = MAX_FINDINGS
     max_report_bytes: int = 64 * 1024 * 1024
     timeout_seconds: float = 900.0
     max_source_bytes: int = 8 * 1024 * 1024
+    max_tree_files: int = 200_000
+    max_tree_bytes: int = 4 << 30
 
 
 DEFAULT_DIAGNOSTIC_LIMITS = DiagnosticLimits()
@@ -2282,6 +2293,7 @@ def _diagnostic_git(
         git = _git_executable()
     except PrepareError as exc:
         raise _ComparisonUnavailable("git is unavailable") from exc
+    policy = _no_fetch_policy()
     # --no-replace-objects: every comparison read uses the objects the recorded base
     # names, never a refs/replace/ substitute (Codex, routed by the Router 6227604656
     # on #436, N1).
@@ -2289,7 +2301,7 @@ def _diagnostic_git(
     process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- argv list, no shell: Git by its resolved path, fixed options and a validated commit id
         command,
         cwd=root,
-        env=_base_env(),
+        env={**_base_env(), **policy},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -2336,6 +2348,26 @@ def _diagnostic_git(
     raise _git_failure(drained, _reap(process))
 
 
+# The no-fetch values the Router selected from the exact-tree owner's environment: no
+# transport, and no lazy fetch of a missing object (Router #389 6325382720).
+_NO_FETCH = {"GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1"}
+
+
+def _no_fetch_policy() -> dict[str, str]:
+    """The integrated exact-tree owner's no-fetch policy, read from its environment,
+    so that a promisor the repository configures runs nothing (PAO 6325156914). A
+    policy that cannot be read, or holds anything but those exact values, fails
+    closed: never a fetch-capable read."""
+    try:
+        from tools.exact_tree import _GIT_ENV
+    except ImportError as exc:
+        raise _ComparisonUnavailable("the no-fetch policy is unavailable") from exc
+    policy = {key: _GIT_ENV.get(key) for key in _NO_FETCH}
+    if policy != _NO_FETCH:
+        raise _ComparisonUnavailable("the no-fetch policy is unavailable")
+    return dict(_NO_FETCH)
+
+
 def _git_failure(
     drained: bounded_process.Drained, reaped: str | None
 ) -> _ComparisonRefused | subprocess.TimeoutExpired | OSError:
@@ -2365,12 +2397,16 @@ def _diff_scope(
     deadline: float,
     wanted: set[str] | None = None,
     cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
+    *,
+    head: str,
 ) -> tuple[dict[str, Any], dict[str, set[int]]]:
-    """The paths changed since `base`, and the lines each change adds, read per path
-    by the GitHub patch reader's own hunk accounting (Claude on #436). It is imported
-    here, so that the default collection never loads the merge-evidence reader. With
-    `wanted`, only those paths are read line by line: a changed path that no finding
-    names is listed, never read whole (CodeAnt on #436)."""
+    """The paths the frozen commit `head` changes since `base`, and the lines each
+    change adds, read per path by the GitHub patch reader's own hunk accounting
+    (Claude on #436). `head` is the one commit the inventory froze, never a later
+    `HEAD` (Router #389 6325382720, D4). It is imported here, so that the default
+    collection never loads the merge-evidence reader. With `wanted`, only those
+    paths are read line by line: a changed path that no finding names is listed,
+    never read whole (CodeAnt on #436)."""
     from tools.merge_evidence_github import _added_lines
 
     # The base must be the commit it names: a tree, a blob, a tag that peels to
@@ -2396,7 +2432,7 @@ def _diff_scope(
         "-z",
         "--no-renames",
         base,
-        "HEAD",
+        head,
         cap=cap,
     ).split("\0")
     changed = sorted(name for name in names if name)
@@ -2414,7 +2450,7 @@ def _diff_scope(
             "--no-textconv",
             "--no-renames",
             base,
-            "HEAD",
+            head,
             "--",
             f":(literal){path}",
             cap=cap,
@@ -2456,13 +2492,13 @@ def _annotate_diff(
     deadline: float,
     cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
     *,
-    compare: bool = True,
+    head: str | None,
 ) -> dict[str, Any] | None:
     """Each finding's `in_diff` against `base`, or None, never False, when the
-    comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope. Without
-    `compare`, only the base's form is checked, never whether it names a commit, and
-    nothing is compared: a dirty or unknown tree's producers read the working tree,
-    and the comparison reads HEAD (the Router's D1 and B-a on #436)."""
+    comparison failed (Amazon Q, Kilo and Octopus on #436); the diff scope. The
+    comparison is the frozen commit `head`'s. Without one, only the base's form is
+    checked and nothing is compared, which is the comparison's own gap (Router #389
+    6325382720, D4)."""
     diff: dict[str, Any] | None = None
     changed: dict[str, list[int]] | None = None
     try:
@@ -2471,13 +2507,19 @@ def _annotate_diff(
         gaps.append(f"base {base!r} is not a 40-hex commit id")
     else:
         try:
-            if compare:
-                diff, lines = _diff_scope(
-                    root, base, deadline, {finding["path"] for finding in findings}, cap
-                )
-                # Each path's changed lines ordered once, for every finding's bisect
-                # (cubic, the Router's I1 on #436).
-                changed = {path: sorted(numbers) for path, numbers in lines.items()}
+            if head is None:
+                raise _ComparisonRefused("no commit was frozen to compare")
+            diff, lines = _diff_scope(
+                root,
+                base,
+                deadline,
+                {finding["path"] for finding in findings},
+                cap,
+                head=head,
+            )
+            # Each path's changed lines ordered once, for every finding's bisect
+            # (cubic, the Router's I1 on #436).
+            changed = {path: sorted(numbers) for path, numbers in lines.items()}
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             # The comparison's own reasons are written as they are; any other failure
             # by its type alone, never its text (the Router's X1 and Y2 on #436).
@@ -2492,12 +2534,15 @@ def _annotate_diff(
 
 
 _SOURCE_BINDING_GAP = (
-    "source binding UNVERIFIED: no bounded check of the index's assume-unchanged and "
-    "skip-worktree entries, which can hide edits from git status; and the producers' "
-    "import graph is not proven confined to the recorded tracked inputs, so an "
-    "untracked module in the checkout can shape a diagnostic on a tracked path"
+    "source binding UNVERIFIED: the producers' installed environment and import graph "
+    "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
+    "are bound"
 )
-
+# The one form a frozen object id takes, the owner's two hash lengths.
+_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+# The private directory, inside the run, that holds the staged source apart from the
+# producers' reports (Router #389 6324876845).
+_STAGED_SOURCE = "source"
 
 # The scope owner's categories for Git metadata that is unsafe or cannot be
 # inspected: no proof of absence, so no inventory (the Router's 6239259708 and C-a on
@@ -2525,76 +2570,200 @@ def _unrepresentable_timeout(read: str) -> QualityEvidenceError:
     )
 
 
-def _subject_state(root: Path, deadline: float) -> tuple[dict[str, Any], str | None]:
-    """The subject's Git state, read within the one budget, and the identity check's
-    own named gap when it failed operationally: the subject read and the recheck after
-    collection both keep it (Amazon Q, the Router's 6243847776 on #436)."""
-    state: dict[str, Any] = {"revision": None, "tracked_tree_dirty": None}
-    identity_gap: str | None = None
-    # One clock reading decides each check and its timeout: a spent budget starts no
-    # Git, and an open one passes exactly what is left, never a floor (Codex, the
-    # Router's I-b on #436).
-    remaining = deadline - time.monotonic()
-    if remaining > 0:
-        owned = False
-        # A spent budget reads nothing, and its state is unknown (CodeAnt on #436).
-        # Otherwise the scope owner classifies `root/.git`. A root with none of its
-        # own, such as a packaged root inside another checkout, is never bound to an
-        # enclosing repository: its state is unknown, and no Git is read (Codex, the
-        # Router's G-a on #436). Unsafe or uninspectable metadata is no proof of
-        # absence, so the inventory is refused, by its category alone (the Router's
-        # 6239259708 on #436).
-        # An identity that Git could not confirm, by a failed or timed-out answer, is
-        # never a bound subject: no Git subject is read (the Router's I-b on #436).
-        try:
-            owned = has_git_metadata(root, timeout=remaining)
-        except RepositoryScopeError as exc:
-            _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
-            # Any other scope error is its own named gap, by its category, never its
-            # text, as everywhere else (Amazon Q on #436).
-            identity_gap = scope_error_detail(
-                "cannot confirm the subject's Git identity", exc
-            )
-        except OverflowError as exc:
-            raise _unrepresentable_timeout("the subject's Git metadata") from exc
-        remaining = deadline - time.monotonic()
-        if owned and remaining > 0:
-            try:
-                state = _git_state(root, timeout=remaining)
-            except OverflowError as exc:
-                raise _unrepresentable_timeout("the subject's Git state") from exc
-    if state["tracked_tree_dirty"] is None:
-        # A state the shared reader could not read whole names no revision: its value
-        # may be the caller's KNOWLEDGE_KIT_REVISION, never observed. A revision read
-        # just before a failed or out-of-budget status read is dropped too, a stated,
-        # conservative loss (the Router's V1, 6225341677 on #436).
-        state = {**state, "revision": None}
-    return state, identity_gap
-
-
-def _diagnostic_subject(
+def _frozen_subject(
     root: Path, expected_revision: str | None, deadline: float
-) -> tuple[dict[str, Any], list[str]]:
-    """The subject as `git status` sees it, and its gaps. The index can hide an edit
-    from that view (Codex on #436), and no bounded check of the index is admitted, so
-    the source binding stays UNVERIFIED and is always a gap (the Router's I3 on #436,
-    6210989878)."""
-    state, identity_gap = _subject_state(root, deadline)
-    gaps = []
-    if state["tracked_tree_dirty"] is not False:
-        gaps.append("the tracked tree is dirty or its state is unknown")
-    if identity_gap is not None:
-        gaps.append(identity_gap)
-    if expected_revision is not None and state["revision"] != expected_revision:
+) -> tuple[str | None, str | None, list[str]]:
+    """The one commit the inventory analyzes, resolved once to its full id, and the
+    tree derived from that id, never from a second read of `HEAD` or a ref (Router
+    #389 6325382720, D4). With `expected_revision`, that exact commit, never another
+    object it peels to; otherwise `HEAD`, read once. Unsafe or uninspectable metadata
+    is refused, by its category alone, and a root with no Git metadata of its own
+    freezes nothing: no Git is read for it (the Router's G-a on #436). Each other
+    failure is the subject's named gap, never a fallback to the checkout."""
+    gaps: list[str] = []
+    if expected_revision is not None and not _OBJECT_ID.fullmatch(expected_revision):
+        gaps.append(f"expected revision {expected_revision!r} is not a full commit id")
+        return None, None, gaps
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        gaps.append("the deadline passed before the subject was frozen")
+        return None, None, gaps
+    try:
+        owned = has_git_metadata(root, timeout=remaining)
+    except RepositoryScopeError as exc:
+        _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
         gaps.append(
-            f"revision {state['revision']} is not the expected {expected_revision}"
+            scope_error_detail("cannot confirm the subject's Git identity", exc)
         )
-    gaps.append(_SOURCE_BINDING_GAP)
+        return None, None, gaps
+    except OverflowError as exc:
+        raise _unrepresentable_timeout("the subject's Git metadata") from exc
+    if not owned:
+        gaps.append("the subject has no Git metadata of its own: no commit was frozen")
+        return None, None, gaps
+    wanted = expected_revision or "HEAD"
+    try:
+        commit = _one_object(root, deadline, f"{wanted}^{{commit}}")
+        if expected_revision is not None and commit != expected_revision:
+            raise _ComparisonRefused("the expected revision is not that commit")
+        tree = _one_object(root, deadline, f"{commit}^{{tree}}")
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        own = isinstance(exc, (_ComparisonUnavailable, _ComparisonRefused))
+        reason = str(exc) if own else type(exc).__name__
+        gaps.append(f"cannot freeze the subject's commit: {reason}")
+        return None, None, gaps
+    return commit, tree, gaps
+
+
+def _one_object(root: Path, deadline: float, name: str) -> str:
+    """The full object id `name` resolves to, read once; never an answer that is not
+    exactly one full id."""
+    answer = _diagnostic_git(
+        root, deadline, "rev-parse", "--verify", "--end-of-options", name
+    ).splitlines()
+    if len(answer) != 1 or not _OBJECT_ID.fullmatch(answer[0]):
+        raise _ComparisonRefused("the answer is not one full object id")
+    return answer[0]
+
+
+def _stage(
+    root: Path, tree: str, run: Path, owner: _TreeLimits
+) -> tuple[Path, str] | str:
+    """The frozen tree's exact bytes, staged privately in the run through the shared
+    exact-tree owner, within the inventory's one deadline and its whole-tree caps,
+    and the staged directory's identity, computed again independently; or the
+    owner's code as the gap, and nothing staged (Router #389 6325382720, D3)."""
+    from tools import exact_tree
+
+    staged = run / _STAGED_SOURCE
+    try:
+        exact_tree.materialize(root, tree, staged, limits=owner)
+        identity = exact_tree.observed_tree(root, staged, limits=owner)
+    except exact_tree.ExactTreeError as exc:
+        _discard_staged(staged)
+        return f"the source tree cannot be staged: {exc.code}"
+    except OverflowError as exc:
+        _discard_staged(staged)
+        raise _unrepresentable_timeout("the frozen tree's stage") from exc
+    if identity != tree:
+        _discard_staged(staged)
+        return "the source tree cannot be staged: tree-mismatch"
+    return staged, identity
+
+
+def _reobserved(
+    root: Path, staged: Path, tree: str, owner: _TreeLimits, run: Path
+) -> bool:
+    """Whether the staged source is still the frozen tree after the producers read
+    it. One that changed is refused, with no inventory (Router #389 6325382720,
+    D3); one that cannot be observed again is not certified."""
+    from tools import exact_tree
+
+    try:
+        after = exact_tree.observed_tree(root, staged, limits=owner)
+    except exact_tree.ExactTreeError:
+        return False
+    except OverflowError as exc:
+        raise _unrepresentable_timeout("the staged source's identity") from exc
+    if after != tree:
+        raise QualityEvidenceError(
+            "the staged source changed during collection; no inventory was written, "
+            f"the raw reports are in {run}"
+        )
+    return True
+
+
+def _metadata_rebound(root: Path, deadline: float, gaps: list[str]) -> bool:
+    """Whether the subject's Git metadata is still its own after collection, by the
+    scope owner's identity check again: never a git status. Unsafe or uninspectable
+    metadata refuses the inventory, by its category alone, as at the freeze; one that
+    cannot be confirmed, is gone or is out of budget leaves the comparison that read
+    it unbound, its own failure named once (the Router's 6239259708 and 6243847776
+    on #436; Router #389 6325382720, D3: the existing hard refusals remain)."""
+    reread = "the subject could not be re-read after collection"
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        gaps.append(reread)
+        return False
+    try:
+        owned = has_git_metadata(root, timeout=remaining)
+    except RepositoryScopeError as exc:
+        _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
+        gaps.append(reread)
+        detail = scope_error_detail("cannot confirm the subject's Git identity", exc)
+        if detail not in gaps:
+            gaps.append(detail)
+        return False
+    except OverflowError as exc:
+        raise _unrepresentable_timeout("the subject's Git metadata") from exc
+    if not owned:
+        gaps.append(reread)
+    return owned
+
+
+def _discard_staged(staged: Path) -> None:
+    """Remove the staged source this run owns. A failure here never replaces the
+    refusal or the result it follows: the run directory, which holds the raw
+    reports, keeps it."""
+    with contextlib.suppress(OSError):
+        shutil.rmtree(staged)
+
+
+def _analyze_frozen(
+    root: Path,
+    tree: str,
+    run: Path,
+    limits: DiagnosticLimits,
+    owner: _TreeLimits,
+    gaps: list[str],
+    deadline: float,
+) -> tuple[list[str] | None, _ProducerResult, str | None, bool]:
+    """The frozen tree's tracked Python set, the producers' result over its staged
+    bytes, the staged identity and whether it was observed unchanged after them.
+    Nothing is analyzed without a staged source, never the checkout: a known set is
+    named unanalyzed, and an unknown one stays unknown (Router #389 6325382720, D3).
+    The staged source is removed once the producers are done."""
+    expected = _tracked_python(root, tree, owner)
+    if isinstance(expected, str):
+        gaps.append(expected)
+        return None, _ProducerResult(), None, False
+    staging = _stage(root, tree, run, owner)
+    if isinstance(staging, str):
+        gaps.append(staging)
+        unstaged = dict.fromkeys(
+            expected, "the source tree was not staged, never analyzed"
+        )
+        return expected, _ProducerResult(unanalyzed=unstaged), None, False
+    staged, identity = staging
+    try:
+        result = _run_producers(staged, run, expected, limits, gaps, deadline)
+        bound = _reobserved(root, staged, tree, owner, run)
+    finally:
+        _discard_staged(staged)
+    if not bound:
+        gaps.append("the staged source could not be observed again")
+    return expected, result, identity, bound
+
+
+def _source_record(
+    commit: str | None,
+    tree: str | None,
+    identity: str | None,
+    expected_revision: str | None,
+    bound: bool,
+) -> dict[str, Any]:
+    """The subject as v2 records it: the frozen commit and tree, and the staged
+    identity only while the tree was staged and observed unchanged after the
+    producers. The checkout is never read, so no dirty state is recorded (Router
+    #389 6325382720, D1)."""
     return {
-        **state,
+        "revision": commit,
+        "tree": tree,
+        "staged_identity": identity if bound else None,
+        "tree_binding": "EXACT_TREE_STAGED" if bound else "NOT_STAGED",
         "expected_revision": expected_revision,
         "source_binding": "UNVERIFIED",
-    }, gaps
+    }
 
 
 def _diagnostic_coverage(
@@ -2653,22 +2822,19 @@ def _inventory_configuration(limits: DiagnosticLimits) -> dict[str, Any]:
     }
 
 
-def _tracked_python(root: Path, deadline: float) -> tuple[list[str] | None, str | None]:
-    """The tracked Python set, enumerated by candidate_paths within what is left of
-    the inventory's one budget; None, an unknown set, and its gap when it cannot be
-    (Option A on #436). A spent budget enumerates nothing, rather than race Git
-    against the millisecond floor."""
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return None, "the deadline passed before the tracked set was enumerated"
+def _tracked_python(root: Path, tree: str, owner: _TreeLimits) -> list[str] | str:
+    """The tracked Python set of the frozen tree, listed from its objects, never the
+    index or the checkout, within the inventory's one deadline and whole-tree caps;
+    or, for a set that stays unknown, its gap (Router #389 6325382720, D3)."""
+    from tools import exact_tree
+
     try:
-        paths = candidate_paths(root, timeout=remaining)
-    except RepositoryScopeError as exc:
-        _refuse_unsafe_metadata(exc, "cannot bind the tracked set's Git metadata")
-        return None, scope_error_detail("cannot enumerate tracked-tree candidates", exc)
+        paths = exact_tree.tree_paths(root, tree, limits=owner)
+    except exact_tree.ExactTreeError as exc:
+        return f"cannot enumerate the frozen tree: {exc.code}"
     except OverflowError as exc:
-        raise _unrepresentable_timeout("the tracked set's enumeration") from exc
-    return sorted(p.as_posix() for p in paths if p.suffix == ".py"), None
+        raise _unrepresentable_timeout("the frozen tree's listing") from exc
+    return sorted(p for p in paths if PurePosixPath(p).suffix == ".py")
 
 
 def _check_limits(limits: DiagnosticLimits) -> None:
@@ -2676,7 +2842,14 @@ def _check_limits(limits: DiagnosticLimits) -> None:
     bound, which read() takes as everything (cubic on #436), a max_findings above the
     normalization bound, or a timeout that is not a positive finite number of seconds
     (CodeAnt on #436)."""
-    for name in ("max_files", "max_findings", "max_report_bytes", "max_source_bytes"):
+    for name in (
+        "max_files",
+        "max_findings",
+        "max_report_bytes",
+        "max_source_bytes",
+        "max_tree_files",
+        "max_tree_bytes",
+    ):
         value = getattr(limits, name)
         # An exact integer: inf or 1.5 would pass a comparison (CodeAnt on #436).
         if type(value) is not int or value < 0:
@@ -2725,32 +2898,6 @@ def _refuse_caller_git_overrides() -> None:
         )
 
 
-def _subject_unbound(
-    source: dict[str, Any],
-    after: dict[str, Any],
-    identity_gap: str | None,
-    gaps: list[str],
-) -> bool:
-    """Whether the recheck after collection leaves the subject unbound, naming why
-    in `gaps`: a read that could not finish, with its own identity failure once, or
-    a subject that changed during collection (SonarCloud's S3776 on #436)."""
-    if after["tracked_tree_dirty"] is None:
-        # A read that could not finish is no evidence of a change (Claude on #436).
-        gaps.append("the subject could not be re-read after collection")
-        # Its own identity failure is named too, once (the Router's 6243847776 on
-        # #436).
-        if identity_gap is not None and identity_gap not in gaps:
-            gaps.append(identity_gap)
-        return True
-    if source["tracked_tree_dirty"] is not None and (
-        after["revision"],
-        after["tracked_tree_dirty"],
-    ) != (source["revision"], source["tracked_tree_dirty"]):
-        gaps.append("the subject changed during collection")
-        return True
-    return False
-
-
 def collect_diagnostic_inventory(
     repository_root: Path,
     output_directory: Path,
@@ -2766,16 +2913,25 @@ def collect_diagnostic_inventory(
     COMPLETE while its source binding is UNVERIFIED."""
     _check_limits(limits)
     _refuse_caller_git_overrides()
+    from tools import exact_tree
+
     root = repository_root.resolve()
     output = output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="diagnostic-", dir=output))
     deadline = time.monotonic() + limits.timeout_seconds
-    source, gaps = _diagnostic_subject(root, expected_revision, deadline)
-    expected, unknown = _tracked_python(root, deadline)
-    if unknown is not None:
-        gaps.append(unknown)
-    result = _run_producers(root, run, expected or [], limits, gaps, deadline)
+    # The owner's bounds share the inventory's one absolute deadline, never a fresh
+    # budget of its own (Router #389 6324876845).
+    owner = exact_tree.Limits(deadline, limits.max_tree_files, limits.max_tree_bytes)
+    commit, tree, gaps = _frozen_subject(root, expected_revision, deadline)
+    if tree is None:
+        expected, result, identity, bound = None, _ProducerResult(), None, False
+    else:
+        expected, result, identity, bound = _analyze_frozen(
+            root, tree, run, limits, owner, gaps, deadline
+        )
+    gaps.append(_SOURCE_BINDING_GAP)
+    source = _source_record(commit, tree, identity, expected_revision, bound)
     if result.truncated:
         # A report cut at max_report_bytes, or whose capture failed, holds a prefix
         # whose rest is unknown, so, as over max_findings, nothing is published (Codex
@@ -2800,12 +2956,10 @@ def collect_diagnostic_inventory(
             gaps,
             deadline,
             limits.max_report_bytes,
-            compare=source["tracked_tree_dirty"] is False,
+            head=commit,
         )
     )
-    after, identity_gap = _subject_state(root, deadline)
-    unbound = _subject_unbound(source, after, identity_gap, gaps)
-    if base is not None and unbound:
+    if not _metadata_rebound(root, deadline, gaps) and base is not None:
         # The comparison no longer describes the subject, so no answer stays definite,
         # and its own record is not published as bound provenance either (the Router's
         # D1 and D1b on #436).
