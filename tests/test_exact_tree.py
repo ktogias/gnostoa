@@ -9,7 +9,6 @@ S2-A3-01, Router 6267325366 and 6297725852).
 
 from __future__ import annotations
 
-import contextlib
 import errno
 import importlib
 import os
@@ -20,8 +19,11 @@ import time
 import unittest
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest import mock
+
+if TYPE_CHECKING:
+    from tools.exact_tree import Limits
 
 _ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -83,7 +85,7 @@ class ExactTreeFixture(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", "c")
         return git(self.repo, "rev-parse", "HEAD^{tree}")
 
-    def limits(self, **overrides: Any) -> Any:
+    def limits(self, **overrides: Any) -> Limits:
         values: dict[str, Any] = {
             "deadline": time.monotonic() + 60,
             "max_files": 1_000,
@@ -91,6 +93,45 @@ class ExactTreeFixture(unittest.TestCase):
         }
         values.update(overrides)
         return _owner().Limits(**values)
+
+    def assertRefused(self, code: str | None, call: Any) -> Any:
+        owner = _owner()
+        with self.assertRaises(owner.ExactTreeError) as raised:
+            call()
+        if code is not None:
+            self.assertEqual(code, raised.exception.code)
+        return raised.exception
+
+    def link_tree(
+        self, links: dict[str, str], files: dict[str, bytes] | None = None
+    ) -> str:
+        """A tree of symlink entries (and files) written with mktree, nested as given."""
+        entries: dict[str, tuple[str, str]] = {}
+        for path, data in (files or {}).items():
+            entries[path] = (
+                "100644",
+                git(self.repo, "hash-object", "-w", "--stdin", stdin=data),
+            )
+        for path, target in links.items():
+            entries[path] = (
+                "120000",
+                git(self.repo, "hash-object", "-w", "--stdin", stdin=target.encode()),
+            )
+
+        def build(paths: dict[str, tuple[str, str]]) -> str:
+            lines: list[str] = []
+            subdirs: dict[str, dict[str, tuple[str, str]]] = {}
+            for path, (mode, oid) in sorted(paths.items()):
+                head, _, rest = path.partition("/")
+                if rest:
+                    subdirs.setdefault(head, {})[rest] = (mode, oid)
+                else:
+                    lines.append(f"{mode} blob {oid}\t{head}")
+            for name, sub in sorted(subdirs.items()):
+                lines.append(f"040000 tree {build(sub)}\t{name}")
+            return git(self.repo, "mktree", stdin=("\n".join(lines) + "\n").encode())
+
+        return build(entries)
 
     def blob(self, tree: str, path: str) -> bytes:
         return subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
@@ -239,12 +280,6 @@ class VerifyTrackedTests(ExactTreeFixture):
 
 
 class RefusalTests(ExactTreeFixture):
-    def assertRefused(self, code: str, call: Any) -> None:
-        owner = _owner()
-        with self.assertRaises(owner.ExactTreeError) as raised:
-            call()
-        self.assertEqual(code, raised.exception.code)
-
     def test_a_gitlink_is_refused(self) -> None:
         self.commit({"a.txt": b"a\n"})
         head = git(self.repo, "rev-parse", "HEAD")
@@ -368,45 +403,6 @@ class RefusalTests(ExactTreeFixture):
 
 class RoundTwoTests(ExactTreeFixture):
     """#446 round 2 (#389 6311879794): one RED per recorded class, run before the fix."""
-
-    def assertRefused(self, code: str | None, call: Any) -> Any:
-        owner = _owner()
-        with self.assertRaises(owner.ExactTreeError) as raised:
-            call()
-        if code is not None:
-            self.assertEqual(code, raised.exception.code)
-        return raised.exception
-
-    def link_tree(
-        self, links: dict[str, str], files: dict[str, bytes] | None = None
-    ) -> str:
-        """A tree of symlink entries (and files) written with mktree, nested as given."""
-        entries: dict[str, tuple[str, str]] = {}
-        for path, data in (files or {}).items():
-            entries[path] = (
-                "100644",
-                git(self.repo, "hash-object", "-w", "--stdin", stdin=data),
-            )
-        for path, target in links.items():
-            entries[path] = (
-                "120000",
-                git(self.repo, "hash-object", "-w", "--stdin", stdin=target.encode()),
-            )
-
-        def build(paths: dict[str, tuple[str, str]]) -> str:
-            lines: list[str] = []
-            subdirs: dict[str, dict[str, tuple[str, str]]] = {}
-            for path, (mode, oid) in sorted(paths.items()):
-                head, _, rest = path.partition("/")
-                if rest:
-                    subdirs.setdefault(head, {})[rest] = (mode, oid)
-                else:
-                    lines.append(f"{mode} blob {oid}\t{head}")
-            for name, sub in sorted(subdirs.items()):
-                lines.append(f"040000 tree {build(sub)}\t{name}")
-            return git(self.repo, "mktree", stdin=("\n".join(lines) + "\n").encode())
-
-        return build(entries)
 
     # A (P0): a link's containment is decided through the tree's own links.
     def test_a_link_chain_through_an_in_tree_link_cannot_escape(self) -> None:
@@ -754,8 +750,6 @@ class RoundTwoTests(ExactTreeFixture):
 class RoundThreeTests(ExactTreeFixture):
     """#446 round 3 (#389 6312793333): one RED per recorded class, run before the fix."""
 
-    assertRefused = RoundTwoTests.assertRefused
-
     # O (S6350): an object id reaches Git's argv as its canonical, plain string.
     def test_an_object_id_reaches_git_as_its_canonical_plain_string(self) -> None:
         owner = _owner()
@@ -872,8 +866,6 @@ class RoundThreeTests(ExactTreeFixture):
 class RoundFourTests(ExactTreeFixture):
     """#446 round 4 (#389 6313297746): one RED per recorded class, run before the fix."""
 
-    assertRefused = RoundTwoTests.assertRefused
-
     # X (S6350): the repository is Git's working directory, never an argument.
     def test_the_repository_reaches_git_as_its_working_directory_not_its_argv(
         self,
@@ -984,9 +976,6 @@ class RoundFiveTests(ExactTreeFixture):
     """#446 round 5 (Router #389 6313854024, option A): a reused tracked link stays
     inside the root through the components actually on disk. RED first."""
 
-    assertRefused = RoundTwoTests.assertRefused
-    link_tree = RoundTwoTests.link_tree
-
     def setUp(self) -> None:
         super().setUp()
         self.outside = self.root / "outside"
@@ -1015,6 +1004,13 @@ class RoundFiveTests(ExactTreeFixture):
         _owner().materialize_or_verify(
             self.repo, tree, destination, limits=self.limits(), ignore=ignore
         )
+
+    def open_descriptors(self) -> int:
+        """This process's open descriptors, as Linux and macOS both list them."""
+        for listing in ("/dev/fd", "/proc/self/fd"):
+            if os.path.isdir(listing):
+                return len(os.listdir(listing))
+        self.skipTest("this platform lists no open descriptors")
 
     def plant(self, destination: Path, name: str, pointed: Path | str) -> None:
         """An untracked link a run left behind, relative to where it sits."""
@@ -1162,14 +1158,65 @@ class RoundFiveTests(ExactTreeFixture):
         (destination / "real").mkdir()
         (destination / "real" / "x").write_bytes(b"x\n")
         self.plant(destination, "u", "real")
-        before = len(os.listdir("/proc/self/fd"))
+        before = self.open_descriptors()
         self.again(tree, destination)
-        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+        self.assertEqual(before, self.open_descriptors())
         os.unlink(destination / "u")
         self.plant(destination, "u", self.outside)
-        with contextlib.suppress(_owner().ExactTreeError):
-            self.again(tree, destination)
-        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+        self.assertRefused("escaping-link", lambda: self.again(tree, destination))
+        self.assertEqual(before, self.open_descriptors())
+
+
+class RoundSixTests(ExactTreeFixture):
+    """#446 round 6 (#389 6314305587): one RED per recorded class, run before the fix."""
+
+    # AE: an ignored directory covers its subtree, as `observed_tree`'s does.
+    def test_verify_tracked_skips_an_ignored_directory_and_its_subtree(self) -> None:
+        tree = self.commit({"gen/out.txt": b"tracked\n", "keep.txt": b"k\n"})
+        root = self.root / "reused"
+        _owner().materialize(self.repo, tree, root, limits=self.limits())
+        (root / "gen" / "out.txt").write_bytes(b"generated by the run\n")
+        _owner().verify_tracked(
+            self.repo, tree, root, limits=self.limits(), ignore=("gen",)
+        )
+
+    # AG: the deadline holds before every descent to a tracked link's parent.
+    def test_a_spent_deadline_opens_no_parent_directory(self) -> None:
+        owner = _owner()
+        tree = self.link_tree({"d/t": "x"}, {"d/f.txt": b"f\n"})
+        destination = self.root / "reused"
+        owner.materialize(self.repo, tree, destination, limits=self.limits())
+        spent = self.limits(deadline=time.monotonic() - 1)
+        real_open = os.open
+        opened: list[Any] = []
+
+        def counting(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            opened.append(path)
+            return real_open(path, flags, *args, **kwargs)
+
+        root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with mock.patch("os.open", side_effect=counting):
+                self.assertRefused(
+                    "deadline",
+                    lambda: owner._resolves_on_disk(root_fd, "d/t", "x", spent),
+                )
+        finally:
+            os.close(root_fd)
+        self.assertEqual([], opened)
+
+    def test_a_name_that_only_prefixes_a_directory_skips_nothing(self) -> None:
+        tree = self.commit({"gen/out.txt": b"tracked\n", "keep.txt": b"k\n"})
+        root = self.root / "reused"
+        _owner().materialize(self.repo, tree, root, limits=self.limits())
+        (root / "gen" / "out.txt").write_bytes(b"generated by the run\n")
+        limits = self.limits()
+        self.assertRefused(
+            "tree-mismatch",
+            lambda: _owner().verify_tracked(
+                self.repo, tree, root, limits=limits, ignore=("ge",)
+            ),
+        )
 
 
 if __name__ == "__main__":

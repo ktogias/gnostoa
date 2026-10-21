@@ -359,23 +359,32 @@ def _resolve(cursor: _Cursor, target: str, limits: Limits | None) -> bool:
     while pending:
         if limits is not None:
             _check_deadline(limits)
-        part = pending.popleft()
-        if part in ("", "."):
+        outcome, through = _step(cursor, pending.popleft())
+        if outcome == "next":
             continue
-        if part == "..":
-            if not cursor.up():
-                return False
-            continue
-        kind, through = cursor.enter(part)
-        if kind == "end":
-            return True
-        if kind == "dir":
-            continue
+        if outcome != "link":
+            return outcome == "inside"
         hops += 1
         if hops > _LINK_HOPS or not through or through.startswith("/"):
             return False
         pending.extendleft(reversed(through.split("/")))
     return True
+
+
+def _step(cursor: _Cursor, part: str) -> tuple[str, str]:
+    """One component of a resolution: "next" to go on, "inside" or "outside" when it
+    ends there, or "link" with the target to resolve in its place."""
+
+    if part in ("", "."):
+        return "next", ""
+    if part == "..":
+        return ("next", "") if cursor.up() else ("outside", "")
+    kind, through = cursor.enter(part)
+    if kind == "end":
+        return "inside", ""
+    if kind == "dir":
+        return "next", ""
+    return "link", through
 
 
 class _TreeCursor:
@@ -459,6 +468,7 @@ def _resolves_on_disk(root_fd: int, path: str, target: str, limits: Limits) -> b
     cursor = _DiskCursor(root_fd)
     try:
         for name in path.split("/")[:-1]:
+            _check_deadline(limits)
             cursor.descend(name)
         return _resolve(cursor, target, limits)
     finally:
@@ -979,8 +989,9 @@ def _blob_id_at(
 def verify_tracked(
     repo: Path, tree: str, root: Path, *, limits: Limits, ignore: Iterable[str] = ()
 ) -> None:
-    """Refuse `root` unless every path `tree` tracks, outside `ignore`, is present with
-    its exact bytes and mode, reached without following any link, and unless its
+    """Refuse `root` unless every path `tree` tracks, outside `ignore` (a named path
+    and the subtree under it, as for `observed_tree`), is present with its exact bytes
+    and mode, reached without following any link, and unless its
     tracked links stay inside. Paths the tree does not track are not checked: a
     reused directory keeps its run's outputs (S2-A3-02)."""
 
@@ -992,7 +1003,7 @@ def verify_tracked(
     try:
         budget = _Budget(limits)
         for entry in entries:
-            if entry.path not in skipped and (
+            if not _ignored(entry.path, skipped) and (
                 _tracked_oid(directories, entry, algorithm, budget, links) != entry.oid
             ):
                 raise ExactTreeError("tree-mismatch", "a tracked path changed")
@@ -1009,6 +1020,13 @@ def verify_tracked(
         raise _filesystem(exc) from exc
     finally:
         directories.close()
+
+
+def _ignored(path: str, ignore: frozenset[str]) -> bool:
+    """Whether `path` is an ignored path or lies beneath one, by whole components."""
+
+    parts = path.split("/")
+    return any("/".join(parts[:end]) in ignore for end in range(1, len(parts) + 1))
 
 
 def _tracked_oid(
