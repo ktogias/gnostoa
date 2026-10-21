@@ -510,7 +510,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         when it captures output, as the Git reads do, and as CPython 3.12 and 3.14 on
         Linux do (measured): only communicate's selector converts the timeout."""
         try:
-            subprocess.run(
+            subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # nosec B603 -- test-only: this interpreter, an empty literal script
                 [sys.executable, "-c", ""],
                 capture_output=True,
                 timeout=1e20,
