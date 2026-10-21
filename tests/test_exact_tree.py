@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib
 import os
-import subprocess
+import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
 import tempfile
 import time
 import unittest
@@ -34,7 +34,7 @@ _ENV = {
 
 def git(repo: Path, *args: str, stdin: bytes | None = None) -> str:
     return (
-        subprocess.run(
+        subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
             ["git", "-C", str(repo), *args],
             check=True,
             capture_output=True,
@@ -82,7 +82,7 @@ class ExactTreeFixture(unittest.TestCase):
         return _owner().Limits(**values)
 
     def blob(self, tree: str, path: str) -> bytes:
-        return subprocess.run(
+        return subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
             ["git", "-C", str(self.repo), "cat-file", "blob", f"{tree}:{path}"],
             check=True,
             capture_output=True,
@@ -482,7 +482,8 @@ class RoundTwoTests(ExactTreeFixture):
         os.symlink(real, alias)
         limits = self.limits()
         self.assertRefused(
-            None, lambda: _owner().observed_tree(self.repo, alias, limits=limits)
+            "unsafe-path",
+            lambda: _owner().observed_tree(self.repo, alias, limits=limits),
         )
 
     # C: ownership is decided by atomic creation; a rollback deletes only its own work.
@@ -736,6 +737,130 @@ class RoundTwoTests(ExactTreeFixture):
         self.assertRefused(
             "tree-mismatch",
             lambda: ensure(self.repo, second, destination, limits=limits),
+        )
+
+
+class RoundThreeTests(ExactTreeFixture):
+    """#446 round 3 (#389 6312793333): one RED per recorded class, run before the fix."""
+
+    assertRefused = RoundTwoTests.assertRefused
+
+    # O (S6350): an object id reaches Git's argv as its canonical, plain string.
+    def test_an_object_id_reaches_git_as_its_canonical_plain_string(self) -> None:
+        owner = _owner()
+
+        class Carried(str):
+            pass
+
+        tree = self.commit({"a.txt": b"a\n"})
+        seen: list[list[str]] = []
+
+        def popen(argv: list[str], **kwargs: Any) -> Any:
+            seen.append(list(argv))
+            raise OSError("stop")
+
+        limits = self.limits()
+        with mock.patch("subprocess.Popen", side_effect=popen):
+            self.assertRefused(
+                "git-failed",
+                lambda: owner.tree_paths(self.repo, Carried(tree), limits=limits),
+            )
+        self.assertTrue(seen, "git was never started")
+        self.assertEqual(tree, seen[0][-1])
+        self.assertIs(str, type(seen[0][-1]))
+
+    # Q: the Semgrep justification sits on the Popen line, with the full rule id.
+    def test_the_popen_call_carries_its_semgrep_justification_on_its_line(
+        self,
+    ) -> None:
+        rule = (
+            "nosemgrep: python.lang.security.audit."
+            "dangerous-subprocess-use-audit.dangerous-subprocess-use-audit"
+        )
+        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        lines = [line for line in source if "subprocess.Popen(" in line]
+        self.assertTrue(lines and all(rule in line for line in lines), lines)
+
+    # T: the observed walk is bounded: no recursion, a deadline per entry, a budget.
+    def test_a_tree_deeper_than_the_recursion_limit_is_materialized(self) -> None:
+        deep = "d/" * 700 + "f.txt"
+        tree = self.commit({deep: b"deep\n"})
+        destination = self.root / "out"
+        result = _owner().materialize(
+            self.repo, tree, destination, limits=self.limits()
+        )
+        self.assertEqual(tree, result.tree)
+
+    def test_a_flood_of_empty_directories_holds_at_the_bound_and_is_refused_past_it(
+        self,
+    ) -> None:
+        # With max_files=0 the listing bound is 4,352 B: 870 names of 4 bytes cost
+        # 5 B each (4,350 B), and one of 1 byte costs 2 B, exactly at the bound.
+        root = self.root / "flood"
+        root.mkdir()
+        for index in range(870):
+            (root / f"{index:04d}").mkdir()
+        (root / "x").mkdir()
+        limits = self.limits(max_files=0)
+        empty = git(self.repo, "hash-object", "-t", "tree", "--stdin", stdin=b"")
+        self.assertEqual(_owner().observed_tree(self.repo, root, limits=limits), empty)
+        (root / "y").mkdir()
+        limits = self.limits(max_files=0)
+        self.assertRefused(
+            "cap-bytes",
+            lambda: _owner().observed_tree(self.repo, root, limits=limits),
+        )
+
+    def test_the_deadline_holds_for_entries_that_hold_no_file(self) -> None:
+        owner = _owner()
+        root = self.root / "empty-dirs"
+        root.mkdir()
+        for name in ("a", "b", "c"):
+            (root / name).mkdir()
+        spent = self.limits(deadline=time.monotonic() - 1)
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            self.assertRefused(
+                "deadline",
+                lambda: owner._observed(root_fd, "sha1", spent, frozenset()),
+            )
+        finally:
+            os.close(root_fd)
+
+    # U: no optional locks; the ownership check is never relaxed by a pin.
+    def test_the_child_takes_no_optional_locks_and_pins_no_safe_directory(
+        self,
+    ) -> None:
+        owner = _owner()
+        self.assertEqual("0", owner._GIT_ENV.get("GIT_OPTIONAL_LOCKS"))
+        self.assertFalse(
+            [part for part in owner._GIT_OVERRIDES if "safe.directory" in part]
+        )
+
+    # V: a failed bind leaves no stale record that a later reuse could accept.
+    def test_a_failed_bind_leaves_no_stale_record_to_reuse(self) -> None:
+        owner = _owner()
+        first = self.commit({"a.txt": b"a\n"})
+        second = self.commit({"b.txt": b"b\n"})
+        destination = self.root / "project"
+        owner.materialize_or_verify(self.repo, first, destination, limits=self.limits())
+        for path in sorted(destination.rglob("*"), reverse=True):
+            path.rmdir() if path.is_dir() else path.unlink()
+        destination.rmdir()
+        injected = owner.ExactTreeError("filesystem", "injected bind failure")
+        limits = self.limits()
+        with mock.patch.object(owner, "_bind", side_effect=injected):
+            self.assertRefused(
+                "filesystem",
+                lambda: owner.materialize_or_verify(
+                    self.repo, second, destination, limits=limits
+                ),
+            )
+        self.assertRefused(
+            "tree-mismatch",
+            lambda: owner.materialize_or_verify(
+                self.repo, first, destination, limits=limits
+            ),
         )
 
 

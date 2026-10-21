@@ -1899,7 +1899,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
             compiler._frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1")
         )
         self.assertEqual(
-            ["materialised-subject-identity-mismatch"], [b["code"] for b in blockers]
+            [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
         )
 
     # N: a reused subject the owner refuses becomes the blocker, not a traceback.

@@ -71,6 +71,10 @@ _GIT_ENV = {
     "GIT_ATTR_NOSYSTEM": "1",
     "GIT_NO_REPLACE_OBJECTS": "1",
     "GIT_TERMINAL_PROMPT": "0",
+    # A read never takes an optional lock (Revix 4335174132). No safe.directory is
+    # pinned: it is an allowlist that disables the ownership check, which applies at
+    # its strictest while no global or system configuration is read (#389 6312793333).
+    "GIT_OPTIONAL_LOCKS": "0",
 }
 _GIT_OVERRIDES = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 
@@ -177,8 +181,8 @@ def _start(repo: Path, args: list[str], stdin: int | None) -> subprocess.Popen[b
     executable = _git_executable()
     argv = [executable, "-C", str(repo), *_GIT_OVERRIDES, *args]
     try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit -- fixed git argv, no shell
-        return subprocess.Popen(  # nosec B603 -- fixed git argv, no shell, trusted env
+        # A fixed git argv, no shell, a trusted environment (Bandit B603, Semgrep).
+        return subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             argv,
             shell=False,
             env=_GIT_ENV,
@@ -234,6 +238,16 @@ def _raise_for(drained: bounded_process.Drained, name: str) -> None:
         )
 
 
+_HEX_DIGITS = {"sha1": 40, "sha256": 64}
+
+
+def _canonical(oid: str, algorithm: str) -> str:
+    """A checked object id rendered again from its numeric value: a plain `str`
+    holding only lowercase hexadecimal digits, whatever object the caller passed."""
+
+    return format(int(oid, 16), f"0{_HEX_DIGITS[algorithm]}x")
+
+
 def _algorithm(oid: object) -> str:
     """The object format of a full, lowercase Git object id. Anything else, an
     option-shaped value included, is refused before it can reach a Git argv."""
@@ -255,7 +269,7 @@ def _entry(record: bytes, algorithm: str) -> _Entry:
     meta, tab, raw_path = record.partition(b"\t")
     try:
         mode, kind, oid = meta.decode("ascii").split(" ")
-    except (UnicodeDecodeError, ValueError) as exc:
+    except ValueError as exc:  # UnicodeDecodeError included
         raise ExactTreeError("git-failed", "malformed ls-tree record") from exc
     path = os.fsdecode(raw_path)
     if (
@@ -273,7 +287,14 @@ def _entries(repo: Path, tree: str, limits: Limits) -> list[_Entry]:
     algorithm = _algorithm(tree)
     listing = _git(
         repo,
-        ["ls-tree", "-r", "-z", "--full-tree", "--end-of-options", tree],
+        [
+            "ls-tree",
+            "-r",
+            "-z",
+            "--full-tree",
+            "--end-of-options",
+            _canonical(tree, algorithm),
+        ],
         limits=limits,
         cap=(limits.max_files + 1) * _LISTING_BYTES_PER_FILE,
     )
@@ -340,29 +361,46 @@ def _check_links(links: Mapping[str, str]) -> None:
 
 class _Directories:
     """Directory descriptors below one root, each opened relative to its parent and
-    never through a link: a symlinked component is refused, not followed."""
+    never through a link: a symlinked component is refused, not followed. Only the
+    chain to the latest directory stays open, so the descriptors held are bounded by
+    the depth, never by the number of directories. Entries arrive in Git's
+    depth-first order, and a directory left behind is opened again if needed."""
 
     def __init__(self, root_fd: int) -> None:
-        self._open: dict[str, int] = {"": root_fd}
+        self._root: int | None = root_fd
+        self._chain: list[tuple[str, int]] = []
 
     def at(self, relative: str, *, create: bool) -> int:
-        if relative in self._open:
-            return self._open[relative]
-        parent, _, name = relative.rpartition("/")
-        parent_fd = self.at(parent, create=create)
-        if create:
-            try:
-                os.mkdir(name, 0o755, dir_fd=parent_fd)
-            except FileExistsError:
-                pass
-        descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
-        self._open[relative] = descriptor
+        if self._root is None:
+            raise ExactTreeError("filesystem", "the directories are closed")
+        parts = relative.split("/") if relative else []
+        keep = 0
+        while (
+            keep < min(len(parts), len(self._chain))
+            and self._chain[keep][0] == parts[keep]
+        ):
+            keep += 1
+        self._release(keep)
+        descriptor = self._chain[-1][1] if self._chain else self._root
+        for name in parts[keep:]:
+            if create:
+                try:
+                    os.mkdir(name, 0o755, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+            descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+            self._chain.append((name, descriptor))
         return descriptor
 
+    def _release(self, keep: int) -> None:
+        while len(self._chain) > keep:
+            os.close(self._chain.pop()[1])
+
     def close(self) -> None:
-        for descriptor in self._open.values():
-            os.close(descriptor)
-        self._open.clear()
+        self._release(0)
+        if self._root is not None:
+            os.close(self._root)
+            self._root = None
 
 
 class _BatchWriter:
@@ -406,7 +444,7 @@ class _BatchWriter:
         try:
             oid, kind, size_text = header.decode("ascii").split(" ")
             size = int(size_text)
-        except (UnicodeDecodeError, ValueError) as exc:
+        except ValueError as exc:  # UnicodeDecodeError included
             raise ExactTreeError("git-failed", "malformed cat-file header") from exc
         entry = next(self._pending, None)
         if entry is None or oid != entry.oid or kind != "blob" or size < 0:
@@ -647,6 +685,18 @@ class _Budget:
         self.limits = limits
         self.files = 0
         self.bytes = 0
+        self.listed = 0
+
+    def list(self, name: str) -> None:
+        """Charge one listed name, whatever it turns out to be, against the bound
+        materialization already puts on a tree's listing. Every non-empty
+        directory's name is a component of a file path beneath it, so a tree within
+        that bound is never refused here; a flood of entries is, while listed."""
+
+        _check_deadline(self.limits)
+        self.listed += len(os.fsencode(name)) + 1
+        if self.listed > (self.limits.max_files + 1) * _LISTING_BYTES_PER_FILE:
+            raise ExactTreeError("cap-bytes", "the listing exceeds the bound")
 
     def take(self, size: int) -> None:
         _check_deadline(self.limits)
@@ -662,72 +712,106 @@ class _Budget:
             )
 
 
+@dataclasses.dataclass
+class _Level:
+    """One directory of the walk: its descriptor, its names still to visit (the last
+    is next) and the tree rows of those already visited."""
+
+    fd: int
+    prefix: str
+    raw: bytes
+    pending: list[str]
+    rows: list[tuple[bytes, bytes]] = dataclasses.field(default_factory=list)
+
+
 def _observed(
     root_fd: int, algorithm: str, limits: Limits, ignore: frozenset[str]
 ) -> str:
-    oid = _observed_dir(root_fd, "", algorithm, _Budget(limits), ignore)
-    return oid if oid is not None else _object_id(algorithm, "tree", b"")
+    """The walk is iterative: the depth holds one descriptor per level and never a
+    Python frame, so a deep tree is a bounded walk, not a recursion error."""
 
-
-def _names(dir_fd: int) -> list[str]:
-    """A directory's entries, listed through a fresh descriptor opened relative to the
-    held one. A long-held directory descriptor can serve a stale listing: measured on
-    #446, a scan of it missed entries created after it was opened."""
-
-    fresh = os.open(".", os.O_RDONLY | _O_DIRECTORY, dir_fd=dir_fd)
+    budget = _Budget(limits)
+    stack = [_Level(root_fd, "", b"", _pending(root_fd, budget))]
     try:
-        with os.scandir(fresh) as listing:
-            return [entry.name for entry in listing]
+        while True:
+            level = stack[-1]
+            if level.pending:
+                step = _observed_row(
+                    level, level.pending.pop(), algorithm, budget, ignore
+                )
+                if isinstance(step, _Level):
+                    stack.append(step)
+                elif step is not None:
+                    level.rows.append(step)
+                continue
+            stack.pop()
+            if stack:
+                os.close(level.fd)
+            oid = _tree_of(level.rows, algorithm)
+            if not stack:
+                return oid if oid is not None else _object_id(algorithm, "tree", b"")
+            if oid is not None:
+                stack[-1].rows.append((level.raw + b"/", _row(_TREE, level.raw, oid)))
     finally:
-        os.close(fresh)
+        for level in stack[1:]:
+            os.close(level.fd)
 
 
-def _observed_dir(
-    dir_fd: int, prefix: str, algorithm: str, budget: _Budget, ignore: frozenset[str]
-) -> str | None:
-    names = sorted(_names(dir_fd), key=os.fsencode)
-    rows = [
-        row
-        for name in names
-        if (row := _observed_row(dir_fd, name, prefix, algorithm, budget, ignore))
-    ]
+def _tree_of(rows: list[tuple[bytes, bytes]], algorithm: str) -> str | None:
     if not rows:
         return None
     body = b"".join(row for _, row in sorted(rows, key=lambda item: item[0]))
     return _object_id(algorithm, "tree", body)
 
 
+def _pending(dir_fd: int, budget: _Budget) -> list[str]:
+    """A directory's names, last to visit first. They are listed through a fresh
+    descriptor opened relative to the held one, since a long-held directory
+    descriptor can serve a stale listing: measured on #446, a scan of it missed
+    entries created after it was opened. Each name is charged as it is listed."""
+
+    fresh = os.open(".", os.O_RDONLY | _O_DIRECTORY, dir_fd=dir_fd)
+    try:
+        names: list[str] = []
+        with os.scandir(fresh) as listing:
+            for entry in listing:
+                budget.list(entry.name)
+                names.append(entry.name)
+    finally:
+        os.close(fresh)
+    return sorted(names, key=os.fsencode, reverse=True)
+
+
 def _observed_row(
-    dir_fd: int,
+    level: _Level,
     name: str,
-    prefix: str,
     algorithm: str,
     budget: _Budget,
     ignore: frozenset[str],
-) -> tuple[bytes, bytes] | None:
-    relative = f"{prefix}{name}"
+) -> tuple[bytes, bytes] | _Level | None:
+    relative = f"{level.prefix}{name}"
     if relative in ignore:
         return None
     if name.lower() == ".git":
         raise ExactTreeError("unsupported-entry", "Git metadata in the directory")
-    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    info = os.stat(name, dir_fd=level.fd, follow_symlinks=False)
     raw = os.fsencode(name)
     if stat.S_ISLNK(info.st_mode):
-        target = os.fsencode(os.readlink(name, dir_fd=dir_fd))
+        target = os.fsencode(os.readlink(name, dir_fd=level.fd))
         budget.take(len(target))
         return raw, _row(_LINK, raw, _object_id(algorithm, "blob", target))
     if stat.S_ISREG(info.st_mode):
         budget.take(info.st_size)
         mode = _EXECUTABLE if info.st_mode & stat.S_IXUSR else _FILE
-        oid = _blob_id_at(dir_fd, name, info.st_size, algorithm, budget.limits)
+        oid = _blob_id_at(level.fd, name, info.st_size, algorithm, budget.limits)
         return raw, _row(mode, raw, oid)
     if stat.S_ISDIR(info.st_mode):
-        child = os.open(name, _DIRECTORY_FLAGS, dir_fd=dir_fd)
+        child = os.open(name, _DIRECTORY_FLAGS, dir_fd=level.fd)
         try:
-            sub = _observed_dir(child, f"{relative}/", algorithm, budget, ignore)
-        finally:
+            return _Level(child, f"{relative}/", raw, _pending(child, budget))
+        except BaseException:
             os.close(child)
-        return None if sub is None else (raw + b"/", _row(_TREE, raw, sub))
+            raise
     raise ExactTreeError("unsupported-entry", "an entry that is not a file")
 
 
@@ -847,6 +931,25 @@ def _bound_tree(destination: Path) -> str | None:
         os.close(descriptor)
 
 
+def _unbind(destination: Path) -> None:
+    """Remove the destination's record, if there is one."""
+
+    try:
+        parent_fd = os.open(destination.parent, os.O_RDONLY | _O_DIRECTORY)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    try:
+        os.unlink(_record_name(destination), dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise _filesystem(exc) from exc
+    finally:
+        os.close(parent_fd)
+
+
 def _bind(destination: Path, tree: str) -> None:
     """Record which tree the destination was written for, atomically, beside it."""
 
@@ -897,6 +1000,10 @@ def materialize_or_verify(
     except OSError as exc:
         raise _filesystem(exc) from exc
     if not occupied:
+        # A record left beside an emptied destination is removed first, so a failed
+        # bind or a crash leaves the new tree unbound, refused, never reused for
+        # the old tree (cubic 4335174301).
+        _unbind(destination)
         materialize(repo, tree, destination, limits=limits)
         _bind(destination, tree)
         return
