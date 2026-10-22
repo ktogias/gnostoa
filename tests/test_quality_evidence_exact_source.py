@@ -1279,7 +1279,8 @@ class FixtureIsolationTests(_DiagnosticFixture):
         with patch.dict(
             os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
         ):
-            # A live probe: Git outside the fixtures' isolation runs the hook.
+            # A live probe: Git reading the hostile global configuration runs the
+            # hook; the system one stays unread, as everywhere in the fixtures (Kilo).
             subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on a temporary fixture repository
                 [
                     "git",
@@ -1296,6 +1297,7 @@ class FixtureIsolationTests(_DiagnosticFixture):
                     "a probe",
                 ],
                 cwd=self.root,
+                env={**os.environ, "GIT_CONFIG_SYSTEM": os.devnull},
                 check=True,
                 capture_output=True,
             )
