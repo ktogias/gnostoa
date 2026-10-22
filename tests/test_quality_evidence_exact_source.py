@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import errno
 import importlib
 import math
 import os
@@ -24,6 +25,7 @@ from quality_evidence_fixtures import (
     _DiagnosticFixture,
     _fixture_git_env,
 )
+from test_exact_tree_reuse import _open_descriptors
 
 
 class ExactSourceTreeTests(_DiagnosticFixture):
@@ -845,6 +847,30 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             retained = self.module._discard_staged(stopped, 5.0)
         self.assertIn("deadline", retained or "")
         self.assertEqual(before, open_descriptors())
+
+    # A descriptor whose close fails, while the deadline leaves directories open,
+    # neither replaces the walk's result nor leaves the others open: the walk's own
+    # exception surface stays the returned gap (Claude on #451, 6331607363).
+    def test_a_failed_close_leaves_the_result_and_no_other_descriptor_open(
+        self,
+    ) -> None:
+        before = _open_descriptors(self)
+        top = self._deep(3)
+        unlinking, clocked, _unlinks = self._spending("unlink", 1)
+        closes: list[int] = []
+        real_close = os.close
+
+        def failing(fd: int) -> None:
+            closes.append(fd)
+            real_close(fd)
+            if len(closes) == 2:
+                raise OSError(errno.EIO, "the close failed")
+
+        with unlinking, clocked, patch.object(os, "close", failing):
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertIn("deadline", retained or "")
+        self.assertEqual(4, len(closes))
+        self.assertEqual(before, _open_descriptors(self))
 
     # A slow removal stops at the deadline, rather than running on past it.
     def test_a_slow_removal_stops_at_the_deadline(self) -> None:

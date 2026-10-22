@@ -2817,8 +2817,11 @@ def _discard_staged(staged: Path, deadline: float) -> str | None:
     except OSError as exc:
         return f"{_RETAINED}: it could not be removed whole ({type(exc).__name__})"
     finally:
+        # A close that fails replaces neither the walk's result nor the closing of
+        # the other descriptors (Claude on #451, 6331607363).
         for fd, _name in frames:
-            os.close(fd)
+            with contextlib.suppress(OSError):
+                os.close(fd)
     return None
 
 
