@@ -1070,6 +1070,35 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual([], observed["roots"])
         self.assertIsNone(observed["interpreter"]["executable"])
 
+    def _answering(self, answer: object):
+        """A launcher that answers the observation command with `answer`, and every
+        other command as the fixture does."""
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command != self.module._environment_command():
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            report.write_text(json.dumps(answer), encoding="utf-8")
+            return 0, None, False
+
+        return run
+
+    @staticmethod
+    def _recording(launcher, launched: list[list[str]]):
+        """`launcher`, with every command it is given appended to `launched`."""
+
+        def run(command, **kwargs):
+            launched.append(command)
+            return launcher(command, **kwargs)
+
+        return run
+
     def test_a_malformed_observation_is_a_gap(self) -> None:
         # The collector's own format with a broken structure is no observation: each
         # field the shape the observer writes, each checked by its own case (cubic
@@ -1095,32 +1124,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     if broken is None
                     else {**json.loads(self._observation()), **broken}
                 )
-
-                def run(
-                    command,
-                    *,
-                    cwd,
-                    environment,
-                    report,
-                    deadline,
-                    limits,
-                    answer=observation,
-                ):
-                    if command != self.module._environment_command():
-                        return self._fake_run(
-                            command,
-                            cwd=cwd,
-                            environment=environment,
-                            report=report,
-                            deadline=deadline,
-                            limits=limits,
-                        )
-                    report.write_text(json.dumps(answer), encoding="utf-8")
-                    return 0, None, False
-
-                member = self._run(run, "import-untyped")["producers"][0][
-                    "environment_observation"
-                ]
+                member = self._run(self._answering(observation), "import-untyped")[
+                    "producers"
+                ][0]["environment_observation"]
                 self.assertEqual("unavailable", member["status"])
 
     def _with_probe_runs(self, *probes: tuple[str, list[str], object]):
@@ -1230,12 +1236,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ):
             with self.subTest(name):
                 launched: list[list[str]] = []
-                answer = self._environment(("fixture-1.0",))
-
-                def run(command, *, answer=answer, launched=launched, **kwargs):
-                    launched.append(command)
-                    return answer(command, **kwargs)
-
+                run = self._recording(self._environment(("fixture-1.0",)), launched)
                 with patch.object(self.module, "_OBSERVER", observer, create=True):
                     inventory = self._run(run, "import-untyped")
                 member = inventory["producers"][0]["environment_observation"]
