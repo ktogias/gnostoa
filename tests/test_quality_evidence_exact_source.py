@@ -170,6 +170,126 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         (run,) = self.output.glob("diagnostic-*")
         self.assertIn(f"the raw reports are in {run}", str(raised.exception))
 
+    def _refused_without_inventory(self, failing: Any) -> tuple[str, Path]:
+        """Collect under `failing` (a patch), which must refuse; the refusal's text and
+        its run directory, which holds the raw reports and no inventory."""
+        with failing, self.assertRaises(self.module.QualityEvidenceError) as raised:
+            self.collect(self.root, self.output)
+        (run,) = self.output.glob("diagnostic-*")
+        self.assertFalse((run / self.module.DIAGNOSTIC_INVENTORY).exists())
+        self.assertTrue([p for p in run.iterdir() if p.name != "source"])
+        return str(raised.exception), run
+
+    # D3 as the Router corrected it (6332488628 on #389): a re-observation that finds
+    # the staged source no longer matching, unsafe or over its bound refuses the
+    # inventory, worded by its native code; an unrepresentable one, which an unknown
+    # object format also raises before the staged root is read, refuses without
+    # claiming a change.
+    def test_a_reobservation_that_finds_no_exact_tree_refuses_the_inventory(
+        self,
+    ) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        cases = {
+            "tree-mismatch": "the staged source no longer matches the frozen tree",
+            "unsafe-path": "the staged source holds an unsafe path",
+            "cap-files": "the staged source exceeds its file bound",
+            "cap-bytes": "the staged source exceeds its byte bound",
+            "unsupported-entry": (
+                "unrepresentable re-observation of the staged source, change not "
+                "established"
+            ),
+        }
+        for code, reason in cases.items():
+            with self.subTest(code):
+                failure = owner.ExactTreeError(code, "an unknown object format")
+                failing = patch.object(
+                    owner,
+                    "observed_tree",
+                    side_effect=self._then(owner.observed_tree, failure),
+                )
+                message, run = self._refused_without_inventory(failing)
+                self.assertIn(f"{reason}: {code};", message)
+                self.assertIn(f"the raw reports are in {run}", message)
+                self.assertNotIn("changed during collection", message)
+                shutil.rmtree(run)
+
+    # A special entry a producer leaves in the staged source is refused as an
+    # unrepresentable re-observation, never as a demonstrated change.
+    def test_a_special_entry_left_in_the_staged_source_is_refused(self) -> None:
+        real = self.module._run_complexity
+
+        def leaving(root, paths, *args, **kwargs):
+            os.mkfifo(Path(root) / "tools" / "pipe")
+            return real(root, paths, *args, **kwargs)
+
+        message, _run = self._refused_without_inventory(
+            patch.object(self.module, "_run_complexity", side_effect=leaving)
+        )
+        self.assertIn("change not established: unsupported-entry;", message)
+        self.assertNotIn("changed during collection", message)
+
+    # An observation that is only unavailable certifies nothing, and refuses nothing:
+    # D3's not-certified treatment, for every code that proves no change.
+    def test_an_unavailable_reobservation_certifies_nothing(self) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        for code in (
+            "deadline",
+            "filesystem",
+            "git-failed",
+            "cap-descriptors",
+            "identity-unavailable",
+            "an-unclassified-code",
+        ):
+            with self.subTest(code):
+                failing = self._then(owner.observed_tree, owner.ExactTreeError(code))
+                with patch.object(owner, "observed_tree", side_effect=failing):
+                    inventory = self._read(self.collect(self.root, self.output))
+                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+                self.assertIn(
+                    "the staged source could not be observed again",
+                    inventory["coverage"]["reason"],
+                )
+                for run in self.output.glob("diagnostic-*"):
+                    shutil.rmtree(run)
+
+    # The cleanup examines every named entry, directories included, while staging
+    # counts files: at max_tree_files equal to the files alone, staging passes and the
+    # cleanup stops at that bound, leaving the staged source named (Router 6332488628).
+    def test_the_cleanup_examines_no_more_entries_than_the_tree_bound(self) -> None:
+        limits = self.module.DiagnosticLimits(max_tree_files=len(self.files))
+        inventory = self._read(self.collect(self.root, self.output, limits=limits))
+        self.assertTrue(self._complexity(inventory, self.lines["branchy"]))
+        self.assertIn(
+            f"more than the {len(self.files)} named entries its removal may examine",
+            inventory["coverage"]["reason"],
+        )
+        (run,) = self.output.glob("diagnostic-*")
+        self.assertTrue((run / "source").is_dir())
+
+    # A staged source that a producer grows past the bound is refused, and its removal
+    # stops at the bound, leaving it named on the refusal rather than listed whole.
+    def test_a_staged_source_grown_past_the_bound_is_left_named(self) -> None:
+        bound = 12
+        real = self.module._run_complexity
+
+        def growing(root, paths, *args, **kwargs):
+            for n in range(6):
+                (Path(root) / f"grown-{n}.py").write_text("", encoding="utf-8")
+            return real(root, paths, *args, **kwargs)
+
+        limits = self.module.DiagnosticLimits(max_tree_files=bound)
+        with (
+            patch.object(self.module, "_run_complexity", side_effect=growing),
+            self.assertRaises(self.module.QualityEvidenceError) as raised,
+        ):
+            self.collect(self.root, self.output, limits=limits)
+        self.assertIn(
+            f"more than the {bound} named entries its removal may examine",
+            "\n".join(getattr(raised.exception, "__notes__", [])),
+        )
+        (run,) = self.output.glob("diagnostic-*")
+        self.assertTrue((run / "source").is_dir())
+
     # The tree is staged within the collector's own absolute deadline, never a fresh
     # budget of the owner's.
     def test_staging_shares_the_collectors_deadline(self) -> None:
@@ -623,6 +743,14 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         self.assertNotIn("staged source was left", inventory["coverage"]["reason"])
         self.assertEqual([], list(self.output.glob("*/source")))
 
+    @staticmethod
+    def _limits(deadline: float, entries: int = 10_000) -> Any:
+        """The collector's tree limits for one removal: its deadline and an entry
+        bound, with the byte bound unused by the removal."""
+        return importlib.import_module("tools.exact_tree").Limits(
+            deadline, entries, 1 << 30
+        )
+
     def _deep(self, levels: int, name: str = "deep") -> Path:
         """An owned tree `levels` directories deep, with one file at the bottom."""
         top = Path(self.directory.name) / name
@@ -655,7 +783,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             return real_open(*args, **kwargs)
 
         with counting, patch.object(os, "open", opening):
-            retained = self.module._discard_staged(top, time.monotonic() - 1)
+            retained = self.module._discard_staged(
+                top, self._limits(time.monotonic() - 1)
+            )
         self.assertEqual([], reads)
         self.assertEqual([], opens)
         self.assertIn("left in the run directory", retained or "")
@@ -678,7 +808,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             patch.object(os, "scandir", spending),
             patch.object(self.module, "time", clocked),
         ):
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(1, len(reads))
         self.assertIn("deadline", retained or "")
         self.assertTrue(top.joinpath(*(f"d{n}" for n in range(13)), "leaf.py").exists())
@@ -708,7 +838,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         counting, reads = self._counting_reads()
         opening, clocked, opens = self._spending("open", 2)
         with counting, opening, clocked:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(2, len(opens))
         self.assertEqual(1, len(reads))
         self.assertIn("deadline", retained or "")
@@ -718,7 +848,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         unlinking, clocked, unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(1, len(unlinks))
         self.assertEqual(4, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -728,7 +858,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._deep(3)
         unlinking, clocked, _unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertTrue(top.joinpath("d0", "d1", "d2").is_dir())
         self.assertIn("deadline", retained or "")
 
@@ -738,7 +868,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         outside = self._deep(2)
         link = Path(self.directory.name) / "staged-link"
         link.symlink_to(outside)
-        retained = self.module._discard_staged(link, time.monotonic() + 60)
+        retained = self.module._discard_staged(
+            link, self._limits(time.monotonic() + 60)
+        )
         self.assertIn("could not be removed whole", retained or "")
         self.assertTrue(outside.joinpath("d0", "d1", "leaf.py").exists())
 
@@ -815,7 +947,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, advances, dispatched = self._listing(spend_on="next")
         with patches:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(1, len(advances))
         self.assertEqual(["open"], dispatched)
         self.assertEqual(5, len(list(top.iterdir())))
@@ -829,7 +961,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, _advances, dispatched = self._listing(spend_on="type")
         with patches:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(["open", "type"], dispatched)
         self.assertEqual(5, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -839,7 +971,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, _advances, dispatched = self._listing(spend_on="unlink")
         with patches:
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertEqual(["open", "type", "unlink"], dispatched)
         self.assertEqual(4, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -849,13 +981,15 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     def test_the_walk_closes_every_descriptor_it_opens(self) -> None:
         before = _open_descriptors(self)
         completed = self._deep(4)
-        self.assertIsNone(self.module._discard_staged(completed, time.monotonic() + 60))
+        self.assertIsNone(
+            self.module._discard_staged(completed, self._limits(time.monotonic() + 60))
+        )
         self.assertFalse(completed.exists())
         self.assertEqual(before, _open_descriptors(self))
         stopped = self._deep(4, name="stopped")
         unlinking, clocked, _unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(stopped, 5.0)
+            retained = self.module._discard_staged(stopped, self._limits(5.0))
         self.assertIn("deadline", retained or "")
         self.assertEqual(before, _open_descriptors(self))
 
@@ -878,10 +1012,95 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 raise OSError(errno.EIO, "the close failed")
 
         with unlinking, clocked, patch.object(os, "close", failing):
-            retained = self.module._discard_staged(top, 5.0)
+            retained = self.module._discard_staged(top, self._limits(5.0))
         self.assertIn("deadline", retained or "")
         self.assertEqual(4, len(closes))
         self.assertEqual(before, _open_descriptors(self))
+
+    def _bounded(self, top: Path, entries: int) -> str | None:
+        """Remove `top` with ample time and `entries` as the removal's entry bound."""
+        return self.module._discard_staged(
+            top, self._limits(time.monotonic() + 60, entries=entries)
+        )
+
+    # The removal's entry bound at its boundaries (Router 6332488628 on #389): an empty
+    # staged source needs none, and a wide listing or a deep chain of `count` named
+    # entries is removed at a bound of `count`, and left named at one fewer, or zero.
+    def test_the_entry_bound_holds_at_its_boundaries(self) -> None:
+        empty = Path(self.directory.name) / "empty"
+        empty.mkdir()
+        self.assertIsNone(self._bounded(empty, 0))
+        self.assertFalse(empty.exists())
+        shapes = {
+            "wide": (lambda: self._flat(5), 5),
+            "deep": (lambda: self._deep(4, name="chain"), 5),
+        }
+        for shape, (build, count) in shapes.items():
+            for entries in (count, count - 1, 0):
+                with self.subTest(shape, entries=entries):
+                    top = build()
+                    retained = self._bounded(top, entries)
+                    if entries == count:
+                        self.assertIsNone(retained)
+                        self.assertFalse(top.exists())
+                    else:
+                        self.assertIn(
+                            f"more than the {entries} named entries", retained or ""
+                        )
+                        self.assertTrue(top.exists())
+                        shutil.rmtree(top)
+
+    # One budget is shared by every directory the removal lists, never reset per
+    # directory: an ancestor's entries and its child's count together.
+    def test_the_entry_bound_is_shared_across_directories(self) -> None:
+        for entries, removed in ((6, True), (5, False)):
+            with self.subTest(entries=entries):
+                top = Path(self.directory.name) / "shared"
+                (top / "child").mkdir(parents=True)
+                for name in ("child/one.py", "child/two.py", "child/three.py", "b.py"):
+                    (top / name).write_text("", encoding="utf-8")
+                (top / "c.py").write_text("", encoding="utf-8")
+                retained = self._bounded(top, entries)
+                self.assertEqual(removed, retained is None)
+                self.assertEqual(removed, not top.exists())
+                if top.exists():
+                    shutil.rmtree(top)
+
+    # A listing past the bound is never read whole before the bound is checked: it
+    # stops at the first entry over the bound.
+    def test_a_listing_past_the_bound_is_never_held_whole(self) -> None:
+        top = self._flat(5)
+        patches, advances, _dispatched = self._listing(spend_on="nothing")
+        with patches:
+            retained = self._bounded(top, 2)
+        self.assertEqual(3, len(advances))
+        self.assertIn("more than the 2 named entries", retained or "")
+        self.assertEqual(5, len(list(top.iterdir())))
+
+    # A removal the bound stops closes every descriptor it opened.
+    def test_a_removal_the_bound_stops_closes_its_descriptors(self) -> None:
+        before = _open_descriptors(self)
+        top = self._deep(4)
+        retained = self._bounded(top, 3)
+        self.assertIn("more than the 3 named entries", retained or "")
+        self.assertEqual(before, _open_descriptors(self))
+
+    # A stage that fails unexpectedly keeps its own failure when the removal after it
+    # stops at the bound: the bound is a note on it, never a replacement.
+    def test_the_entry_bound_never_replaces_a_stage_failure(self) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        failure = RuntimeError("an unexpected failure")
+        limits = self.module.DiagnosticLimits(max_tree_files=len(self.files))
+        with (
+            patch.object(owner, "observed_tree", side_effect=failure),
+            self.assertRaises(RuntimeError) as raised,
+        ):
+            self.collect(self.root, self.output, limits=limits)
+        self.assertIs(failure, raised.exception)
+        self.assertIn(
+            f"more than the {len(self.files)} named entries",
+            "\n".join(getattr(raised.exception, "__notes__", [])),
+        )
 
     # A slow removal stops at the deadline, rather than running on past it.
     def test_a_slow_removal_stops_at_the_deadline(self) -> None:

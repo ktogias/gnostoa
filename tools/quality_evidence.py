@@ -2654,21 +2654,36 @@ def _stage(
     except exact_tree.ExactTreeError as exc:
         return _and(
             f"the source tree cannot be staged: {exc.code}",
-            _discard_staged(staged, owner.deadline),
+            _discard_staged(staged, owner),
         )
     except OverflowError as exc:
         refusal = _unrepresentable_timeout("the frozen tree's stage")
-        _note_retained(refusal, _discard_staged(staged, owner.deadline))
+        _note_retained(refusal, _discard_staged(staged, owner))
         raise refusal from exc
     except BaseException as primary:
-        _note_retained(primary, _discard_staged(staged, owner.deadline))
+        _note_retained(primary, _discard_staged(staged, owner))
         raise
     if identity != tree:
         return _and(
             "the source tree cannot be staged: tree-mismatch",
-            _discard_staged(staged, owner.deadline),
+            _discard_staged(staged, owner),
         )
     return staged, identity
+
+
+# The owner's codes that refuse an inventory when the staged source is observed again,
+# each with its reason. `unsupported-entry` is also what an unknown object format
+# raises before the staged root is read, so it claims no change (Router #389
+# 6332488628, correcting D3's boundary). Every other code certifies nothing.
+_REOBSERVATION_REFUSALS = {
+    "tree-mismatch": "the staged source no longer matches the frozen tree",
+    "unsafe-path": "the staged source holds an unsafe path",
+    "cap-files": "the staged source exceeds its file bound",
+    "cap-bytes": "the staged source exceeds its byte bound",
+    "unsupported-entry": (
+        "unrepresentable re-observation of the staged source, change not established"
+    ),
+}
 
 
 def _reobserved(
@@ -2676,13 +2691,21 @@ def _reobserved(
 ) -> bool:
     """Whether the staged source is still the frozen tree after the producers read
     it. One that changed is refused, with no inventory (Router #389 6325382720,
-    D3); one that cannot be observed again is not certified."""
+    D3), as is one the owner finds mismatched, unsafe, over its bound or
+    unrepresentable, worded by its code (6332488628); one that cannot otherwise be
+    observed again is not certified."""
     from tools import exact_tree
 
     try:
         after = exact_tree.observed_tree(root, staged, limits=owner)
-    except exact_tree.ExactTreeError:
-        return False
+    except exact_tree.ExactTreeError as exc:
+        reason = _REOBSERVATION_REFUSALS.get(exc.code)
+        if reason is None:
+            return False
+        raise QualityEvidenceError(
+            f"{reason}: {exc.code}; no inventory was written, the raw reports are in "
+            f"{run}"
+        ) from exc
     except OverflowError as exc:
         raise _unrepresentable_timeout("the staged source's identity") from exc
     if after != tree:
@@ -2727,6 +2750,25 @@ class _CleanupDeadline(Exception):
     """The inventory's deadline passed while its staged source was being removed."""
 
 
+class _CleanupOverBound(Exception):
+    """The staged source holds more named entries than its removal may examine."""
+
+
+@dataclasses.dataclass
+class _EntryBudget:
+    """The named entries, directories included, that one removal may still examine:
+    shared by every directory it lists and never reset per directory (Router
+    6332488628 on #389)."""
+
+    remaining: int
+
+    def spend(self) -> None:
+        """Spend one entry, or refuse it once the budget is spent."""
+        if self.remaining <= 0:
+            raise _CleanupOverBound
+        self.remaining -= 1
+
+
 _RETAINED = "the staged source was left in the run directory"
 
 
@@ -2740,10 +2782,11 @@ def _within(deadline: float) -> None:
         raise _CleanupDeadline
 
 
-def _listed(fd: int, deadline: float) -> list[os.DirEntry[str]]:
+def _listed(fd: int, deadline: float, budget: _EntryBudget) -> list[os.DirEntry[str]]:
     """Every entry of an open directory, the deadline checked before its listing opens
     and before each advance of it, since one advance can read the directory again
-    (Router 6330915173 on #389)."""
+    (Router 6330915173 on #389). Each entry spends the removal's shared budget before
+    it is kept, so a listing past the bound is never held whole (6332488628)."""
     _within(deadline)
     found: list[os.DirEntry[str]] = []
     with os.scandir(fd) as listing:
@@ -2752,6 +2795,7 @@ def _listed(fd: int, deadline: float) -> list[os.DirEntry[str]]:
             entry = next(listing, None)
             if entry is None:
                 return found
+            budget.spend()
             found.append(entry)
 
 
@@ -2772,16 +2816,22 @@ def _descend_or_remove(entry: os.DirEntry[str], fd: int, deadline: float) -> int
     return None
 
 
-def _discard_staged(staged: Path, deadline: float) -> str | None:
-    """Remove the staged source this run owns, within the inventory's one deadline. The
-    walk is post-order and explicit: the deadline is checked before every directory
-    open, every advance of a directory's listing, every entry's type read, and every
-    removal, so a spent budget starts none of them; only closing the walk's own
-    descriptors runs past it. Each directory is opened relative to its parent's
-    descriptor, never through a link, and an entry is removed by its own type, never
-    followed. What a passed deadline or a failed removal leaves stays in the run
-    directory, and that is returned for the record; it never replaces the refusal or
-    the result it follows (PAO 6329094433 and 6330677193 on #389)."""
+def _discard_staged(staged: Path, owner: _TreeLimits) -> str | None:
+    """Remove the staged source this run owns, within the inventory's one deadline and
+    its tree bound. The walk is post-order and explicit: the deadline is checked before
+    every directory open, every advance of a directory's listing, every entry's type
+    read, and every removal, so a spent budget starts none of them; only closing the
+    walk's own descriptors runs past it. Each directory is opened relative to its
+    parent's descriptor, never through a link, and an entry is removed by its own type,
+    never followed. The walk examines at most `max_files` named entries, beyond the
+    root, counting directories, where staging counts files alone: so a directory-rich
+    tree that staged within the bound can still leave its removal short (Router
+    6332488628). What a passed deadline, the entry bound or a failed removal leaves
+    stays in the run directory, and that is returned for the record; it never
+    replaces the refusal or the result it follows (PAO 6329094433 and 6330677193 on
+    #389)."""
+    deadline = owner.deadline
+    budget = _EntryBudget(owner.max_files)
     # Each frame: an open directory and its name for removal, relative to the frame
     # below, or the staged path itself for the root; beside it, its entries still to
     # remove, None until the directory is read.
@@ -2797,7 +2847,7 @@ def _discard_staged(staged: Path, deadline: float) -> str | None:
         while frames:
             fd, name = frames[-1]
             if entries[-1] is None:
-                entries[-1] = _listed(fd, deadline)
+                entries[-1] = _listed(fd, deadline, budget)
             pending = entries[-1]
             if pending:
                 entry = pending.pop()
@@ -2814,6 +2864,11 @@ def _discard_staged(staged: Path, deadline: float) -> str | None:
                 os.rmdir(name, dir_fd=frames[-1][0] if frames else None)
     except _CleanupDeadline:
         return f"{_RETAINED}: the deadline passed during its removal"
+    except _CleanupOverBound:
+        return (
+            f"{_RETAINED}: it holds more than the {owner.max_files} named entries its "
+            "removal may examine"
+        )
     except OSError as exc:
         return f"{_RETAINED}: it could not be removed whole ({type(exc).__name__})"
     finally:
@@ -2862,9 +2917,9 @@ def _analyze_frozen(
         result = _run_producers(staged, run, expected, limits, gaps, deadline)
         bound = _reobserved(root, staged, tree, owner, run)
     except BaseException as primary:
-        _note_retained(primary, _discard_staged(staged, deadline))
+        _note_retained(primary, _discard_staged(staged, owner))
         raise
-    retained = _discard_staged(staged, deadline)
+    retained = _discard_staged(staged, owner)
     if retained is not None:
         gaps.append(retained)
     if not bound:
