@@ -1476,6 +1476,36 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         (site / "linked-1.0.dist-info").symlink_to(real, target_is_directory=True)
         self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
 
+    def test_a_record_is_read_from_the_directory_opened_not_its_path(self) -> None:
+        # Kill test (X54, round 5): the RECORD is opened relative to the *.dist-info
+        # directory the observer opened, so a directory replaced by a link after that
+        # open is never followed (cubic 4354512430).
+        observer = importlib.import_module("tools.python_environment_observation")
+        site = self._observed_root("swapped")
+        dist = site / "one-1.0.dist-info"
+        elsewhere = Path(self.directory.name) / "elsewhere-dist-info"
+        elsewhere.mkdir()
+        (elsewhere / "RECORD").write_text("y" * 64, encoding="utf-8")
+        moved = Path(self.directory.name) / "moved-dist-info"
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            if os.fspath(path) == str(dist) and flags & os.O_DIRECTORY:
+                dist.rename(moved)
+                dist.symlink_to(elsewhere, target_is_directory=True)
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(site)], caps, form))
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [[str(site), "one-1.0.dist-info", hashlib.sha256(b"x" * 64).hexdigest()]],
+            observed["distributions"],
+        )
+
     def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
         # An import-path entry that exists but cannot be examined stops the observation
         # as unreadable; only a path that is absent is skipped (PAO 6353587922,
