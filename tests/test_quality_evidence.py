@@ -849,14 +849,24 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
         if spec is None or spec.loader is None:
             self.fail("the module cannot be loaded from its path")
         module = importlib.util.module_from_spec(spec)
+        package = sys.modules["tools"]
         # Registered for the load alone: dataclasses resolve their annotations
         # through the module's own entry.
-        with patch.dict(sys.modules, {spec.name: module}), patch.dict(os.__dict__):
+        with (
+            patch.dict(sys.modules, {spec.name: module}),
+            patch.dict(package.__dict__),
+            patch.dict(os.__dict__),
+        ):
             # Either flag may already be absent, on the very platforms this is about
             # (cubic and CodeAnt on #451).
             for name in ("O_DIRECTORY", "O_NOFOLLOW"):
                 os.__dict__.pop(name, None)
+            # The staging owner is unloaded, as in a fresh interpreter, so an import of
+            # it at module scope reads the flags again rather than finding it cached.
+            sys.modules.pop("tools.exact_tree", None)
+            package.__dict__.pop("exact_tree", None)
             spec.loader.exec_module(module)
+            self.assertNotIn("tools.exact_tree", sys.modules)
         self.assertTrue(callable(module.collect_quality_evidence))
 
 
