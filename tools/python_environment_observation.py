@@ -133,12 +133,19 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
             observation.stop("roots")
             break
         examined += 1
-        if not os.path.exists(entry):
+        # Only an entry that is absent is skipped: one that exists but cannot be
+        # examined stops the observation (PAO 6353587922 on #452).
+        try:
+            mode = os.stat(entry).st_mode
+        except (FileNotFoundError, NotADirectoryError):
             continue
+        except (OSError, ValueError):
+            observation.stop("unreadable")
+            break
         root = observation.text(entry)
         if root is None:
             break
-        if not os.path.isdir(entry):
+        if not stat.S_ISDIR(mode):
             # An archive on the import path, a zip or an egg: its bytes stand for it.
             archives.append([root, observation.digest_of(entry)])
             continue
