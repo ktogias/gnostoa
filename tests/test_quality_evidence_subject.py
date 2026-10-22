@@ -3,6 +3,7 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 
 from __future__ import annotations
 
+import ast
 import errno
 import hashlib
 import importlib
@@ -1107,34 +1108,195 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 ]
                 self.assertEqual("unavailable", member["status"])
 
-    def _renamed(self, producer: str, interpreter: str | None = None):
-        """A run-record writer that renames mypy's records to `producer`, and, when
-        `interpreter` is given, records them as launched by it."""
-        original = self.module._run_record
+    def _with_probe_runs(self, *probes: tuple[str, list[str], object]):
+        """The collector's runner, merging further producers' runs after complexity's,
+        without changing the collector: each probe is (producer, argv, launch), from an
+        adapter that declares `launch`, or declares nothing when it is None."""
+        original = self.module._run_complexity
 
-        def record(name, tool, command, status, report, run, version):
-            if tool == "mypy":
-                tool, name = producer, name.replace("mypy", producer)
-                if interpreter is not None:
-                    command = [interpreter, *command[1:]]
-            return original(name, tool, command, status, report, run, version)
+        def run_complexity(*args, **kwargs):
+            result = original(*args, **kwargs)
+            for producer, argv, launch in probes:
+                record = {
+                    "invocation": producer,
+                    "producer": producer,
+                    "version": None,
+                    "argv": argv,
+                    "exit_status": 0,
+                }
+                if launch is None:
+                    result.runs.append(record)
+                else:
+                    result.add_run(record, launch)
+            return result
 
-        return patch.object(self.module, "_run_record", side_effect=record)
+        return patch.object(self.module, "_run_complexity", side_effect=run_complexity)
 
-    def test_the_observation_follows_the_observed_interpreter_not_a_name(self) -> None:
-        # A producer the collector launches as its own interpreter under -I receives
-        # the observation whatever its name; one launched by another interpreter does
-        # not (owner 6351449420 items 2 and 6).
-        with self._renamed("probe-producer"):
+    def test_the_observation_follows_the_declared_launch_not_a_name(self) -> None:
+        # A producer whose adapter declares the observed launch receives the
+        # observation whatever its name; one declaring another interpreter does not,
+        # nor does in-process complexity (Router 6351766731 R2; PAO 6351691418).
+        observed = getattr(self.module, "_ISOLATED_PYTHON", None)
+        self.assertIsNotNone(observed, "the collector declares no observed launch")
+        other = self.module._Launch("/another/python", ("-I",))
+        with self._with_probe_runs(
+            ("probe-producer", [*observed.argv(), "-m", "probe"], observed),
+            ("another-interpreter", [*other.argv(), "-m", "probe"], other),
+        ):
             inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
         runs = {r["producer"]: r for r in inventory["producers"]}
         self.assertIn("environment_observation", runs["probe-producer"])
-        with self._renamed("probe-producer", interpreter="/another/python"):
+        self.assertNotIn("environment_observation", runs["another-interpreter"])
+        self.assertNotIn("environment_observation", runs["complexity"])
+        self.assertIn("environment_observation", runs["mypy"])
+        self.assertIn("environment_observation", runs["ruff"])
+
+    def test_a_run_that_only_looks_like_the_observed_launch_gets_no_observation(
+        self,
+    ) -> None:
+        # An argv that starts as the observed interpreter's does, from an adapter that
+        # declares no launch, is no association: neither a name nor an argv prefix
+        # proves a run's scope (Router 6351766731 R2; PAO 6351691418).
+        argv = [sys.executable, "-I", "-m", "lookalike"]
+        with self._with_probe_runs(("lookalike", argv, None)):
             inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
         runs = {r["producer"]: r for r in inventory["producers"]}
-        self.assertNotIn("environment_observation", runs["probe-producer"])
-        self.assertIn("environment_observation", runs["ruff"])
+        self.assertNotIn("environment_observation", runs["lookalike"])
+        self.assertIn("environment_observation", runs["mypy"])
+
+    def _observer(self) -> Path:
+        return (
+            Path(self.module.__file__).resolve().parent
+            / "python_environment_observation.py"
+        )
+
+    def test_the_observer_is_the_module_beside_the_collector(self) -> None:
+        # The observer is the toolkit's own module beside the collector, run by its
+        # path under -I: never the staged tree's, the cwd's or one searched on PATH
+        # (Router 6351766731 R1).
+        observer = self._observer()
+        self.assertTrue(
+            observer.is_file() and not observer.is_symlink(),
+            "no observer module beside the collector",
+        )
+        command = self.module._environment_command()
+        self.assertEqual([sys.executable, "-I", str(observer)], command[:3])
+        self.assertNotIn("-c", command)
+
+    def test_the_observer_imports_only_the_standard_library(self) -> None:
+        # Under -I the observer cannot import the toolkit, and it does not try to.
+        observer = self._observer()
+        self.assertTrue(observer.is_file(), "no observer module beside the collector")
+        tree = ast.parse(observer.read_text(encoding="utf-8"))
+        imported = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            node.module.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        self.assertLessEqual(imported, set(sys.stdlib_module_names))
+
+    def test_a_missing_or_linked_observer_is_unavailable_without_a_launch(
+        self,
+    ) -> None:
+        # Refused before any launch: an observer that is missing, or reached through a
+        # link (Router 6351766731 R1).
+        target = Path(self.directory.name) / "observer-target.py"
+        target.write_text("print('{}')\n", encoding="utf-8")
+        linked = Path(self.directory.name) / "linked-observer.py"
+        linked.symlink_to(target)
+        for name, observer in (
+            ("missing", Path(self.directory.name) / "absent-observer.py"),
+            ("linked", linked),
+        ):
+            with self.subTest(name):
+                launched: list[list[str]] = []
+                answer = self._environment(("fixture-1.0",))
+
+                def run(command, *, answer=answer, launched=launched, **kwargs):
+                    launched.append(command)
+                    return answer(command, **kwargs)
+
+                with patch.object(self.module, "_OBSERVER", observer, create=True):
+                    inventory = self._run(run, "import-untyped")
+                member = inventory["producers"][0]["environment_observation"]
+                self.assertEqual("unavailable", member["status"])
+                observations = [
+                    command
+                    for command in launched
+                    if not (
+                        "--version" in command or "mypy" in command or "ruff" in command
+                    )
+                ]
+                self.assertEqual([], observations)
+
+    def test_the_observer_runs_isolated_from_a_planted_working_directory(
+        self,
+    ) -> None:
+        # Characterization, run for real: a staged root that plants an observer of its
+        # own, at its top and under tools/, and a json.py, runs none of them, and
+        # neither that root nor the observer's directory is an observed import root
+        # (Router 6351766731 R1).
+        forged_report = json.dumps(
+            {
+                "format": self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                "incomplete": None,
+                "roots": ["/forged"],
+            }
+        )
+        forged = f"print({forged_report!r})\n"
+        for place in (
+            "python_environment_observation.py",
+            "tools/python_environment_observation.py",
+            "json.py",
+        ):
+            (self.root / place).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / place).write_text(forged, encoding="utf-8")
+        run = Path(self.directory.name) / "isolated-run"
+        run.mkdir()
+        evidence, interpreter = self.module._observe_environment(
+            self.root,
+            run,
+            self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+            time.monotonic() + 120,
+            "before",
+        )
+        self.assertIsNotNone(evidence)
+        observed = json.loads((run / evidence["path"]).read_text(encoding="utf-8"))
+        roots = {os.path.realpath(root) for root in observed["roots"]}
+        self.assertNotIn("/forged", observed["roots"])
+        self.assertNotIn(os.path.realpath(self.root), roots)
+        self.assertNotIn(os.path.realpath(self._observer().parent), roots)
+        self.assertEqual(os.path.realpath(sys.executable), interpreter["executable"])
+
+    def test_the_member_is_additive_to_the_v2_record(self) -> None:
+        # Characterization: the v2 record keeps its fields; the member is the one
+        # optional addition, absent where nothing was observed (complexity), and its
+        # unobserved scope is the one field added to it (Router 6351766731).
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
+        known = {"invocation", "producer", "version", "argv", "exit_status", "report"}
+        for record in inventory["producers"]:
+            self.assertLessEqual(set(record) - known, {"environment_observation"})
+        runs = {r["producer"]: r for r in inventory["producers"]}
         self.assertNotIn("environment_observation", runs["complexity"])
+        self.assertEqual(
+            {
+                "format",
+                "scope",
+                "caps",
+                "unobserved",
+                "status",
+                "interpreter",
+                "before",
+                "after",
+            },
+            set(runs["ruff"]["environment_observation"]),
+        )
 
     def test_the_observation_names_what_it_does_not_observe(self) -> None:
         # Equal endpoints are never complete equality: the member lists its unobserved
