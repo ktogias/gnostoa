@@ -4,6 +4,7 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 from __future__ import annotations
 
 import errno
+import importlib
 import json
 import os
 import shutil
@@ -14,11 +15,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from quality_evidence_fixtures import (
+    _DIAGNOSTIC_SAMPLE,
+    _EXTRA_COMPLEX,
+    _SOURCE_BINDING_GAP,
     _DiagnosticInventoryFixture,
-)
-
-from tools.quality_evidence import (
-    QualityEvidenceError,
 )
 
 
@@ -31,15 +31,17 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
     ) -> None:
         # Codex on #436, by the Router's G-a (6234212478): a manifest-backed root with
         # no `.git` of its own, inside another checkout, recorded that checkout's HEAD
-        # and compared against its history. It reads no Git: no revision, its state
-        # unknown, the named gap, and no comparison; a requested revision is never an
-        # observed one. A linked worktree's `.git` file is its own.
+        # and compared against its history. It reads no Git: no revision, no tree, the
+        # named gap, and no comparison; a requested revision is never an observed one.
+        # In v2 nothing is frozen for it, so its set stays unknown and nothing is
+        # analyzed: never the checkout or its manifest (Router #389 6325382720, D3,
+        # D4). A linked worktree's `.git` file is its own.
         self.mypy_records, self.ruff_records = {}, []
         nested = self._package(self.root / "pkg")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a package")
         standalone = self._package(Path(self.directory.name) / "standalone")
-        unknown = "the tracked tree is dirty or its state is unknown"
+        unfrozen = "the subject has no Git metadata of its own: no commit was frozen"
         cases = (
             ("nested, a base", nested, {"base": self.base}),
             ("nested, no base", nested, {}),
@@ -54,25 +56,27 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 self.assertEqual([], state.call_args_list)
                 self.assertEqual([], comparison.call_args_list)
                 self.assertIsNone(inventory["source"]["revision"])
-                self.assertIsNone(inventory["source"]["tracked_tree_dirty"])
+                self.assertIsNone(inventory["source"]["tree"])
+                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
                 self.assertIsNone(inventory["scope"]["diff"])
-                self.assertEqual(
-                    ["tools/sample.py"], inventory["scope"]["full"]["expected"]
+                self.assertIsNone(inventory["scope"]["full"]["expected"])
+                self.assertEqual([], inventory["producers"])
+                self.assertIn(unfrozen, inventory["coverage"]["reason"])
+                self.assertNotIn(
+                    "could not be re-read", inventory["coverage"]["reason"]
                 )
-                self.assertIn(unknown, inventory["coverage"]["reason"])
         with self.subTest("a requested revision is never observed"):
             with patch.dict(os.environ, {"KNOWLEDGE_KIT_REVISION": self.base}):
-                inventory, state, _comparison = self._collect_spied(
+                inventory, state, comparison = self._collect_spied(
                     nested,
                     Path(self.directory.name) / "out-expected",
                     expected_revision=self.base,
                 )
             self.assertEqual([], state.call_args_list)
+            self.assertEqual([], comparison.call_args_list)
             self.assertIsNone(inventory["source"]["revision"])
-            self.assertIn(
-                f"revision None is not the expected {self.base}",
-                inventory["coverage"]["reason"],
-            )
+            self.assertEqual(self.base, inventory["source"]["expected_revision"])
+            self.assertIn(unfrozen, inventory["coverage"]["reason"])
         with self.subTest("a malformed base"):
             inventory, _state, comparison = self._collect_spied(
                 nested, Path(self.directory.name) / "out-malformed", base="not-a-sha"
@@ -89,10 +93,11 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             inventory, state, _comparison = self._collect_spied(
                 worktree, Path(self.directory.name) / "out-linked"
             )
-            self.assertEqual(1 + 1, state.call_count)
+            self.assertEqual(0, state.call_count)
             self.assertEqual(
                 self._git("rev-parse", "HEAD"), inventory["source"]["revision"]
             )
+            self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
 
     def test_unsafe_git_metadata_refuses_the_inventory(self) -> None:
         # cubic and Claude on #436, by the Router's 6239259708: a packaged root whose
@@ -123,6 +128,29 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 self.assertEqual(
                     [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
                 )
+
+    def test_unsafe_metadata_at_the_freeze_alone_refuses_before_any_work(self) -> None:
+        # Mutant F7 on S2 B (#389 6326768433): the recheck after collection refuses
+        # unsafe metadata too, so the freeze's own refusal is observable only when the
+        # metadata is unsafe there alone. It refuses at once: no listing, no stage, no
+        # producer and no inventory (Router #389 6325382720, D3).
+        from tools.repository_scope import RepositoryScopeError
+
+        owner = importlib.import_module("tools.exact_tree")
+        unsafe = RepositoryScopeError("raw /host detail", category="UNSAFE_PATH")
+        listing = Mock(side_effect=owner.tree_paths)
+        with (
+            patch.object(self.module, "has_git_metadata", side_effect=[unsafe, True]),
+            patch.object(owner, "tree_paths", listing),
+        ):
+            reason, state, comparison = self._refused_spied(self.root)
+        self.assertIn("UNSAFE_PATH", reason)
+        self.assertNotIn("raw /host detail", reason)
+        self.assertEqual([], listing.call_args_list)
+        self.assertEqual([], comparison.call_args_list)
+        self.assertEqual([], state.call_args_list)
+        self.assertEqual([], [c for c, *_ in self.commands if "--version" not in c])
+        self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
 
     def test_metadata_that_git_resolves_elsewhere_refuses_the_inventory(self) -> None:
         # cubic on #436, by the Router's I-b: metadata that Git resolves to the
@@ -169,14 +197,23 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         # the check what is left of it, never no bound.
         identity = Mock(return_value=True)
         with patch.object(self.module, "has_git_metadata", identity):
-            source, _gaps = self.module._diagnostic_subject(
+            commit, _tree, _gaps = self.module._frozen_subject(
                 self.root, None, time.monotonic() - 1
             )
         self.assertEqual([], identity.call_args_list)
-        self.assertIsNone(source["tracked_tree_dirty"])
+        self.assertIsNone(commit)
+        identity = Mock(return_value=True)
+        gaps: list[str] = []
+        with patch.object(self.module, "has_git_metadata", identity):
+            rebound = self.module._metadata_rebound(
+                self.root, time.monotonic() - 1, gaps
+            )
+        self.assertEqual([], identity.call_args_list)
+        self.assertFalse(rebound)
+        self.assertEqual(["the subject could not be re-read after collection"], gaps)
         identity = Mock(return_value=True)
         with patch.object(self.module, "has_git_metadata", identity):
-            self.module._diagnostic_subject(self.root, None, time.monotonic() + 30)
+            self.module._frozen_subject(self.root, None, time.monotonic() + 30)
         self.assertEqual(1, identity.call_count)
         timeout = identity.call_args.kwargs["timeout"]
         self.assertIsNotNone(timeout)
@@ -188,47 +225,40 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         # check and the timeout came from two readings, and _time_left floored a
         # deadline spent in between to a millisecond, so Git started past it. One
         # reading decides both: a spent budget starts no Git, and an open one passes
-        # exactly what that reading leaves, never the floor.
+        # exactly what that reading leaves, never the floor. The frozen tree's owner
+        # takes the absolute deadline itself, never a converted timeout (#389 F3 S2 B).
         def clock(*readings):
             values = iter(readings)
             return SimpleNamespace(
                 monotonic=lambda: next(values, readings[-1]), sleep=time.sleep
             )
 
-        identity, state = Mock(return_value=True), Mock()
+        identity, reader = Mock(return_value=True), Mock()
         with (
             patch.object(self.module, "time", clock(101.0)),
             patch.object(self.module, "has_git_metadata", identity),
-            patch.object(self.module, "_git_state", state),
+            patch.object(self.module, "_diagnostic_git", reader),
         ):
-            source, _gaps = self.module._diagnostic_subject(self.root, None, 100.5)
+            commit, _tree, _gaps = self.module._frozen_subject(self.root, None, 100.5)
         self.assertEqual([], identity.call_args_list)
-        self.assertEqual([], state.call_args_list)
-        self.assertIsNone(source["tracked_tree_dirty"])
-        identity, state = Mock(return_value=True), Mock()
+        self.assertEqual([], reader.call_args_list)
+        self.assertIsNone(commit)
+        identity = Mock(return_value=True)
+        reader = Mock(side_effect=OSError("spent"))
         with (
             patch.object(self.module, "time", clock(100.0, 101.0)),
             patch.object(self.module, "has_git_metadata", identity),
-            patch.object(self.module, "_git_state", state),
+            patch.object(self.module, "_diagnostic_git", reader),
         ):
-            self.module._diagnostic_subject(self.root, None, 100.5)
+            self.module._frozen_subject(self.root, None, 100.5)
         self.assertEqual(0.5, identity.call_args.kwargs["timeout"])
-        self.assertEqual([], state.call_args_list)
-        enumeration = Mock(return_value=[])
-        with (
-            patch.object(self.module, "time", clock(101.0)),
-            patch.object(self.module, "candidate_paths", enumeration),
-        ):
-            expected, gap = self.module._tracked_python(self.root, 100.5)
-        self.assertEqual([], enumeration.call_args_list)
-        self.assertIsNone(expected)
-        self.assertIn("deadline", gap)
-        with (
-            patch.object(self.module, "time", clock(100.0, 101.0)),
-            patch.object(self.module, "candidate_paths", enumeration),
-        ):
-            self.module._tracked_python(self.root, 100.5)
-        self.assertEqual(0.5, enumeration.call_args.kwargs["timeout"])
+        owner = importlib.import_module("tools.exact_tree")
+        bounds = owner.Limits(100.5, 10, 10)
+        enumeration = Mock(return_value=frozenset({"tools/sample.py", "a.txt"}))
+        with patch.object(owner, "tree_paths", enumeration):
+            expected = self.module._tracked_python(self.root, "t" * 40, bounds)
+        self.assertIs(bounds, enumeration.call_args.kwargs["limits"])
+        self.assertEqual(["tools/sample.py"], expected)
 
     def test_an_unconfirmed_git_identity_reads_no_subject(self) -> None:
         # The Router's I-b on #436: an operational failure of the identity check is
@@ -248,14 +278,15 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                         self.root, self.output
                     )
                 self.assertEqual([], state.call_args_list)
+                self.assertEqual([], _comparison.call_args_list)
                 self.assertIsNone(inventory["source"]["revision"])
+                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
                 reason = inventory["coverage"]["reason"]
-                self.assertIn(
-                    "the tracked tree is dirty or its state is unknown", reason
-                )
-                self.assertIn(
-                    f"cannot confirm the subject's Git identity (scope error: {category})",
-                    reason,
+                self.assertEqual(
+                    1,
+                    reason.count(
+                        f"cannot confirm the subject's Git identity (scope error: {category})"
+                    ),
                 )
                 self.assertNotIn("raw /host detail", json.dumps(inventory))
 
@@ -295,9 +326,11 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 {named.format("GIT_TIMEOUT"): 1, reread: 1},
             ),
             (
-                "the same failure at both",
-                [failed, failed],
-                {named.format("GIT_FAILED"): 1, reread: 1},
+                # Nothing reads the root's Git after a failed freeze, so it is not
+                # checked again (cubic and Octopus on #451).
+                "a failure at the freeze",
+                [failed],
+                {named.format("GIT_FAILED"): 1, reread: 0},
             ),
             (
                 "an ordinary success",
@@ -318,45 +351,31 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 if effect[0] is True:
                     self.assertEqual(self.base, inventory["source"]["revision"])
 
-    def test_unsafe_metadata_at_the_tracked_read_refuses_the_inventory(self) -> None:
-        # Claude on #436, by the Router's C-a: the scope owner's UNSAFE_PATH or
-        # GIT_METADATA_IO at the tracked-set read refuses the inventory, as at the
-        # subject read, with no producer started; other scope errors stay soft gaps.
-        from tools.repository_scope import RepositoryScopeError
-
-        self.mypy_records, self.ruff_records = {}, []
-        for category in ("UNSAFE_PATH", "GIT_METADATA_IO"):
-            with self.subTest(category):
-                shutil.rmtree(self.output, ignore_errors=True)
-                self.commands = []
-                refused = RepositoryScopeError("/host/private", category=category)
-                with (
-                    patch(
-                        "tools.repository_scope.has_git_metadata", side_effect=refused
-                    ),
-                    patch(
-                        "tools.quality_evidence._bounded_run",
-                        side_effect=self._fake_run,
-                    ),
-                    self.assertRaises(QualityEvidenceError) as raised,
-                ):
-                    self.collect(self.root, self.output)
-                self.assertIn(category, str(raised.exception))
-                self.assertNotIn("/host/private", str(raised.exception))
-                self.assertEqual(
-                    [], [c for c, *_ in self.commands if "--version" not in c]
-                )
-                self.assertEqual(
-                    [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
-                )
-        for category in ("GIT_TIMEOUT", "MANIFEST_MISSING"):
-            with self.subTest(category):
-                shutil.rmtree(self.output, ignore_errors=True)
-                soft = RepositoryScopeError("/host/private", category=category)
-                with patch("tools.repository_scope.has_git_metadata", side_effect=soft):
-                    inventory = self._inventory()
-                self.assertIsNone(inventory["scope"]["full"]["expected"])
-                self.assertIn(category, inventory["coverage"]["reason"])
+    def test_the_tracked_set_is_the_frozen_trees_listing(self) -> None:
+        # Claude on #436, by the Router's C-a, in v2: the tracked set is the frozen
+        # tree's object listing, never the scope owner's index listing, so that read's
+        # metadata seam is gone. Unsafe metadata stays refused at the freeze and at the
+        # recheck after collection (test_unsafe_git_metadata_refuses_the_inventory,
+        # test_unsafe_git_metadata_at_the_final_read_refuses_the_inventory).
+        owner = importlib.import_module("tools.exact_tree")
+        listing = Mock(side_effect=owner.tree_paths)
+        with (
+            patch.object(
+                self.module,
+                "candidate_paths",
+                side_effect=AssertionError("the index's listing"),
+            ),
+            patch.object(owner, "tree_paths", listing),
+        ):
+            inventory = self._inventory()
+        self.assertEqual(1, listing.call_count)
+        self.assertEqual(
+            self._git("rev-parse", "HEAD^{tree}"), listing.call_args.args[1]
+        )
+        self.assertEqual(
+            sorted(p for p in self.files if p.endswith(".py")),
+            inventory["scope"]["full"]["expected"],
+        )
 
     def test_an_uninspectable_git_entry_refuses_the_inventory(self) -> None:
         # The Router's 6239259708 tightens G-a: a `.git` that cannot be inspected is no
@@ -379,9 +398,10 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
 
     def test_unsafe_git_metadata_at_the_final_read_refuses_the_inventory(self) -> None:
         # The Router's 6239259708 at the final subject read: metadata replaced by a
-        # symlink there is refused too, with no second Git subject read. Both reads go
-        # through _subject_state (the Router's 6243847776 on #436).
-        real = self.module._subject_state
+        # symlink there is refused too. Both reads are the scope owner's identity
+        # check; no git status runs at either (Router #389 6325382720, D1, D3: the
+        # existing hard refusals remain).
+        real = self.module.has_git_metadata
         calls: list[Path] = []
 
         def final_with_a_link(root, *args, **kwargs):
@@ -391,17 +411,22 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 (root / ".git").symlink_to(root / ".git-moved")
             return real(root, *args, **kwargs)
 
-        with patch.object(self.module, "_subject_state", side_effect=final_with_a_link):
+        with patch.object(
+            self.module, "has_git_metadata", side_effect=final_with_a_link
+        ):
             reason, state, _comparison = self._refused_spied(self.root, base=self.base)
         self.assertEqual(2, len(calls))
-        self.assertEqual(1, state.call_count)
+        self.assertEqual(0, state.call_count)
         self.assertIn("UNSAFE_PATH", reason)
         self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
 
-    def test_a_dirty_subjects_base_is_checked_for_its_form_only(self) -> None:
-        # Codex on #436, by the Router's B-a (6239259708): with nothing compared, a
-        # base is checked for its form only, never verified as a commit, and no Git
-        # comparison work starts; a malformed base keeps its gap.
+    def test_an_unfrozen_subjects_base_is_checked_for_its_form_only(self) -> None:
+        # Codex on #436, by the Router's B-a (6239259708), in v2: with nothing
+        # compared, because no commit was frozen, a base is checked for its form only,
+        # never verified as a commit, and no Git comparison work starts; a malformed
+        # base keeps its gap.
+        from tools.repository_scope import RepositoryScopeError
+
         self._git("tag", "-a", "-m", "a tag", "base-tag", self.base)
         bases = {
             "tree": self._git("rev-parse", f"{self.base}^{{tree}}"),
@@ -409,27 +434,28 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             "tag": self._git("rev-parse", "base-tag"),
             "missing object": "f" * 40,
         }
-        clean = self.module._git_state(self.root)
-        dirty = {"revision": self.base, "tracked_tree_dirty": True}
+        unknown = RepositoryScopeError("raw detail", category="GIT_FAILED")
         for kind, base in bases.items():
             with self.subTest(kind):
                 shutil.rmtree(self.output, ignore_errors=True)
                 comparison = Mock(side_effect=self.module._diagnostic_git)
                 with (
-                    patch.object(self.module, "_git_state", side_effect=[dirty, clean]),
+                    patch.object(
+                        self.module, "has_git_metadata", side_effect=[unknown, True]
+                    ),
                     patch.object(self.module, "_diagnostic_git", comparison),
                 ):
                     inventory = self._inventory(base=base)
                 self.assertEqual([], comparison.call_args_list)
                 self.assertIsNone(inventory["scope"]["diff"])
                 reason = inventory["coverage"]["reason"]
-                self.assertNotIn("commit", reason)
-                self.assertIn(
-                    "the tracked tree is dirty or its state is unknown", reason
-                )
+                self.assertNotIn("is not a commit", reason)
+                self.assertIn("no commit was frozen to compare", reason)
         with self.subTest("a malformed base"):
             shutil.rmtree(self.output, ignore_errors=True)
-            with patch.object(self.module, "_git_state", side_effect=[dirty, clean]):
+            with patch.object(
+                self.module, "has_git_metadata", side_effect=[unknown, True]
+            ):
                 inventory = self._inventory(base="not-a-sha")
             self.assertIn(
                 "base 'not-a-sha' is not a 40-hex commit id",
@@ -439,10 +465,10 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
     def test_metadata_gone_at_the_final_read_leaves_the_comparison_unbound(
         self,
     ) -> None:
-        # The Router's G-a at the final subject read: metadata gone there reads no Git,
-        # and the existing unbound-subject handling nulls every in_diff. Both reads go
-        # through _subject_state (the Router's 6243847776 on #436).
-        real = self.module._subject_state
+        # The Router's G-a at the final subject read: metadata gone there leaves the
+        # comparison, which read it, unbound: no diff and every in_diff null. The
+        # staged tree's own binding is unaffected (Router #389 6325382720).
+        real = self.module.has_git_metadata
         calls: list[Path] = []
 
         def final_without_metadata(root, *args, **kwargs):
@@ -452,117 +478,173 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             return real(root, *args, **kwargs)
 
         with patch.object(
-            self.module, "_subject_state", side_effect=final_without_metadata
+            self.module, "has_git_metadata", side_effect=final_without_metadata
         ):
             inventory, state, _comparison = self._collect_spied(
                 self.root, self.output, base=self.base
             )
         self.assertEqual(2, len(calls))
-        self.assertEqual(1, state.call_count)
+        self.assertEqual(0, state.call_count)
         self.assertIn(
             "the subject could not be re-read after collection",
             inventory["coverage"]["reason"],
         )
+        self.assertIsNone(inventory["scope"]["diff"])
+        self.assertTrue(inventory["findings"])
         self.assertEqual(
             {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
         )
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
 
-    def test_a_dirty_or_unknown_subject_is_never_compared(self) -> None:
-        # The Router's D1 (6231894979): the producers read the working tree and the
-        # comparison reads HEAD, so a definite in_diff for a dirty or unknown tree may
-        # be wrong. It is not compared: no diff, every in_diff null, and the named gap.
-        clean = self.module._git_state(self.root)
-        cases = (
-            ("dirty", {"revision": self.base, "tracked_tree_dirty": True}),
-            ("unknown", {"revision": None, "tracked_tree_dirty": None}),
+    # The Router's G451-R6 (6335930651 on #389): a final staged observation that is
+    # only unavailable, with the metadata still confirmed, keeps the frozen-object
+    # comparison but no finding's attribution, positive or negative: no finding was
+    # observed on verified bytes. The observation fails by an unavailable identity,
+    # leaving the comparison its time, never by an expired deadline.
+    def test_an_unobserved_staged_source_keeps_the_comparison_not_attribution(
+        self,
+    ) -> None:
+        sample = self.root / "tools" / "sample.py"
+        sample.write_text(
+            sample.read_text(encoding="utf-8") + _EXTRA_COMPLEX, encoding="utf-8"
         )
-        for label, first in cases:
+        self._git("commit", "-q", "-am", "an extra complex function")
+        bound = self._inventory(base=self.base)
+        self.assertEqual(
+            {True, False}, {f["native"]["in_diff"] for f in bound["findings"]}
+        )
+        for run in self.output.glob("diagnostic-*"):
+            shutil.rmtree(run)
+        owner = importlib.import_module("tools.exact_tree")
+        unavailable = self._then(
+            owner.observed_tree, owner.ExactTreeError("identity-unavailable")
+        )
+        with patch.object(owner, "observed_tree", side_effect=unavailable):
+            inventory = self._inventory(base=self.base)
+        self.assertIsNotNone(inventory["scope"]["diff"])
+        self.assertEqual(
+            bound["scope"]["diff"]["changed_paths"],
+            inventory["scope"]["diff"]["changed_paths"],
+        )
+        self.assertEqual(len(bound["findings"]), len(inventory["findings"]))
+        self.assertEqual(
+            {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+        )
+        reason = inventory["coverage"]["reason"]
+        self.assertIn("finding-to-diff attribution is unknown", reason)
+        self.assertIn("the staged source could not be observed again", reason)
+        self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+        self.assertIsNone(inventory["source"]["staged_identity"])
+        self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
+
+    # The Router's G451-R9 (6339588153 on #389): the residual agrees with the
+    # published staged-tree binding. A NOT_STAGED record, after no freeze, a failed
+    # stage or an unavailable final observation, never says that the bytes were
+    # observed before and after the producers; an EXACT_TREE_STAGED one keeps the
+    # whole residual.
+    def test_the_residual_agrees_with_the_published_binding(self) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        unconfined = (
+            "source binding UNVERIFIED: the producers' installed environment and "
+            "import graph is not proven confined to the staged tracked inputs"
+        )
+        unavailable = owner.ExactTreeError("identity-unavailable")
+        cases = {
+            "no freeze": patch.object(
+                self.module, "has_git_metadata", return_value=False
+            ),
+            "a failed stage": patch.object(
+                owner, "observed_tree", side_effect=unavailable
+            ),
+            "an unavailable final observation": patch.object(
+                owner,
+                "observed_tree",
+                side_effect=self._then(owner.observed_tree, unavailable),
+            ),
+        }
+        for label, failing in cases.items():
             with self.subTest(label):
-                spy = Mock(side_effect=self.module._diagnostic_git)
-                with (
-                    patch.object(self.module, "_git_state", side_effect=[first, clean]),
-                    patch.object(self.module, "_diagnostic_git", spy),
-                ):
-                    inventory = self._inventory(base=self.base)
-                self.assertEqual([], spy.call_args_list)
-                self.assertIsNone(inventory["scope"]["diff"])
-                self.assertEqual(
-                    {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
-                )
-                self.assertIn(
-                    "the tracked tree is dirty or its state is unknown",
-                    inventory["coverage"]["reason"],
-                )
+                with failing:
+                    inventory = self._inventory()
+                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+                self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+                reason = inventory["coverage"]["reason"]
+                self.assertIn(unconfined, reason)
+                self.assertNotIn("observed before and after the producers", reason)
+                for run in self.output.glob("diagnostic-*"):
+                    shutil.rmtree(run)
+        inventory = self._inventory()
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self.assertIn(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
+
+    def test_an_unfrozen_subject_is_never_compared(self) -> None:
+        # The Router's D1 (6231894979), in v2 (Router #389 6325382720, D4): a subject
+        # whose commit was not frozen is not compared: no comparison read, no diff, and
+        # the named gap. A dirty checkout is no longer such a subject: the frozen
+        # commit is analyzed and compared, and no dirty state is read.
+        from tools.repository_scope import RepositoryScopeError
+
+        unknown = RepositoryScopeError("raw detail", category="GIT_FAILED")
+        spy = Mock(side_effect=self.module._diagnostic_git)
+        with (
+            patch.object(self.module, "has_git_metadata", side_effect=[unknown, True]),
+            patch.object(self.module, "_diagnostic_git", spy),
+        ):
+            inventory = self._inventory(base=self.base)
+        self.assertEqual([], spy.call_args_list)
+        self.assertIsNone(inventory["scope"]["diff"])
+        self.assertEqual([], inventory["findings"])
+        self.assertIn(
+            f"cannot compare with base {self.base}: no commit was frozen to compare",
+            inventory["coverage"]["reason"],
+        )
+        with self.subTest("a dirty checkout is compared as its frozen commit"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            self._changed_once()
+            (self.root / "tools" / "sample.py").write_text(
+                _DIAGNOSTIC_SAMPLE + "\n# dirty\n", encoding="utf-8"
+            )
+            inventory = self._inventory(base=self.base)
+            self.assertEqual(
+                ["tools/sample.py"], inventory["scope"]["diff"]["changed_paths"]
+            )
+            self.assertNotIn(
+                None, {f["native"]["in_diff"] for f in inventory["findings"]}
+            )
+            self.assertNotIn("dirty", inventory["coverage"]["reason"])
 
     def test_an_unbound_subject_publishes_no_diff(self) -> None:
-        # Codex on #436, by the Router's D1b (6240492499): a subject that changed,
-        # turned dirty or could not be re-read after a clean comparison kept
-        # scope.diff, whose changed_paths may describe another revision. It is null, as
-        # for a subject that was dirty from the start, and the gap names why.
+        # Codex on #436, by the Router's D1b (6240492499), in v2: a comparison whose
+        # metadata could not be confirmed again after collection keeps no scope.diff,
+        # and the gap names why. A later HEAD is no longer a changed subject: the
+        # comparison is the frozen commit's (Router #389 6325382720, D4; held by
+        # ExactSourceTreeTests.test_the_diff_is_the_frozen_commits_not_a_later_heads).
+        from tools.repository_scope import RepositoryScopeError
+
         self._changed_once()
-        clean = self.module._git_state(self.root)
+        reread = "the subject could not be re-read after collection"
         cases = (
+            ("metadata gone", [True, False]),
             (
-                "HEAD changed",
-                {"revision": "f" * 40, "tracked_tree_dirty": False},
-                "the subject changed during collection",
-            ),
-            (
-                "turned dirty",
-                {**clean, "tracked_tree_dirty": True},
-                "the subject changed during collection",
-            ),
-            (
-                "could not be re-read",
-                {"revision": None, "tracked_tree_dirty": None},
-                "the subject could not be re-read after collection",
+                "unconfirmed",
+                [True, RepositoryScopeError("raw detail", category="GIT_FAILED")],
             ),
         )
-        for label, after, gap in cases:
+        for label, effect in cases:
             with self.subTest(label):
                 shutil.rmtree(self.output, ignore_errors=True)
-                with patch.object(
-                    self.module, "_git_state", side_effect=[clean, after]
-                ):
+                with patch.object(self.module, "has_git_metadata", side_effect=effect):
                     inventory = self._inventory(base=self.base)
                 self.assertIsNone(inventory["scope"]["diff"])
-                self.assertEqual(
-                    {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
-                )
-                self.assertIn(gap, inventory["coverage"]["reason"])
-        with self.subTest("a stable clean subject keeps its diff"):
-            shutil.rmtree(self.output, ignore_errors=True)
-            with patch.object(self.module, "_git_state", side_effect=[clean, clean]):
-                inventory = self._inventory(base=self.base)
-            self.assertEqual(self.base, inventory["scope"]["diff"]["base"])
-        with self.subTest("no base, no diff"):
-            shutil.rmtree(self.output, ignore_errors=True)
-            self.assertIsNone(self._inventory()["scope"]["diff"])
-
-    def test_a_subject_that_changed_or_cannot_be_re_read_has_no_in_diff(self) -> None:
-        # The Router's D1: when the final read differs, or cannot finish, the definite
-        # answers are cleared to null, and the subject gap stays.
-        clean = self.module._git_state(self.root)
-        cases = (
-            (
-                "changed",
-                {"revision": "f" * 40, "tracked_tree_dirty": False},
-                "the subject changed during collection",
-            ),
-            (
-                "unreadable",
-                {"revision": None, "tracked_tree_dirty": None},
-                "the subject could not be re-read after collection",
-            ),
-        )
-        for label, after, gap in cases:
-            with self.subTest(label):
-                with patch.object(
-                    self.module, "_git_state", side_effect=[clean, after]
-                ):
-                    inventory = self._inventory(base=self.base)
                 self.assertTrue(inventory["findings"])
                 self.assertEqual(
                     {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
                 )
-                self.assertIn(gap, inventory["coverage"]["reason"])
+                self.assertIn(reread, inventory["coverage"]["reason"])
+        with self.subTest("a stable subject keeps its diff"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            inventory = self._inventory(base=self.base)
+            self.assertEqual(self.base, inventory["scope"]["diff"]["base"])
+        with self.subTest("no base, no diff"):
+            shutil.rmtree(self.output, ignore_errors=True)
+            self.assertIsNone(self._inventory()["scope"]["diff"])

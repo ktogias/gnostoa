@@ -4,6 +4,7 @@ import ast
 import errno
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ from unittest.mock import ANY, Mock, patch
 
 from quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
+    _EXTRA_COMPLEX,
     _SOURCE_BINDING_GAP,
     _DiagnosticFixture,
     _DiagnosticInventoryFixture,
@@ -838,6 +840,35 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
         )
         self.assertIn("evidence: [artifact, test-report]", verification)
 
+    # The module imports where the diagnostic path's POSIX-only directory flags are
+    # absent, so the default collection does not need them: they are read on that
+    # path alone, never at import (Codex and Q on #451).
+    def test_the_module_imports_without_the_diagnostic_directory_flags(self) -> None:
+        path = ROOT / "tools" / "quality_evidence.py"
+        spec = importlib.util.spec_from_file_location("quality_evidence_bare", path)
+        if spec is None or spec.loader is None:
+            self.fail("the module cannot be loaded from its path")
+        module = importlib.util.module_from_spec(spec)
+        package = sys.modules["tools"]
+        # Registered for the load alone: dataclasses resolve their annotations
+        # through the module's own entry.
+        with (
+            patch.dict(sys.modules, {spec.name: module}),
+            patch.dict(package.__dict__),
+            patch.dict(os.__dict__),
+        ):
+            # Either flag may already be absent, on the very platforms this is about
+            # (cubic and CodeAnt on #451).
+            for name in ("O_DIRECTORY", "O_NOFOLLOW"):
+                os.__dict__.pop(name, None)
+            # The staging owner is unloaded, as in a fresh interpreter, so an import of
+            # it at module scope reads the flags again rather than finding it cached.
+            sys.modules.pop("tools.exact_tree", None)
+            package.__dict__.pop("exact_tree", None)
+            spec.loader.exec_module(module)
+            self.assertNotIn("tools.exact_tree", sys.modules)
+        self.assertTrue(callable(module.collect_quality_evidence))
+
 
 # #389 F3-S1: the explicit, offline diagnostic inventory (Router 6201584332). It is
 # experimental qualification material: not an assurance receipt, not in the default
@@ -885,7 +916,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         )
         self.assertEqual(17, complexity[0]["native"]["value"])
         self.assertEqual("PY-R1000", complexity[0]["native"]["deepsource_rule"])
-        self.assertEqual("gnostoa-diagnostic-inventory/v1", inventory["schema"])
+        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
         self.assertEqual("EXPERIMENTAL", inventory["status"])
 
     def test_a_non_mapped_diagnostic_and_a_second_rule_on_one_line_stay_distinct(
@@ -1188,77 +1219,96 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         ]
         self.assertIs(False, outside["native"]["tracked"])
 
-    def test_a_dirty_or_unexpected_subject_is_incomplete(self) -> None:
+    def test_an_unexpected_subject_is_incomplete_and_a_dirty_one_is_not_read(
+        self,
+    ) -> None:
+        # In v2 (Router #389 6325382720, D1, D4): an expected revision that names no
+        # commit freezes nothing and analyzes nothing; a dirty checkout is not the
+        # subject, so its expected commit is analyzed and no dirty state is recorded.
         inventory = self._inventory(expected_revision="0" * 40)
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-        self.assertIn("revision", inventory["coverage"]["reason"])
+        self.assertIn(
+            "cannot freeze the subject's commit", inventory["coverage"]["reason"]
+        )
+        self.assertIsNone(inventory["source"]["revision"])
+        self.assertEqual([], inventory["producers"])
         (self.root / "tools" / "sample.py").write_text(
             _DIAGNOSTIC_SAMPLE + "\n# dirty\n", encoding="utf-8"
         )
+        shutil.rmtree(self.output, ignore_errors=True)
         inventory = self._inventory(expected_revision=self.base)
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-        self.assertIn("dirty", inventory["coverage"]["reason"])
-        self.assertIs(True, inventory["source"]["tracked_tree_dirty"])
+        self.assertEqual(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
+        self.assertEqual(self.base, inventory["source"]["revision"])
+        self.assertNotIn("tracked_tree_dirty", inventory["source"])
 
     def test_an_unread_subject_records_no_revision(self) -> None:
-        # Octopus and CodeAnt on #436, routed by the Router (6225341677, V1): when the
-        # shared reader cannot read the state whole, its revision may be the caller's
-        # KNOWLEDGE_KIT_REVISION, never observed. It is recorded as null, and an
-        # expected revision is then always a named gap.
+        # Octopus and CodeAnt on #436, routed by the Router (6225341677, V1), in v2:
+        # a commit that cannot be frozen, here an unborn HEAD's, records no revision,
+        # never the caller's KNOWLEDGE_KIT_REVISION, and the expected revision is kept
+        # as asked (Router #389 6325382720, D4: no environment-revision fallback).
         claimed = "c" * 40
         shutil.rmtree(self.root / ".git")
         self._git("init", "-q")
         self._git("add", "-A")
         for label, caller in (("the caller's revision", claimed), ("none", None)):
-            with self.subTest(label), patch.dict(os.environ):
-                os.environ.pop("KNOWLEDGE_KIT_REVISION", None)
-                if caller is not None:
-                    os.environ["KNOWLEDGE_KIT_REVISION"] = caller
-                inventory = self._inventory(expected_revision=claimed)
-                self.assertIsNone(inventory["source"]["revision"])
-                self.assertEqual(claimed, inventory["source"]["expected_revision"])
-                reason = inventory["coverage"]["reason"]
-                self.assertIn(f"revision None is not the expected {claimed}", reason)
-                self.assertIn("its state is unknown", reason)
+            for expected in (claimed, None):
+                with (
+                    self.subTest(label, expected=expected),
+                    patch.dict(os.environ),
+                ):
+                    os.environ.pop("KNOWLEDGE_KIT_REVISION", None)
+                    if caller is not None:
+                        os.environ["KNOWLEDGE_KIT_REVISION"] = caller
+                    shutil.rmtree(self.output, ignore_errors=True)
+                    inventory = self._inventory(expected_revision=expected)
+                    self.assertIsNone(inventory["source"]["revision"])
+                    self.assertIsNone(inventory["source"]["tree"])
+                    self.assertEqual(expected, inventory["source"]["expected_revision"])
+                    self.assertIn(
+                        "cannot freeze the subject's commit",
+                        inventory["coverage"]["reason"],
+                    )
+                    self.assertEqual([], inventory["producers"])
 
-    def test_a_revision_read_before_an_unread_status_is_dropped(self) -> None:
-        # The Router's V1 (6225341677), its stated conservative loss: a revision read
-        # just before a failed or out-of-budget status read is dropped too.
-        with patch.object(
-            self.module,
-            "_git_state",
-            return_value={"revision": self.base, "tracked_tree_dirty": None},
-        ):
-            source, gaps = self.module._diagnostic_subject(
-                self.root, self.base, time.monotonic() + 60
+    def test_a_commit_read_before_a_failed_tree_read_is_dropped(self) -> None:
+        # The Router's V1 (6225341677), its stated conservative loss, in v2: a commit
+        # resolved just before its tree could not be read is dropped too; no commit is
+        # recorded without the tree derived from it.
+        real = self.module._diagnostic_git
+
+        def no_tree(root, deadline, *arguments, **options):
+            if arguments[-1].endswith("^{tree}"):
+                raise OSError("read failed")
+            return real(root, deadline, *arguments, **options)
+
+        with patch.object(self.module, "_diagnostic_git", side_effect=no_tree):
+            commit, tree, gaps = self.module._frozen_subject(
+                self.root, None, time.monotonic() + 60
             )
-        self.assertIsNone(source["revision"])
-        self.assertIn(f"revision None is not the expected {self.base}", gaps)
+        self.assertEqual((None, None), (commit, tree))
+        self.assertEqual(["cannot freeze the subject's commit: OSError"], gaps)
 
-    def test_a_read_subject_keeps_its_observed_revision(self) -> None:
-        # The Router's V1 (6225341677): a completed shared read keeps its revision,
-        # clean or dirty, and a spent budget reads nothing.
-        source, gaps = self.module._diagnostic_subject(
-            self.root, self.base, time.monotonic() + 60
-        )
+    def test_a_frozen_subject_keeps_its_commit_and_tree(self) -> None:
+        # The Router's V1 (6225341677), in v2: a completed freeze keeps its commit and
+        # the tree derived from it, whatever the checkout's state, and a spent budget
+        # freezes nothing (Router #389 6325382720, D4).
+        tree = self._git("rev-parse", "HEAD^{tree}")
         self.assertEqual(
-            (self.base, False), (source["revision"], source["tracked_tree_dirty"])
+            (self.base, tree, []),
+            self.module._frozen_subject(self.root, None, time.monotonic() + 60),
         )
-        self.assertEqual([], [gap for gap in gaps if gap.startswith("revision")])
         (self.root / "tools" / "sample.py").write_text(
             _DIAGNOSTIC_SAMPLE + "\n# dirty\n", encoding="utf-8"
         )
-        source, gaps = self.module._diagnostic_subject(
-            self.root, self.base, time.monotonic() + 60
+        self.assertEqual(
+            (self.base, tree, []),
+            self.module._frozen_subject(self.root, self.base, time.monotonic() + 60),
         )
         self.assertEqual(
-            (self.base, True), (source["revision"], source["tracked_tree_dirty"])
+            (None, None, ["the deadline passed before the subject was frozen"]),
+            self.module._frozen_subject(self.root, self.base, time.monotonic() - 1),
         )
-        source, gaps = self.module._diagnostic_subject(
-            self.root, self.base, time.monotonic() - 1
-        )
-        self.assertIsNone(source["revision"])
-        self.assertIn(f"revision None is not the expected {self.base}", gaps)
 
     def test_a_file_budget_or_a_producer_gap_is_explicit(self) -> None:
         limits = self.module.DiagnosticLimits(max_files=2)
@@ -1313,7 +1363,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         ):
             inventory = self._inventory()
         self.assertEqual(self.base, inventory["source"]["revision"])
-        self.assertIs(False, inventory["source"]["tracked_tree_dirty"])
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
         runs = {r["invocation"]: r for r in inventory["producers"]}
         self.assertEqual(
             {"mypy:main", "mypy:tests/fixtures/one", "ruff", "complexity"}, set(runs)
@@ -1336,33 +1386,26 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.assertEqual([sys.executable, "-I", "-m"], command[:3])
 
     def test_an_inventory_past_its_deadline_is_incomplete(self) -> None:
-        # Every later reading of the clock is past the deadline: the inherited subject
-        # and scope reads are bounded or reported (Codex and the PAO's F3-BND-01 on
-        # #436), and a spent budget enumerates nothing, so the result never depends on
+        # Every later reading of the clock is past the deadline: the subject and
+        # scope reads are bounded or reported (Codex and the PAO's F3-BND-01 on #436),
+        # and a spent budget freezes and lists nothing, so the result never depends on
         # whether Git happens to finish within a millisecond (Option A on #436).
         clock = iter([0.0])
-        seen: list[object] = []
-        enumerate_paths = self.module.candidate_paths
-
-        def recording(root, **options):
-            seen.append(options.get("timeout"))
-            return enumerate_paths(root, **options)
-
+        owner = importlib.import_module("tools.exact_tree")
+        listing = Mock(side_effect=AssertionError("listed past the deadline"))
         with (
             patch(
                 "tools.quality_evidence.time.monotonic",
                 side_effect=lambda: next(clock, 10_000.0),
             ),
-            patch("tools.quality_evidence.candidate_paths", side_effect=recording),
+            patch.object(owner, "tree_paths", listing),
         ):
             inventory = self._inventory()
         reason = inventory["coverage"].get("reason", "")
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
         self.assertIn("ran past its deadline", reason)
-        self.assertIn(
-            "the deadline passed before the tracked set was enumerated", reason
-        )
-        self.assertEqual([], seen)
+        self.assertIn("the deadline passed before the subject was frozen", reason)
+        self.assertEqual([], listing.call_args_list)
         self.assertIsNone(inventory["scope"]["full"]["expected"])
         self.assertEqual([], inventory["findings"])
 
@@ -1389,44 +1432,48 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             size - 1, inventory["configuration"]["limits"]["max_source_bytes"]
         )
 
-    def test_a_tracked_path_that_is_not_a_regular_file_is_never_opened(self) -> None:
+    def test_a_checkout_path_that_is_not_a_regular_file_is_never_opened(self) -> None:
+        # CodeAnt on #436, in v2: the producers read the frozen tree's staged bytes,
+        # so a tracked path that the checkout replaced with a FIFO is never opened,
+        # and the committed file is analyzed instead.
         done = self._tracked_fifo()
-        inventory = self._inventory()
-        done()
-        unanalyzed = {
-            u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
-        }
-        self.assertEqual(
-            "missing or not a regular file, never analyzed",
-            unanalyzed["tools/sample.py"],
-        )
-        self.assertEqual(
-            [], [f for f in inventory["findings"] if f["path"] == "tools/sample.py"]
-        )
-        self.assertEqual([], [c for c, _, _ in self.commands if "tools/sample.py" in c])
+        fifo = os.path.realpath(self.root / "tools" / "sample.py")
+        real_open, opened = os.open, []
 
-    def test_a_missing_tracked_file_reaches_no_producer(self) -> None:
-        (self.root / "tools" / "sample.py").unlink()
-        # A producer may still report it, as mypy following an import: the finding is
-        # listed and out of scope (Codex on #436).
-        self.mypy_records = {
-            "tests/test_sample.py": [
-                self._mypy("tools/sample.py", 1, 1, "import-not-found", "followed")
-            ]
-        }
-        inventory = self._inventory()
-        (finding,) = [
-            f for f in inventory["findings"] if f["path"] == "tools/sample.py"
-        ]
-        self.assertIs(False, finding["native"]["tracked"])
-        unanalyzed = {
-            u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
-        }
-        self.assertEqual(
-            "missing or not a regular file, never analyzed",
-            unanalyzed["tools/sample.py"],
+        def opening(name, *args, **kwargs):
+            opened.append(os.path.realpath(name))
+            return real_open(name, *args, **kwargs)
+
+        with patch.object(self.module.os, "open", side_effect=opening):
+            inventory = self._inventory()
+        done()
+        self.assertTrue(opened)
+        self.assertNotIn(fifo, opened)
+        self.assertNotIn(
+            "tools/sample.py",
+            {u["path"] for u in inventory["scope"]["full"]["unanalyzed"]},
         )
-        self.assertEqual([], [c for c, _, _ in self.commands if "tools/sample.py" in c])
+        self.assertTrue(
+            self._find(
+                inventory, "complexity", "cc", "tools/sample.py", self.lines["branchy"]
+            )
+        )
+
+    def test_a_file_deleted_from_the_checkout_is_still_the_frozen_trees(self) -> None:
+        # Codex on #436, in v2: a tracked file the checkout no longer holds is no
+        # missing input. The producers read the frozen tree, so it is analyzed, and a
+        # finding on it is tracked-source evidence.
+        (self.root / "tools" / "sample.py").unlink()
+        inventory = self._inventory()
+        self.assertNotIn(
+            "tools/sample.py",
+            {u["path"] for u in inventory["scope"]["full"]["unanalyzed"]},
+        )
+        (finding,) = self._find(
+            inventory, "complexity", "cc", "tools/sample.py", self.lines["branchy"]
+        )
+        self.assertIs(True, finding["native"]["tracked"])
+        self.assertTrue([c for c, _, _ in self.commands if "tools/sample.py" in c])
 
     def test_the_in_process_read_refuses_a_file_that_became_a_fifo(self) -> None:
         # After the check above, a FIFO can still be swapped in: the read itself must
@@ -1692,14 +1739,22 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertEqual([], result.findings)
 
     def test_the_subject_reads_get_the_remaining_time(self) -> None:
+        # Both identity checks, at the freeze and after collection, get what is left;
+        # the state reader, git status, never runs on this path (Router #389
+        # 6325382720, D1).
         seen: list[object] = []
-        original = self.module._git_state
+        original = self.module.has_git_metadata
 
         def recording(root, **options):
             seen.append(options.get("timeout"))
             return original(root, **options)
 
-        with patch("tools.quality_evidence._git_state", side_effect=recording):
+        with (
+            patch.object(self.module, "has_git_metadata", side_effect=recording),
+            patch.object(
+                self.module, "_git_state", side_effect=AssertionError("git status")
+            ),
+        ):
             self._inventory()
         self.assertEqual(2, len(seen))
         self.assertTrue(all(isinstance(t, float) and t > 0 for t in seen), seen)
@@ -1732,66 +1787,70 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertIn("timed out", reasons["tests/test_sample.py"])
 
     def test_a_subject_that_cannot_be_re_read_is_not_called_changed(self) -> None:
-        # A read that could not finish gives the fallback state, which is no evidence
-        # that the subject changed (Claude's round-2 review on #436), either way round.
-        state = self.module._git_state(self.root)
-        unknown = {"revision": "unbound", "tracked_tree_dirty": None}
-        for first, second, gap in (
-            (state, unknown, "the subject could not be re-read after collection"),
-            (unknown, state, "the tracked tree is dirty or its state is unknown"),
+        # A read that could not finish is no evidence that the subject changed
+        # (Claude's round-2 review on #436), either way round. In v2 only the
+        # metadata identity is read twice (Router #389 6325382720, D1).
+        reread = "the subject could not be re-read after collection"
+        unfrozen = "the subject has no Git metadata of its own: no commit was frozen"
+        for label, effect, gap, absent in (
+            ("the recheck", [True, False], reread, unfrozen),
+            ("the freeze", [False, True], unfrozen, reread),
         ):
-            with self.subTest(first=first["revision"]):
-                with patch(
-                    "tools.quality_evidence._git_state", side_effect=[first, second]
-                ):
+            with self.subTest(label):
+                shutil.rmtree(self.output, ignore_errors=True)
+                with patch.object(self.module, "has_git_metadata", side_effect=effect):
                     inventory = self._inventory()
                 reason = inventory["coverage"]["reason"]
                 self.assertIn(gap, reason)
-                self.assertNotIn("the subject changed during collection", reason)
+                self.assertNotIn(absent, reason)
+                self.assertNotIn("changed during collection", reason)
 
     def test_the_enumeration_gets_the_remaining_shared_budget(self) -> None:
-        # Option A on #436 (the owner's 6210613320): candidate_paths gets what is left
-        # of the inventory's one budget, never a fresh one.
+        # Option A on #436 (the owner's 6210613320), in v2: the frozen tree's listing
+        # gets the inventory's one absolute deadline, however much of it the earlier
+        # reads spent, never a fresh one (Router #389 6324876845).
         clock = [1000.0]
         seen: list[object] = []
-        state = self.module._git_state
-        enumerate_paths = self.module.candidate_paths
+        identity = self.module.has_git_metadata
+        owner = importlib.import_module("tools.exact_tree")
+        listing = owner.tree_paths
 
         def advancing(root, **options):
             clock[0] += 100.0
-            return state(root, **options)
+            return identity(root, **options)
 
-        def recording(root, **options):
-            seen.append(options.get("timeout"))
-            return enumerate_paths(root, **options)
+        def recording(root, tree, *, limits):
+            seen.append(limits.deadline)
+            return listing(root, tree, limits=limits)
 
         with (
             patch(
                 "tools.quality_evidence.time.monotonic", side_effect=lambda: clock[0]
             ),
-            patch("tools.quality_evidence._git_state", side_effect=advancing),
-            patch("tools.quality_evidence.candidate_paths", side_effect=recording),
+            patch.object(self.module, "has_git_metadata", side_effect=advancing),
+            patch.object(owner, "tree_paths", side_effect=recording),
         ):
             self._inventory()
-        self.assertEqual([800.0], seen)
+        self.assertEqual([1900.0], seen)
 
     def test_an_enumeration_that_fails_is_an_incomplete_gap(self) -> None:
         # Never an empty COMPLETE inventory, and no producer runs on an unknown set.
-        for category in ("GIT_TIMEOUT", "GIT_FAILED"):
-            with self.subTest(category=category):
+        # In v2 the set is the frozen tree's listing, and its refusal is named by the
+        # owner's code alone (Router #389 6325382720, D3).
+        owner = importlib.import_module("tools.exact_tree")
+        for code in ("git-failed", "deadline"):
+            with self.subTest(code=code):
                 self.commands.clear()
-                with patch(
-                    "tools.quality_evidence.candidate_paths",
-                    side_effect=self.module.RepositoryScopeError(
-                        "private detail", category=category
-                    ),
+                with patch.object(
+                    owner,
+                    "tree_paths",
+                    side_effect=owner.ExactTreeError(code, "private detail"),
                 ):
                     inventory = self._inventory()
                 coverage = inventory["coverage"]
                 self.assertEqual("INCOMPLETE", coverage["status"])
                 self.assertIn(
-                    f"cannot enumerate tracked-tree candidates (scope error: {category})",
-                    coverage["reason"],
+                    f"cannot enumerate the frozen tree: {code}", coverage["reason"]
                 )
                 self.assertNotIn("no tracked Python file", coverage["reason"])
                 self.assertNotIn("total", coverage)
@@ -1800,11 +1859,12 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.assertEqual([], inventory["findings"])
                 self.assertEqual([], self.commands)
 
-    def test_without_a_bounded_index_check_no_inventory_is_complete(self) -> None:
-        # assume-unchanged and skip-worktree hide an edit from `git status` (Codex on
-        # #436), and no bounded check of the index is admitted (I3), so a clean index
-        # and a hiding one take the same gap. git status's own view stays recorded, and
-        # every emitted finding stays listed.
+    def test_an_index_entry_hides_nothing_and_the_residual_stays(self) -> None:
+        # assume-unchanged and skip-worktree hid an edit from `git status` (Codex on
+        # #436). In v2 the producers read the frozen tree, never the checkout, so a
+        # hidden edit is no input and the index gap is closed; the narrower residual,
+        # the producers' environment and import graph, keeps the inventory INCOMPLETE,
+        # and every emitted finding stays listed (Router #389 6325382720, D1).
         self.mypy_records = {}
         self.mypy_exit = {".": 0, "tests/fixtures/one/": 0}
         cases = (
@@ -1817,7 +1877,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 if path is not None:
                     target = self.root / path
                     target.write_text(
-                        target.read_text(encoding="utf-8") + "HIDDEN = 1\n",
+                        target.read_text(encoding="utf-8") + _EXTRA_COMPLEX,
                         encoding="utf-8",
                     )
                     self._git("update-index", flag, path)
@@ -1828,8 +1888,18 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
                 self.assertEqual(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
                 self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
-                self.assertIs(False, inventory["source"]["tracked_tree_dirty"])
+                self.assertEqual(
+                    "EXACT_TREE_STAGED", inventory["source"]["tree_binding"]
+                )
                 self.assertEqual(4, inventory["coverage"]["count"])
+                self.assertEqual(
+                    [],
+                    [
+                        f
+                        for f in inventory["findings"]
+                        if "extra" in f.get("message", "")
+                    ],
+                )
                 self.assertTrue(
                     self._find(
                         inventory,
@@ -1849,7 +1919,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         def late(command, **options):
             if "ruff" in command and "--version" not in command:
                 options["report"].write_text(
-                    json.dumps(self.ruff_records), encoding="utf-8"
+                    self._staged_text(json.dumps(self.ruff_records), options["cwd"]),
+                    encoding="utf-8",
                 )
                 return None, "timed out at the inventory deadline", False
             return self._fake_run(command, **options)
@@ -1925,11 +1996,10 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
 
     def test_a_finding_on_a_withheld_symlink_is_kept_but_out_of_scope(self) -> None:
         # Codex on #436: mypy can follow an accepted file's import into a tracked
-        # symlink, whose content may lie outside the tree. Its findings are listed,
-        # never dropped, and are not tracked-source evidence.
-        outside = Path(self.directory.name) / "outside.py"
-        outside.write_text("VALUE: int = 'text'\n", encoding="utf-8")
-        (self.root / "tools" / "link.py").symlink_to(outside)
+        # symlink. Its findings are listed, never dropped, and are not tracked-source
+        # evidence. In v2 a link staged from the tree stays inside it; one escaping
+        # the tree is refused by the owner (test_a_tracked_symlink_is_never_analyzed).
+        (self.root / "tools" / "link.py").symlink_to("sample.py")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a tracked symlink")
         self.mypy_records = {
@@ -1940,6 +2010,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         inventory = self._inventory()
         (finding,) = [f for f in inventory["findings"] if f["path"] == "tools/link.py"]
         self.assertIs(False, finding["native"]["tracked"])
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
 
     def test_ruff_reports_what_its_suppression_comments_would_hide(self) -> None:
         # Codex on #436: honoring ruff's suppression comments would hide a finding.
@@ -2121,11 +2192,20 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 patch.object(self.module.subprocess, "Popen", side_effect=no_stdout),
             ),
         )
+        real_producers = self.module._run_producers
+
+        def during_producers(failure):
+            def run(*args, **kwargs):
+                with failure:
+                    return real_producers(*args, **kwargs)
+
+            return patch.object(self.module, "_run_producers", side_effect=run)
+
         for label, failure in cases:
             with self.subTest(label):
                 reads.clear()
                 shutil.rmtree(self.output, ignore_errors=True)
-                with self._with_a_real_main_mypy(script), failure:
+                with self._with_a_real_main_mypy(script), during_producers(failure):
                     with self.assertRaisesRegex(
                         QualityEvidenceError, "no inventory was written"
                     ):
@@ -2462,7 +2542,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         "the comparison's Git output exceeds max_report_bytes",
                     ),
                 ):
-                    self.module._diff_scope(self.root, self.base, deadline, cap=cap)
+                    self.module._diff_scope(
+                        self.root, self.base, deadline, cap=cap, head=self._head()
+                    )
                 verbs = [call.args[2] for call in spy.call_args_list]
                 self.assertEqual(reads, len(verbs), verbs)
                 self.assertEqual(read_last, verbs[-1])
@@ -2476,7 +2558,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a name that is not UTF-8")
         diff, _lines = self.module._diff_scope(
-            self.root, self.base, time.monotonic() + 30
+            self.root, self.base, time.monotonic() + 30, head=self._head()
         )
         self.assertIn("tools/odd\udcffname.py", diff["changed_paths"])
 
@@ -3058,25 +3140,37 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
 
     def test_an_overflowing_git_read_is_refused_at_each_seam(self) -> None:
         # The Router's 6243027809, portable injected controls: an OverflowError from
-        # the metadata check, the state reader, the tracked-set enumeration or the
-        # recheck after collection is the same classified refusal. It names no raw
+        # the metadata check, the frozen tree's listing, its stage, its identity or
+        # the recheck after collection is the same classified refusal. It names no raw
         # text and no revision, and writes no inventory. It is no evidence that the
-        # deadline passed or that the metadata is absent.
-        state = self.module._git_state
+        # deadline passed or that the metadata is absent. No state reader runs on this
+        # path (Router #389 6325382720, D1).
+        owner = importlib.import_module("tools.exact_tree")
         seams = {
-            "the metadata check": ("has_git_metadata", OverflowError("raw detail")),
-            "the state reader": ("_git_state", OverflowError("raw detail")),
-            "the tracked set": ("candidate_paths", OverflowError("raw detail")),
+            "the metadata check": (
+                self.module,
+                "has_git_metadata",
+                OverflowError("raw detail"),
+            ),
+            "the tracked set": (owner, "tree_paths", OverflowError("raw detail")),
+            "the stage": (owner, "materialize", OverflowError("raw detail")),
+            "the identity": (owner, "observed_tree", OverflowError("raw detail")),
+            "the identity after the producers": (
+                owner,
+                "observed_tree",
+                self._then(owner.observed_tree, OverflowError("raw detail")),
+            ),
             "the recheck": (
-                "_git_state",
-                [state(self.root), OverflowError("raw detail")],
+                self.module,
+                "has_git_metadata",
+                [True, OverflowError("raw detail")],
             ),
         }
-        for label, (name, effect) in seams.items():
+        for label, (target, name, effect) in seams.items():
             with self.subTest(label):
                 shutil.rmtree(self.output, ignore_errors=True)
                 with (
-                    patch.object(self.module, name, side_effect=effect),
+                    patch.object(target, name, side_effect=effect),
                     self.assertRaises(QualityEvidenceError) as raised,
                 ):
                     self._inventory()
@@ -3088,6 +3182,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.assertEqual(
                     [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
                 )
+                self.assertEqual([], list(self.output.glob("*/source")))
         with self.subTest("an ordinary timeout publishes"):
             shutil.rmtree(self.output, ignore_errors=True)
             inventory = self._inventory(
@@ -3097,11 +3192,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with self.subTest("a spent budget starts no Git read to overflow"):
             identity = Mock(side_effect=OverflowError("raw detail"))
             with patch.object(self.module, "has_git_metadata", identity):
-                source, _gaps = self.module._diagnostic_subject(
+                commit, tree, _gaps = self.module._frozen_subject(
                     self.root, None, time.monotonic() - 1
                 )
             self.assertEqual([], identity.call_args_list)
-            self.assertIsNone(source["tracked_tree_dirty"])
+            self.assertEqual((None, None), (commit, tree))
 
     def test_records_after_a_malformed_mypy_line_stay_listed(self) -> None:
         # Codex on #436: a malformed line is a gap, and the records after it are
@@ -3311,7 +3406,12 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             )
             self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
             report = self.run_directory / "diagnostic-ruff.json"
-            self.assertEqual(json.dumps(self.ruff_records), report.read_text("utf-8"))
+            self.assertEqual(
+                json.dumps(self.ruff_records).replace(
+                    str(self.root.resolve()), str(self.run_directory / "source")
+                ),
+                report.read_text("utf-8"),
+            )
         self.ruff_exit = 1
         with self.subTest("mypy, a coded error"):
             self.mypy_exit["."] = 0
@@ -3573,8 +3673,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self._inventory(limits=limits)
         started = [c for c, _, _ in self.commands if "--version" not in c]
         self.assertEqual(
-            [("mypy", self.root.resolve())],
-            [(c[3], cwd.resolve()) for c, cwd, _ in self.commands if c in started],
+            [("mypy", ".")],
+            [(c[3], self._group(cwd)) for c, cwd, _ in self.commands if c in started],
         )
         metric.assert_not_called()
 
@@ -3593,10 +3693,12 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with self.assertRaisesRegex(QualityEvidenceError, "exceed max_findings 2"):
             self._inventory(limits=limits)
         started = [
-            (c[3], cwd.resolve()) for c, cwd, _ in self.commands if "--version" not in c
+            (c[3], self._group(cwd))
+            for c, cwd, _ in self.commands
+            if "--version" not in c
         ]
-        self.assertIn(("mypy", (self.root / "tests/fixtures/one").resolve()), started)
-        self.assertIn(("ruff", self.root.resolve()), started)
+        self.assertIn(("mypy", "tests/fixtures/one"), started)
+        self.assertIn(("ruff", "."), started)
         complexity = patch.object(
             self.module, "_run_complexity", wraps=self.module._run_complexity
         )
@@ -3694,6 +3796,30 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             refusal = self._refused({})
         self.assertIn("could not be checked", str(refusal))
 
+    # The refusal tests' spies watch real work: an admitted collection runs every
+    # piece of work they watch, and neither of D1's negatives (Amazon Q on #451).
+    def test_the_refusal_spies_watch_the_work_a_collection_does(self) -> None:
+        with self._watched_work() as watched:
+            self.collect(self.root, self.output, base=self.base)
+        for work in ("producer", "subject", "scope", "stage", "git_reads"):
+            self.assertTrue(watched[work].called, f"no {work} work was watched")
+        watched["v1_scope"].assert_not_called()
+        watched["v1_subject"].assert_not_called()
+
+    # An owner that no longer defines the no-fetch policy leaves the comparison
+    # unavailable, never a crash: importing a missing name raises ImportError, which
+    # the policy's own handler names (Amazon Q on #451).
+    def test_a_missing_owner_policy_is_an_unavailable_comparison(self) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        with patch.dict(owner.__dict__):
+            del owner.__dict__["_GIT_ENV"]
+            with self.assertRaises(self.module._ComparisonUnavailable):
+                self.module._no_fetch_policy()
+        self.assertEqual(
+            {"GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1"},
+            self.module._no_fetch_policy(),
+        )
+
     def test_a_base_that_is_not_that_commit_is_a_comparison_gap(self) -> None:
         # Codex on #436, routed by the Router (6224373564, B1): exact_sha checks only
         # the form, and git diff takes any tree-ish, so a tree, a blob or a tag
@@ -3776,8 +3902,13 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.module.subprocess, "Popen", wraps=self.module.subprocess.Popen
         ) as spawned:
             self._inventory(base=self.base)
+        # The diagnostic reader's children name the subject's safe.directory; the
+        # exact-tree owner's run under its own fixed environment (#389 F3 S2 B).
+        bound = f"safe.directory={self.root.resolve()}"
         comparison = [
-            call.args[0] for call in spawned.call_args_list if call.args[0][0] == git
+            call.args[0]
+            for call in spawned.call_args_list
+            if call.args[0][0] == git and bound in call.args[0]
         ]
         verbs = [argv[argv.index("-c") + 2] for argv in comparison]
         self.assertIn("rev-parse", verbs)
@@ -3793,9 +3924,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.module, "_diagnostic_git", wraps=self.module._diagnostic_git
         ) as git:
             inventory = self._inventory(base=self.base)
-        self.assertEqual(
+        self.assertIn(
             ("rev-parse", "--verify", "--end-of-options", f"{self.base}^{{commit}}"),
-            git.call_args_list[0].args[2:],
+            [call.args[2:] for call in git.call_args_list],
         )
         self.assertEqual(self.base, inventory["scope"]["diff"]["base"])
         self.assertNotIn(None, {f["native"]["in_diff"] for f in inventory["findings"]})
@@ -3941,7 +4072,12 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.module, "_diff_scope", return_value=(diff, {"tools/sample.py": lines})
         ):
             self.module._annotate_diff(
-                self.root, self.base, findings, [], time.monotonic() + 30
+                self.root,
+                self.base,
+                findings,
+                [],
+                time.monotonic() + 30,
+                head=self._head(),
             )
         self.assertEqual(1, passes[0])
         # A set that iterates out of order, {8, 1} here, is still bisected in order.
@@ -3956,7 +4092,12 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.module, "_diff_scope", return_value=(diff, {"tools/other.py": {8, 1}})
         ):
             self.module._annotate_diff(
-                self.root, self.base, unordered, [], time.monotonic() + 30
+                self.root,
+                self.base,
+                unordered,
+                [],
+                time.monotonic() + 30,
+                head=self._head(),
             )
         self.assertIs(True, unordered[0]["native"]["in_diff"])
         self.assertEqual(
@@ -4013,9 +4154,10 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         )
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "subject")
+        head = self._head()
         with patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
             scope, _ = self.module._diff_scope(
-                self.root, self.base, time.monotonic() + 60
+                self.root, self.base, time.monotonic() + 60, head=head
             )
         self.assertEqual(["tools/sample.py"], scope["changed_paths"])
 
@@ -4031,41 +4173,6 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
 class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
     """The real runner: its producers may be absent in CI's runtime image, so these
     assert only what holds either way, and the complexity metric's findings."""
-
-    def test_an_untracked_module_can_shape_a_tracked_diagnostic(self) -> None:
-        # Codex on #436, routed by the Router (6225341677, U1): the producers' import
-        # graph is not confined to the recorded tracked inputs. This is a stated
-        # limit, not a prevention: both runs stay INCOMPLETE and name it, while an
-        # untracked module may change what is reported on a tracked path.
-        (self.root / "tools" / "uses_injected.py").write_text(
-            "from injected import f\n\nx: str = f()\n", encoding="utf-8"
-        )
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "a tracked import")
-        rules = {}
-        ran = False
-        for label in ("without", "with"):
-            if label == "with":
-                (self.root / "injected.py").write_text(
-                    "def f() -> int:\n    return 1\n", encoding="utf-8"
-                )
-            inventory = self._read(self.collect(self.root, self.output))
-            self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-            self.assertIn(
-                "import graph is not proven confined", inventory["coverage"]["reason"]
-            )
-            rules[label] = {
-                f.get("rule")
-                for f in inventory["findings"]
-                if f["path"] == "tools/uses_injected.py" and f["tool"]["id"] == "mypy"
-            }
-            ran = any(
-                p["invocation"].split(":")[0] == "mypy" and p.get("version")
-                for p in inventory["producers"]
-            )
-        if ran:
-            # Where mypy runs, the untracked module changed the tracked diagnostic.
-            self.assertNotEqual(rules["without"], rules["with"])
 
     def test_a_repository_module_cannot_shadow_a_producer(self) -> None:
         sentinel = Path(self.directory.name) / "hijacked"
@@ -4106,9 +4213,11 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         )
 
     def test_a_tracked_symlink_is_never_analyzed(self) -> None:
-        outside = Path(self.directory.name) / "outside.py"
-        outside.write_text(_DIAGNOSTIC_SAMPLE, encoding="utf-8")
-        (self.root / "tools" / "link.py").symlink_to(outside)
+        # In v2 a link the tree stages, inside it, is withheld from every producer; a
+        # link escaping the tree is the owner's refusal of the whole stage, so every
+        # tracked file is named unanalyzed and nothing runs (Router #389 6325382720,
+        # D3).
+        (self.root / "tools" / "link.py").symlink_to("sample.py")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a tracked symlink")
         inventory = self._read(self.collect(self.root, self.output))
@@ -4119,6 +4228,24 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         self.assertEqual(
             [], [f for f in inventory["findings"] if f["path"] == "tools/link.py"]
         )
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        with self.subTest("a link escaping the tree"):
+            outside = Path(self.directory.name) / "outside.py"
+            outside.write_text(_DIAGNOSTIC_SAMPLE, encoding="utf-8")
+            (self.root / "tools" / "away.py").symlink_to(outside)
+            self._git("add", "-A")
+            self._git("commit", "-q", "-m", "an escaping symlink")
+            inventory = self._read(self.collect(self.root, self.output))
+            self.assertIn(
+                "the source tree cannot be staged: escaping-link",
+                inventory["coverage"]["reason"],
+            )
+            self.assertEqual([], inventory["findings"])
+            self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+            self.assertIn(
+                "tools/away.py",
+                {u["path"] for u in inventory["scope"]["full"]["unanalyzed"]},
+            )
 
     def test_a_failed_comparison_leaves_in_diff_unknown(self) -> None:
         inventory = self._read(self.collect(self.root, self.output, base="f" * 40))
@@ -4152,15 +4279,6 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         )
         self.assertIs(True, branchy["native"]["in_diff"])
 
-    def test_a_subject_that_changes_during_collection_is_incomplete(self) -> None:
-        state = self.module._git_state(self.root)
-        moved = {**state, "revision": "1" * 40}
-        with patch("tools.quality_evidence._git_state", side_effect=[state, moved]):
-            inventory = self._read(self.collect(self.root, self.output))
-        self.assertIn(
-            "the subject changed during collection", inventory["coverage"]["reason"]
-        )
-
     def test_more_findings_than_the_budget_write_no_inventory(self) -> None:
         one = self.module.DiagnosticLimits(max_findings=1)
         with self.assertRaisesRegex(QualityEvidenceError, "no inventory was written"):
@@ -4191,7 +4309,9 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         magic.write_text("A = 2\n", encoding="utf-8")
         (self.root / "other.py").write_text("B = 2\nC = 3\n", encoding="utf-8")
         self._git("commit", "-q", "-am", "change both")
-        _diff, lines = self.module._diff_scope(self.root, base, time.monotonic() + 30)
+        _diff, lines = self.module._diff_scope(
+            self.root, base, time.monotonic() + 30, head=self._head()
+        )
         self.assertEqual({1}, lines[":(glob)*.py"])
         self.assertEqual({1, 2}, lines["other.py"])
 
@@ -4223,6 +4343,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         # spent deadline is read first, so the assertion holds one call (SonarCloud
         # S5778).
         spent = time.monotonic() - 1.0
+        head = self._head()
         with (
             patch(
                 "tools.quality_evidence.subprocess.run",
@@ -4230,18 +4351,26 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
             ),
             self.assertRaisesRegex(subprocess.SubprocessError, "deadline had passed"),
         ):
-            self.module._diff_scope(self.root, self.base, spent)
+            self.module._diff_scope(self.root, self.base, spent, head=head)
 
     def test_a_spent_budget_reads_no_subject(self) -> None:
-        with patch(
-            "tools.quality_evidence._git_state",
-            side_effect=AssertionError("git started past the deadline"),
+        with (
+            patch.object(
+                self.module,
+                "has_git_metadata",
+                side_effect=AssertionError("git started past the deadline"),
+            ),
+            patch.object(
+                self.module,
+                "_diagnostic_git",
+                side_effect=AssertionError("git started past the deadline"),
+            ),
         ):
-            state, gaps = self.module._diagnostic_subject(
+            commit, tree, gaps = self.module._frozen_subject(
                 self.root, None, time.monotonic() - 1.0
             )
-        self.assertIsNone(state["tracked_tree_dirty"])
-        self.assertIn("the tracked tree is dirty or its state is unknown", gaps)
+        self.assertEqual((None, None), (commit, tree))
+        self.assertEqual(["the deadline passed before the subject was frozen"], gaps)
 
     def test_a_suppression_marked_violation_is_still_reported(self) -> None:
         marker = "# noqa: SLF001"  # fixture text, not a suppression -- the test needs a real marker
