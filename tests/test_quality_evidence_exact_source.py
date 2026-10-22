@@ -13,6 +13,7 @@ import subprocess  # nosec B404 -- test-only: drives git on temporary fixture re
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -604,6 +605,128 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
         self.assertNotIn("staged source was left", inventory["coverage"]["reason"])
         self.assertEqual([], list(self.output.glob("*/source")))
+
+    def _deep(self, levels: int) -> Path:
+        """An owned tree `levels` directories deep, with one file at the bottom."""
+        top = Path(self.directory.name) / "deep"
+        bottom = top.joinpath(*(f"d{n}" for n in range(levels)))
+        bottom.mkdir(parents=True)
+        (bottom / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+        return top
+
+    def _counting_reads(self):
+        """A patch counting every directory read, and the list it counts into."""
+        reads: list[int] = []
+        real = os.scandir
+
+        def counting(*args, **kwargs):
+            reads.append(1)
+            return real(*args, **kwargs)
+
+        return patch.object(os, "scandir", counting), reads
+
+    # The traversal itself keeps the deadline: a spent budget reads no directory of
+    # the staged source (PAO 6330677193 on #389).
+    def test_a_spent_budget_reads_no_directory_of_the_staged_source(self) -> None:
+        top = self._deep(13)
+        counting, reads = self._counting_reads()
+        opens: list[int] = []
+        real_open = os.open
+
+        def opening(*args, **kwargs):
+            opens.append(1)
+            return real_open(*args, **kwargs)
+
+        with counting, patch.object(os, "open", opening):
+            retained = self.module._discard_staged(top, time.monotonic() - 1)
+        self.assertEqual([], reads)
+        self.assertEqual([], opens)
+        self.assertIn("left in the run directory", retained or "")
+        self.assertTrue(top.joinpath(*(f"d{n}" for n in range(13)), "leaf.py").exists())
+
+    # A budget that the first directory read spends starts no further read.
+    def test_a_budget_spent_during_the_descent_reads_no_further_directory(self) -> None:
+        top = self._deep(13)
+        clock = [0.0]
+        reads: list[int] = []
+        real = os.scandir
+
+        def spending(*args, **kwargs):
+            reads.append(1)
+            clock[0] = 10.0
+            return real(*args, **kwargs)
+
+        clocked = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep)
+        with (
+            patch.object(os, "scandir", spending),
+            patch.object(self.module, "time", clocked),
+        ):
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(1, len(reads))
+        self.assertIn("deadline", retained or "")
+        self.assertTrue(top.joinpath(*(f"d{n}" for n in range(13)), "leaf.py").exists())
+
+    def _spending(self, name: str, after: int):
+        """Patches under which the `after`-th call of `os.<name>` spends the budget of a
+        removal whose deadline is 5.0, and the list of those calls."""
+        clock, calls = [0.0], []
+        real = getattr(os, name)
+
+        def spending(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == after:
+                clock[0] = 10.0
+            return real(*args, **kwargs)
+
+        clocked = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep)
+        return (
+            patch.object(os, name, spending),
+            patch.object(self.module, "time", clocked),
+            calls,
+        )
+
+    # A budget spent while a directory is opened reads not that directory.
+    def test_a_budget_spent_by_an_open_reads_not_that_directory(self) -> None:
+        top = self._deep(3)
+        counting, reads = self._counting_reads()
+        opening, clocked, opens = self._spending("open", 2)
+        with counting, opening, clocked:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(2, len(opens))
+        self.assertEqual(1, len(reads))
+        self.assertIn("deadline", retained or "")
+
+    # A budget spent by one removal removes no further entry.
+    def test_a_budget_spent_by_a_removal_removes_no_further_entry(self) -> None:
+        top = Path(self.directory.name) / "flat"
+        top.mkdir()
+        for n in range(5):
+            (top / f"f{n}.py").write_text("VALUE = 1\n", encoding="utf-8")
+        unlinking, clocked, unlinks = self._spending("unlink", 1)
+        with unlinking, clocked:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(1, len(unlinks))
+        self.assertEqual(4, len(list(top.iterdir())))
+        self.assertIn("deadline", retained or "")
+
+    # A budget spent by the last removal in a directory removes not that directory.
+    def test_a_budget_spent_by_the_last_removal_keeps_its_directory(self) -> None:
+        top = self._deep(3)
+        unlinking, clocked, _unlinks = self._spending("unlink", 1)
+        with unlinking, clocked:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertTrue(top.joinpath("d0", "d1", "d2").is_dir())
+        self.assertIn("deadline", retained or "")
+
+    # A staged source that is itself a link is never followed: what it points to
+    # stays whole.
+    def test_a_staged_source_that_is_a_link_is_never_followed(self) -> None:
+        outside = self._deep(2)
+        link = Path(self.directory.name) / "staged-link"
+        link.symlink_to(outside)
+        retained = self.module._discard_staged(link, time.monotonic() + 60)
+        self.assertIn("could not be removed whole", retained or "")
+        self.assertTrue(outside.joinpath("d0", "d1", "leaf.py").exists())
 
     # A slow removal stops at the deadline, rather than running on past it.
     def test_a_slow_removal_stops_at_the_deadline(self) -> None:

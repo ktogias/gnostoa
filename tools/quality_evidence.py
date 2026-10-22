@@ -2729,38 +2729,73 @@ class _CleanupDeadline(Exception):
 _RETAINED = "the staged source was left in the run directory"
 
 
+# A directory of the staged source, opened by its own name and never through a link.
+_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
 def _discard_staged(staged: Path, deadline: float) -> str | None:
-    """Remove the staged source this run owns, within the inventory's one deadline:
-    entry by entry, bottom-up, relative to its directories' descriptors and never
-    following a link. A deadline that passes, or a removal that fails, leaves the rest
-    in the run directory, and that is returned for the record; it never replaces the
-    refusal or the result it follows (PAO 6329094433 on #389)."""
+    """Remove the staged source this run owns, within the inventory's one deadline. The
+    walk is post-order and explicit: the deadline is checked before every directory
+    read, every directory open and every removal, so a spent budget starts none of
+    them. Each directory is opened relative to its parent's descriptor, never through a
+    link, and an entry is removed by its own type, never followed. What a passed
+    deadline or a failed removal leaves stays in the run directory, and that is returned
+    for the record; it never replaces the refusal or the result it follows (PAO
+    6329094433 and 6330677193 on #389)."""
 
-    def remove(name: str, top_fd: int) -> None:
+    def check() -> None:
         if time.monotonic() >= deadline:
             raise _CleanupDeadline
-        try:
-            mode = os.stat(name, dir_fd=top_fd, follow_symlinks=False).st_mode
-            if stat.S_ISDIR(mode):
-                os.rmdir(name, dir_fd=top_fd)
-            else:
-                os.unlink(name, dir_fd=top_fd)
-        except FileNotFoundError:
-            return
 
+    # Each frame: an open directory and its name in the frame below (None for the
+    # root); beside it, its entries still to remove, None until the directory is read.
+    frames: list[tuple[int, str | None]] = []
+    entries: list[list[os.DirEntry[str]] | None] = []
     try:
-        for _top, dirs, files, top_fd in os.fwalk(staged, topdown=False):
-            for name in [*files, *dirs]:
-                remove(name, top_fd)
-        if time.monotonic() >= deadline:
-            raise _CleanupDeadline
-        os.rmdir(staged)
-    except FileNotFoundError:
-        return None
+        check()
+        try:
+            frames.append((os.open(staged, _DIRECTORY), None))
+        except FileNotFoundError:
+            return None
+        entries.append(None)
+        while frames:
+            fd, name = frames[-1]
+            pending = entries[-1]
+            if pending is None:
+                check()
+                with os.scandir(fd) as listing:
+                    pending = entries[-1] = list(listing)
+            if pending:
+                entry = pending.pop()
+                check()
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        child = os.open(entry.name, _DIRECTORY, dir_fd=fd)
+                        frames.append((child, entry.name))
+                        entries.append(None)
+                    else:
+                        os.unlink(entry.name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+                continue
+            frames.pop()
+            entries.pop()
+            os.close(fd)
+            check()
+            try:
+                if name is None:
+                    os.rmdir(staged)
+                else:
+                    os.rmdir(name, dir_fd=frames[-1][0])
+            except FileNotFoundError:
+                pass
     except _CleanupDeadline:
         return f"{_RETAINED}: the deadline passed during its removal"
     except OSError as exc:
         return f"{_RETAINED}: it could not be removed whole ({type(exc).__name__})"
+    finally:
+        for fd, _name in frames:
+            os.close(fd)
     return None
 
 
