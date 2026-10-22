@@ -8,6 +8,7 @@ import importlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -888,3 +889,61 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     self.assertTrue(
                         all(len(v) <= 1 for v in observed["entries"].values())
                     )
+
+    def test_an_observation_in_another_format_is_a_gap(self) -> None:
+        # Only the collector's own format is an observation (X11, round 1).
+        foreign = json.loads(self._observation())
+        foreign["format"] = "another-observation/v1"
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command != self.module._environment_command():
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            report.write_text(json.dumps(foreign), encoding="utf-8")
+            return 0, None, False
+
+        inventory = self._run(run, "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["before"])
+
+    def test_an_unavailable_first_observation_is_a_gap(self) -> None:
+        # Either end missing leaves nothing to compare, even when the other completed
+        # (X17, round 1).
+        inventory = self._run(
+            self._environment(None, ("fixture-1.0",)), "import-untyped"
+        )
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["before"])
+        self.assertIsNotNone(member["after"])
+        self.assertIn(
+            "producer environment identity unavailable", inventory["coverage"]["reason"]
+        )
+
+    def test_the_observation_command_runs_as_the_collector_composes_it(self) -> None:
+        # The composed command itself, caps and format included, run for real (X18,
+        # round 1).
+        report = self.output / "observation-composed.json"
+        self.output.mkdir(parents=True, exist_ok=True)
+        status, gap, invalid = self.module._bounded_run(
+            self.module._environment_command(),
+            cwd=self.root,
+            environment=dict(os.environ),
+            report=report,
+            deadline=time.monotonic() + 60,
+            limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+        )
+        self.assertEqual((0, None, False), (status, gap, invalid))
+        observed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
+        self.assertIsNone(observed["capped"])
+        self.assertEqual(
+            os.path.realpath(sys.executable), observed["interpreter"]["executable"]
+        )
