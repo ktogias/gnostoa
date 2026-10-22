@@ -1071,8 +1071,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIsNone(observed["interpreter"]["executable"])
 
     def _answering(self, answer: object):
-        """A launcher that answers the observation command with `answer`, and every
-        other command as the fixture does."""
+        """A launcher that answers the observation command with `answer` as JSON, and
+        every other command as the fixture does."""
+        return self._answering_text(json.dumps(answer))
+
+    def _answering_text(self, text: str):
+        """A launcher that answers the observation command with exactly `text`."""
 
         def run(command, *, cwd, environment, report, deadline, limits):
             if command != self.module._environment_command():
@@ -1084,7 +1088,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     deadline=deadline,
                     limits=limits,
                 )
-            report.write_text(json.dumps(answer), encoding="utf-8")
+            report.write_text(text, encoding="utf-8")
             return 0, None, False
 
         return run
@@ -1117,6 +1121,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("an archive not a pair", {"archives": [["/fixture/a.zip"]]}),
             ("distributions a mapping", {"distributions": {}}),
             ("a distribution not a triple", {"distributions": [["/fixture", "x"]]}),
+            ("an unknown field", {"unknown": 1}),
+            (
+                "an unknown interpreter field",
+                {"interpreter": {"executable": "/p", "version": "v", "unknown": "x"}},
+            ),
         ):
             with self.subTest(name):
                 observation = (
@@ -1384,6 +1393,86 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ):
             self.assertIsNone(observation.digest_of(str(record)))
         self.assertEqual("unreadable", observation.incomplete)
+
+    def test_a_report_with_a_duplicate_field_is_a_gap(self) -> None:
+        # A field given twice is refused while decoding, never read as its last value
+        # (cubic 4354512437; security_scan's strict loader, #365 F1).
+        text = '{"format": "elsewhere", ' + self._observation().lstrip()[1:]
+        member = self._run(self._answering_text(text), "import-untyped")["producers"][
+            0
+        ]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+
+    def test_an_observer_without_a_safe_open_stops(self) -> None:
+        # Where the platform lacks the no-follow or non-blocking open, the observation
+        # stops as unreadable, never following a link or blocking (Codex 4354512574,
+        # cubic 4354512373; adoption_check._read_regular_bounded).
+        observer = importlib.import_module("tools.python_environment_observation")
+        root = self._observed_root("unsafe-open")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        for flags in ("_SAFE_OPEN", "_DIRECTORY_OPEN"):
+            with self.subTest(flags), patch.object(observer, flags, None, create=True):
+                observed = json.loads(observer.observe([str(root)], caps, form))
+                self.assertEqual("unreadable", observed["incomplete"])
+
+    def test_a_read_never_passes_a_file_cap_by_more_than_one_byte(self) -> None:
+        # Each read asks for at most what is left of both file caps, and one byte more
+        # to see an overflow; the descriptor's offset is what the observer consumed
+        # (cubic 4354512414).
+        observer = importlib.import_module("tools.python_environment_observation")
+        record = Path(self.directory.name) / "LARGE-RECORD"
+        record.write_bytes(b"x" * 100_000)
+        opened = os.fdopen
+        base = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        for name, caps, stop in (
+            ("per file", {**base, "file_bytes": 1}, "file_bytes"),
+            ("in all", {**base, "file_bytes_total": 1}, "file_bytes_total"),
+        ):
+            with self.subTest(name):
+                offsets: list[int] = []
+
+                class Counting:
+                    def __init__(self, stream, offsets=offsets) -> None:
+                        self.stream, self.offsets = stream, offsets
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *exc) -> None:
+                        self.stream.close()
+
+                    def fileno(self) -> int:
+                        return self.stream.fileno()
+
+                    def read(self, size: int = -1) -> bytes:
+                        chunk = self.stream.read(size)
+                        self.offsets.append(os.lseek(self.fileno(), 0, os.SEEK_CUR))
+                        return chunk
+
+                observation = observer._Observation(caps)
+                with patch.object(
+                    observer.os,
+                    "fdopen",
+                    lambda fd, *args, **kwargs: Counting(opened(fd, *args, **kwargs)),
+                ):
+                    self.assertIsNone(observation.digest_of(str(record)))
+                self.assertEqual(stop, observation.incomplete)
+                self.assertLessEqual(max(offsets), 2)
+
+    def test_a_distribution_directory_reached_through_a_link_is_unreadable(
+        self,
+    ) -> None:
+        # The *.dist-info directory is opened without following a link, and its RECORD
+        # relative to it: no component of the RECORD's path is followed (cubic
+        # 4354512430).
+        site = Path(self.directory.name) / "linked-dist-site"
+        site.mkdir()
+        real = Path(self.directory.name) / "real-dist-info"
+        real.mkdir()
+        (real / "RECORD").write_text("x" * 64, encoding="utf-8")
+        (site / "linked-1.0.dist-info").symlink_to(real, target_is_directory=True)
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
