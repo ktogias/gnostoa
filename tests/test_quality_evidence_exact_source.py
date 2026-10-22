@@ -58,15 +58,21 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                     self.files["tools/sample.py"] + _EXTRA_COMPLEX, encoding="utf-8"
                 )
                 self._git("update-index", flag, "tools/sample.py")
-                self.assertEqual(
-                    "", self._git("status", "--porcelain", "--untracked-files=no")
-                )
-                inventory = self._read(self.collect(self.root, self.output))
-                self.assertEqual([], self._complexity(inventory, self._extra_line()))
-                self._git(
-                    "update-index", flag.replace("--", "--no-"), "tools/sample.py"
-                )
-                self._git("checkout", "--", "tools/sample.py")
+                # A failed assertion still restores the flag and the file, so the
+                # next flag starts clean (Revix on #451).
+                try:
+                    self.assertEqual(
+                        "", self._git("status", "--porcelain", "--untracked-files=no")
+                    )
+                    inventory = self._read(self.collect(self.root, self.output))
+                    self.assertEqual(
+                        [], self._complexity(inventory, self._extra_line())
+                    )
+                finally:
+                    self._git(
+                        "update-index", flag.replace("--", "--no-"), "tools/sample.py"
+                    )
+                    self._git("checkout", "--", "tools/sample.py")
 
     # An untracked module in the checkout cannot shape a tracked diagnostic: the staged
     # source holds only the tree (the inverse of the earlier stated limit).
@@ -146,7 +152,8 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self.assertIs(True, extra["native"]["in_diff"])
 
     # A staged source that changes while the producers read it is refused, never
-    # published as the tree's evidence.
+    # published as the tree's evidence, and the refusal names the run directory that
+    # keeps the raw reports.
     def test_a_changed_staged_source_is_refused(self) -> None:
         real = self.module._run_complexity
 
@@ -159,6 +166,8 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             with self.assertRaises(self.module.QualityEvidenceError) as raised:
                 self.collect(self.root, self.output)
         self.assertIn("staged source", str(raised.exception))
+        (run,) = self.output.glob("diagnostic-*")
+        self.assertIn(f"the raw reports are in {run}", str(raised.exception))
 
     # The tree is staged within the collector's own absolute deadline, never a fresh
     # budget of the owner's.
@@ -833,20 +842,17 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     # The walk closes every descriptor it opened, both when it completes and when the
     # deadline stops it with directories still open.
     def test_the_walk_closes_every_descriptor_it_opens(self) -> None:
-        def open_descriptors() -> int:
-            return len(os.listdir("/proc/self/fd"))
-
-        before = open_descriptors()
+        before = _open_descriptors(self)
         completed = self._deep(4)
         self.assertIsNone(self.module._discard_staged(completed, time.monotonic() + 60))
         self.assertFalse(completed.exists())
-        self.assertEqual(before, open_descriptors())
+        self.assertEqual(before, _open_descriptors(self))
         stopped = self._deep(4, name="stopped")
         unlinking, clocked, _unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
             retained = self.module._discard_staged(stopped, 5.0)
         self.assertIn("deadline", retained or "")
-        self.assertEqual(before, open_descriptors())
+        self.assertEqual(before, _open_descriptors(self))
 
     # A descriptor whose close fails, while the deadline leaves directories open,
     # neither replaces the walk's result nor leaves the others open: the walk's own
