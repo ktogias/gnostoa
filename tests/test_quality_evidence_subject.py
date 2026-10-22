@@ -1389,7 +1389,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         )
         with patch.object(
-            observer.os, "fdopen", lambda fd, mode: Failing(opened(fd, mode))
+            observer.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: Failing(opened(fd, *args, **kwargs)),
         ):
             self.assertIsNone(observation.digest_of(str(record)))
         self.assertEqual("unreadable", observation.incomplete)

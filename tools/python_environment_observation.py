@@ -21,6 +21,24 @@ import os
 import stat
 import sys
 
+# A safe open needs both flags: without either the observation stops as unreadable,
+# never following a link or waiting for a writer (Codex and cubic on #452), as the
+# existing bounded reader refuses without O_NOFOLLOW (adoption_check._read_regular_bounded).
+_SAFE_OPEN = (
+    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_NONBLOCK")
+    else None
+)
+# A *.dist-info directory is opened the same way, and its RECORD relative to it, so that
+# no component of the RECORD's path is followed (cubic on #452).
+_DIRECTORY_OPEN = (
+    _SAFE_OPEN | os.O_DIRECTORY
+    if _SAFE_OPEN is not None
+    and hasattr(os, "O_DIRECTORY")
+    and os.open in os.supports_dir_fd
+    else None
+)
+
 
 class _Observation:
     """The caps and the first reason the observation stopped, if it did."""
@@ -39,25 +57,35 @@ class _Observation:
             return None
         return value
 
-    def digest_of(self, path: str) -> str | None:
+    def digest_of(self, path: str, directory: int | None = None) -> str | None:
         """A regular file's digest, opened without following a link and without
         blocking, as the existing bounded reader treats one
-        (adoption_check._read_regular_bounded): anything else is unreadable."""
-        flags = (
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        )
+        (adoption_check._read_regular_bounded), and relative to `directory` when one
+        is given: anything else is unreadable."""
+        if _SAFE_OPEN is None:
+            self.stop("unreadable")
+            return None
         try:
-            descriptor = os.open(path, flags)
+            descriptor = os.open(path, _SAFE_OPEN, dir_fd=directory)
         except OSError:
             self.stop("unreadable")
             return None
         digest, size = hashlib.sha256(), 0
-        with os.fdopen(descriptor, "rb") as stream:
+        # Unbuffered, so that a read consumes no more than it asks for.
+        with os.fdopen(descriptor, "rb", buffering=0) as stream:
             try:
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                     self.stop("unreadable")
                     return None
-                while chunk := stream.read(65536):
+                # At most what is left of both caps, and one byte more to see an
+                # overflow (cubic on #452).
+                while chunk := stream.read(
+                    min(
+                        65536,
+                        self.caps["file_bytes"] - size + 1,
+                        self.caps["file_bytes_total"] - self.read_total + 1,
+                    )
+                ):
                     size += len(chunk)
                     self.read_total += len(chunk)
                     if size > self.caps["file_bytes"]:
@@ -71,6 +99,22 @@ class _Observation:
                 self.stop("unreadable")
                 return None
         return digest.hexdigest()
+
+    def record_digest(self, root: str, name: str) -> str | None:
+        """The digest of a distribution's RECORD, opened relative to its `*.dist-info`
+        directory, which is itself opened without following a link."""
+        if _DIRECTORY_OPEN is None:
+            self.stop("unreadable")
+            return None
+        try:
+            directory = os.open(os.path.join(root, name), _DIRECTORY_OPEN)
+        except OSError:
+            self.stop("unreadable")
+            return None
+        try:
+            return self.digest_of("RECORD", directory)
+        finally:
+            os.close(directory)
 
 
 def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
@@ -127,8 +171,7 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
             if len(distributions) == caps["distributions"]:
                 observation.stop("distributions")
                 break
-            record = os.path.join(root, name, "RECORD")
-            distributions.append([root, name, observation.digest_of(record)])
+            distributions.append([root, name, observation.record_digest(root, name)])
     interpreter = {
         "executable": observation.text(os.path.realpath(sys.executable)),
         "version": observation.text(sys.version),

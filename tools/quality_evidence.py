@@ -49,7 +49,7 @@ from tools.requirements_lock import (
     locked_requirements,
     normalized_distribution_name,
 )
-from tools.security_scan import SecurityScanError, scan_tracked_tree
+from tools.security_scan import SecurityScanError, _strict_json_loads, scan_tracked_tree
 
 if TYPE_CHECKING:
     # Only for its type: the default collection, collect_quality_evidence, never imports
@@ -1815,6 +1815,19 @@ def _is_text_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
+_OBSERVATION_FIELDS = frozenset(
+    {
+        "format",
+        "incomplete",
+        "interpreter",
+        "roots",
+        "entries",
+        "archives",
+        "distributions",
+    }
+)
+
+
 def _valid_observation(observed: object) -> bool:
     """A complete observation in the collector's own format, every field the shape the
     script writes; anything else is no observation (cubic 4353631703)."""
@@ -1827,9 +1840,12 @@ def _valid_observation(observed: object) -> bool:
     )
     archives, distributions = observed.get("archives"), observed.get("distributions")
     return (
-        observed.get("format") == ENVIRONMENT_OBSERVATION_FORMAT
+        # Exactly the fields the observer writes, and no other (cubic 4354512437).
+        set(observed) == _OBSERVATION_FIELDS
+        and observed.get("format") == ENVIRONMENT_OBSERVATION_FORMAT
         and observed.get("incomplete") is None
         and isinstance(interpreter, dict)
+        and set(interpreter) == {"executable", "version"}
         and all(isinstance(interpreter.get(k), str) for k in ("executable", "version"))
         and _is_text_list(roots)
         and isinstance(entries, dict)
@@ -1883,10 +1899,12 @@ def _observe_environment(
         return None, None
     # One read: the bytes parsed are the bytes the evidence names, and a read that
     # fails is an unavailable observation, never an escaping error (Sourcery on #452).
+    # The strict loader refuses a duplicate field rather than keep its last value
+    # (cubic 4354512437): security_scan's, consumed rather than copied (#365 F1).
     try:
         content = report.read_bytes()
-        observed = json.loads(content.decode("utf-8"))
-    except (OSError, ValueError, RecursionError):
+        observed = _strict_json_loads(content.decode("utf-8"))
+    except (OSError, ValueError, RecursionError, SecurityScanError):
         return None, None
     if not _valid_observation(observed):
         return None, None
