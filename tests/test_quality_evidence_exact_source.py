@@ -390,16 +390,22 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             ("extensions.partialClone", "o"),
             ("remote.o.url", str(self.root)),
             ("remote.o.promisor", "true"),
-            ("remote.o.uploadpack", f"touch {marker}; false"),
+            ("remote.o.uploadpack", f"touch {shlex.quote(str(marker))}; false"),
             ("protocol.file.allow", "always"),
         ):
             self._git("config", key, value)
+        # A live probe: a plain read of the missing object fetches, and leaves the
+        # marker, so its later absence proves that no fetch ran (Amazon Q on #451).
+        with contextlib.suppress(subprocess.CalledProcessError):
+            self._git("cat-file", "-p", "1" * 40)
+        self.assertTrue(marker.exists(), "the promisor probe did not fire")
+        marker.unlink()
         return base, head
 
     # No diagnostic Git read fetches: the missing object is refused, and the
     # repository's configured promisor command never runs (PAO 6325156914).
     def test_a_diagnostic_read_fetches_no_missing_object(self) -> None:
-        marker = Path(self.directory.name) / "fetched"
+        marker = Path(self.directory.name) / "was fetched"
         self._promisor(marker)
         with self.assertRaises(subprocess.CalledProcessError):
             self.module._diagnostic_git(
@@ -410,7 +416,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # The whole chain, with a base to compare: staging, enumeration and the
     # comparison's patch read all refuse the missing object, and none fetches it.
     def test_the_collection_fetches_no_missing_object(self) -> None:
-        marker = Path(self.directory.name) / "fetched"
+        marker = Path(self.directory.name) / "was fetched"
         base, _ = self._promisor(marker)
         self.collect(self.root, self.output, base=base)
         self.assertFalse(marker.exists())
@@ -617,7 +623,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     # The collection's missing object is refused by the stage, and nothing is fetched
     # (PAO 6325156914: a failed read alone proves no absence of a side effect).
     def test_a_missing_object_is_refused_by_the_stage(self) -> None:
-        marker = Path(self.directory.name) / "fetched"
+        marker = Path(self.directory.name) / "was fetched"
         base, _ = ExactSourceTreeTests._promisor(self, marker)
         inventory = self._read(self.collect(self.root, self.output, base=base))
         self.assertFalse(marker.exists())
@@ -1250,10 +1256,12 @@ class FixtureIsolationTests(_DiagnosticFixture):
         home = Path(self.directory.name) / "home"
         hooks = home / "hooks"
         hooks.mkdir(parents=True)
-        marker = Path(self.directory.name) / "hook-ran"
+        marker = Path(self.directory.name) / "hook ran"
         for name in ("post-commit", "reference-transaction"):
             hook = hooks / name
-            hook.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+            hook.write_text(
+                f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n", encoding="utf-8"
+            )
             hook.chmod(0o755)
         (home / ".gitconfig").write_text(
             f"[core]\n\thooksPath = {hooks}\n", encoding="utf-8"
@@ -1271,9 +1279,33 @@ class FixtureIsolationTests(_DiagnosticFixture):
         with patch.dict(
             os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
         ):
+            # A live probe: Git outside the fixtures' isolation runs the hook.
+            subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on a temporary fixture repository
+                [
+                    "git",
+                    "-c",
+                    "user.name=diagnostic",
+                    "-c",
+                    "user.email=diagnostic@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "a probe",
+                ],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+            )
+            self.assertTrue(marker.exists(), "the hook probe did not fire")
+            marker.unlink()
             self._a_change()
             self._git("commit", "-q", "-am", "under a hostile home")
-            ExactSourceTreeTests._promisor(self, Path(self.directory.name) / "fetched")
+            ExactSourceTreeTests._promisor(
+                self, Path(self.directory.name) / "was fetched"
+            )
         self.assertFalse(marker.exists())
 
     # A malformed global or system configuration cannot fail or steer them either.
@@ -1291,5 +1323,5 @@ class FixtureIsolationTests(_DiagnosticFixture):
                 self._a_change()
                 self._git("commit", "-q", "-am", f"under a broken {label} config")
                 ExactSourceTreeTests._promisor(
-                    self, Path(self.directory.name) / f"fetched-{label}"
+                    self, Path(self.directory.name) / f"was fetched-{label}"
                 )
