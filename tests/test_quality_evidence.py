@@ -1382,8 +1382,13 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             )
         self.assertIn("--isolated", runs["ruff"]["argv"])
         self.assertIn("--config-file=", runs["mypy:main"]["argv"])
+        observation = self.module._environment_command()
         for command, _, _ in self.commands:
-            self.assertEqual([sys.executable, "-I", "-m"], command[:3])
+            # The environment observations run the same isolated interpreter with the
+            # collector's own fixed script, never a producer (#389 F3 S2-C).
+            expected = observation[:3] if command == observation else None
+            self.assertEqual(expected or [sys.executable, "-I", "-m"], command[:3])
+        self.assertEqual([sys.executable, "-I", "-c"], observation[:3])
 
     def test_an_inventory_past_its_deadline_is_incomplete(self) -> None:
         # Every later reading of the clock is past the deadline: the subject and
@@ -3671,12 +3676,18 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ),
         ):
             self._inventory(limits=limits)
-        started = [c for c, _, _ in self.commands if "--version" not in c]
+        observation = self.module._environment_command()
+        started = [
+            c for c, _, _ in self.commands if "--version" not in c and c != observation
+        ]
         self.assertEqual(
             [("mypy", ".")],
             [(c[3], self._group(cwd)) for c, cwd, _ in self.commands if c in started],
         )
         metric.assert_not_called()
+        # Only the observation before the producers: none follows a refusal (#389 F3
+        # S2-C).
+        self.assertEqual(1, [c for c, _, _ in self.commands].count(observation))
 
     def test_an_inventory_at_exactly_the_findings_limit_is_written(self) -> None:
         # The other side of the same predicate: equality is within the limit.

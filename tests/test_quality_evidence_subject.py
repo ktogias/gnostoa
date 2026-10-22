@@ -675,7 +675,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             answer = answers.pop(0) if len(answers) > 1 else answers[0]
             if answer is None:
                 return 1, "exited 1", False
-            report.write_text(json.dumps({"installed": list(answer)}), encoding="utf-8")
+            report.write_text(self._observation(tuple(answer)), encoding="utf-8")
             return 0, None, False
 
         return run
@@ -694,7 +694,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         }
         shutil.rmtree(self.output, ignore_errors=True)
         with patch("tools.quality_evidence._bounded_run", side_effect=launcher):
-            return self._read(self.collect(self.root, self.output))
+            path = self.collect(self.root, self.output)
+        self.run_directory = Path(path).parent
+        return self._read(path)
 
     @staticmethod
     def _producers(inventory: dict) -> list[dict]:
@@ -706,7 +708,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
     @staticmethod
     def _rules(inventory: dict) -> list[str]:
-        return sorted(f["rule"] for f in inventory["findings"] if f["tool"]["id"] == "mypy")
+        return sorted(
+            f["rule"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"
+        )
 
     def test_an_unchanged_environment_records_the_same_producers_twice(self) -> None:
         first = self._run(self._environment(("types-PyYAML 6.0",)), "import-untyped")
@@ -747,3 +751,140 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             r"producer environment identity unavailable",
         )
         self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+
+    def test_the_observation_member_names_its_format_scope_and_status(self) -> None:
+        # The optional v2 member (Router 6347672936): its own format, endpoint scope,
+        # recorded caps, interpreter and both observations' evidence. A v2 record
+        # without it was not observed.
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["invocation"]: r for r in inventory["producers"]}
+        self.assertNotIn("environment_observation", runs["complexity"])
+        member = runs["mypy:main"]["environment_observation"]
+        self.assertEqual(member, runs["ruff"]["environment_observation"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, member["format"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_SCOPE, member["scope"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_CAPS, member["caps"])
+        self.assertEqual("endpoints_equal", member["status"])
+        self.assertEqual("/fixture/python", member["interpreter"]["executable"])
+        for when in ("before", "after"):
+            path = self.run_directory / member[when]["path"]
+            self.assertEqual(
+                self.module.file_evidence(path)["sha256"], member[when]["sha256"]
+            )
+
+    def test_equal_endpoints_never_certify_an_unchanged_run(self) -> None:
+        # A -> B -> A: the producers read B while both observations saw A (PAO
+        # 6347682576). The endpoints compare equal, which is all the member states.
+        inventory = self._run(
+            self._environment(("probe-dep-1.0",), ("probe-dep-1.0",)), "import-untyped"
+        )
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("endpoints_equal", member["status"])
+        self.assertIn("neither continuous nor installed content", member["scope"])
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+        self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
+
+    def test_a_capped_or_cut_observation_is_a_gap_never_an_identity(self) -> None:
+        capped = self._observation(("fixture-1.0",), capped="entries")
+        for name, answer in (("capped", capped), ("cut", None)):
+            with self.subTest(name):
+
+                def run(
+                    command,
+                    *,
+                    cwd,
+                    environment,
+                    report,
+                    deadline,
+                    limits,
+                    answer=answer,
+                ):
+                    if command != self.module._environment_command():
+                        return self._fake_run(
+                            command,
+                            cwd=cwd,
+                            environment=environment,
+                            report=report,
+                            deadline=deadline,
+                            limits=limits,
+                        )
+                    report.write_text(answer or self._observation(), encoding="utf-8")
+                    return 0, None, answer is None
+
+                inventory = self._run(run, "import-untyped")
+                member = inventory["producers"][0]["environment_observation"]
+                self.assertEqual("unavailable", member["status"])
+                self.assertIsNone(member["before"])
+                self.assertIn(
+                    "producer environment identity unavailable",
+                    inventory["coverage"]["reason"],
+                )
+
+    def test_the_observations_share_the_inventory_deadline(self) -> None:
+        # One original absolute deadline, never a fresh budget: a spent one starts no
+        # later observation, which is then a gap (Router 6347672936).
+        deadlines: list[tuple[str, float]] = []
+        observations = 0
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            nonlocal observations
+            if command != self.module._environment_command():
+                deadlines.append(("producer", deadline))
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            deadlines.append(("observation", deadline))
+            observations += 1
+            if observations == 2:
+                return None, "not started: the inventory deadline had passed", False
+            report.write_text(self._observation(), encoding="utf-8")
+            return 0, None, False
+
+        inventory = self._run(run, "import-untyped")
+        self.assertEqual(1, len({deadline for _, deadline in deadlines}))
+        self.assertEqual(
+            ["observation", "observation"],
+            [k for k, _ in deadlines if k == "observation"],
+        )
+        self.assertEqual("observation", deadlines[-1][0])
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["after"])
+
+    def test_the_observation_enforces_its_caps_while_it_enumerates(self) -> None:
+        # The collector's own script, run for real through its bounded launcher.
+        caps = self.module.ENVIRONMENT_OBSERVATION_CAPS
+        command = self.module._environment_command()
+        cases = (
+            (caps, None),
+            ({**caps, "entries_per_root": 1}, "entries_per_root"),
+            ({**caps, "record_bytes": 1}, "record_bytes"),
+            ({**caps, "output_bytes": 1}, "output_bytes"),
+        )
+        for limit, expected in cases:
+            with self.subTest(capped=expected):
+                report = self.output / f"observation-{expected}.json"
+                self.output.mkdir(parents=True, exist_ok=True)
+                status, gap, invalid = self.module._bounded_run(
+                    [*command[:4], json.dumps(limit, sort_keys=True), command[5]],
+                    cwd=self.root,
+                    environment=dict(os.environ),
+                    report=report,
+                    deadline=time.monotonic() + 60,
+                    limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                )
+                self.assertEqual((0, None, False), (status, gap, invalid))
+                observed = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"]
+                )
+                self.assertEqual(expected, observed["capped"])
+                if expected == "entries_per_root":
+                    self.assertTrue(
+                        all(len(v) <= 1 for v in observed["entries"].values())
+                    )

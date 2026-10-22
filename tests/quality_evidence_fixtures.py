@@ -370,7 +370,31 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             # producers ran in, never the checkout (#389 F3 S2 B).
             report.write_text(self._staged_text(text, cwd), encoding="utf-8")
             return self.ruff_exit, None, False
+        if command == self.module._environment_command():
+            # The producers' environment observation (#389 F3 S2-C): one fixed
+            # installed set, unless a test answers the observation itself.
+            report.write_text(self._observation(), encoding="utf-8")
+            return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
+
+    def _observation(
+        self, installed: tuple[str, ...] = ("fixture-1.0",), capped: str | None = None
+    ) -> str:
+        """An environment observation in the collector's own format, whose one root
+        holds a `*.dist-info` for each of `installed`."""
+        root = "/fixture/site-packages"
+        names = sorted(f"{name}.dist-info" for name in installed)
+        return json.dumps(
+            {
+                "format": self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                "capped": capped,
+                "interpreter": {"executable": "/fixture/python", "version": "3.12"},
+                "roots": [root],
+                "entries": {root: names},
+                "distributions": [[root, name, "0" * 64] for name in names],
+            },
+            sort_keys=True,
+        )
 
     def _inventory(self, **options) -> dict:
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):

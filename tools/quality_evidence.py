@@ -1589,7 +1589,10 @@ def _bounded_run(
     starts nothing (Codex on #436)."""
     if time.monotonic() >= deadline:
         return None, "not started: the inventory deadline had passed", False
-    print("+ " + " ".join(command[:8]), flush=True)
+    # An argument past 200 bytes, as the environment observation's script, is named by
+    # its size: the log keeps the interpreter and its flags (#389 F3 S2-C).
+    shown = (a if len(a) <= 200 else f"<{len(a)} bytes>" for a in command[:8])
+    print("+ " + " ".join(shown), flush=True)
     try:
         stream = _new_file(report)
     except OSError as exc:
@@ -1724,6 +1727,189 @@ def _run_record(
             **file_evidence(report),
         }
     return record
+
+
+# The producers' installed environment, as their own interpreter resolves it under -I:
+# the staged tree is not their only input. One tree under two installed sets gave mypy
+# two findings with every other recorded field identical (#389 F3 S2-C, the C6 probe in
+# 6347549109). Two bounded metadata observations, one before the version reads and one
+# after the producers, name the interpreter, its import roots and their top-level
+# entries, and each `*.dist-info` with a digest of the RECORD bytes read. What differs
+# between them is a gap. Equal endpoints prove neither continuity, since a change
+# restored in between is not seen (PAO 6347682576), nor installed content, since a
+# RECORD digest attests that file's bytes, not the files it lists (Router 6347672936).
+ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v1"
+ENVIRONMENT_OBSERVATION_SCOPE = (
+    "metadata observed at two endpoints: neither continuous nor installed content"
+)
+# Measured in gnostoa:development-445: 3 roots, 430 entries (201 in the largest root),
+# 69 distributions, RECORD at most 1,608,909 bytes and 2,258,869 in all, names at most
+# 59 bytes (#389 F3 S2-C). Each cap keeps a wide margin and is enforced while the
+# observation enumerates or reads, before anything is sorted.
+ENVIRONMENT_OBSERVATION_CAPS = {
+    "roots": 32,
+    "entries_per_root": 4096,
+    "entries": 16384,
+    "distributions": 1024,
+    "record_bytes": 8 * 1024 * 1024,
+    "record_bytes_total": 32 * 1024 * 1024,
+    "string_bytes": 4096,
+    "output_bytes": 1024 * 1024,
+}
+_ENVIRONMENT_OBSERVATION = """\
+import hashlib, json, os, sys
+
+caps = json.loads(sys.argv[1])
+capped = None
+
+
+def text(value):
+    global capped
+    if len(os.fsencode(value)) > caps["string_bytes"]:
+        capped = capped or "string_bytes"
+        return None
+    return value
+
+
+roots, entries, total = [], {}, 0
+for path in sys.path:
+    if capped or not os.path.isdir(path):
+        continue
+    if len(roots) == caps["roots"]:
+        capped = "roots"
+        break
+    root = text(path)
+    if root is None:
+        break
+    names = []
+    with os.scandir(path) as listing:
+        for entry in listing:
+            if len(names) == caps["entries_per_root"] or total == caps["entries"]:
+                capped = "entries_per_root" if len(names) == caps["entries_per_root"] else "entries"
+                break
+            name = text(entry.name)
+            if name is None:
+                break
+            names.append(name)
+            total += 1
+    roots.append(root)
+    entries[root] = sorted(names)
+distributions, read_total = [], 0
+for root in roots:
+    for name in entries[root]:
+        if capped or not name.endswith(".dist-info"):
+            continue
+        if len(distributions) == caps["distributions"]:
+            capped = "distributions"
+            break
+        digest, size = hashlib.sha256(), 0
+        try:
+            with open(os.path.join(root, name, "RECORD"), "rb") as stream:
+                while chunk := stream.read(65536):
+                    size, read_total = size + len(chunk), read_total + len(chunk)
+                    if size > caps["record_bytes"] or read_total > caps["record_bytes_total"]:
+                        capped = "record_bytes" if size > caps["record_bytes"] else "record_bytes_total"
+                        break
+                    digest.update(chunk)
+            record = None if capped else digest.hexdigest()
+        except OSError:
+            record = None
+        distributions.append([root, name, record])
+observation = {
+    "format": sys.argv[2],
+    "capped": capped,
+    "interpreter": {"executable": os.path.realpath(sys.executable), "version": sys.version},
+    "roots": roots,
+    "entries": entries,
+    "distributions": distributions,
+}
+output = json.dumps(observation, sort_keys=True)
+if len(output.encode()) > caps["output_bytes"]:
+    output = json.dumps({"format": sys.argv[2], "capped": "output_bytes"}, sort_keys=True)
+print(output)
+"""
+_ENVIRONMENT_UNAVAILABLE_GAP = (
+    "producer environment identity unavailable: an observation before or after the "
+    "producers did not complete, was capped or was cut, so no installed set is "
+    "identified"
+)
+_ENVIRONMENT_CHANGED_GAP = (
+    "producer environment changed between its observations: the metadata observed "
+    "before the producers differs from the metadata observed after them"
+)
+
+
+def _environment_command() -> list[str]:
+    return [
+        sys.executable,
+        "-I",
+        "-c",
+        _ENVIRONMENT_OBSERVATION,
+        json.dumps(ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
+        ENVIRONMENT_OBSERVATION_FORMAT,
+    ]
+
+
+def _observe_environment(
+    root: Path, run: Path, limits: DiagnosticLimits, deadline: float, when: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """One bounded metadata observation of the producers' environment, run as they
+    run, isolated with -I and under the inventory's deadline and max_report_bytes: its
+    report's evidence and its interpreter, or None for each when it does not complete,
+    is capped, is cut or is not the observation's own format."""
+    report = run / f"diagnostic-environment-{when}.json"
+    status, gap, invalid = _bounded_run(
+        _environment_command(),
+        cwd=root,
+        environment=dict(os.environ),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    if gap is not None or invalid or status != 0:
+        return None, None
+    try:
+        observed = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None, None
+    if (
+        not isinstance(observed, dict)
+        or observed.get("format") != ENVIRONMENT_OBSERVATION_FORMAT
+        or observed.get("capped") is not None
+    ):
+        return None, None
+    interpreter = observed.get("interpreter")
+    return (
+        {"path": report.relative_to(run).as_posix(), **file_evidence(report)},
+        interpreter if isinstance(interpreter, dict) else None,
+    )
+
+
+def _environment_observation(
+    before: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    after: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    gaps: list[str],
+) -> dict[str, Any]:
+    """The optional record member: its own format, its endpoint scope and caps, both
+    observations' evidence, and their status. Its absence from a v2 record means not
+    observed, never equal or trusted."""
+    if before[0] is None or after[0] is None:
+        status = "unavailable"
+        gaps.append(_ENVIRONMENT_UNAVAILABLE_GAP)
+    elif before[0]["sha256"] != after[0]["sha256"]:
+        status = "endpoints_differ"
+        gaps.append(_ENVIRONMENT_CHANGED_GAP)
+    else:
+        status = "endpoints_equal"
+    return {
+        "format": ENVIRONMENT_OBSERVATION_FORMAT,
+        "scope": ENVIRONMENT_OBSERVATION_SCOPE,
+        "caps": dict(ENVIRONMENT_OBSERVATION_CAPS),
+        "status": status,
+        "interpreter": before[1],
+        "before": before[0],
+        "after": after[0],
+    }
 
 
 def _producer_version(
@@ -2225,6 +2411,7 @@ def _run_producers(
         else:
             paths.append(path)
     if paths:
+        before = _observe_environment(root, run, limits, deadline, "before")
         versions = {
             producer: _producer_version(root, run, producer, limits, deadline)
             for producer in ("mypy", "ruff")
@@ -2254,6 +2441,17 @@ def _run_producers(
                     max_findings=limits.max_findings - result.count(),
                 )
             )
+        # Past the refusal's predicate no inventory is written, so, as for a later
+        # producer, no later observation starts (cubic on #436).
+        after = (
+            _observe_environment(root, run, limits, deadline, "after")
+            if result.count() <= limits.max_findings
+            else (None, None)
+        )
+        observation = _environment_observation(before, after, gaps)
+        for record in result.runs:
+            if record["producer"] in ("mypy", "ruff"):
+                record["environment_observation"] = observation
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
     tracked = set(expected) - set(withheld)
