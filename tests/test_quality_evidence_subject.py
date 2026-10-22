@@ -1528,19 +1528,42 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         with self.subTest("simulated"), patch.object(observer.os, "stat", refusing):
             observed = json.loads(observer.observe([str(root)], caps, form))
             self.assertEqual("unreadable", observed["incomplete"])
-        if os.geteuid() == 0:
-            return  # root reads past the permission below
-        parent = root.parent / "closed-parent"
-        parent.mkdir()
+
+    def test_a_real_permission_denial_reaches_the_collector_as_a_gap(self) -> None:
+        # The negative control where denial really occurs: the observer's own child
+        # over a root whose parent denies search, and its report through the actual
+        # acceptance boundary, which records unavailable and its gap. The positive
+        # control, an absent entry, is accepted (Router 6353798690).
+        absent = self._observe_with(Path(self.directory.name) / "absent-root")
+        self.assertIsNone(absent["incomplete"])
+        member = self._run(self._answering(absent), "import-untyped")["producers"][0][
+            "environment_observation"
+        ]
+        self.assertEqual("endpoints_equal", member["status"])
+        parent = Path(self.directory.name) / "closed-parent"
         closed = parent / "root"
-        root.rename(closed)
+        closed.mkdir(parents=True)
         parent.chmod(0o600)
         try:
-            with self.subTest("real"):
-                observed = self._observe_with(closed)
-                self.assertEqual("unreadable", observed["incomplete"])
+            try:
+                closed.stat()
+            except PermissionError:
+                pass
+            else:
+                # An elevated process reads past the permission, so the control
+                # cannot occur here: reported as skipped, never passed.
+                self.skipTest("this process is not denied the closed root")
+            observed = self._observe_with(closed)
         finally:
             parent.chmod(0o700)
+        self.assertEqual("unreadable", observed["incomplete"])
+        inventory = self._run(self._answering(observed), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
 
     def test_an_observation_without_its_completion_marker_is_a_gap(self) -> None:
         # Characterization: a report lacking `incomplete` is not the observer's format,

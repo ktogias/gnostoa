@@ -1815,6 +1815,10 @@ def _is_text_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
+# The v1 contract of the observer's report, which is evidence the collector reads, not a
+# wire member: every field is required, and an unknown or repeated field is not v1. A
+# missing `incomplete` is therefore never read as a completed observation (cubic
+# 4354512437; PAO 6353587922; Router 6353798690).
 _OBSERVATION_FIELDS = frozenset(
     {
         "format",
