@@ -4,6 +4,7 @@ import ast
 import errno
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -838,6 +839,23 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("evidence: [artifact, test-report]", verification)
+
+    # The module imports where the diagnostic path's POSIX-only directory flags are
+    # absent, so the default collection does not need them: they are read on that
+    # path alone, never at import (Codex and Q on #451).
+    def test_the_module_imports_without_the_diagnostic_directory_flags(self) -> None:
+        path = ROOT / "tools" / "quality_evidence.py"
+        spec = importlib.util.spec_from_file_location("quality_evidence_bare", path)
+        if spec is None or spec.loader is None:
+            self.fail("the module cannot be loaded from its path")
+        module = importlib.util.module_from_spec(spec)
+        # Registered for the load alone: dataclasses resolve their annotations
+        # through the module's own entry.
+        with patch.dict(sys.modules, {spec.name: module}), patch.dict(os.__dict__):
+            for name in ("O_DIRECTORY", "O_NOFOLLOW"):
+                del os.__dict__[name]
+            spec.loader.exec_module(module)
+        self.assertTrue(callable(module.collect_quality_evidence))
 
 
 # #389 F3-S1: the explicit, offline diagnostic inventory (Router 6201584332). It is

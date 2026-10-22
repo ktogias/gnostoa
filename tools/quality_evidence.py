@@ -2772,8 +2772,12 @@ class _EntryBudget:
 _RETAINED = "the staged source was left in the run directory"
 
 
-# A directory of the staged source, opened by its own name and never through a link.
-_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+def _directory_flags() -> int:
+    """The flags that open a directory of the staged source by its own name and never
+    through a link. They are POSIX-only, so they are read here, on the diagnostic path,
+    never at import: the default collection imports without them (Codex and Q on
+    #451)."""
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
 def _within(deadline: float) -> None:
@@ -2809,7 +2813,7 @@ def _descend_or_remove(entry: os.DirEntry[str], fd: int, deadline: float) -> int
         directory = entry.is_dir(follow_symlinks=False)
         _within(deadline)
         if directory:
-            return os.open(entry.name, _DIRECTORY, dir_fd=fd)
+            return os.open(entry.name, _directory_flags(), dir_fd=fd)
         os.unlink(entry.name, dir_fd=fd)
     except FileNotFoundError:
         pass
@@ -2840,7 +2844,7 @@ def _discard_staged(staged: Path, owner: _TreeLimits) -> str | None:
     try:
         _within(deadline)
         try:
-            frames.append((os.open(staged, _DIRECTORY), staged))
+            frames.append((os.open(staged, _directory_flags()), staged))
         except FileNotFoundError:
             return None
         entries.append(None)
