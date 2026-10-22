@@ -1071,16 +1071,30 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIsNone(observed["interpreter"]["executable"])
 
     def test_a_malformed_observation_is_a_gap(self) -> None:
-        # The collector's own format with a broken structure is no observation: an
-        # interpreter that is not a mapping, or roots that are not a list of strings
-        # (cubic 4353631703; owner 6351449420 item 5).
+        # The collector's own format with a broken structure is no observation: each
+        # field the shape the observer writes, each checked by its own case (cubic
+        # 4353631703; owner 6351449420 item 5).
+        root = "/fixture/site-packages"
         for name, broken in (
+            ("not a mapping", None),
             ("no interpreter", {"interpreter": None}),
-            ("roots not a list", {"roots": "/fixture/site-packages"}),
+            ("a version not text", {"interpreter": {"executable": "/p", "version": 3}}),
+            ("roots not a list", {"roots": root}),
+            ("roots a mapping", {"roots": {root: []}}),
+            ("entries a list", {"entries": [root]}),
+            ("entries not the roots", {"entries": {}}),
+            ("an entry not text", {"entries": {root: [1]}}),
+            ("archives a mapping", {"archives": {}}),
+            ("an archive not a pair", {"archives": [["/fixture/a.zip"]]}),
+            ("distributions a mapping", {"distributions": {}}),
             ("a distribution not a triple", {"distributions": [["/fixture", "x"]]}),
         ):
             with self.subTest(name):
-                observation = {**json.loads(self._observation()), **broken}
+                observation = (
+                    [json.loads(self._observation())]
+                    if broken is None
+                    else {**json.loads(self._observation()), **broken}
+                )
 
                 def run(
                     command,
@@ -1336,6 +1350,39 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         started = time.monotonic()
         self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
         self.assertLess(time.monotonic() - started, 30)
+
+    def test_a_record_that_fails_mid_read_stops_the_observation(self) -> None:
+        # Characterization, in process: a read that fails once the file is open is an
+        # unreadable stop, never a digest or an escaping error (owner 6351449420 item 6).
+        observer = importlib.import_module("tools.python_environment_observation")
+        record = Path(self.directory.name) / "RECORD"
+        record.write_text("x" * 64, encoding="utf-8")
+        opened = os.fdopen
+
+        class Failing:
+            def __init__(self, stream) -> None:
+                self.stream = stream
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self.stream.close()
+
+            def fileno(self) -> int:
+                return self.stream.fileno()
+
+            def read(self, size: int) -> bytes:
+                raise OSError(errno.EIO, "a read that fails mid-file")
+
+        observation = observer._Observation(
+            dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        )
+        with patch.object(
+            observer.os, "fdopen", lambda fd, mode: Failing(opened(fd, mode))
+        ):
+            self.assertIsNone(observation.digest_of(str(record)))
+        self.assertEqual("unreadable", observation.incomplete)
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
