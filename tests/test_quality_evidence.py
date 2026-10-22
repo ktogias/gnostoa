@@ -852,8 +852,10 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
         # Registered for the load alone: dataclasses resolve their annotations
         # through the module's own entry.
         with patch.dict(sys.modules, {spec.name: module}), patch.dict(os.__dict__):
+            # Either flag may already be absent, on the very platforms this is about
+            # (cubic and CodeAnt on #451).
             for name in ("O_DIRECTORY", "O_NOFOLLOW"):
-                del os.__dict__[name]
+                os.__dict__.pop(name, None)
             spec.loader.exec_module(module)
         self.assertTrue(callable(module.collect_quality_evidence))
 

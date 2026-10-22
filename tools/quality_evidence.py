@@ -2774,10 +2774,13 @@ _RETAINED = "the staged source was left in the run directory"
 
 def _directory_flags() -> int:
     """The flags that open a directory of the staged source by its own name and never
-    through a link. They are POSIX-only, so they are read here, on the diagnostic path,
-    never at import: the default collection imports without them (Codex and Q on
-    #451)."""
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    through a link: the staging owner's own, consumed rather than copied, so the
+    removal opens the directories exactly as the owner that staged them (cubic on
+    #451). They are POSIX-only, so the owner is imported here, on the diagnostic path,
+    never at import: the default collection imports without them (Codex and Q)."""
+    from tools import exact_tree
+
+    return exact_tree._DIRECTORY_FLAGS
 
 
 def _within(deadline: float) -> None:
