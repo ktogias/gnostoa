@@ -106,7 +106,7 @@ def _diagnostic_line(text: str, needle: str, after: str | None = None) -> int:
 _SOURCE_BINDING_GAP = (
     "source binding UNVERIFIED: the producers' installed environment and import graph "
     "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
-    "are bound"
+    "are bound, observed before and after the producers, not throughout them"
 )
 
 
@@ -327,6 +327,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         if not cwd.is_relative_to(output):
             return self.root.resolve()
         relative = cwd.relative_to(output)
+        if len(relative.parts) < 2:
+            raise AssertionError(f"a producer ran outside a staged source: {cwd}")
         return output / relative.parts[0] / relative.parts[1]
 
     def _group(self, cwd) -> str:
@@ -669,20 +671,30 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _uncompared(self, base: str, reader=None) -> dict:
         """Collect against `base` and require the comparison's named gap: no diff
         read, no comparison published, every finding kept with in_diff null."""
-        real = self.module._diagnostic_git
+        real, real_annotate = self.module._diagnostic_git, self.module._annotate_diff
         chosen = reader or real
-        frozen = {"HEAD^{commit}", f"{self._head()}^{{tree}}"}
+        comparing: list[bool] = []
+
+        def annotating(*args, **kwargs):
+            comparing.append(True)
+            try:
+                return real_annotate(*args, **kwargs)
+            finally:
+                comparing.pop()
 
         def comparison_only(root, deadline, *arguments, **options):
-            # The freeze reads the subject's own commit and tree; the reader under test
-            # answers the comparison's reads alone (#389 F3 S2 B).
-            if arguments[-1] in frozen:
-                return real(root, deadline, *arguments, **options)
-            return chosen(root, deadline, *arguments, **options)
+            # The reader under test answers the comparison's reads alone, while the
+            # comparison runs; the freeze's reads of the subject's own commit and tree
+            # stay real, whatever they name (#389 F3 S2 B; Amazon Q on #451).
+            read = chosen if comparing else real
+            return read(root, deadline, *arguments, **options)
 
-        with patch.object(
-            self.module, "_diagnostic_git", side_effect=comparison_only
-        ) as git:
+        with (
+            patch.object(
+                self.module, "_diagnostic_git", side_effect=comparison_only
+            ) as git,
+            patch.object(self.module, "_annotate_diff", side_effect=annotating),
+        ):
             inventory = self._inventory(base=base)
         self.assertNotIn("diff", [call.args[2] for call in git.call_args_list])
         self.assertIsNone(inventory["scope"]["diff"])

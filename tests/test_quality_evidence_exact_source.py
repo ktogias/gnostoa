@@ -166,13 +166,25 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             seen.append(kwargs["limits"])
             return real(*args, **kwargs)
 
+        reader, deadlines = self.module._diagnostic_git, []
+
+        def reading(root, deadline, *arguments, **options):
+            deadlines.append(deadline)
+            return reader(root, deadline, *arguments, **options)
+
         start = time.monotonic()
         limits = self.module.DiagnosticLimits(timeout_seconds=123.0)
-        with patch.object(owner, "materialize", side_effect=staging):
+        with (
+            patch.object(owner, "materialize", side_effect=staging),
+            patch.object(self.module, "_diagnostic_git", side_effect=reading),
+        ):
             self.collect(self.root, self.output, limits=limits)
         self.assertEqual(1, len(seen))
         self.assertGreaterEqual(seen[0].deadline, start + 123.0)
-        self.assertLessEqual(seen[0].deadline, time.monotonic() + 123.0)
+        # The very deadline of the freeze's own reads: a budget the owner got afresh,
+        # however close, differs (cubic on #451).
+        self.assertTrue(deadlines)
+        self.assertEqual({seen[0].deadline}, set(deadlines))
 
     # The whole tree has its own finite file bound, at the cap and past it, apart from
     # max_files, which still counts the Python inputs.
@@ -284,7 +296,8 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     """#389 F3 S2 B, the contract the Router selected (6325382720, D1-D4 and the no-fetch
     policy). RECONSTRUCTED pre-change evidence: written after the first production
     edit and run against the prior subject d617c21e, never test-first (chronology
-    record 6325643085)."""
+    record 6325643085). On main 1e4cc560 they failed first again, with production
+    unchanged (#389 6328550076)."""
 
     _TREE_LIMITS = ("max_tree_files", "max_tree_bytes")
 
@@ -510,19 +523,26 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             ),
             "unobservable after": ("the staged source could not be observed again", 2),
         }
+
+        def observer(label: str, calls: list[int]):
+            """The identity read for one case, counting its calls in `calls`."""
+
+            def observing(*args, **kwargs):
+                calls.append(1)
+                if label == "differs":
+                    return "0" * 40
+                if label == "unobservable at first" or len(calls) > 1:
+                    raise owner.ExactTreeError("identity-unavailable")
+                return real(*args, **kwargs)
+
+            return observing
+
         for label, (gap, count) in cases.items():
             with self.subTest(label):
                 calls: list[int] = []
-
-                def observing(*args, _label=label, _calls=calls, **kwargs):
-                    _calls.append(1)
-                    if _label == "differs":
-                        return "0" * 40
-                    if _label == "unobservable at first" or len(_calls) > 1:
-                        raise owner.ExactTreeError("identity-unavailable")
-                    return real(*args, **kwargs)
-
-                with patch.object(owner, "observed_tree", side_effect=observing):
+                with patch.object(
+                    owner, "observed_tree", side_effect=observer(label, calls)
+                ):
                     inventory = self._read(self.collect(self.root, self.output))
                 self.assertEqual(count, len(calls))
                 self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
@@ -531,6 +551,78 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 self.assertEqual([], list(self.output.glob("*/source")))
                 for run in self.output.glob("diagnostic-*"):
                     shutil.rmtree(run)
+
+    # An unexpected failure while staging is raised as it is, and the staged copy is
+    # still removed (cubic on #451).
+    def test_an_unexpected_stage_failure_is_raised_and_leaves_no_staged_source(
+        self,
+    ) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        for failure in (RuntimeError("an unexpected failure"), OSError(5, "I/O")):
+            with self.subTest(type(failure).__name__):
+                with (
+                    patch.object(owner, "observed_tree", side_effect=failure),
+                    self.assertRaises(type(failure)) as raised,
+                ):
+                    self.collect(self.root, self.output)
+                self.assertIs(failure, raised.exception)
+                self.assertEqual([], list(self.output.glob("*/source")))
+
+    def _producers_ending(self, before: float):
+        """A patch under which the producers run, then return `before` seconds before
+        the inventory's deadline, or after it when negative."""
+        real = self.module._run_producers
+
+        def ending(staged, run, expected, limits, gaps, deadline):
+            result = real(staged, run, expected, limits, gaps, deadline)
+            while time.monotonic() < deadline - before:
+                time.sleep(0.02)
+            return result
+
+        return patch.object(self.module, "_run_producers", side_effect=ending)
+
+    # The owned cleanup keeps the inventory's one deadline: a spent budget starts no
+    # removal, and the staged source is left in the run, named in the gaps (PAO
+    # 6329094433 on #389).
+    def test_a_spent_budget_leaves_the_staged_source_named(self) -> None:
+        limits = self.module.DiagnosticLimits(timeout_seconds=3.0)
+        with self._producers_ending(-0.05):
+            inventory = self._read(self.collect(self.root, self.output, limits=limits))
+        (run,) = self.output.glob("diagnostic-*")
+        self.assertTrue((run / "source" / "tools" / "sample.py").exists())
+        self.assertIn(
+            "the staged source was left in the run directory",
+            inventory["coverage"]["reason"],
+        )
+
+    # The removal never follows a link: a staged link to a directory goes as a link.
+    def test_a_staged_directory_link_is_removed_as_a_link(self) -> None:
+        (self.root / "tools" / "fixtures").symlink_to("../tests/fixtures")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "a tracked directory link")
+        inventory = self._read(self.collect(self.root, self.output))
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self.assertNotIn("staged source was left", inventory["coverage"]["reason"])
+        self.assertEqual([], list(self.output.glob("*/source")))
+
+    # A slow removal stops at the deadline, rather than running on past it.
+    def test_a_slow_removal_stops_at_the_deadline(self) -> None:
+        limits = self.module.DiagnosticLimits(timeout_seconds=4.0)
+        unlink = os.unlink
+
+        def slow(*args, **kwargs):
+            time.sleep(0.4)
+            return unlink(*args, **kwargs)
+
+        start = time.monotonic()
+        with self._producers_ending(0.3), patch.object(self.module.os, "unlink", slow):
+            inventory = self._read(self.collect(self.root, self.output, limits=limits))
+        overrun = time.monotonic() - (start + 4.0)
+        self.assertLess(overrun, 1.0)
+        self.assertIn(
+            "the staged source was left in the run directory",
+            inventory["coverage"]["reason"],
+        )
 
     # D4: an answer that is not exactly one full object id freezes nothing.
     def test_a_freeze_answer_that_is_not_one_full_id_freezes_nothing(self) -> None:
@@ -589,31 +681,38 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         self._git("tag", "-a", "-m", "a tag", "probe")
         tag = self._git("rev-parse", "probe")
         self.assertNotEqual(self.base, tag)
+        inventory = self._read(
+            self.collect(self.root, self.output, expected_revision=tag)
+        )
+        self.assertIsNone(inventory["source"]["revision"])
+        self.assertIsNone(inventory["source"]["tree"])
+        self.assertEqual(tag, inventory["source"]["expected_revision"])
+        self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+        self.assertEqual([], inventory["producers"])
+        self.assertIsNone(self._python(inventory))
+        shutil.rmtree(self.output)
+        # Anything that is not one full id is refused before any work, by its form,
+        # never echoed: an arbitrary input cannot grow the record (CodeAnt on #451).
         for label, expected in (
-            ("an annotated tag", tag),
             ("a short id", self.base[:12]),
             ("a ref name", "HEAD"),
             ("option-like", "--output=" + str(Path(self.directory.name) / "x")),
+            ("long", "a" * 100_000),
+            ("not text", 40),
         ):
             with self.subTest(label):
-                inventory = self._read(
+                started, spawning = self._spawns()
+                with (
+                    spawning,
+                    self.assertRaises(self.module.QualityEvidenceError) as raised,
+                ):
                     self.collect(self.root, self.output, expected_revision=expected)
-                )
-                self.assertIsNone(inventory["source"]["revision"])
-                self.assertIsNone(inventory["source"]["tree"])
-                self.assertEqual(expected, inventory["source"]["expected_revision"])
-                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
-                self.assertEqual([], inventory["producers"])
-                self.assertIsNone(self._python(inventory))
+                message = str(raised.exception)
+                self.assertIn("expected_revision", message)
+                self.assertLess(len(message), 200)
+                self.assertEqual([], started)
+                self.assertFalse(self.output.exists())
                 self.assertFalse((Path(self.directory.name) / "x").exists())
-                formed = label == "an annotated tag"
-                self.assertEqual(
-                    not formed,
-                    f"expected revision {expected!r} is not a full commit id"
-                    in inventory["coverage"]["reason"],
-                )
-                for run in self.output.glob("diagnostic-*"):
-                    shutil.rmtree(run)
 
     # D4: the tree is the frozen commit id's, never a second read of a moving HEAD.
     def test_the_tree_is_derived_from_the_frozen_commit(self) -> None:

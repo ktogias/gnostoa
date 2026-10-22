@@ -60,6 +60,9 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 self.assertIsNone(inventory["scope"]["full"]["expected"])
                 self.assertEqual([], inventory["producers"])
                 self.assertIn(unfrozen, inventory["coverage"]["reason"])
+                self.assertNotIn(
+                    "could not be re-read", inventory["coverage"]["reason"]
+                )
         with self.subTest("a requested revision is never observed"):
             with patch.dict(os.environ, {"KNOWLEDGE_KIT_REVISION": self.base}):
                 inventory, state, comparison = self._collect_spied(
@@ -321,9 +324,11 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 {named.format("GIT_TIMEOUT"): 1, reread: 1},
             ),
             (
-                "the same failure at both",
-                [failed, failed],
-                {named.format("GIT_FAILED"): 1, reread: 1},
+                # Nothing reads the root's Git after a failed freeze, so it is not
+                # checked again (cubic and Octopus on #451).
+                "a failure at the freeze",
+                [failed],
+                {named.format("GIT_FAILED"): 1, reread: 0},
             ),
             (
                 "an ordinary success",

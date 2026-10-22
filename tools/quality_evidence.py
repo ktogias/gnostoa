@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import ast
 import bisect
-import contextlib
 import dataclasses
 import hashlib
 import importlib
@@ -14,7 +13,6 @@ import json
 import math
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -53,7 +51,8 @@ from tools.requirements_lock import (
 from tools.security_scan import SecurityScanError, scan_tracked_tree
 
 if TYPE_CHECKING:
-    # Only for its type: the default collection never imports the exact-tree owner.
+    # Only for its type: the default collection, collect_quality_evidence, never imports
+    # the exact-tree owner; the explicit diagnostic inventory imports it where it runs.
     from tools.exact_tree import Limits as _TreeLimits
 
 DEFAULT_COVERAGE_FLOOR = 65.0
@@ -2536,7 +2535,7 @@ def _annotate_diff(
 _SOURCE_BINDING_GAP = (
     "source binding UNVERIFIED: the producers' installed environment and import graph "
     "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
-    "are bound"
+    "are bound, observed before and after the producers, not throughout them"
 )
 # The one form a frozen object id takes, the owner's two hash lengths.
 _OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -2581,9 +2580,6 @@ def _frozen_subject(
     freezes nothing: no Git is read for it (the Router's G-a on #436). Each other
     failure is the subject's named gap, never a fallback to the checkout."""
     gaps: list[str] = []
-    if expected_revision is not None and not _OBJECT_ID.fullmatch(expected_revision):
-        gaps.append(f"expected revision {expected_revision!r} is not a full commit id")
-        return None, None, gaps
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         gaps.append("the deadline passed before the subject was frozen")
@@ -2615,6 +2611,21 @@ def _frozen_subject(
     return commit, tree, gaps
 
 
+def _check_expected_revision(expected_revision: object) -> None:
+    """Refuse, before any work, an expected revision that is not one full commit id,
+    by its form alone and never echoed: an arbitrary input can neither reach Git nor
+    grow the record (Router #389 6325382720, D4; CodeAnt on #451)."""
+    if expected_revision is None:
+        return
+    if type(expected_revision) is not str or not _OBJECT_ID.fullmatch(
+        expected_revision
+    ):
+        raise QualityEvidenceError(
+            "expected_revision must be one full 40- or 64-character lowercase hex "
+            "commit id"
+        )
+
+
 def _one_object(root: Path, deadline: float, name: str) -> str:
     """The full object id `name` resolves to, read once; never an answer that is not
     exactly one full id."""
@@ -2640,14 +2651,22 @@ def _stage(
         exact_tree.materialize(root, tree, staged, limits=owner)
         identity = exact_tree.observed_tree(root, staged, limits=owner)
     except exact_tree.ExactTreeError as exc:
-        _discard_staged(staged)
-        return f"the source tree cannot be staged: {exc.code}"
+        return _and(
+            f"the source tree cannot be staged: {exc.code}",
+            _discard_staged(staged, owner.deadline),
+        )
     except OverflowError as exc:
-        _discard_staged(staged)
-        raise _unrepresentable_timeout("the frozen tree's stage") from exc
+        refusal = _unrepresentable_timeout("the frozen tree's stage")
+        _note_retained(refusal, _discard_staged(staged, owner.deadline))
+        raise refusal from exc
+    except BaseException as primary:
+        _note_retained(primary, _discard_staged(staged, owner.deadline))
+        raise
     if identity != tree:
-        _discard_staged(staged)
-        return "the source tree cannot be staged: tree-mismatch"
+        return _and(
+            "the source tree cannot be staged: tree-mismatch",
+            _discard_staged(staged, owner.deadline),
+        )
     return staged, identity
 
 
@@ -2689,10 +2708,12 @@ def _metadata_rebound(root: Path, deadline: float, gaps: list[str]) -> bool:
         owned = has_git_metadata(root, timeout=remaining)
     except RepositoryScopeError as exc:
         _refuse_unsafe_metadata(exc, "cannot bind the subject's Git metadata")
+        # Only a frozen commit is checked again, so the freeze named no identity
+        # failure before this one (cubic and Octopus on #451).
         gaps.append(reread)
-        detail = scope_error_detail("cannot confirm the subject's Git identity", exc)
-        if detail not in gaps:
-            gaps.append(detail)
+        gaps.append(
+            scope_error_detail("cannot confirm the subject's Git identity", exc)
+        )
         return False
     except OverflowError as exc:
         raise _unrepresentable_timeout("the subject's Git metadata") from exc
@@ -2701,12 +2722,53 @@ def _metadata_rebound(root: Path, deadline: float, gaps: list[str]) -> bool:
     return owned
 
 
-def _discard_staged(staged: Path) -> None:
-    """Remove the staged source this run owns. A failure here never replaces the
-    refusal or the result it follows: the run directory, which holds the raw
-    reports, keeps it."""
-    with contextlib.suppress(OSError):
-        shutil.rmtree(staged)
+class _CleanupDeadline(Exception):
+    """The inventory's deadline passed while its staged source was being removed."""
+
+
+_RETAINED = "the staged source was left in the run directory"
+
+
+def _discard_staged(staged: Path, deadline: float) -> str | None:
+    """Remove the staged source this run owns, within the inventory's one deadline:
+    entry by entry, bottom-up, relative to its directories' descriptors and never
+    following a link. A deadline that passes, or a removal that fails, leaves the rest
+    in the run directory, and that is returned for the record; it never replaces the
+    refusal or the result it follows (PAO 6329094433 on #389)."""
+
+    def remove(name: str, top_fd: int) -> None:
+        if time.monotonic() >= deadline:
+            raise _CleanupDeadline
+        try:
+            mode = os.stat(name, dir_fd=top_fd, follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode):
+                os.rmdir(name, dir_fd=top_fd)
+            else:
+                os.unlink(name, dir_fd=top_fd)
+        except FileNotFoundError:
+            return
+
+    try:
+        for _top, dirs, files, top_fd in os.fwalk(staged, topdown=False):
+            for name in [*files, *dirs]:
+                remove(name, top_fd)
+        if time.monotonic() >= deadline:
+            raise _CleanupDeadline
+        os.rmdir(staged)
+    except FileNotFoundError:
+        return None
+    except _CleanupDeadline:
+        return f"{_RETAINED}: the deadline passed during its removal"
+    except OSError as exc:
+        return f"{_RETAINED}: it could not be removed whole ({type(exc).__name__})"
+    return None
+
+
+def _note_retained(primary: BaseException, retained: str | None) -> None:
+    """Name a staged source left behind on the failure being raised, never replacing
+    it."""
+    if retained is not None:
+        primary.add_note(retained)
 
 
 def _analyze_frozen(
@@ -2738,8 +2800,12 @@ def _analyze_frozen(
     try:
         result = _run_producers(staged, run, expected, limits, gaps, deadline)
         bound = _reobserved(root, staged, tree, owner, run)
-    finally:
-        _discard_staged(staged)
+    except BaseException as primary:
+        _note_retained(primary, _discard_staged(staged, deadline))
+        raise
+    retained = _discard_staged(staged, deadline)
+    if retained is not None:
+        gaps.append(retained)
     if not bound:
         gaps.append("the staged source could not be observed again")
     return expected, result, identity, bound
@@ -2912,6 +2978,7 @@ def collect_diagnostic_inventory(
     inventory at all: the raw reports stay in the run directory. It is never
     COMPLETE while its source binding is UNVERIFIED."""
     _check_limits(limits)
+    _check_expected_revision(expected_revision)
     _refuse_caller_git_overrides()
     from tools import exact_tree
 
@@ -2959,7 +3026,10 @@ def collect_diagnostic_inventory(
             head=commit,
         )
     )
-    if not _metadata_rebound(root, deadline, gaps) and base is not None:
+    # Nothing reads the root's Git after a freeze that failed, so the metadata is
+    # checked again only for a frozen commit (cubic and Octopus on #451).
+    rebound = commit is None or _metadata_rebound(root, deadline, gaps)
+    if not rebound and base is not None:
         # The comparison no longer describes the subject, so no answer stays definite,
         # and its own record is not published as bound provenance either (the Router's
         # D1 and D1b on #436).
