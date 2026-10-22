@@ -1041,3 +1041,25 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual(
             os.path.realpath(sys.executable), observed["interpreter"]["executable"]
         )
+
+    def test_the_output_cap_counts_the_final_newline(self) -> None:
+        # At exactly the output's size the observation fits; one byte less and only
+        # the stand-in that names the cap is written (Sourcery on #452).
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        root = self._observed_root("boundary")
+        self.assertIsNone(self._observe_with(root, caps=caps)["incomplete"])
+        size = self.observed_bytes
+        fits = self._observe_with(root, caps={**caps, "output_bytes": size})
+        self.assertIsNone(fits["incomplete"])
+        short = self._observe_with(root, caps={**caps, "output_bytes": size - 1})
+        self.assertEqual("output_bytes", short["incomplete"])
+        self.assertLessEqual(self.observed_bytes, size - 1)
+
+    def test_the_interpreter_strings_pass_the_string_cap(self) -> None:
+        # With no root at all, only the interpreter's own path and version can exceed
+        # the cap (Sourcery on #452).
+        caps = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "string_bytes": 8}
+        observed = self._observe_with(caps=caps)
+        self.assertEqual("string_bytes", observed["incomplete"])
+        self.assertEqual([], observed["roots"])
+        self.assertIsNone(observed["interpreter"]["executable"])
