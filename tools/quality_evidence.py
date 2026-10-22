@@ -2533,10 +2533,17 @@ def _annotate_diff(
     return diff
 
 
-_SOURCE_BINDING_GAP = (
+# The residual of every inventory. A NOT_STAGED one says only that the producers are
+# not proven confined; an EXACT_TREE_STAGED one also says which bytes were bound, and
+# when, chosen by the same binding as the record's tree_binding (the Router's G451-R9
+# on #389).
+_UNCONFINED_PRODUCERS_GAP = (
     "source binding UNVERIFIED: the producers' installed environment and import graph "
-    "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
-    "are bound, observed before and after the producers, not throughout them"
+    "is not proven confined to the staged tracked inputs"
+)
+_SOURCE_BINDING_GAP = (
+    f"{_UNCONFINED_PRODUCERS_GAP}; only the frozen tree's bytes are bound, observed "
+    "before and after the producers, not throughout them"
 )
 # The comparison is read from the frozen Git objects, but each finding's location came
 # from producers reading the staged bytes (the Router's G451-R6 on #389).
@@ -3134,7 +3141,7 @@ def collect_diagnostic_inventory(
         expected, result, identity, bound = _analyze_frozen(
             root, tree, run, limits, owner, gaps, deadline
         )
-    gaps.append(_SOURCE_BINDING_GAP)
+    gaps.append(_SOURCE_BINDING_GAP if bound else _UNCONFINED_PRODUCERS_GAP)
     source = _source_record(commit, tree, identity, expected_revision, bound)
     if result.truncated:
         # A report cut at max_report_bytes, or whose capture failed, holds a prefix

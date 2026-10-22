@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 from quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
     _EXTRA_COMPLEX,
+    _SOURCE_BINDING_GAP,
     _DiagnosticInventoryFixture,
 )
 
@@ -535,6 +536,46 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
         self.assertIsNone(inventory["source"]["staged_identity"])
         self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
+
+    # The Router's G451-R9 (6339588153 on #389): the residual agrees with the
+    # published staged-tree binding. A NOT_STAGED record, after no freeze, a failed
+    # stage or an unavailable final observation, never says that the bytes were
+    # observed before and after the producers; an EXACT_TREE_STAGED one keeps the
+    # whole residual.
+    def test_the_residual_agrees_with_the_published_binding(self) -> None:
+        owner = importlib.import_module("tools.exact_tree")
+        unconfined = (
+            "source binding UNVERIFIED: the producers' installed environment and "
+            "import graph is not proven confined to the staged tracked inputs"
+        )
+        unavailable = owner.ExactTreeError("identity-unavailable")
+        cases = {
+            "no freeze": patch.object(
+                self.module, "has_git_metadata", return_value=False
+            ),
+            "a failed stage": patch.object(
+                owner, "observed_tree", side_effect=unavailable
+            ),
+            "an unavailable final observation": patch.object(
+                owner,
+                "observed_tree",
+                side_effect=self._then(owner.observed_tree, unavailable),
+            ),
+        }
+        for label, failing in cases.items():
+            with self.subTest(label):
+                with failing:
+                    inventory = self._inventory()
+                self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+                self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+                reason = inventory["coverage"]["reason"]
+                self.assertIn(unconfined, reason)
+                self.assertNotIn("observed before and after the producers", reason)
+                for run in self.output.glob("diagnostic-*"):
+                    shutil.rmtree(run)
+        inventory = self._inventory()
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self.assertIn(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
 
     def test_an_unfrozen_subject_is_never_compared(self) -> None:
         # The Router's D1 (6231894979), in v2 (Router #389 6325382720, D4): a subject
