@@ -632,9 +632,10 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         """Spies, by name, on each piece of work a diagnostic collection does, where
         v2 does it: the producers, the scope owner's metadata check (`subject`), the
         exact-tree owner's enumeration (`scope`) and staging (`stage`), which run their
-        own Git, and the comparison reads (`diff`) (Amazon Q on #451). `candidate_paths`
-        and `_git_state` are watched as D1's negatives: neither is on the diagnostic
-        path, nor may come back onto it."""
+        own Git, and every `_diagnostic_git` read (`git_reads`): the freeze's object
+        resolution as well as the comparison's (Amazon Q and Claude on #451).
+        `candidate_paths` and `_git_state` are watched as D1's negatives: neither is on
+        the diagnostic path, nor may come back onto it."""
         owner = importlib.import_module("tools.exact_tree")
         with (
             patch.object(
@@ -647,7 +648,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             patch.object(owner, "materialize", wraps=owner.materialize) as stage,
             patch.object(
                 self.module, "_diagnostic_git", wraps=self.module._diagnostic_git
-            ) as diff,
+            ) as git_reads,
             patch.object(
                 self.module, "candidate_paths", wraps=self.module.candidate_paths
             ) as v1_scope,
@@ -660,7 +661,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                 "subject": subject,
                 "scope": scope,
                 "stage": stage,
-                "diff": diff,
+                "git_reads": git_reads,
                 "v1_scope": v1_scope,
                 "v1_subject": v1_subject,
             }

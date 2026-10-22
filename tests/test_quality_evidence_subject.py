@@ -508,7 +508,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             sample.read_text(encoding="utf-8") + _EXTRA_COMPLEX, encoding="utf-8"
         )
         self._git("commit", "-q", "-am", "an extra complex function")
-        bound = self._read(self.collect(self.root, self.output, base=self.base))
+        bound = self._inventory(base=self.base)
         self.assertEqual(
             {True, False}, {f["native"]["in_diff"] for f in bound["findings"]}
         )
@@ -519,7 +519,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             owner.observed_tree, owner.ExactTreeError("identity-unavailable")
         )
         with patch.object(owner, "observed_tree", side_effect=unavailable):
-            inventory = self._read(self.collect(self.root, self.output, base=self.base))
+            inventory = self._inventory(base=self.base)
         self.assertIsNotNone(inventory["scope"]["diff"])
         self.assertEqual(
             bound["scope"]["diff"]["changed_paths"],
