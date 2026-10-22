@@ -393,6 +393,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                 "interpreter": {"executable": "/fixture/python", "version": "3.12"},
                 "roots": [root],
                 "entries": {root: names},
+                "archives": [],
                 "distributions": [[root, name, "0" * 64] for name in names],
             },
             sort_keys=True,

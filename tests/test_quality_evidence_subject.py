@@ -845,7 +845,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import hashlib, json, os, sys\n"
+            "import hashlib, json, os, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
@@ -1160,6 +1160,19 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         target.write_text("x" * 64, encoding="utf-8")
         (site / "linked-1.0.dist-info" / "RECORD").symlink_to(target)
         self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+
+    def test_a_record_that_is_not_a_regular_file_is_refused_without_blocking(
+        self,
+    ) -> None:
+        # A FIFO RECORD is opened without blocking and refused as not a regular file:
+        # the copied pattern keeps the owner's refusal, never waiting for a writer
+        # (PAO 6351691418).
+        site = Path(self.directory.name) / "fifo-site"
+        (site / "fifo-1.0.dist-info").mkdir(parents=True)
+        os.mkfifo(site / "fifo-1.0.dist-info" / "RECORD")
+        started = time.monotonic()
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+        self.assertLess(time.monotonic() - started, 30)
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an

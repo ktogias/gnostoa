@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Mapping
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, BinaryIO, TextIO
+from typing import TYPE_CHECKING, Any, BinaryIO, TextIO, TypeGuard
 from urllib.parse import quote, unquote, urlparse
 
 from tools import bounded_process, test_suite
@@ -1742,6 +1742,15 @@ ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v1"
 ENVIRONMENT_OBSERVATION_SCOPE = (
     "metadata observed at two endpoints: neither continuous nor installed content"
 )
+# What the observation does not see, stated so that endpoints_equal is never read as
+# complete equality (owner 6351449420 item 4). The staged tree on MYPYPATH is bound by
+# tree_binding, not by this observation.
+ENVIRONMENT_OBSERVATION_UNOBSERVED = (
+    "installed file contents beyond the RECORD bytes",
+    "data inside installed packages, typeshed among them",
+    "import resolution beyond the interpreter's -I path",
+    "changes between the endpoints",
+)
 # Measured in gnostoa:development-445: 4 import-path entries (3 directories and an
 # absent zip, no archive), 430 entries (201 in the largest root), 69 distributions, RECORD at most 1,608,909 bytes
 # and 2,258,869 in all, names at most 59 bytes (#389 F3 S2-C). Each cap keeps a wide
@@ -1760,7 +1769,7 @@ ENVIRONMENT_OBSERVATION_CAPS = {
 # The observation is incomplete, and so no identity, when a cap stops it or a root,
 # RECORD or archive cannot be read (Sourcery and cubic on #452).
 _ENVIRONMENT_OBSERVATION = """\
-import hashlib, json, os, sys
+import hashlib, json, os, stat, sys
 
 caps = json.loads(sys.argv[1])
 incomplete = None
@@ -1780,10 +1789,18 @@ def text(value):
 
 
 def digest_of(path):
+    # A regular file only, opened without following a link and without blocking, as
+    # the existing bounded reader treats one (adoption_check._read_regular_bounded).
     global read_total
     digest, size = hashlib.sha256(), 0
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        with open(path, "rb") as stream:
+        descriptor = os.open(path, flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            stop("unreadable")
+            return None
+        with os.fdopen(descriptor, "rb") as stream:
             while chunk := stream.read(65536):
                 size, read_total = size + len(chunk), read_total + len(chunk)
                 if size > caps["file_bytes"]:
@@ -1877,6 +1894,37 @@ _ENVIRONMENT_CHANGED_GAP = (
 )
 
 
+def _is_text_list(value: object) -> TypeGuard[list[str]]:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _valid_observation(observed: object) -> bool:
+    """A complete observation in the collector's own format, every field the shape the
+    script writes; anything else is no observation (cubic 4353631703)."""
+    if not isinstance(observed, dict):
+        return False
+    interpreter, roots, entries = (
+        observed.get("interpreter"),
+        observed.get("roots"),
+        observed.get("entries"),
+    )
+    archives, distributions = observed.get("archives"), observed.get("distributions")
+    return (
+        observed.get("format") == ENVIRONMENT_OBSERVATION_FORMAT
+        and observed.get("incomplete") is None
+        and isinstance(interpreter, dict)
+        and all(isinstance(interpreter.get(k), str) for k in ("executable", "version"))
+        and _is_text_list(roots)
+        and isinstance(entries, dict)
+        and set(entries) == set(roots)
+        and all(_is_text_list(names) for names in entries.values())
+        and isinstance(archives, list)
+        and all(_is_text_list(a) and len(a) == 2 for a in archives)
+        and isinstance(distributions, list)
+        and all(_is_text_list(d) and len(d) == 3 for d in distributions)
+    )
+
+
 def _environment_command() -> list[str]:
     return [
         sys.executable,
@@ -1913,20 +1961,15 @@ def _observe_environment(
         observed = json.loads(content.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return None, None
-    if (
-        not isinstance(observed, dict)
-        or observed.get("format") != ENVIRONMENT_OBSERVATION_FORMAT
-        or observed.get("incomplete") is not None
-    ):
+    if not _valid_observation(observed):
         return None, None
-    interpreter = observed.get("interpreter")
     return (
         {
             "path": report.relative_to(run).as_posix(),
             "sha256": hashlib.sha256(content).hexdigest(),
             "size_bytes": len(content),
         },
-        interpreter if isinstance(interpreter, dict) else None,
+        dict(observed["interpreter"]),
     )
 
 
@@ -1950,6 +1993,7 @@ def _environment_observation(
         "format": ENVIRONMENT_OBSERVATION_FORMAT,
         "scope": ENVIRONMENT_OBSERVATION_SCOPE,
         "caps": dict(ENVIRONMENT_OBSERVATION_CAPS),
+        "unobserved": list(ENVIRONMENT_OBSERVATION_UNOBSERVED),
         "status": status,
         "interpreter": before[1],
         "before": before[0],
@@ -2494,8 +2538,11 @@ def _run_producers(
             else (None, None)
         )
         observation = _environment_observation(before, after, gaps)
+        # The observation is of this interpreter under -I, so it describes exactly the
+        # runs launched as that: whatever their producer, and never an in-process one
+        # (owner 6351449420 item 2).
         for record in result.runs:
-            if record["producer"] in ("mypy", "ruff"):
+            if record.get("argv", [])[:2] == [sys.executable, "-I"]:
                 record["environment_observation"] = observation
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
