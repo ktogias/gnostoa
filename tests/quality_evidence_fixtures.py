@@ -627,25 +627,49 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
 
-    def _refused(self, environment: dict[str, str]) -> QualityEvidenceError:
-        """Collect under `environment`, and return the refusal. No subject, scope,
-        producer or diff work may start, no output may be written, and the caller's
-        environment must be left as it was."""
+    @contextlib.contextmanager
+    def _watched_work(self):
+        """Spies, by name, on each piece of work a diagnostic collection does, where
+        v2 does it: the producers, the scope owner's metadata check (`subject`), the
+        exact-tree owner's enumeration (`scope`) and staging (`stage`), which run their
+        own Git, and the comparison reads (`diff`) (Amazon Q on #451). `candidate_paths`
+        and `_git_state` are watched as D1's negatives: neither is on the diagnostic
+        path, nor may come back onto it."""
+        owner = importlib.import_module("tools.exact_tree")
         with (
-            patch.dict(os.environ, environment),
             patch.object(
                 self.module, "_bounded_run", side_effect=self._fake_run
             ) as producer,
             patch.object(
-                self.module, "candidate_paths", wraps=self.module.candidate_paths
-            ) as scope,
-            patch.object(
-                self.module, "_git_state", wraps=self.module._git_state
+                self.module, "has_git_metadata", wraps=self.module.has_git_metadata
             ) as subject,
+            patch.object(owner, "tree_paths", wraps=owner.tree_paths) as scope,
+            patch.object(owner, "materialize", wraps=owner.materialize) as stage,
             patch.object(
                 self.module, "_diagnostic_git", wraps=self.module._diagnostic_git
             ) as diff,
+            patch.object(
+                self.module, "candidate_paths", wraps=self.module.candidate_paths
+            ) as v1_scope,
+            patch.object(
+                self.module, "_git_state", wraps=self.module._git_state
+            ) as v1_subject,
         ):
+            yield {
+                "producer": producer,
+                "subject": subject,
+                "scope": scope,
+                "stage": stage,
+                "diff": diff,
+                "v1_scope": v1_scope,
+                "v1_subject": v1_subject,
+            }
+
+    def _refused(self, environment: dict[str, str]) -> QualityEvidenceError:
+        """Collect under `environment`, and return the refusal. No work watched by
+        `_watched_work` may start, no output may be written, and the caller's
+        environment must be left as it was."""
+        with patch.dict(os.environ, environment), self._watched_work() as watched:
             before = dict(os.environ)
             # Any other exception fails the test by itself (SonarCloud S8714 on #436).
             with self.assertRaises(QualityEvidenceError) as raised:
@@ -654,7 +678,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             self.assertEqual(
                 before, dict(os.environ), "the caller's environment changed"
             )
-        for work in (producer, scope, subject, diff):
+        for work in watched.values():
             work.assert_not_called()
         self.assertFalse(self.output.exists(), "a refused call wrote output")
         self.assertIn("no inventory was written", str(refusal))

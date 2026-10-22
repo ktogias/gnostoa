@@ -3796,6 +3796,16 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             refusal = self._refused({})
         self.assertIn("could not be checked", str(refusal))
 
+    # The refusal tests' spies watch real work: an admitted collection runs every
+    # piece of work they watch, and neither of D1's negatives (Amazon Q on #451).
+    def test_the_refusal_spies_watch_the_work_a_collection_does(self) -> None:
+        with self._watched_work() as watched:
+            self.collect(self.root, self.output, base=self.base)
+        for work in ("producer", "subject", "scope", "stage", "diff"):
+            self.assertTrue(watched[work].called, f"no {work} work was watched")
+        watched["v1_scope"].assert_not_called()
+        watched["v1_subject"].assert_not_called()
+
     def test_a_base_that_is_not_that_commit_is_a_comparison_gap(self) -> None:
         # Codex on #436, routed by the Router (6224373564, B1): exact_sha checks only
         # the form, and git diff takes any tree-ish, so a tree, a blob or a tag
