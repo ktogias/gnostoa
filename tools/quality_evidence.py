@@ -2538,6 +2538,20 @@ _SOURCE_BINDING_GAP = (
     "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
     "are bound, observed before and after the producers, not throughout them"
 )
+# The comparison is read from the frozen Git objects, but each finding's location came
+# from producers reading the staged bytes (the Router's G451-R6 on #389).
+_UNOBSERVED_ATTRIBUTION_GAP = (
+    "finding-to-diff attribution is unknown: the staged source was not verified after "
+    "the producers, so the retained comparison describes only the frozen Git objects"
+)
+
+
+def _forget_attribution(findings: list[dict[str, Any]]) -> None:
+    """Make every finding's diff attribution unknown, positive and negative alike."""
+    for finding in findings:
+        finding["native"]["in_diff"] = None
+
+
 # The one form a frozen object id takes, the owner's two hash lengths.
 _OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 # The private directory, inside the run, that holds the staged source apart from the
@@ -3157,8 +3171,13 @@ def collect_diagnostic_inventory(
         # and its own record is not published as bound provenance either (the Router's
         # D1 and D1b on #436).
         diff = None
-        for finding in result.findings:
-            finding["native"]["in_diff"] = None
+        _forget_attribution(result.findings)
+    elif diff is not None and identity is not None and not bound:
+        # The staged source the producers read was not observed again: the comparison
+        # still describes the frozen objects, but no finding's place in it is known,
+        # and the deduplication below keeps it unknown (the Router's G451-R6 on #389).
+        _forget_attribution(result.findings)
+        gaps.append(_UNOBSERVED_ATTRIBUTION_GAP)
     try:
         findings = deduplicate_findings(result.findings)
     except AnalyzerReadbackError as exc:

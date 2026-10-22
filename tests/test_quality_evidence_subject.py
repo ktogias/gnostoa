@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 from quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
+    _EXTRA_COMPLEX,
     _DiagnosticInventoryFixture,
 )
 
@@ -493,6 +494,47 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
         )
         self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+
+    # The Router's G451-R6 (6335930651 on #389): a final staged observation that is
+    # only unavailable, with the metadata still confirmed, keeps the frozen-object
+    # comparison but no finding's attribution, positive or negative: no finding was
+    # observed on verified bytes. The observation fails by an unavailable identity,
+    # leaving the comparison its time, never by an expired deadline.
+    def test_an_unobserved_staged_source_keeps_the_comparison_not_attribution(
+        self,
+    ) -> None:
+        sample = self.root / "tools" / "sample.py"
+        sample.write_text(
+            sample.read_text(encoding="utf-8") + _EXTRA_COMPLEX, encoding="utf-8"
+        )
+        self._git("commit", "-q", "-am", "an extra complex function")
+        bound = self._read(self.collect(self.root, self.output, base=self.base))
+        self.assertEqual(
+            {True, False}, {f["native"]["in_diff"] for f in bound["findings"]}
+        )
+        for run in self.output.glob("diagnostic-*"):
+            shutil.rmtree(run)
+        owner = importlib.import_module("tools.exact_tree")
+        unavailable = self._then(
+            owner.observed_tree, owner.ExactTreeError("identity-unavailable")
+        )
+        with patch.object(owner, "observed_tree", side_effect=unavailable):
+            inventory = self._read(self.collect(self.root, self.output, base=self.base))
+        self.assertIsNotNone(inventory["scope"]["diff"])
+        self.assertEqual(
+            bound["scope"]["diff"]["changed_paths"],
+            inventory["scope"]["diff"]["changed_paths"],
+        )
+        self.assertEqual(len(bound["findings"]), len(inventory["findings"]))
+        self.assertEqual(
+            {None}, {f["native"]["in_diff"] for f in inventory["findings"]}
+        )
+        reason = inventory["coverage"]["reason"]
+        self.assertIn("finding-to-diff attribution is unknown", reason)
+        self.assertIn("the staged source could not be observed again", reason)
+        self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+        self.assertIsNone(inventory["source"]["staged_identity"])
+        self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
 
     def test_an_unfrozen_subject_is_never_compared(self) -> None:
         # The Router's D1 (6231894979), in v2 (Router #389 6325382720, D4): a subject
