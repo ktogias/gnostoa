@@ -10,6 +10,7 @@ import errno
 import importlib
 import math
 import os
+import shlex
 import shutil
 import subprocess  # nosec B404 -- test-only: drives git on temporary fixture repositories
 import sys
@@ -211,15 +212,19 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self.assertEqual([], [f for f in inventory["findings"]])
         self.assertIn("cap-files", inventory["coverage"]["reason"])
 
-    # A filter driver the repository configures never runs during collection.
+    # A filter driver the repository configures never runs during collection. The
+    # marker's name holds a space, and a calibration first proves the probe fires, so
+    # a probe that cannot run never passes for a driver that did not (CodeAnt on #451).
     def test_a_configured_driver_never_runs(self) -> None:
-        marker = Path(self.directory.name) / "driver-ran"
-        command = f"sh -c 'touch {marker}; cat'"
+        marker = Path(self.directory.name) / "driver ran"
+        command = "sh -c " + shlex.quote(f"touch {shlex.quote(str(marker))}; cat")
         self._git("config", "filter.probe.clean", command)
         self._git("config", "filter.probe.smudge", command)
         info = self.root / ".git" / "info"
         info.mkdir(exist_ok=True)
         (info / "attributes").write_text("*.py filter=probe\n", encoding="utf-8")
+        self._git("hash-object", "--path", "tools/sample.py", "tools/sample.py")
+        self.assertTrue(marker.exists(), "the probe's own calibration did not fire")
         later = time.time() + 10
         os.utime(self.root / "tools" / "sample.py", (later, later))
         marker.unlink(missing_ok=True)
