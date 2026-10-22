@@ -4,6 +4,7 @@ or a later HEAD (Router 6324876845; D1-D4 selected in 6325382720)."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import importlib
 import math
@@ -606,9 +607,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         self.assertNotIn("staged source was left", inventory["coverage"]["reason"])
         self.assertEqual([], list(self.output.glob("*/source")))
 
-    def _deep(self, levels: int) -> Path:
+    def _deep(self, levels: int, name: str = "deep") -> Path:
         """An owned tree `levels` directories deep, with one file at the bottom."""
-        top = Path(self.directory.name) / "deep"
+        top = Path(self.directory.name) / name
         bottom = top.joinpath(*(f"d{n}" for n in range(levels)))
         bottom.mkdir(parents=True)
         (bottom / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -698,10 +699,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
 
     # A budget spent by one removal removes no further entry.
     def test_a_budget_spent_by_a_removal_removes_no_further_entry(self) -> None:
-        top = Path(self.directory.name) / "flat"
-        top.mkdir()
-        for n in range(5):
-            (top / f"f{n}.py").write_text("VALUE = 1\n", encoding="utf-8")
+        top = self._flat(5)
         unlinking, clocked, unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
             retained = self.module._discard_staged(top, 5.0)
@@ -727,6 +725,126 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         retained = self.module._discard_staged(link, time.monotonic() + 60)
         self.assertIn("could not be removed whole", retained or "")
         self.assertTrue(outside.joinpath("d0", "d1", "leaf.py").exists())
+
+    def _flat(self, files: int) -> Path:
+        """An owned directory holding `files` files and nothing else."""
+        top = Path(self.directory.name) / "flat"
+        top.mkdir()
+        for n in range(files):
+            (top / f"f{n}.py").write_text("VALUE = 1\n", encoding="utf-8")
+        return top
+
+    def _listing(self, *, spend_on: str):
+        """Patches under which each directory listing counts its advances and spends
+        the budget of a removal whose deadline is 5.0: on its first advance (`next`),
+        on its first entry's type read (`type`) or on the first unlink (`unlink`); with
+        the count of the advances, and the type reads, opens and unlinks dispatched in
+        their order."""
+        clock: list[float] = [0.0]
+        advances: list[int] = []
+        dispatched: list[str] = []
+        real_scandir, real_open, real_unlink = os.scandir, os.open, os.unlink
+
+        class Entry:
+            def __init__(self, entry: os.DirEntry[str]) -> None:
+                self.name = entry.name
+                self._entry = entry
+
+            def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+                dispatched.append("type")
+                if spend_on == "type":
+                    clock[0] = 10.0
+                return self._entry.is_dir(follow_symlinks=follow_symlinks)
+
+        class Listing:
+            def __init__(self, fd: int) -> None:
+                self._real = real_scandir(fd)
+
+            def __enter__(self) -> Listing:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                self._real.close()
+
+            def __iter__(self) -> Listing:
+                return self
+
+            def __next__(self) -> Entry:
+                advances.append(1)
+                if spend_on == "next":
+                    clock[0] = 10.0
+                return Entry(next(self._real))
+
+        def opening(*args, **kwargs):
+            dispatched.append("open")
+            return real_open(*args, **kwargs)
+
+        def unlinking(*args, **kwargs):
+            dispatched.append("unlink")
+            if spend_on == "unlink":
+                clock[0] = 10.0
+            return real_unlink(*args, **kwargs)
+
+        clocked = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep)
+        patches = contextlib.ExitStack()
+        patches.enter_context(patch.object(os, "scandir", Listing))
+        patches.enter_context(patch.object(os, "open", opening))
+        patches.enter_context(patch.object(os, "unlink", unlinking))
+        patches.enter_context(patch.object(self.module, "time", clocked))
+        return patches, advances, dispatched
+
+    # The listing's own reads keep the deadline: a budget its first advance spends
+    # starts no further advance (Router 6330915173 on #389).
+    def test_a_budget_spent_by_a_listing_advance_advances_it_no_further(self) -> None:
+        top = self._flat(5)
+        patches, advances, dispatched = self._listing(spend_on="next")
+        with patches:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(1, len(advances))
+        self.assertEqual(["open"], dispatched)
+        self.assertEqual(5, len(list(top.iterdir())))
+        self.assertIn("deadline", retained or "")
+
+    # An entry's type read keeps the deadline: a budget it spends opens or removes
+    # nothing after it.
+    def test_a_budget_spent_by_an_entry_type_read_dispatches_nothing_after_it(
+        self,
+    ) -> None:
+        top = self._flat(5)
+        patches, _advances, dispatched = self._listing(spend_on="type")
+        with patches:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(["open", "type"], dispatched)
+        self.assertEqual(5, len(list(top.iterdir())))
+        self.assertIn("deadline", retained or "")
+
+    # A budget spent by one removal reads not even the next entry's type.
+    def test_a_budget_spent_by_a_removal_reads_no_further_entry_type(self) -> None:
+        top = self._flat(5)
+        patches, _advances, dispatched = self._listing(spend_on="unlink")
+        with patches:
+            retained = self.module._discard_staged(top, 5.0)
+        self.assertEqual(["open", "type", "unlink"], dispatched)
+        self.assertEqual(4, len(list(top.iterdir())))
+        self.assertIn("deadline", retained or "")
+
+    # The walk closes every descriptor it opened, both when it completes and when the
+    # deadline stops it with directories still open.
+    def test_the_walk_closes_every_descriptor_it_opens(self) -> None:
+        def open_descriptors() -> int:
+            return len(os.listdir("/proc/self/fd"))
+
+        before = open_descriptors()
+        completed = self._deep(4)
+        self.assertIsNone(self.module._discard_staged(completed, time.monotonic() + 60))
+        self.assertFalse(completed.exists())
+        self.assertEqual(before, open_descriptors())
+        stopped = self._deep(4, name="stopped")
+        unlinking, clocked, _unlinks = self._spending("unlink", 1)
+        with unlinking, clocked:
+            retained = self.module._discard_staged(stopped, 5.0)
+        self.assertIn("deadline", retained or "")
+        self.assertEqual(before, open_descriptors())
 
     # A slow removal stops at the deadline, rather than running on past it.
     def test_a_slow_removal_stops_at_the_deadline(self) -> None:
