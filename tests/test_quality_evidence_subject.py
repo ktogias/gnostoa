@@ -648,3 +648,102 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         with self.subTest("no base, no diff"):
             shutil.rmtree(self.output, ignore_errors=True)
             self.assertIsNone(self._inventory()["scope"]["diff"])
+
+
+class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
+    """The producers' installed environment, an input outside the staged tree: the
+    same tree under two installed sets gave mypy two findings with every recorded
+    field identical (#389 F3 S2-C, the C6 probe in 6347549109). The producers stay
+    faked at `_bounded_run`; anything they launch besides a version read, mypy and
+    Ruff is the environment's isolated identity read, answered by `installed`."""
+
+    def _environment(self, *installed: tuple[str, ...]):
+        """A launcher whose identity reads answer `installed[0]`, then `installed[1]`
+        and so on, keeping the last one; None answers as an unreadable read."""
+        answers = list(installed)
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if "--version" in command or "mypy" in command or "ruff" in command:
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            answer = answers.pop(0) if len(answers) > 1 else answers[0]
+            if answer is None:
+                return 1, "exited 1", False
+            report.write_text(json.dumps({"installed": list(answer)}), encoding="utf-8")
+            return 0, None, False
+
+        return run
+
+    def _run(self, launcher, code: str) -> dict:
+        self.mypy_records = {
+            "tests/test_sample.py": [
+                self._mypy(
+                    "tests/test_sample.py",
+                    self.lines["typing"],
+                    1,
+                    code,
+                    f"{code}: probe_dep as this environment resolves it",
+                )
+            ]
+        }
+        shutil.rmtree(self.output, ignore_errors=True)
+        with patch("tools.quality_evidence._bounded_run", side_effect=launcher):
+            return self._read(self.collect(self.root, self.output))
+
+    @staticmethod
+    def _producers(inventory: dict) -> list[dict]:
+        # A report's digest follows its bytes, which the findings already compare.
+        return [
+            {key: value for key, value in record.items() if key != "report"}
+            for record in inventory["producers"]
+        ]
+
+    @staticmethod
+    def _rules(inventory: dict) -> list[str]:
+        return sorted(f["rule"] for f in inventory["findings"] if f["tool"]["id"] == "mypy")
+
+    def test_an_unchanged_environment_records_the_same_producers_twice(self) -> None:
+        first = self._run(self._environment(("types-PyYAML 6.0",)), "import-untyped")
+        second = self._run(self._environment(("types-PyYAML 6.0",)), "import-untyped")
+        self.assertEqual(self._producers(first), self._producers(second))
+        self.assertEqual(self._rules(first), self._rules(second))
+        self.assertEqual("UNVERIFIED", second["source"]["source_binding"])
+
+    def test_a_changed_installed_environment_is_visible_in_the_producer_records(
+        self,
+    ) -> None:
+        absent = self._run(self._environment(()), "import-not-found")
+        present = self._run(self._environment(("probe-dep 1.0",)), "import-untyped")
+        self.assertNotEqual(self._rules(absent), self._rules(present))
+        self.assertEqual(absent["source"]["tree"], present["source"]["tree"])
+        self.assertNotEqual(
+            self._producers(absent),
+            self._producers(present),
+            "the installed environment changed mypy's finding on the same tree, "
+            "yet every producer record is identical",
+        )
+        self.assertEqual("UNVERIFIED", present["source"]["source_binding"])
+
+    def test_an_environment_changed_during_the_producers_is_a_gap(self) -> None:
+        inventory = self._run(
+            self._environment((), ("probe-dep 1.0",)), "import-not-found"
+        )
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment changed",
+        )
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+
+    def test_an_unreadable_environment_identity_is_a_gap(self) -> None:
+        inventory = self._run(self._environment(None), "import-not-found")
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
