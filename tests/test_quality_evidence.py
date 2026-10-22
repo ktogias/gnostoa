@@ -1385,10 +1385,14 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         observation = self.module._environment_command()
         for command, _, _ in self.commands:
             # The environment observations run the same isolated interpreter with the
-            # collector's own fixed script, never a producer (#389 F3 S2-C).
+            # collector's own observer module, never a producer (#389 F3 S2-C).
             expected = observation[:3] if command == observation else None
             self.assertEqual(expected or [sys.executable, "-I", "-m"], command[:3])
-        self.assertEqual([sys.executable, "-I", "-c"], observation[:3])
+        observer = Path(self.module.__file__).resolve().parent
+        self.assertEqual(
+            [sys.executable, "-I", str(observer / "python_environment_observation.py")],
+            observation[:3],
+        )
 
     def test_an_inventory_past_its_deadline_is_incomplete(self) -> None:
         # Every later reading of the clock is past the deadline: the subject and

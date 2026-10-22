@@ -836,13 +836,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual({"mypy", "ruff"}, set(launches[3:-1]))
 
     def _observe_with(self, *roots: Path, caps: dict | None = None) -> dict:
-        """The collector's own observation script, run for real through its bounded
+        """The collector's own observer module, run for real through its bounded
         launcher with exactly `roots` as its import path, so that the result does not
         depend on the image running the tests (Claude on #452). Without `caps`, it runs
         with the composed command's own caps and format."""
         command = self.module._environment_command()
         if caps is not None:
-            command = [*command[:4], json.dumps(caps, sort_keys=True), command[5]]
+            command = [*command[:3], json.dumps(caps, sort_keys=True), command[4]]
+        source = Path(command[2]).read_text(encoding="utf-8")
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
@@ -852,7 +853,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
         self.output.mkdir(parents=True, exist_ok=True)
         status, gap, invalid = self.module._bounded_run(
-            [*command[:3], prefix + command[3], *command[4:]],
+            [*command[:2], "-c", prefix + source, *command[3:]],
             cwd=self.root,
             environment=dict(os.environ),
             report=report,

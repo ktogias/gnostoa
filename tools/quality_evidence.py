@@ -1427,9 +1427,33 @@ class DiagnosticLimits:
 DEFAULT_DIAGNOSTIC_LIMITS = DiagnosticLimits()
 
 
+@dataclasses.dataclass(frozen=True)
+class _Launch:
+    """The interpreter launch a producer adapter builds its argv from and declares for
+    its runs: what an environment observation is associated by, never a producer name
+    or an argv prefix (Router 6351766731 R2)."""
+
+    executable: str
+    flags: tuple[str, ...]
+
+    def argv(self) -> list[str]:
+        return [self.executable, *self.flags]
+
+
+# The producers' interpreter under -I, its own isolation, as security_scan's child runs
+# (Codex on #436): mypy's and Ruff's adapters declare it, and the environment is observed
+# under it.
+_ISOLATED_PYTHON = _Launch(sys.executable, ("-I",))
+
+
 @dataclasses.dataclass
 class _ProducerResult:
     runs: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # The runs whose adapter declares a launch, with it: in memory only, never written
+    # (Router 6351766731 R2).
+    launched: list[tuple[_Launch, dict[str, Any]]] = dataclasses.field(
+        default_factory=list
+    )
     truncated: bool = False
     findings: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unanalyzed: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -1451,8 +1475,14 @@ class _ProducerResult:
         else:
             self.excess += 1
 
+    def add_run(self, record: dict[str, Any], launch: _Launch) -> None:
+        """A run its adapter launched as `launch`."""
+        self.runs.append(record)
+        self.launched.append((launch, record))
+
     def merge(self, other: _ProducerResult) -> None:
         self.runs += other.runs
+        self.launched += other.launched
         self.truncated = self.truncated or other.truncated
         self.findings += other.findings
         self.excess += other.excess
@@ -1766,123 +1796,10 @@ ENVIRONMENT_OBSERVATION_CAPS = {
     "string_bytes": 4096,
     "output_bytes": 1024 * 1024,
 }
-# The observation is incomplete, and so no identity, when a cap stops it or a root,
-# RECORD or archive cannot be read (Sourcery and cubic on #452).
-_ENVIRONMENT_OBSERVATION = """\
-import hashlib, json, os, stat, sys
-
-caps = json.loads(sys.argv[1])
-incomplete = None
-read_total = 0
-
-
-def stop(reason):
-    global incomplete
-    incomplete = incomplete or reason
-
-
-def text(value):
-    if len(os.fsencode(value)) > caps["string_bytes"]:
-        stop("string_bytes")
-        return None
-    return value
-
-
-def digest_of(path):
-    # A regular file only, opened without following a link and without blocking, as
-    # the existing bounded reader treats one (adoption_check._read_regular_bounded).
-    global read_total
-    digest, size = hashlib.sha256(), 0
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        descriptor = os.open(path, flags)
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            os.close(descriptor)
-            stop("unreadable")
-            return None
-        with os.fdopen(descriptor, "rb") as stream:
-            while chunk := stream.read(65536):
-                size, read_total = size + len(chunk), read_total + len(chunk)
-                if size > caps["file_bytes"]:
-                    stop("file_bytes")
-                    return None
-                if read_total > caps["file_bytes_total"]:
-                    stop("file_bytes_total")
-                    return None
-                digest.update(chunk)
-    except OSError:
-        stop("unreadable")
-        return None
-    return digest.hexdigest()
-
-
-roots, entries, archives, total, examined = [], {}, [], 0, 0
-for path in sys.path:
-    if incomplete:
-        break
-    # Every entry examined counts, an absent one too (CodeAnt on #452).
-    if examined == caps["roots"]:
-        stop("roots")
-        break
-    examined += 1
-    if not os.path.exists(path):
-        continue
-    root = text(path)
-    if root is None:
-        break
-    if not os.path.isdir(path):
-        # An archive on the import path, a zip or an egg: its bytes stand for it.
-        archives.append([root, digest_of(path)])
-        continue
-    names = []
-    try:
-        with os.scandir(path) as listing:
-            for entry in listing:
-                if len(names) == caps["entries_per_root"]:
-                    stop("entries_per_root")
-                    break
-                if total == caps["entries"]:
-                    stop("entries")
-                    break
-                name = text(entry.name)
-                if name is None:
-                    break
-                names.append(name)
-                total += 1
-    except OSError:
-        stop("unreadable")
-    roots.append(root)
-    entries[root] = sorted(names)
-distributions = []
-for root in roots:
-    for name in entries[root]:
-        if incomplete:
-            break
-        if not name.endswith(".dist-info"):
-            continue
-        if len(distributions) == caps["distributions"]:
-            stop("distributions")
-            break
-        distributions.append([root, name, digest_of(os.path.join(root, name, "RECORD"))])
-interpreter = {
-    "executable": text(os.path.realpath(sys.executable)),
-    "version": text(sys.version),
-}
-observation = {
-    "format": sys.argv[2],
-    "incomplete": incomplete,
-    "interpreter": interpreter,
-    "roots": roots,
-    "entries": entries,
-    "archives": archives,
-    "distributions": distributions,
-}
-output = json.dumps(observation, sort_keys=True)
-# print adds a newline, which counts against the cap too (Sourcery on #452).
-if len(output.encode()) + 1 > caps["output_bytes"]:
-    output = json.dumps({"format": sys.argv[2], "incomplete": "output_bytes"}, sort_keys=True)
-print(output)
-"""
+# The observer, tools/python_environment_observation.py: the toolkit's own module beside
+# this one, so the collector's own revision, run by its path and never from the staged
+# tree, the working directory or PATH (Router 6351766731 R1).
+_OBSERVER = Path(__file__).resolve().parent / "python_environment_observation.py"
 _ENVIRONMENT_UNAVAILABLE_GAP = (
     "producer environment identity unavailable: an observation before or after the "
     "producers did not complete, was capped or was cut, so no installed set is "
@@ -1927,13 +1844,21 @@ def _valid_observation(observed: object) -> bool:
 
 def _environment_command() -> list[str]:
     return [
-        sys.executable,
-        "-I",
-        "-c",
-        _ENVIRONMENT_OBSERVATION,
+        *_ISOLATED_PYTHON.argv(),
+        str(_OBSERVER),
         json.dumps(ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
         ENVIRONMENT_OBSERVATION_FORMAT,
     ]
+
+
+def _regular_observer(path: Path) -> bool:
+    """The observer is a regular file reached without a link: checked before any
+    launch, so that a missing or linked one is no observation (Router 6351766731
+    R1)."""
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
 
 
 def _observe_environment(
@@ -1943,6 +1868,8 @@ def _observe_environment(
     run, isolated with -I and under the inventory's deadline and max_report_bytes: its
     report's evidence and its interpreter, or None for each when it does not complete,
     is incomplete, is cut or is not the observation's own format."""
+    if not _regular_observer(_OBSERVER):
+        return None, None
     report = run / f"diagnostic-environment-{when}.json"
     status, gap, invalid = _bounded_run(
         _environment_command(),
@@ -2010,7 +1937,7 @@ def _producer_version(
     #436). None when it cannot be read."""
     report = run / f"diagnostic-{producer}-version.txt"
     status, gap, _invalid = _bounded_run(
-        [sys.executable, "-I", "-m", producer, "--version"],
+        [*_ISOLATED_PYTHON.argv(), "-m", producer, "--version"],
         cwd=root,
         environment=dict(os.environ),
         report=report,
@@ -2046,10 +1973,9 @@ def _mypy_command(
     prefix = f"{key}/" if key else ""
     flags = [] if key else ["--explicit-package-bases"]
     command = [
-        sys.executable,
         # -I, the interpreter's own isolation, as security_scan's child runs: -P left
         # the user site on, so a usercustomize ran in every producer (Codex on #436).
-        "-I",
+        *_ISOLATED_PYTHON.argv(),
         "-m",
         "mypy",
         "--config-file=",
@@ -2205,8 +2131,9 @@ def _run_mypy(
             deadline=deadline,
             limits=limits,
         )
-        result.runs.append(
-            _run_record(name, "mypy", command, status, report, run, version)
+        result.add_run(
+            _run_record(name, "mypy", command, status, report, run, version),
+            _ISOLATED_PYTHON,
         )
         result.truncated = result.truncated or invalid
         gap = _mypy_gap(report, prefix, status, gap, result, limits.max_findings)
@@ -2262,10 +2189,9 @@ def _run_ruff(
     allowance = limits.max_findings if max_findings is None else max_findings
     result = _ProducerResult()
     command = [
-        sys.executable,
         # -I, the interpreter's own isolation, as security_scan's child runs: -P left
         # the user site on, so a usercustomize ran in every producer (Codex on #436).
-        "-I",
+        *_ISOLATED_PYTHON.argv(),
         "-m",
         "ruff",
         "check",
@@ -2291,8 +2217,9 @@ def _run_ruff(
         deadline=deadline,
         limits=limits,
     )
-    result.runs.append(
-        _run_record("ruff", "ruff", command, status, report, run, version)
+    result.add_run(
+        _run_record("ruff", "ruff", command, status, report, run, version),
+        _ISOLATED_PYTHON,
     )
     result.truncated = result.truncated or invalid
     # A complete report is read even after a gap, so that nothing ruff emitted is
@@ -2538,11 +2465,11 @@ def _run_producers(
             else (None, None)
         )
         observation = _environment_observation(before, after, gaps)
-        # The observation is of this interpreter under -I, so it describes exactly the
-        # runs launched as that: whatever their producer, and never an in-process one
-        # (owner 6351449420 item 2).
-        for record in result.runs:
-            if record.get("argv", [])[:2] == [sys.executable, "-I"]:
+        # The observation describes the runs launched as it was, by the launch their
+        # adapter declares: whatever their producer, and never by a name, an argv prefix
+        # or for an in-process run (Router 6351766731 R2).
+        for launch, record in result.launched:
+            if launch == _ISOLATED_PYTHON:
                 record["environment_observation"] = observation
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
