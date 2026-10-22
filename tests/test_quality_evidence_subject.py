@@ -4,6 +4,7 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 from __future__ import annotations
 
 import errno
+import hashlib
 import importlib
 import json
 import os
@@ -774,19 +775,123 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             )
 
     def test_equal_endpoints_never_certify_an_unchanged_run(self) -> None:
-        # A -> B -> A: the producers read B while both observations saw A (PAO
-        # 6347682576). The endpoints compare equal, which is all the member states.
-        inventory = self._run(
-            self._environment(("probe-dep-1.0",), ("probe-dep-1.0",)), "import-untyped"
-        )
+        # A -> B -> A: the dependency appears while mypy runs and is gone again before
+        # the last observation (PAO 6347682576; cubic on #452). The endpoints compare
+        # equal, which is all the member states, although mypy's finding is B's.
+        installed: dict[str, tuple[str, ...]] = {"now": ()}
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command == self.module._environment_command():
+                report.write_text(self._observation(installed["now"]), encoding="utf-8")
+                return 0, None, False
+            if "--version" not in command and "mypy" in command:
+                installed["now"] = ("probe-dep-1.0",)
+            elif "--version" not in command and "ruff" in command:
+                installed["now"] = ()
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+
+        inventory = self._run(run, "import-untyped")
         member = inventory["producers"][0]["environment_observation"]
         self.assertEqual("endpoints_equal", member["status"])
+        a = hashlib.sha256(self._observation(()).encode("utf-8")).hexdigest()
+        self.assertEqual(
+            [a, a], [member["before"]["sha256"], member["after"]["sha256"]]
+        )
+        self.assertEqual(["import-untyped"], self._rules(inventory))
         self.assertIn("neither continuous nor installed content", member["scope"])
         self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
         self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
 
+    def test_the_observations_bracket_every_launch_of_the_producers(self) -> None:
+        # The first observation precedes the version reads, and the last follows the
+        # producers, so the endpoints enclose every producer launch (Sourcery on #452).
+        launches: list[str] = []
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command == self.module._environment_command():
+                launches.append("observation")
+            else:
+                launches.append("version" if "--version" in command else command[3])
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+
+        self._run(run, "import-untyped")
+        self.assertEqual(["observation", "version", "version"], launches[:3])
+        self.assertEqual("observation", launches[-1])
+        self.assertEqual(2, launches.count("observation"))
+        self.assertEqual({"mypy", "ruff"}, set(launches[3:-1]))
+
+    def _observe_with(self, *roots: Path, caps: dict | None = None) -> dict:
+        """The collector's own observation script, run for real through its bounded
+        launcher with exactly `roots` as its import path, so that the result does not
+        depend on the image running the tests (Claude on #452). Without `caps`, it runs
+        with the composed command's own caps and format."""
+        command = self.module._environment_command()
+        if caps is not None:
+            command = [*command[:4], json.dumps(caps, sort_keys=True), command[5]]
+        # The script's own imports are loaded first, so that only its import path, not
+        # the standard library, is replaced.
+        prefix = (
+            "import hashlib, json, os, sys\n"
+            f"sys.path[:] = {[str(r) for r in roots]!r}\n"
+        )
+        report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
+        self.output.mkdir(parents=True, exist_ok=True)
+        status, gap, invalid = self.module._bounded_run(
+            [*command[:3], prefix + command[3], *command[4:]],
+            cwd=self.root,
+            environment=dict(os.environ),
+            report=report,
+            deadline=time.monotonic() + 60,
+            limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+        )
+        self.assertEqual((0, None, False), (status, gap, invalid))
+        self.observed_bytes = len(report.read_bytes())
+        return json.loads(report.read_text(encoding="utf-8"))
+
+    def _observed_root(self, name: str) -> Path:
+        """A root of two modules and one distribution whose RECORD is 64 bytes."""
+        root = Path(self.directory.name) / name
+        (root / "one-1.0.dist-info").mkdir(parents=True)
+        (root / "one-1.0.dist-info" / "RECORD").write_text("x" * 64, encoding="utf-8")
+        for module in ("a.py", "b.py"):
+            (root / module).write_text("", encoding="utf-8")
+        return root
+
+    def test_an_unreadable_record_or_an_archive_on_the_path_is_observed(self) -> None:
+        # A RECORD that cannot be read is no identity, and an archive on the import
+        # path is observed by its bytes, within the file caps (Sourcery and cubic on
+        # #452).
+        site = Path(self.directory.name) / "site"
+        (site / "broken-1.0.dist-info").mkdir(parents=True)
+        archive = Path(self.directory.name) / "dependency.zip"
+        archive.write_bytes(b"PK\x05\x06" + bytes(18))
+        with self.subTest("an unreadable RECORD"):
+            self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+        with self.subTest("an archive"):
+            observed = self._observe_with(archive)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertEqual([str(archive), digest], observed["archives"][0])
+        with self.subTest("an archive over its cap"):
+            caps = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "file_bytes": 4}
+            observed = self._observe_with(archive, caps=caps)
+            self.assertEqual("file_bytes", observed["incomplete"])
+
     def test_a_capped_or_cut_observation_is_a_gap_never_an_identity(self) -> None:
-        capped = self._observation(("fixture-1.0",), capped="entries")
+        capped = self._observation(("fixture-1.0",), incomplete="entries")
         for name, answer in (("capped", capped), ("cut", None)):
             with self.subTest(name):
 
@@ -858,37 +963,37 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIsNone(member["after"])
 
     def test_the_observation_enforces_its_caps_while_it_enumerates(self) -> None:
-        # The collector's own script, run for real through its bounded launcher.
+        # The collector's own script over two controlled roots. The output cap lies
+        # above the fixed stand-in that names it and below the full observation, so its
+        # case proves the bound itself (Sourcery on #452).
         caps = self.module.ENVIRONMENT_OBSERVATION_CAPS
-        command = self.module._environment_command()
+        roots = (self._observed_root("first"), self._observed_root("second"))
         cases = (
             (caps, None),
+            ({**caps, "roots": 1}, "roots"),
             ({**caps, "entries_per_root": 1}, "entries_per_root"),
-            ({**caps, "record_bytes": 1}, "record_bytes"),
-            ({**caps, "output_bytes": 1}, "output_bytes"),
+            ({**caps, "file_bytes": 1}, "file_bytes"),
+            ({**caps, "string_bytes": 8}, "string_bytes"),
+            ({**caps, "output_bytes": 200}, "output_bytes"),
         )
         for limit, expected in cases:
-            with self.subTest(capped=expected):
-                report = self.output / f"observation-{expected}.json"
-                self.output.mkdir(parents=True, exist_ok=True)
-                status, gap, invalid = self.module._bounded_run(
-                    [*command[:4], json.dumps(limit, sort_keys=True), command[5]],
-                    cwd=self.root,
-                    environment=dict(os.environ),
-                    report=report,
-                    deadline=time.monotonic() + 60,
-                    limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
-                )
-                self.assertEqual((0, None, False), (status, gap, invalid))
-                observed = json.loads(report.read_text(encoding="utf-8"))
+            with self.subTest(incomplete=expected):
+                observed = self._observe_with(*roots, caps=limit)
                 self.assertEqual(
                     self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"]
                 )
-                self.assertEqual(expected, observed["capped"])
+                self.assertEqual(expected, observed["incomplete"])
+                self.assertLessEqual(self.observed_bytes, limit["output_bytes"])
+                if expected is None:
+                    self.assertEqual([str(r) for r in roots], observed["roots"])
+                    self.assertEqual(2, len(observed["distributions"]))
                 if expected == "entries_per_root":
                     self.assertTrue(
                         all(len(v) <= 1 for v in observed["entries"].values())
                     )
+                if expected == "string_bytes":
+                    # A root path over the cap ends the enumeration: none is kept.
+                    self.assertEqual([], observed["roots"])
 
     def test_an_observation_in_another_format_is_a_gap(self) -> None:
         # Only the collector's own format is an observation (X11, round 1).
@@ -928,22 +1033,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         )
 
     def test_the_observation_command_runs_as_the_collector_composes_it(self) -> None:
-        # The composed command itself, caps and format included, run for real (X18,
-        # round 1).
-        report = self.output / "observation-composed.json"
-        self.output.mkdir(parents=True, exist_ok=True)
-        status, gap, invalid = self.module._bounded_run(
-            self.module._environment_command(),
-            cwd=self.root,
-            environment=dict(os.environ),
-            report=report,
-            deadline=time.monotonic() + 60,
-            limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
-        )
-        self.assertEqual((0, None, False), (status, gap, invalid))
-        observed = json.loads(report.read_text(encoding="utf-8"))
+        # The composed command's own caps and format, run for real over a controlled
+        # root (X18, round 1).
+        observed = self._observe_with(self._observed_root("composed"))
         self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
-        self.assertIsNone(observed["capped"])
+        self.assertIsNone(observed["incomplete"])
         self.assertEqual(
             os.path.realpath(sys.executable), observed["interpreter"]["executable"]
         )

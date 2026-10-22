@@ -378,7 +378,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         raise AssertionError(f"unexpected producer: {command}")
 
     def _observation(
-        self, installed: tuple[str, ...] = ("fixture-1.0",), capped: str | None = None
+        self,
+        installed: tuple[str, ...] = ("fixture-1.0",),
+        incomplete: str | None = None,
     ) -> str:
         """An environment observation in the collector's own format, whose one root
         holds a `*.dist-info` for each of `installed`."""
@@ -387,7 +389,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         return json.dumps(
             {
                 "format": self.module.ENVIRONMENT_OBSERVATION_FORMAT,
-                "capped": capped,
+                "incomplete": incomplete,
                 "interpreter": {"executable": "/fixture/python", "version": "3.12"},
                 "roots": [root],
                 "entries": {root: names},

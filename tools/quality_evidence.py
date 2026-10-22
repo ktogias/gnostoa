@@ -1742,90 +1742,128 @@ ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v1"
 ENVIRONMENT_OBSERVATION_SCOPE = (
     "metadata observed at two endpoints: neither continuous nor installed content"
 )
-# Measured in gnostoa:development-445: 3 roots, 430 entries (201 in the largest root),
-# 69 distributions, RECORD at most 1,608,909 bytes and 2,258,869 in all, names at most
-# 59 bytes (#389 F3 S2-C). Each cap keeps a wide margin and is enforced while the
-# observation enumerates or reads, before anything is sorted.
+# Measured in gnostoa:development-445: 4 import-path entries (3 directories and an
+# absent zip, no archive), 430 entries (201 in the largest root), 69 distributions, RECORD at most 1,608,909 bytes
+# and 2,258,869 in all, names at most 59 bytes (#389 F3 S2-C). Each cap keeps a wide
+# margin and is enforced while the observation enumerates or reads, before anything is
+# sorted. A file read, a RECORD or an archive on the path, counts against both file caps.
 ENVIRONMENT_OBSERVATION_CAPS = {
     "roots": 32,
     "entries_per_root": 4096,
     "entries": 16384,
     "distributions": 1024,
-    "record_bytes": 8 * 1024 * 1024,
-    "record_bytes_total": 32 * 1024 * 1024,
+    "file_bytes": 8 * 1024 * 1024,
+    "file_bytes_total": 32 * 1024 * 1024,
     "string_bytes": 4096,
     "output_bytes": 1024 * 1024,
 }
+# The observation is incomplete, and so no identity, when a cap stops it or a root,
+# RECORD or archive cannot be read (Sourcery and cubic on #452).
 _ENVIRONMENT_OBSERVATION = """\
 import hashlib, json, os, sys
 
 caps = json.loads(sys.argv[1])
-capped = None
+incomplete = None
+read_total = 0
+
+
+def stop(reason):
+    global incomplete
+    incomplete = incomplete or reason
 
 
 def text(value):
-    global capped
     if len(os.fsencode(value)) > caps["string_bytes"]:
-        capped = capped or "string_bytes"
+        stop("string_bytes")
         return None
     return value
 
 
-roots, entries, total = [], {}, 0
+def digest_of(path):
+    global read_total
+    digest, size = hashlib.sha256(), 0
+    try:
+        with open(path, "rb") as stream:
+            while chunk := stream.read(65536):
+                size, read_total = size + len(chunk), read_total + len(chunk)
+                if size > caps["file_bytes"]:
+                    stop("file_bytes")
+                    return None
+                if read_total > caps["file_bytes_total"]:
+                    stop("file_bytes_total")
+                    return None
+                digest.update(chunk)
+    except OSError:
+        stop("unreadable")
+        return None
+    return digest.hexdigest()
+
+
+roots, entries, archives, total, examined = [], {}, [], 0, 0
 for path in sys.path:
-    if capped or not os.path.isdir(path):
-        continue
-    if len(roots) == caps["roots"]:
-        capped = "roots"
+    if incomplete:
         break
+    # Every entry examined counts, an absent one too (CodeAnt on #452).
+    if examined == caps["roots"]:
+        stop("roots")
+        break
+    examined += 1
+    if not os.path.exists(path):
+        continue
     root = text(path)
     if root is None:
         break
+    if not os.path.isdir(path):
+        # An archive on the import path, a zip or an egg: its bytes stand for it.
+        archives.append([root, digest_of(path)])
+        continue
     names = []
-    with os.scandir(path) as listing:
-        for entry in listing:
-            if len(names) == caps["entries_per_root"] or total == caps["entries"]:
-                capped = "entries_per_root" if len(names) == caps["entries_per_root"] else "entries"
-                break
-            name = text(entry.name)
-            if name is None:
-                break
-            names.append(name)
-            total += 1
+    try:
+        with os.scandir(path) as listing:
+            for entry in listing:
+                if len(names) == caps["entries_per_root"]:
+                    stop("entries_per_root")
+                    break
+                if total == caps["entries"]:
+                    stop("entries")
+                    break
+                name = text(entry.name)
+                if name is None:
+                    break
+                names.append(name)
+                total += 1
+    except OSError:
+        stop("unreadable")
     roots.append(root)
     entries[root] = sorted(names)
-distributions, read_total = [], 0
+distributions = []
 for root in roots:
     for name in entries[root]:
-        if capped or not name.endswith(".dist-info"):
+        if incomplete:
+            break
+        if not name.endswith(".dist-info"):
             continue
         if len(distributions) == caps["distributions"]:
-            capped = "distributions"
+            stop("distributions")
             break
-        digest, size = hashlib.sha256(), 0
-        try:
-            with open(os.path.join(root, name, "RECORD"), "rb") as stream:
-                while chunk := stream.read(65536):
-                    size, read_total = size + len(chunk), read_total + len(chunk)
-                    if size > caps["record_bytes"] or read_total > caps["record_bytes_total"]:
-                        capped = "record_bytes" if size > caps["record_bytes"] else "record_bytes_total"
-                        break
-                    digest.update(chunk)
-            record = None if capped else digest.hexdigest()
-        except OSError:
-            record = None
-        distributions.append([root, name, record])
+        distributions.append([root, name, digest_of(os.path.join(root, name, "RECORD"))])
+interpreter = {
+    "executable": text(os.path.realpath(sys.executable)),
+    "version": text(sys.version),
+}
 observation = {
     "format": sys.argv[2],
-    "capped": capped,
-    "interpreter": {"executable": os.path.realpath(sys.executable), "version": sys.version},
+    "incomplete": incomplete,
+    "interpreter": interpreter,
     "roots": roots,
     "entries": entries,
+    "archives": archives,
     "distributions": distributions,
 }
 output = json.dumps(observation, sort_keys=True)
-if len(output.encode()) > caps["output_bytes"]:
-    output = json.dumps({"format": sys.argv[2], "capped": "output_bytes"}, sort_keys=True)
+# print adds a newline, which counts against the cap too (Sourcery on #452).
+if len(output.encode()) + 1 > caps["output_bytes"]:
+    output = json.dumps({"format": sys.argv[2], "incomplete": "output_bytes"}, sort_keys=True)
 print(output)
 """
 _ENVIRONMENT_UNAVAILABLE_GAP = (
@@ -1856,7 +1894,7 @@ def _observe_environment(
     """One bounded metadata observation of the producers' environment, run as they
     run, isolated with -I and under the inventory's deadline and max_report_bytes: its
     report's evidence and its interpreter, or None for each when it does not complete,
-    is capped, is cut or is not the observation's own format."""
+    is incomplete, is cut or is not the observation's own format."""
     report = run / f"diagnostic-environment-{when}.json"
     status, gap, invalid = _bounded_run(
         _environment_command(),
@@ -1868,19 +1906,26 @@ def _observe_environment(
     )
     if gap is not None or invalid or status != 0:
         return None, None
+    # One read: the bytes parsed are the bytes the evidence names, and a read that
+    # fails is an unavailable observation, never an escaping error (Sourcery on #452).
     try:
-        observed = json.loads(report.read_text(encoding="utf-8"))
+        content = report.read_bytes()
+        observed = json.loads(content.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return None, None
     if (
         not isinstance(observed, dict)
         or observed.get("format") != ENVIRONMENT_OBSERVATION_FORMAT
-        or observed.get("capped") is not None
+        or observed.get("incomplete") is not None
     ):
         return None, None
     interpreter = observed.get("interpreter")
     return (
-        {"path": report.relative_to(run).as_posix(), **file_evidence(report)},
+        {
+            "path": report.relative_to(run).as_posix(),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        },
         interpreter if isinstance(interpreter, dict) else None,
     )
 
