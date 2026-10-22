@@ -972,7 +972,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             (caps, None),
             ({**caps, "roots": 1}, "roots"),
             ({**caps, "entries_per_root": 1}, "entries_per_root"),
+            # Each root holds 3 entries and a 64-byte RECORD: only the totals stop
+            # these two (X19, X20, round 3).
+            ({**caps, "entries": 3}, "entries"),
             ({**caps, "file_bytes": 1}, "file_bytes"),
+            ({**caps, "file_bytes_total": 100}, "file_bytes_total"),
             ({**caps, "string_bytes": 8}, "string_bytes"),
             ({**caps, "output_bytes": 200}, "output_bytes"),
         )
