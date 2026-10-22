@@ -1476,6 +1476,52 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         (site / "linked-1.0.dist-info").symlink_to(real, target_is_directory=True)
         self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
 
+    def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
+        # An import-path entry that exists but cannot be examined stops the observation
+        # as unreadable; only a path that is absent is skipped (PAO 6353587922,
+        # PAO-452-ROOT-PERMISSION-NOT-ABSENCE-A4B26156-v1).
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        root = self._observed_root("inaccessible")
+        absent = Path(self.directory.name) / "absent-root"
+        observed = json.loads(observer.observe([str(absent)], caps, form))
+        self.assertIsNone(observed["incomplete"], "an absent entry is skipped")
+        self.assertEqual([], observed["roots"])
+        examined = os.stat
+
+        def refusing(path, *args, **kwargs):
+            if os.fspath(path) == str(root):
+                raise PermissionError(errno.EACCES, "permission denied", str(path))
+            return examined(path, *args, **kwargs)
+
+        with self.subTest("simulated"), patch.object(observer.os, "stat", refusing):
+            observed = json.loads(observer.observe([str(root)], caps, form))
+            self.assertEqual("unreadable", observed["incomplete"])
+        if os.geteuid() == 0:
+            return  # root reads past the permission below
+        parent = root.parent / "closed-parent"
+        parent.mkdir()
+        closed = parent / "root"
+        root.rename(closed)
+        parent.chmod(0o600)
+        try:
+            with self.subTest("real"):
+                observed = self._observe_with(closed)
+                self.assertEqual("unreadable", observed["incomplete"])
+        finally:
+            parent.chmod(0o700)
+
+    def test_an_observation_without_its_completion_marker_is_a_gap(self) -> None:
+        # Characterization: a report lacking `incomplete` is not the observer's format,
+        # so its absence is never read as complete (PAO 6353587922).
+        observation = json.loads(self._observation())
+        del observation["incomplete"]
+        member = self._run(self._answering(observation), "import-untyped")["producers"][
+            0
+        ]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
         # unavailable observation, never an escaping error.
