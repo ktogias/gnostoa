@@ -1067,3 +1067,111 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual("string_bytes", observed["incomplete"])
         self.assertEqual([], observed["roots"])
         self.assertIsNone(observed["interpreter"]["executable"])
+
+    def test_a_malformed_observation_is_a_gap(self) -> None:
+        # The collector's own format with a broken structure is no observation: an
+        # interpreter that is not a mapping, or roots that are not a list of strings
+        # (cubic 4353631703; owner 6351449420 item 5).
+        for name, broken in (
+            ("no interpreter", {"interpreter": None}),
+            ("roots not a list", {"roots": "/fixture/site-packages"}),
+            ("a distribution not a triple", {"distributions": [["/fixture", "x"]]}),
+        ):
+            with self.subTest(name):
+                observation = {**json.loads(self._observation()), **broken}
+
+                def run(
+                    command,
+                    *,
+                    cwd,
+                    environment,
+                    report,
+                    deadline,
+                    limits,
+                    answer=observation,
+                ):
+                    if command != self.module._environment_command():
+                        return self._fake_run(
+                            command,
+                            cwd=cwd,
+                            environment=environment,
+                            report=report,
+                            deadline=deadline,
+                            limits=limits,
+                        )
+                    report.write_text(json.dumps(answer), encoding="utf-8")
+                    return 0, None, False
+
+                member = self._run(run, "import-untyped")["producers"][0][
+                    "environment_observation"
+                ]
+                self.assertEqual("unavailable", member["status"])
+
+    def _renamed(self, producer: str, interpreter: str | None = None):
+        """A run-record writer that renames mypy's records to `producer`, and, when
+        `interpreter` is given, records them as launched by it."""
+        original = self.module._run_record
+
+        def record(name, tool, command, status, report, run, version):
+            if tool == "mypy":
+                tool, name = producer, name.replace("mypy", producer)
+                if interpreter is not None:
+                    command = [interpreter, *command[1:]]
+            return original(name, tool, command, status, report, run, version)
+
+        return patch.object(self.module, "_run_record", side_effect=record)
+
+    def test_the_observation_follows_the_observed_interpreter_not_a_name(self) -> None:
+        # A producer the collector launches as its own interpreter under -I receives
+        # the observation whatever its name; one launched by another interpreter does
+        # not (owner 6351449420 items 2 and 6).
+        with self._renamed("probe-producer"):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["producer"]: r for r in inventory["producers"]}
+        self.assertIn("environment_observation", runs["probe-producer"])
+        with self._renamed("probe-producer", interpreter="/another/python"):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["producer"]: r for r in inventory["producers"]}
+        self.assertNotIn("environment_observation", runs["probe-producer"])
+        self.assertIn("environment_observation", runs["ruff"])
+        self.assertNotIn("environment_observation", runs["complexity"])
+
+    def test_the_observation_names_what_it_does_not_observe(self) -> None:
+        # Equal endpoints are never complete equality: the member lists its unobserved
+        # scope (owner 6351449420 item 4).
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertIn("unobserved", member, "the member names no unobserved scope")
+        unobserved = member["unobserved"]
+        for scope in (
+            "installed file contents beyond the RECORD bytes",
+            "data inside installed packages, typeshed among them",
+            "import resolution beyond the interpreter's -I path",
+            "changes between the endpoints",
+        ):
+            self.assertIn(scope, unobserved)
+
+    def test_a_record_reached_through_a_link_is_unreadable(self) -> None:
+        # Only a regular file, never followed through a link, as the existing bounded
+        # reader does (adoption_check._read_regular_bounded; owner 6351449420 item 1).
+        site = Path(self.directory.name) / "linked-site"
+        (site / "linked-1.0.dist-info").mkdir(parents=True)
+        target = Path(self.directory.name) / "elsewhere-RECORD"
+        target.write_text("x" * 64, encoding="utf-8")
+        (site / "linked-1.0.dist-info" / "RECORD").symlink_to(target)
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+
+    def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
+        # Characterization: a read of the observation's own report that fails is an
+        # unavailable observation, never an escaping error.
+        original = Path.read_bytes
+
+        def failing(path):
+            if path.name.startswith("diagnostic-environment-"):
+                raise OSError("unreadable report")
+            return original(path)
+
+        with patch.object(Path, "read_bytes", failing):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
