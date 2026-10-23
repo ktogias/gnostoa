@@ -2016,6 +2016,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("the standard alphabet", claim.replace("-", "+").replace("_", "/")),
             ("padding", claim + "="),
             ("unused bits set", claim[:-1] + last[last.index(claim[-1]) + 1]),
+            # Characterization (Sonar python:S5713 on #453): base64 raises a plain
+            # ValueError, not binascii.Error, for a claim that is not ASCII.
+            ("a non-ASCII claim", "é" + claim[1:]),
         )
         for name, encoded in cases:
             with self.subTest(name):
