@@ -61,13 +61,19 @@ _DIRECTORY_OPEN = (
 _SIZE_DIGITS = len(str(2**64))
 
 
+# The longest RECORD line, in characters, that can hold a row the CSV reader accepts:
+# three fields at its field limit, each doubled by escaped quotes, with their quotes,
+# separators and line end. A longer line is refused before it is held.
+_RECORD_LINE_CHARACTERS = 6 * csv.field_size_limit() + 16
+
+
 def _record_lines(chunks: list[bytes]) -> Iterator[str]:
     """A RECORD's text, line by line as `io.StringIO` gives it, decoded strictly from
-    the bytes its digest names, emptying `chunks` as it goes: the bytes, the text and
-    the rows are never all held at once, so a RECORD at the per-file cap costs about
-    its own size (Router #389 6364506650). A line longer than any row the CSV reader
-    accepts is refused before it is held."""
-    longest = 6 * csv.field_size_limit() + 16
+    the bytes its digest names. The bytes are held once, as they were read, and
+    `chunks` is emptied as its lines are parsed; neither the whole text nor all the
+    rows are ever held, so a RECORD at the per-file cap costs about its own size
+    (Router #389 6364506650; Revix on #453). A line longer than
+    _RECORD_LINE_CHARACTERS is refused before it is held."""
     decoder = codecs.getincrementaldecoder("utf-8")()
     pending: list[str] = []
     held = 0
@@ -81,7 +87,7 @@ def _record_lines(chunks: list[bytes]) -> Iterator[str]:
             held = 0
             start = end + 1
         held += len(text) - start
-        if held > longest:
+        if held > _RECORD_LINE_CHARACTERS:
             raise csv.Error("a RECORD line longer than any row")
         pending.append(text[start:])
     tail = "".join(pending) + decoder.decode(b"", final=True)
