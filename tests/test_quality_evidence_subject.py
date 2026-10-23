@@ -1593,6 +1593,36 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             [[str(link), "mm-1.0.dist-info", expected]], observed["distributions"]
         )
 
+    def test_an_alias_into_the_opened_root_is_ambiguous_after_a_swap(self) -> None:
+        # CodeAnt on #453: a row is classified against the real path of the root that
+        # was opened, not one recomputed later, so a root link retargeted after its
+        # open never turns an alias into that root into an unchecked "outside" row.
+        observer = importlib.import_module("tools.python_environment_observation")
+        claim = f"sha256={self._claim(b'x')},1"
+        pinned = self._recorded_root(
+            "alias-root", f"../alias-root/mm/__init__.py,{claim}"
+        )
+        other = self._recorded_root("alias-other")
+        link = Path(self.directory.name) / "linked-alias"
+        link.symlink_to(pinned, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-alias.new"
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            if os.fspath(path) == str(link) and not retarget.exists():
+                retarget.symlink_to(other, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertEqual("record_ambiguous_path", observed["incomplete"])
+
     def test_the_observation_closes_every_descriptor_it_opens(self) -> None:
         # Kill test (R12, round 3): whichever way a distribution's check ends, matched,
         # mismatched, malformed, outside, ambiguous, unreadable or with a linked
