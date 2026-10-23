@@ -1839,7 +1839,7 @@ def _is_text_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-# The v1 contract of the observer's report, which is evidence the collector reads, not a
+# The v2 contract of the observer's report, which is evidence the collector reads, not a
 # wire member: every field is required, and an unknown or repeated field is not v1. A
 # missing `incomplete` is therefore never read as a completed observation (cubic
 # 4354512437; PAO 6353587922; Router 6353798690).
@@ -1855,12 +1855,13 @@ _OBSERVATION_FIELDS = frozenset(
         "unlisted",
     }
 )
-_UNLISTED_KINDS = frozenset({"file", "link", "other"})
+_UNLISTED_KINDS = frozenset({"file", "link", "directory", "other"})
 
 
 def _valid_unlisted(entry: object, roots: list[str]) -> bool:
-    """An unlisted entry as the observer writes it: one of its roots, a path, a kind,
-    and the kind's value, a file's sha256, a link's target or nothing."""
+    """An unlisted entry as the observer writes it: one of its roots, a plain path
+    relative to it, a kind, and the kind's value, a file's sha256, a link's target or
+    nothing."""
     if not (isinstance(entry, list) and len(entry) == 4):
         return False
     root, path, kind, value = entry
@@ -1868,6 +1869,9 @@ def _valid_unlisted(entry: object, roots: list[str]) -> bool:
         isinstance(root, str)
         and root in roots
         and isinstance(path, str)
+        # Plain and root-relative: no absolute path and no empty, `.` or `..` part
+        # (cubic on #455).
+        and all(part not in ("", ".", "..") for part in path.split("/"))
         and isinstance(kind, str)
         and kind in _UNLISTED_KINDS
     ):

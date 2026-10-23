@@ -28,8 +28,11 @@ The entries no RECORD lists are observed too, in the RECORD-owned directories: e
 in-root top-level directory under which some in-root row names a file, walked whole
 without following a link (D-U, H-out: #389 F3-S2-DU-HOUT-FINAL-PROOF, Router 6373641379).
 Each such entry is reported with its kind: a regular file with its digest, a link with
-its target, never followed, and anything else alone, never opened. A file a RECORD lists
-without a hash is listed, so its bytes stay unobserved. Each root is opened once, and
+its target, never followed, a directory beneath which nothing shows, an empty one among
+them, alone, and anything else alone, never opened. A file a RECORD lists without a
+hash, in its plain in-root spelling, is listed, so its bytes stay unobserved; a row
+spelled otherwise lists nothing, so a file named only that way is recorded. A root
+named twice on the import path is walked once. Each root is opened once, and
 its listing, its RECORDs and the walk all read that one directory object (PAO
 6373356762): a link to the root retargeted afterwards leaves them on it. That is no
 guarantee against a change made in place, nor that the producers read the same
@@ -407,6 +410,10 @@ class _Observation:
         """A row's place, hashed or not: an in-root path is kept as a digest, so that the
         walk never takes a listed file for an unlisted one, and charged to record_rows;
         its first component, when the root lists it, names an owned directory."""
+        # A row's path is a string the observer holds, kept or not, so it is charged to
+        # string_bytes like any other (Sourcery on #455).
+        if self.text(path) is None:
+            return "ambiguous", None
         kind, parts = _record_path(bases, path)
         if kind == "inside" and parts:
             self.rows += 1
@@ -475,7 +482,9 @@ class _Observation:
         each owned directory charged as one directory and walked from the root opened
         once."""
         found: list[list[str | None]] = []
-        for root in roots:
+        # A root named twice is one directory, opened once, so it is walked once
+        # (cubic on #455); different spellings of one directory stay a residual.
+        for root in dict.fromkeys(roots):
             for top in sorted(self.tops.get(root, ())):
                 held = self.base(root) if not self.incomplete else None
                 if held is None:
@@ -484,38 +493,54 @@ class _Observation:
                 if self.directories > self.caps["tree_directories"]:
                     self.stop("tree_directories")
                     return found
+                # An owned directory is depth 1, checked before it is opened like any
+                # other (CodeAnt and cubic on #455).
+                if self.caps["tree_depth"] < 1:
+                    self.stop("tree_depth")
+                    return found
                 self.walk(root, held[0], [top], found)
         return found
 
     def walk(
         self, root: str, parent: int, parts: list[str], found: list[list[str | None]]
-    ) -> None:
+    ) -> bool:
         """The owned directory `parts`, already charged, opened relative to `parent`
         without following a link and listed; then each subdirectory it lists, once the
-        listing is closed. At most the walk's depth is open at once."""
+        listing is closed. At most the walk's depth is open at once. Returns whether
+        anything shows beneath it, a listed file or a recorded entry: a subdirectory
+        beneath which nothing shows is recorded itself, so that adding or removing an
+        empty one changes the observation (Octopus, Sourcery, CodeAnt and cubic on
+        #455)."""
         if _DIRECTORY_OPEN is None:
             self.stop("unreadable")
-            return
+            return False
         try:
             directory = os.open(parts[-1], _DIRECTORY_OPEN, dir_fd=parent)
         except OSError:
             self.stop("unreadable")
-            return
+            return False
         try:
-            for name in self.scan(root, directory, parts, found):
+            subdirectories, shown = self.scan(root, directory, parts, found)
+            for name in subdirectories:
                 if self.incomplete:
-                    return
-                self.walk(root, directory, [*parts, name], found)
+                    break
+                path = [*parts, name]
+                if not self.walk(root, directory, path, found) and not self.incomplete:
+                    self.record(root, directory, path, stat.S_IFDIR, found)
+                shown = True
+            return shown
         finally:
             os.close(directory)
 
     def scan(
         self, root: str, directory: int, parts: list[str], found: list[list[str | None]]
-    ) -> list[str]:
+    ) -> tuple[list[str], bool]:
         """The opened `directory`'s entries, each counted as it is listed: a subdirectory
         charged and its depth checked before it is kept, and an unlisted entry recorded
-        while the listing is open. Returns the subdirectories, walked after it closes."""
+        while the listing is open. Returns the subdirectories, walked after it closes,
+        and whether any other entry shows."""
         subdirectories: list[str] = []
+        shown = False
         listed = self.listed.get(root, set())
         try:
             with os.scandir(directory) as listing:
@@ -537,13 +562,15 @@ class _Observation:
                             self.stop("tree_depth")
                         else:
                             subdirectories.append(name)
-                    elif _path_key(path) not in listed:
-                        self.record(root, directory, path, mode, found)
+                    else:
+                        shown = True
+                        if _path_key(path) not in listed:
+                            self.record(root, directory, path, mode, found)
                     if self.incomplete:
                         break
         except OSError:
             self.stop("unreadable")
-        return subdirectories
+        return subdirectories, shown
 
     def record(
         self,
@@ -554,7 +581,8 @@ class _Observation:
         found: list[list[str | None]],
     ) -> None:
         """One unlisted entry of the opened `directory`: a regular file with its digest,
-        a link with its target, never followed, anything else alone, never opened. Each
+        a link with its target, never followed, a directory beneath which nothing shows
+        alone, and anything else alone, never opened. Each
         is charged as it will be written, so that what the walk keeps never passes the
         output cap (Router 6373641379 item 2)."""
         self.unlisted += 1
@@ -574,7 +602,7 @@ class _Observation:
             except OSError:
                 self.stop("unreadable")
         else:
-            kind = "other"
+            kind = "directory" if stat.S_ISDIR(mode) else "other"
         if self.incomplete:
             return
         entry = [root, text, kind, value]
