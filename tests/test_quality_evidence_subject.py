@@ -1509,7 +1509,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
         def swapping(path, flags, *args, **kwargs):
             descriptor = opened(path, flags, *args, **kwargs)
-            if os.fspath(path) == str(dist) and flags & os.O_DIRECTORY:
+            named = os.fspath(path) in (str(dist), dist.name)
+            if named and flags & os.O_DIRECTORY and not moved.exists():
                 dist.rename(moved)
                 dist.symlink_to(elsewhere, target_is_directory=True)
             return descriptor
@@ -1524,6 +1525,36 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             [[str(site), "one-1.0.dist-info", opened_record]],
             observed["distributions"],
         )
+
+    def test_a_record_and_the_files_it_names_come_from_one_root(self) -> None:
+        # Q 4358351672 on #453: the RECORD and the files its rows name are read from
+        # one opened import root, so a root link retargeted between the two never
+        # verifies one directory's RECORD against another directory's files.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("first-root")
+        second = self._recorded_root("second-root")
+        (first / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        link = Path(self.directory.name) / "linked-site"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-site.new"
+        dist = "mm-1.0.dist-info"
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            named = os.fspath(path) in (str(link / dist), dist)
+            if named and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertEqual("record_mismatch", observed["incomplete"])
 
     def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
         # An import-path entry that exists but cannot be examined stops the observation
