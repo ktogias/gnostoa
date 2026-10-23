@@ -2080,6 +2080,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         claim = f"sha256={self._claim(module)},{len(module)}"
         for name in (
             "a character across the chunk boundary",
+            "a row across the chunk boundary",
             "CRLF rows",
             "no final newline",
         ):
@@ -2090,6 +2091,16 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     body = record.read_bytes().replace(b"\n", b"\r\n")
                 elif name == "no final newline":
                     body = record.read_bytes().rstrip(b"\n")
+                elif name == "a row across the chunk boundary":
+                    # Hashless rows, then a hashed row that starts 20 bytes before the
+                    # first chunk ends, so that its parse needs both chunks.
+                    (root / "mm" / "copy.py").write_bytes(module)
+                    body = record.read_bytes()
+                    filler = b"mm/a.py,,\n"
+                    body += filler * ((65516 - len(body)) // len(filler))
+                    body += b"m" * (65516 - len(body) - len(",,\n")) + b",,\n"
+                    body += f"mm/copy.py,{claim}\n".encode()
+                    self.assertEqual(65516, body.index(b"mm/copy.py,"))
                 else:
                     # Hashless rows up to byte 65,535, then a row whose path starts
                     # with a two-byte character at bytes 65,535 and 65,536.
@@ -2165,6 +2176,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         module = b'VALUE: str = "s"\n'
         with self.subTest("a row of one field"):
             root = self._recorded_root("one-field", "mm/__init__.py")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD ending inside a character"):
+            root = self._recorded_root("truncated-utf8")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes() + "é".encode()[:1])
             self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
         with self.subTest("a RECORD that is not UTF-8"):
             root = self._recorded_root("not-utf8")
