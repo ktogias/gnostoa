@@ -25,7 +25,6 @@ rows outside the root, files no RECORD lists and import resolution stay unobserv
 """
 
 import base64
-import binascii
 import codecs
 import csv
 import hashlib
@@ -106,7 +105,9 @@ def _sha256_claim(encoded: str) -> str | None:
         raw = base64.b64decode(
             encoded + "=" * (-len(encoded) % 4), b"-_", validate=True
         )
-    except (binascii.Error, ValueError):
+    except ValueError:
+        # binascii.Error is a ValueError, and a claim that is not ASCII raises a plain
+        # one (Sonar python:S5713 on #453).
         return None
     if len(raw) != 32 or base64.urlsafe_b64encode(raw).rstrip(b"=") != encoded.encode():
         return None

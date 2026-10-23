@@ -852,7 +852,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import base64, binascii, codecs, collections.abc, csv, hashlib, json, os\n"
+            "import base64, codecs, collections.abc, csv, hashlib, json, os\n"
             "import pathlib, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
