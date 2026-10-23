@@ -2028,6 +2028,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("loose quoting", f'"mm/__init__."py,sha256={claim},{len(module)}'),
             ("a superscript size", f"mm/__init__.py,sha256={claim},\u00b2"),
             ("an Arabic-Indic size", f"mm/__init__.py,sha256={claim},\u0661\u0667"),
+            # Owner 6364237541 item 2: a size is bounded before anything reads it, at
+            # 20 digits, as 2**64 has; one digit more, or past Python's 4,300-digit
+            # conversion limit, is malformed.
+            ("a 21-digit size", f"mm/__init__.py,sha256={claim},{'9' * 21}"),
+            ("a 4,301-digit size", f"mm/__init__.py,sha256={claim},{'1' * 4301}"),
         )
         for name, row in cases:
             with self.subTest(name):
@@ -2043,9 +2048,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         claim = self._claim(b"x")
         cases = (
             ("a different size", "2"),
-            # Revix 4359050029 on #453: past Python's 4,300-digit limit, a size made
-            # `int` raise; it is compared as text instead.
-            ("a size past int's digit limit", "1" + "0" * 5000),
+            # The longest size admitted, 20 digits as 2**64 has, and a zero-padded
+            # size are compared as text, never converted (Revix 4359050029 on #453).
+            ("a 20-digit size", "9" * 20),
             ("leading zeros", "01"),
         )
         for name, size in cases:
