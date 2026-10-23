@@ -26,13 +26,14 @@ rows outside the root, files no RECORD lists and import resolution stay unobserv
 
 import base64
 import binascii
+import codecs
 import csv
 import hashlib
-import io
 import json
 import os
 import stat
 import sys
+from collections.abc import Iterator
 from pathlib import PurePosixPath
 
 # A safe open needs both flags: without either the observation stops as unreadable,
@@ -58,6 +59,34 @@ _DIRECTORY_OPEN = (
 # A size is bounded before anything reads its file and is never converted, so no size
 # reaches Python's integer-conversion limit (owner 6364237541; Revix on #453).
 _SIZE_DIGITS = len(str(2**64))
+
+
+def _record_lines(chunks: list[bytes]) -> Iterator[str]:
+    """A RECORD's text, line by line as `io.StringIO` gives it, decoded strictly from
+    the bytes its digest names, emptying `chunks` as it goes: the bytes, the text and
+    the rows are never all held at once, so a RECORD at the per-file cap costs about
+    its own size (Router #389 6364506650). A line longer than any row the CSV reader
+    accepts is refused before it is held."""
+    longest = 6 * csv.field_size_limit() + 16
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    pending: list[str] = []
+    held = 0
+    chunks.reverse()
+    while chunks:
+        text = decoder.decode(chunks.pop())
+        start = 0
+        while (end := text.find("\n", start)) != -1:
+            yield "".join(pending) + text[start : end + 1]
+            pending.clear()
+            held = 0
+            start = end + 1
+        held += len(text) - start
+        if held > longest:
+            raise csv.Error("a RECORD line longer than any row")
+        pending.append(text[start:])
+    tail = "".join(pending) + decoder.decode(b"", final=True)
+    if tail:
+        yield tail
 
 
 def _sha256_claim(encoded: str) -> str | None:
@@ -243,16 +272,18 @@ class _Observation:
         chunks: list[bytes] = []
         digest = self.digest_of("RECORD", directory, chunks)
         if digest is not None:
-            self.verify_record(bases, base, b"".join(chunks))
+            self.verify_record(bases, base, chunks)
         return digest
 
-    def verify_record(self, bases: set[str], directory: int, content: bytes) -> None:
+    def verify_record(
+        self, bases: set[str], directory: int, chunks: list[bytes]
+    ) -> None:
         """Every hashed row of a RECORD, read once, against the file it names under
         the opened root `directory`. A row without a hash stays outside the check."""
         try:
             # Strict, so that quoting a lenient reader would repair is malformed (CodeAnt
             # on #453).
-            rows = csv.reader(io.StringIO(content.decode("utf-8")), strict=True)
+            rows = csv.reader(_record_lines(chunks), strict=True)
             for row in rows:
                 if self.incomplete:
                     return

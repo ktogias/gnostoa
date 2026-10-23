@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import csv
 import errno
 import hashlib
 import importlib
@@ -851,7 +852,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import base64, binascii, csv, hashlib, io, json, os, pathlib, stat, sys\n"
+            "import base64, binascii, codecs, collections.abc, csv, hashlib, json, os\n"
+            "import pathlib, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
@@ -2101,6 +2103,22 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     body += f"mm/copy.py,{claim}\n".encode()
                 record.write_bytes(body)
                 self.assertIsNone(self._observe_with(root)["incomplete"])
+
+    def test_a_record_is_never_held_whole_while_it_is_parsed(self) -> None:
+        # Router 6364506650: the RECORD's bytes are released as its lines are parsed,
+        # and a line longer than any row the CSV reader accepts is refused before it is
+        # held, so a RECORD at the per-file cap costs about its own size.
+        observer = importlib.import_module("tools.python_environment_observation")
+        chunks = [b"mm/a.py,,\n" * 6553] * 64
+        lines = observer._record_lines(chunks)
+        self.assertEqual("mm/a.py,,\n", next(lines))
+        self.assertEqual(63, len(chunks))
+        self.assertEqual(6553 * 64 - 1, sum(1 for _ in lines))
+        self.assertEqual([], chunks)
+        endless = [b"x" * 65536] * 64
+        with self.assertRaises(csv.Error):
+            next(observer._record_lines(endless))
+        self.assertGreater(len(endless), 40)
 
     def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
         # Router 6364506650 (B): the composed caps admit a matching in-root payload of
