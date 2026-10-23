@@ -1984,6 +1984,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("the root itself", "../aliased"),
             ("a bare parent", ".."),
             ("an absolute alias with a dot", f"{root.parent}/./aliased/mm/__init__.py"),
+            # Kill test (G19, round 6): a parent component, which only normalization
+            # removes, since pathlib collapses a dot but never `..`.
+            (
+                "an absolute alias through a parent",
+                f"{root.parent}/elsewhere/../aliased/mm/__init__.py",
+            ),
             # Sourcery 4358369113 and 4358369120 on #453.
             ("a NUL in a component", "mm/\x00x.py"),
             ("a doubled leading slash into the root", f"/{root}/mm/__init__.py"),
