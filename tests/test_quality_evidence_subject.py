@@ -11,6 +11,7 @@ import importlib
 import json
 import os
 import shutil
+import string
 import sys
 import tempfile
 import time
@@ -1929,7 +1930,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # its last character are malformed even when they decode to the right digest.
         claim = self._claim(b"x")
         self.assertIn("-", claim)
-        last = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        last = string.ascii_uppercase + string.ascii_lowercase + string.digits + "-_"
         cases = (
             ("the standard alphabet", claim.replace("-", "+").replace("_", "/")),
             ("padding", claim + "="),
