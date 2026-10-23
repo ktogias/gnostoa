@@ -1623,6 +1623,33 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertTrue(retarget.exists())
         self.assertEqual("record_ambiguous_path", observed["incomplete"])
 
+    def test_a_root_that_changes_while_being_opened_is_unreadable(self) -> None:
+        # Kill test for the pinned real path (CodeAnt on #453): a root link retargeted
+        # between the read of its real path and its open leaves a real path naming
+        # another directory than the one opened, and the observation stops.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("racing-first")
+        second = self._recorded_root("racing-second")
+        link = Path(self.directory.name) / "linked-racing"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-racing.new"
+        resolved = os.path.realpath
+
+        def swapping(path, *args, **kwargs):
+            real = resolved(path, *args, **kwargs)
+            if os.fspath(path) == str(link) and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return real
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os.path, "realpath", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertEqual("unreadable", observed["incomplete"])
+
     def test_the_observation_closes_every_descriptor_it_opens(self) -> None:
         # Kill test (R12, round 3): whichever way a distribution's check ends, matched,
         # mismatched, malformed, outside, ambiguous, unreadable or with a linked
