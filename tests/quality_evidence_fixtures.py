@@ -370,7 +370,58 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             # producers ran in, never the checkout (#389 F3 S2 B).
             report.write_text(self._staged_text(text, cwd), encoding="utf-8")
             return self.ruff_exit, None, False
+        if command == self._observation_command():
+            # The producers' environment observation (#389 F3 S2-C): one fixed
+            # installed set, unless a test answers the observation itself.
+            report.write_text(self._observation(), encoding="utf-8")
+            return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
+
+    def _observation_command(self) -> list[str]:
+        """The observation launch the collector must compose, pinned here rather than
+        read from it: the observer beside the collector's module, the measured caps and
+        the v1 format. A launcher answers exactly this and refuses any other, so that a
+        moved observer, cap or format fails its tests (CodeAnt and cubic on #452)."""
+        caps = {
+            "roots": 32,
+            "entries_per_root": 4096,
+            "entries": 16384,
+            "distributions": 1024,
+            "file_bytes": 8 * 1024 * 1024,
+            "file_bytes_total": 32 * 1024 * 1024,
+            "string_bytes": 4096,
+            "output_bytes": 1024 * 1024,
+        }
+        observer = Path(self.module.__file__).resolve().parent
+        return [
+            sys.executable,
+            "-I",
+            str(observer / "python_environment_observation.py"),
+            json.dumps(caps, sort_keys=True),
+            "gnostoa-producer-environment-observation/v1",
+        ]
+
+    def _observation(
+        self,
+        installed: tuple[str, ...] = ("fixture-1.0",),
+        incomplete: str | None = None,
+    ) -> str:
+        """An environment observation in the collector's own format, whose one root
+        holds a `*.dist-info` for each of `installed`."""
+        root = "/fixture/site-packages"
+        names = sorted(f"{name}.dist-info" for name in installed)
+        return json.dumps(
+            {
+                "format": self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                "incomplete": incomplete,
+                "interpreter": {"executable": "/fixture/python", "version": "3.12"},
+                "roots": [root],
+                "entries": {root: names},
+                "archives": [],
+                "distributions": [[root, name, "0" * 64] for name in names],
+            },
+            sort_keys=True,
+        )
 
     def _inventory(self, **options) -> dict:
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):

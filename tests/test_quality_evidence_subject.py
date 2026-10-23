@@ -3,11 +3,14 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 
 from __future__ import annotations
 
+import ast
 import errno
+import hashlib
 import importlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -648,3 +651,1002 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         with self.subTest("no base, no diff"):
             shutil.rmtree(self.output, ignore_errors=True)
             self.assertIsNone(self._inventory()["scope"]["diff"])
+
+
+class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
+    """The producers' installed environment, an input outside the staged tree: the
+    same tree under two installed sets gave mypy two findings with every recorded
+    field identical (#389 F3 S2-C, the C6 probe in 6347549109). The producers stay
+    faked at `_bounded_run`; anything they launch besides a version read, mypy and
+    Ruff is the environment's isolated identity read, answered by `installed`."""
+
+    def _environment(self, *installed: tuple[str, ...]):
+        """A launcher whose identity reads answer `installed[0]`, then `installed[1]`
+        and so on, keeping the last one; None answers as an unreadable read."""
+        answers = list(installed)
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if "--version" in command or "mypy" in command or "ruff" in command:
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            if command != self._observation_command():
+                raise AssertionError(f"unexpected launch: {command}")
+            answer = answers.pop(0) if len(answers) > 1 else answers[0]
+            if answer is None:
+                return 1, "exited 1", False
+            report.write_text(self._observation(tuple(answer)), encoding="utf-8")
+            return 0, None, False
+
+        return run
+
+    def _run(self, launcher, code: str) -> dict:
+        self.mypy_records = {
+            "tests/test_sample.py": [
+                self._mypy(
+                    "tests/test_sample.py",
+                    self.lines["typing"],
+                    1,
+                    code,
+                    f"{code}: probe_dep as this environment resolves it",
+                )
+            ]
+        }
+        shutil.rmtree(self.output, ignore_errors=True)
+        with patch("tools.quality_evidence._bounded_run", side_effect=launcher):
+            path = self.collect(self.root, self.output)
+        self.run_directory = Path(path).parent
+        return self._read(path)
+
+    @staticmethod
+    def _producers(inventory: dict) -> list[dict]:
+        # A report's digest follows its bytes, which the findings already compare.
+        return [
+            {key: value for key, value in record.items() if key != "report"}
+            for record in inventory["producers"]
+        ]
+
+    @staticmethod
+    def _rules(inventory: dict) -> list[str]:
+        return sorted(
+            f["rule"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"
+        )
+
+    def test_an_unchanged_environment_records_the_same_producers_twice(self) -> None:
+        first = self._run(self._environment(("types-PyYAML 6.0",)), "import-untyped")
+        second = self._run(self._environment(("types-PyYAML 6.0",)), "import-untyped")
+        self.assertEqual(self._producers(first), self._producers(second))
+        self.assertEqual(self._rules(first), self._rules(second))
+        self.assertEqual("UNVERIFIED", second["source"]["source_binding"])
+
+    def test_a_changed_installed_environment_is_visible_in_the_producer_records(
+        self,
+    ) -> None:
+        absent = self._run(self._environment(()), "import-not-found")
+        present = self._run(self._environment(("probe-dep 1.0",)), "import-untyped")
+        self.assertNotEqual(self._rules(absent), self._rules(present))
+        self.assertEqual(absent["source"]["tree"], present["source"]["tree"])
+        self.assertNotEqual(
+            self._producers(absent),
+            self._producers(present),
+            "the installed environment changed mypy's finding on the same tree, "
+            "yet every producer record is identical",
+        )
+        self.assertEqual("UNVERIFIED", present["source"]["source_binding"])
+
+    def test_an_environment_changed_during_the_producers_is_a_gap(self) -> None:
+        inventory = self._run(
+            self._environment((), ("probe-dep 1.0",)), "import-not-found"
+        )
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment changed",
+        )
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+
+    def test_an_unreadable_environment_identity_is_a_gap(self) -> None:
+        inventory = self._run(self._environment(None), "import-not-found")
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+
+    def test_the_observation_member_names_its_format_scope_and_status(self) -> None:
+        # The optional v2 member (Router 6347672936): its own format, endpoint scope,
+        # recorded caps, interpreter and both observations' evidence. A v2 record
+        # without it was not observed.
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["invocation"]: r for r in inventory["producers"]}
+        self.assertNotIn("environment_observation", runs["complexity"])
+        member = runs["mypy:main"]["environment_observation"]
+        self.assertEqual(member, runs["ruff"]["environment_observation"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, member["format"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_SCOPE, member["scope"])
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_CAPS, member["caps"])
+        self.assertEqual("endpoints_equal", member["status"])
+        self.assertEqual("/fixture/python", member["interpreter"]["executable"])
+        for when in ("before", "after"):
+            path = self.run_directory / member[when]["path"]
+            self.assertEqual(
+                self.module.file_evidence(path)["sha256"], member[when]["sha256"]
+            )
+
+    def test_equal_endpoints_never_certify_an_unchanged_run(self) -> None:
+        # A -> B -> A: the dependency appears while mypy runs and is gone again before
+        # the last observation (PAO 6347682576; cubic on #452). The endpoints compare
+        # equal, which is all the member states, although mypy's finding is B's.
+        installed: dict[str, tuple[str, ...]] = {"now": ()}
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command == self._observation_command():
+                report.write_text(self._observation(installed["now"]), encoding="utf-8")
+                return 0, None, False
+            if "--version" not in command and "mypy" in command:
+                installed["now"] = ("probe-dep-1.0",)
+            elif "--version" not in command and "ruff" in command:
+                installed["now"] = ()
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+
+        inventory = self._run(run, "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("endpoints_equal", member["status"])
+        a = hashlib.sha256(self._observation(()).encode("utf-8")).hexdigest()
+        self.assertEqual(
+            [a, a], [member["before"]["sha256"], member["after"]["sha256"]]
+        )
+        self.assertEqual(["import-untyped"], self._rules(inventory))
+        self.assertIn("neither continuous nor installed content", member["scope"])
+        self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+        self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
+
+    def test_the_observations_bracket_every_launch_of_the_producers(self) -> None:
+        # The first observation precedes the version reads, and the last follows the
+        # producers, so the endpoints enclose every producer launch (Sourcery on #452).
+        launches: list[str] = []
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command == self._observation_command():
+                launches.append("observation")
+            else:
+                launches.append("version" if "--version" in command else command[3])
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+
+        self._run(run, "import-untyped")
+        self.assertEqual(["observation", "version", "version"], launches[:3])
+        self.assertEqual("observation", launches[-1])
+        self.assertEqual(2, launches.count("observation"))
+        self.assertEqual({"mypy", "ruff"}, set(launches[3:-1]))
+
+    def _observe_with(self, *roots: Path, caps: dict | None = None) -> dict:
+        """The collector's own observer module, run for real through its bounded
+        launcher with exactly `roots` as its import path, so that the result does not
+        depend on the image running the tests (Claude on #452). Without `caps`, it runs
+        with the composed command's own caps and format."""
+        command = self.module._environment_command()
+        if caps is not None:
+            command = [*command[:3], json.dumps(caps, sort_keys=True), command[4]]
+        source = Path(command[2]).read_text(encoding="utf-8")
+        # The script's own imports are loaded first, so that only its import path, not
+        # the standard library, is replaced.
+        prefix = (
+            "import hashlib, json, os, stat, sys\n"
+            f"sys.path[:] = {[str(r) for r in roots]!r}\n"
+        )
+        report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
+        self.output.mkdir(parents=True, exist_ok=True)
+        status, gap, invalid = self.module._bounded_run(
+            [*command[:2], "-c", prefix + source, *command[3:]],
+            cwd=self.root,
+            environment=dict(os.environ),
+            report=report,
+            deadline=time.monotonic() + 60,
+            limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+        )
+        self.assertEqual((0, None, False), (status, gap, invalid))
+        self.observed_bytes = len(report.read_bytes())
+        return json.loads(report.read_text(encoding="utf-8"))
+
+    def _observed_root(self, name: str) -> Path:
+        """A root of two modules and one distribution whose RECORD is 64 bytes."""
+        root = Path(self.directory.name) / name
+        (root / "one-1.0.dist-info").mkdir(parents=True)
+        (root / "one-1.0.dist-info" / "RECORD").write_text("x" * 64, encoding="utf-8")
+        for module in ("a.py", "b.py"):
+            (root / module).write_text("", encoding="utf-8")
+        return root
+
+    def test_an_unreadable_record_or_an_archive_on_the_path_is_observed(self) -> None:
+        # A RECORD that cannot be read is no identity, and an archive on the import
+        # path is observed by its bytes, within the file caps (Sourcery and cubic on
+        # #452).
+        site = Path(self.directory.name) / "site"
+        (site / "broken-1.0.dist-info").mkdir(parents=True)
+        archive = Path(self.directory.name) / "dependency.zip"
+        archive.write_bytes(b"PK\x05\x06" + bytes(18))
+        with self.subTest("an unreadable RECORD"):
+            self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+        with self.subTest("an archive"):
+            observed = self._observe_with(archive)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertEqual([str(archive), digest], observed["archives"][0])
+        with self.subTest("an archive over its cap"):
+            caps = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "file_bytes": 4}
+            observed = self._observe_with(archive, caps=caps)
+            self.assertEqual("file_bytes", observed["incomplete"])
+
+    def test_a_capped_or_cut_observation_is_a_gap_never_an_identity(self) -> None:
+        capped = self._observation(("fixture-1.0",), incomplete="entries")
+        for name, answer in (("capped", capped), ("cut", None)):
+            with self.subTest(name):
+
+                def run(
+                    command,
+                    *,
+                    cwd,
+                    environment,
+                    report,
+                    deadline,
+                    limits,
+                    answer=answer,
+                ):
+                    if command != self._observation_command():
+                        return self._fake_run(
+                            command,
+                            cwd=cwd,
+                            environment=environment,
+                            report=report,
+                            deadline=deadline,
+                            limits=limits,
+                        )
+                    report.write_text(answer or self._observation(), encoding="utf-8")
+                    return 0, None, answer is None
+
+                inventory = self._run(run, "import-untyped")
+                member = inventory["producers"][0]["environment_observation"]
+                self.assertEqual("unavailable", member["status"])
+                self.assertIsNone(member["before"])
+                self.assertIn(
+                    "producer environment identity unavailable",
+                    inventory["coverage"]["reason"],
+                )
+
+    def test_the_observations_share_the_inventory_deadline(self) -> None:
+        # One original absolute deadline, never a fresh budget: a spent one starts no
+        # later observation, which is then a gap (Router 6347672936).
+        deadlines: list[tuple[str, float]] = []
+        observations = 0
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            nonlocal observations
+            if command != self._observation_command():
+                deadlines.append(("producer", deadline))
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            deadlines.append(("observation", deadline))
+            observations += 1
+            if observations == 2:
+                return None, "not started: the inventory deadline had passed", False
+            report.write_text(self._observation(), encoding="utf-8")
+            return 0, None, False
+
+        inventory = self._run(run, "import-untyped")
+        self.assertEqual(1, len({deadline for _, deadline in deadlines}))
+        self.assertEqual(
+            ["observation", "observation"],
+            [k for k, _ in deadlines if k == "observation"],
+        )
+        self.assertEqual("observation", deadlines[-1][0])
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["after"])
+
+    def test_the_observation_enforces_its_caps_while_it_enumerates(self) -> None:
+        # The collector's own script over two controlled roots. The output cap lies
+        # above the fixed stand-in that names it and below the full observation, so its
+        # case proves the bound itself (Sourcery on #452).
+        caps = self.module.ENVIRONMENT_OBSERVATION_CAPS
+        roots = (self._observed_root("first"), self._observed_root("second"))
+        cases = (
+            (caps, None),
+            ({**caps, "roots": 1}, "roots"),
+            ({**caps, "entries_per_root": 1}, "entries_per_root"),
+            # Each root holds 3 entries and a 64-byte RECORD: only the totals stop
+            # these two (X19, X20, round 3).
+            ({**caps, "entries": 3}, "entries"),
+            ({**caps, "file_bytes": 1}, "file_bytes"),
+            ({**caps, "file_bytes_total": 100}, "file_bytes_total"),
+            # One distribution in each root: only the second stops it (X64, Claude on
+            # #452).
+            ({**caps, "distributions": 1}, "distributions"),
+            ({**caps, "string_bytes": 8}, "string_bytes"),
+            ({**caps, "output_bytes": 200}, "output_bytes"),
+        )
+        for limit, expected in cases:
+            with self.subTest(incomplete=expected):
+                observed = self._observe_with(*roots, caps=limit)
+                self.assertEqual(
+                    self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"]
+                )
+                self.assertEqual(expected, observed["incomplete"])
+                self.assertLessEqual(self.observed_bytes, limit["output_bytes"])
+                if expected is None:
+                    self.assertEqual([str(r) for r in roots], observed["roots"])
+                    self.assertEqual(2, len(observed["distributions"]))
+                if expected == "entries_per_root":
+                    self.assertTrue(
+                        all(len(v) <= 1 for v in observed["entries"].values())
+                    )
+                if expected == "string_bytes":
+                    # A root path over the cap ends the enumeration: none is kept.
+                    self.assertEqual([], observed["roots"])
+
+    def test_an_observation_in_another_format_is_a_gap(self) -> None:
+        # Only the collector's own format is an observation (X11, round 1).
+        foreign = json.loads(self._observation())
+        foreign["format"] = "another-observation/v1"
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command != self._observation_command():
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            report.write_text(json.dumps(foreign), encoding="utf-8")
+            return 0, None, False
+
+        inventory = self._run(run, "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["before"])
+
+    def test_an_unavailable_first_observation_is_a_gap(self) -> None:
+        # Either end missing leaves nothing to compare, even when the other completed
+        # (X17, round 1).
+        inventory = self._run(
+            self._environment(None, ("fixture-1.0",)), "import-untyped"
+        )
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["before"])
+        self.assertIsNotNone(member["after"])
+        self.assertIn(
+            "producer environment identity unavailable", inventory["coverage"]["reason"]
+        )
+
+    def test_the_observation_command_runs_as_the_collector_composes_it(self) -> None:
+        # The composed command's own caps and format, run for real over a controlled
+        # root (X18, round 1).
+        observed = self._observe_with(self._observed_root("composed"))
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            os.path.realpath(sys.executable), observed["interpreter"]["executable"]
+        )
+
+    def test_the_output_cap_counts_the_final_newline(self) -> None:
+        # At exactly the output's size the observation fits; one byte less and only
+        # the stand-in that names the cap is written (Sourcery on #452).
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        root = self._observed_root("boundary")
+        self.assertIsNone(self._observe_with(root, caps=caps)["incomplete"])
+        size = self.observed_bytes
+        fits = self._observe_with(root, caps={**caps, "output_bytes": size})
+        self.assertIsNone(fits["incomplete"])
+        short = self._observe_with(root, caps={**caps, "output_bytes": size - 1})
+        self.assertEqual("output_bytes", short["incomplete"])
+        self.assertLessEqual(self.observed_bytes, size - 1)
+
+    def test_the_interpreter_strings_pass_the_string_cap(self) -> None:
+        # With no root at all, only the interpreter's own path and version can exceed
+        # the cap (Sourcery on #452).
+        caps = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "string_bytes": 8}
+        observed = self._observe_with(caps=caps)
+        self.assertEqual("string_bytes", observed["incomplete"])
+        self.assertEqual([], observed["roots"])
+        self.assertIsNone(observed["interpreter"]["executable"])
+
+    def _answering(self, answer: object):
+        """A launcher that answers the observation command with `answer` as JSON, and
+        every other command as the fixture does."""
+        return self._answering_text(json.dumps(answer))
+
+    def _answering_text(self, text: str):
+        """A launcher that answers the observation command with exactly `text`."""
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command != self._observation_command():
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            report.write_text(text, encoding="utf-8")
+            return 0, None, False
+
+        return run
+
+    @staticmethod
+    def _recording(launcher, launched: list[list[str]]):
+        """`launcher`, with every command it is given appended to `launched`."""
+
+        def run(command, **kwargs):
+            launched.append(command)
+            return launcher(command, **kwargs)
+
+        return run
+
+    def test_a_malformed_observation_is_a_gap(self) -> None:
+        # The collector's own format with a broken structure is no observation: each
+        # field the shape the observer writes, each checked by its own case (cubic
+        # 4353631703; owner 6351449420 item 5).
+        root = "/fixture/site-packages"
+        for name, broken in (
+            ("not a mapping", None),
+            ("no interpreter", {"interpreter": None}),
+            ("a version not text", {"interpreter": {"executable": "/p", "version": 3}}),
+            ("roots not a list", {"roots": root}),
+            ("roots a mapping", {"roots": {root: []}}),
+            ("entries a list", {"entries": [root]}),
+            ("entries not the roots", {"entries": {}}),
+            ("an entry not text", {"entries": {root: [1]}}),
+            ("archives a mapping", {"archives": {}}),
+            ("an archive not a pair", {"archives": [["/fixture/a.zip"]]}),
+            ("distributions a mapping", {"distributions": {}}),
+            ("a distribution not a triple", {"distributions": [["/fixture", "x"]]}),
+            ("an unknown field", {"unknown": 1}),
+            (
+                "an unknown interpreter field",
+                {"interpreter": {"executable": "/p", "version": "v", "unknown": "x"}},
+            ),
+        ):
+            with self.subTest(name):
+                observation = (
+                    [json.loads(self._observation())]
+                    if broken is None
+                    else {**json.loads(self._observation()), **broken}
+                )
+                member = self._run(self._answering(observation), "import-untyped")[
+                    "producers"
+                ][0]["environment_observation"]
+                self.assertEqual("unavailable", member["status"])
+
+    def _with_probe_runs(self, *probes: tuple[str, list[str], object]):
+        """The collector's runner, merging further producers' runs after complexity's,
+        without changing the collector: each probe is (producer, argv, launch), from an
+        adapter that declares `launch`, or declares nothing when it is None."""
+        original = self.module._run_complexity
+
+        def run_complexity(*args, **kwargs):
+            result = original(*args, **kwargs)
+            for producer, argv, launch in probes:
+                record = {
+                    "invocation": producer,
+                    "producer": producer,
+                    "version": None,
+                    "argv": argv,
+                    "exit_status": 0,
+                }
+                if launch is None:
+                    result.runs.append(record)
+                else:
+                    result.add_run(record, launch)
+            return result
+
+        return patch.object(self.module, "_run_complexity", side_effect=run_complexity)
+
+    def test_the_observation_follows_the_declared_launch_not_a_name(self) -> None:
+        # A producer whose adapter declares the observed launch receives the
+        # observation whatever its name; one declaring another interpreter does not,
+        # nor does in-process complexity (Router 6351766731 R2; PAO 6351691418).
+        observed = getattr(self.module, "_ISOLATED_PYTHON", None)
+        self.assertIsNotNone(observed, "the collector declares no observed launch")
+        other = self.module._Launch("/another/python", ("-I",))
+        with self._with_probe_runs(
+            ("probe-producer", [*observed.argv(), "-m", "probe"], observed),
+            ("another-interpreter", [*other.argv(), "-m", "probe"], other),
+        ):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["producer"]: r for r in inventory["producers"]}
+        self.assertIn("environment_observation", runs["probe-producer"])
+        self.assertNotIn("environment_observation", runs["another-interpreter"])
+        self.assertNotIn("environment_observation", runs["complexity"])
+        self.assertIn("environment_observation", runs["mypy"])
+        self.assertIn("environment_observation", runs["ruff"])
+
+    def test_a_run_that_only_looks_like_the_observed_launch_gets_no_observation(
+        self,
+    ) -> None:
+        # An argv that starts as the observed interpreter's does, from an adapter that
+        # declares no launch, is no association: neither a name nor an argv prefix
+        # proves a run's scope (Router 6351766731 R2; PAO 6351691418).
+        argv = [sys.executable, "-I", "-m", "lookalike"]
+        with self._with_probe_runs(("lookalike", argv, None)):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        runs = {r["producer"]: r for r in inventory["producers"]}
+        self.assertNotIn("environment_observation", runs["lookalike"])
+        self.assertIn("environment_observation", runs["mypy"])
+
+    def _observer(self) -> Path:
+        return (
+            Path(self.module.__file__).resolve().parent
+            / "python_environment_observation.py"
+        )
+
+    def test_the_observer_is_the_module_beside_the_collector(self) -> None:
+        # The observer is the toolkit's own module beside the collector, run by its
+        # path under -I: never the staged tree's, the cwd's or one searched on PATH
+        # (Router 6351766731 R1).
+        observer = self._observer()
+        self.assertTrue(
+            observer.is_file() and not observer.is_symlink(),
+            "no observer module beside the collector",
+        )
+        command = self.module._environment_command()
+        self.assertEqual([sys.executable, "-I", str(observer)], command[:3])
+        self.assertNotIn("-c", command)
+
+    def test_the_observer_imports_only_the_standard_library(self) -> None:
+        # Under -I the observer cannot import the toolkit, and it does not try to.
+        observer = self._observer()
+        self.assertTrue(observer.is_file(), "no observer module beside the collector")
+        tree = ast.parse(observer.read_text(encoding="utf-8"))
+        imported = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            node.module.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        self.assertLessEqual(imported, set(sys.stdlib_module_names))
+
+    def test_a_missing_or_linked_observer_is_unavailable_without_a_launch(
+        self,
+    ) -> None:
+        # Refused before any launch: an observer that is missing, or reached through a
+        # link (Router 6351766731 R1).
+        target = Path(self.directory.name) / "observer-target.py"
+        target.write_text("print('{}')\n", encoding="utf-8")
+        linked = Path(self.directory.name) / "linked-observer.py"
+        linked.symlink_to(target)
+        for name, observer in (
+            ("missing", Path(self.directory.name) / "absent-observer.py"),
+            ("linked", linked),
+        ):
+            with self.subTest(name):
+                launched: list[list[str]] = []
+                run = self._recording(self._environment(("fixture-1.0",)), launched)
+                with patch.object(self.module, "_OBSERVER", observer, create=True):
+                    inventory = self._run(run, "import-untyped")
+                member = inventory["producers"][0]["environment_observation"]
+                self.assertEqual("unavailable", member["status"])
+                observations = [
+                    command
+                    for command in launched
+                    if not (
+                        "--version" in command or "mypy" in command or "ruff" in command
+                    )
+                ]
+                self.assertEqual([], observations)
+
+    def test_the_observer_runs_isolated_from_a_planted_working_directory(
+        self,
+    ) -> None:
+        # Characterization, run for real: a staged root that plants an observer of its
+        # own, at its top and under tools/, and a json.py, runs none of them, and
+        # neither that root nor the observer's directory is an observed import root
+        # (Router 6351766731 R1).
+        forged_report = json.dumps(
+            {
+                "format": self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                "incomplete": None,
+                "roots": ["/forged"],
+            }
+        )
+        forged = f"print({forged_report!r})\n"
+        for place in (
+            "python_environment_observation.py",
+            "tools/python_environment_observation.py",
+            "json.py",
+        ):
+            (self.root / place).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / place).write_text(forged, encoding="utf-8")
+        run = Path(self.directory.name) / "isolated-run"
+        run.mkdir()
+        evidence, interpreter = self.module._observe_environment(
+            self.root,
+            run,
+            self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+            time.monotonic() + 120,
+            "before",
+        )
+        self.assertIsNotNone(evidence)
+        observed = json.loads((run / evidence["path"]).read_text(encoding="utf-8"))
+        roots = {os.path.realpath(root) for root in observed["roots"]}
+        self.assertNotIn("/forged", observed["roots"])
+        self.assertNotIn(os.path.realpath(self.root), roots)
+        self.assertNotIn(os.path.realpath(self._observer().parent), roots)
+        self.assertEqual(os.path.realpath(sys.executable), interpreter["executable"])
+
+    def test_the_member_is_additive_to_the_v2_record(self) -> None:
+        # Characterization: the v2 record keeps its fields; the member is the one
+        # optional addition, absent where nothing was observed (complexity), and its
+        # unobserved scope is the one field added to it (Router 6351766731).
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
+        known = {"invocation", "producer", "version", "argv", "exit_status", "report"}
+        for record in inventory["producers"]:
+            self.assertLessEqual(set(record) - known, {"environment_observation"})
+        runs = {r["producer"]: r for r in inventory["producers"]}
+        self.assertNotIn("environment_observation", runs["complexity"])
+        self.assertEqual(
+            {
+                "format",
+                "scope",
+                "caps",
+                "unobserved",
+                "status",
+                "interpreter",
+                "before",
+                "after",
+            },
+            set(runs["ruff"]["environment_observation"]),
+        )
+
+    def test_the_observation_names_what_it_does_not_observe(self) -> None:
+        # Equal endpoints are never complete equality: the member lists its unobserved
+        # scope (owner 6351449420 item 4).
+        inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertIn("unobserved", member, "the member names no unobserved scope")
+        unobserved = member["unobserved"]
+        for scope in (
+            "installed file contents beyond the RECORD bytes",
+            "data inside installed packages, typeshed among them",
+            "import resolution beyond the interpreter's -I path",
+            "changes between the endpoints",
+        ):
+            self.assertIn(scope, unobserved)
+
+    def test_a_record_reached_through_a_link_is_unreadable(self) -> None:
+        # Only a regular file, never followed through a link, as the existing bounded
+        # reader does (adoption_check._read_regular_bounded; owner 6351449420 item 1).
+        site = Path(self.directory.name) / "linked-site"
+        (site / "linked-1.0.dist-info").mkdir(parents=True)
+        target = Path(self.directory.name) / "elsewhere-RECORD"
+        target.write_text("x" * 64, encoding="utf-8")
+        (site / "linked-1.0.dist-info" / "RECORD").symlink_to(target)
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+
+    def test_a_record_that_is_not_a_regular_file_is_refused_without_blocking(
+        self,
+    ) -> None:
+        # A FIFO RECORD is opened without blocking and refused as not a regular file:
+        # the copied pattern keeps the owner's refusal, never waiting for a writer
+        # (PAO 6351691418).
+        site = Path(self.directory.name) / "fifo-site"
+        (site / "fifo-1.0.dist-info").mkdir(parents=True)
+        os.mkfifo(site / "fifo-1.0.dist-info" / "RECORD")
+        started = time.monotonic()
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+        self.assertLess(time.monotonic() - started, 30)
+
+    def test_a_record_that_fails_mid_read_stops_the_observation(self) -> None:
+        # Characterization, in process: a read that fails once the file is open is an
+        # unreadable stop, never a digest or an escaping error (owner 6351449420 item 6).
+        observer = importlib.import_module("tools.python_environment_observation")
+        record = Path(self.directory.name) / "RECORD"
+        record.write_text("x" * 64, encoding="utf-8")
+        opened = os.fdopen
+
+        class Failing:
+            def __init__(self, stream) -> None:
+                self.stream = stream
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self.stream.close()
+
+            def fileno(self) -> int:
+                return self.stream.fileno()
+
+            def read(self, size: int) -> bytes:
+                raise OSError(errno.EIO, "a read that fails mid-file")
+
+        observation = observer._Observation(
+            dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        )
+        with patch.object(
+            observer.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: Failing(opened(fd, *args, **kwargs)),
+        ):
+            self.assertIsNone(observation.digest_of(str(record)))
+        self.assertEqual("unreadable", observation.incomplete)
+
+    def test_a_report_with_a_duplicate_field_is_a_gap(self) -> None:
+        # A field given twice is refused while decoding, never read as its last value
+        # (cubic 4354512437; security_scan's strict loader, #365 F1).
+        text = '{"format": "elsewhere", ' + self._observation().lstrip()[1:]
+        member = self._run(self._answering_text(text), "import-untyped")["producers"][
+            0
+        ]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+
+    def test_an_observer_without_a_safe_open_stops(self) -> None:
+        # Where the platform lacks the no-follow or non-blocking open, the observation
+        # stops as unreadable, never following a link or blocking (Codex 4354512574,
+        # cubic 4354512373; adoption_check._read_regular_bounded).
+        observer = importlib.import_module("tools.python_environment_observation")
+        root = self._observed_root("unsafe-open")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        for flags in ("_SAFE_OPEN", "_DIRECTORY_OPEN"):
+            with self.subTest(flags), patch.object(observer, flags, None, create=True):
+                observed = json.loads(observer.observe([str(root)], caps, form))
+                self.assertEqual("unreadable", observed["incomplete"])
+
+    @staticmethod
+    def _offset_recording(opened, offsets: list[int]):
+        """`opened` (os.fdopen), its streams appending the descriptor's offset after
+        every read to `offsets`: what the reader consumed from the file."""
+
+        class Recording:
+            def __init__(self, stream) -> None:
+                self.stream = stream
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self.stream.close()
+
+            def fileno(self) -> int:
+                return self.stream.fileno()
+
+            def read(self, size: int = -1) -> bytes:
+                chunk = self.stream.read(size)
+                offsets.append(os.lseek(self.fileno(), 0, os.SEEK_CUR))
+                return chunk
+
+        return lambda fd, *args, **kwargs: Recording(opened(fd, *args, **kwargs))
+
+    def test_a_read_never_passes_a_file_cap_by_more_than_one_byte(self) -> None:
+        # Each read asks for at most what is left of both file caps, and one byte more
+        # to see an overflow; the descriptor's offset is what the observer consumed
+        # (cubic 4354512414).
+        observer = importlib.import_module("tools.python_environment_observation")
+        record = Path(self.directory.name) / "LARGE-RECORD"
+        record.write_bytes(b"x" * 100_000)
+        opened = os.fdopen
+        base = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        for name, caps, stop in (
+            ("per file", {**base, "file_bytes": 1}, "file_bytes"),
+            ("in all", {**base, "file_bytes_total": 1}, "file_bytes_total"),
+        ):
+            with self.subTest(name):
+                offsets: list[int] = []
+                observation = observer._Observation(caps)
+                with patch.object(
+                    observer.os, "fdopen", self._offset_recording(opened, offsets)
+                ):
+                    self.assertIsNone(observation.digest_of(str(record)))
+                self.assertEqual(stop, observation.incomplete)
+                self.assertLessEqual(max(offsets), 2)
+
+    def test_a_distribution_directory_reached_through_a_link_is_unreadable(
+        self,
+    ) -> None:
+        # The *.dist-info directory is opened without following a link, and its RECORD
+        # relative to it: no component of the RECORD's path is followed (cubic
+        # 4354512430).
+        site = Path(self.directory.name) / "linked-dist-site"
+        site.mkdir()
+        real = Path(self.directory.name) / "real-dist-info"
+        real.mkdir()
+        (real / "RECORD").write_text("x" * 64, encoding="utf-8")
+        (site / "linked-1.0.dist-info").symlink_to(real, target_is_directory=True)
+        self.assertEqual("unreadable", self._observe_with(site)["incomplete"])
+
+    def test_a_record_is_read_from_the_directory_opened_not_its_path(self) -> None:
+        # Kill test (X54, round 5): the RECORD is opened relative to the *.dist-info
+        # directory the observer opened, so a directory replaced by a link after that
+        # open is never followed (cubic 4354512430).
+        observer = importlib.import_module("tools.python_environment_observation")
+        site = self._observed_root("swapped")
+        dist = site / "one-1.0.dist-info"
+        elsewhere = Path(self.directory.name) / "elsewhere-dist-info"
+        elsewhere.mkdir()
+        (elsewhere / "RECORD").write_text("y" * 64, encoding="utf-8")
+        moved = Path(self.directory.name) / "moved-dist-info"
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            if os.fspath(path) == str(dist) and flags & os.O_DIRECTORY:
+                dist.rename(moved)
+                dist.symlink_to(elsewhere, target_is_directory=True)
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(site)], caps, form))
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [[str(site), "one-1.0.dist-info", hashlib.sha256(b"x" * 64).hexdigest()]],
+            observed["distributions"],
+        )
+
+    def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
+        # An import-path entry that exists but cannot be examined stops the observation
+        # as unreadable; only a path that is absent is skipped (PAO 6353587922,
+        # PAO-452-ROOT-PERMISSION-NOT-ABSENCE-A4B26156-v1).
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        root = self._observed_root("inaccessible")
+        absent = Path(self.directory.name) / "absent-root"
+        observed = json.loads(observer.observe([str(absent)], caps, form))
+        self.assertIsNone(observed["incomplete"], "an absent entry is skipped")
+        self.assertEqual([], observed["roots"])
+        examined = os.stat
+
+        def refusing(path, *args, **kwargs):
+            if os.fspath(path) == str(root):
+                raise PermissionError(errno.EACCES, "permission denied", str(path))
+            return examined(path, *args, **kwargs)
+
+        with self.subTest("simulated"), patch.object(observer.os, "stat", refusing):
+            observed = json.loads(observer.observe([str(root)], caps, form))
+            self.assertEqual("unreadable", observed["incomplete"])
+
+    def test_a_real_permission_denial_reaches_the_collector_as_a_gap(self) -> None:
+        # The negative control where denial really occurs: the observer's own child
+        # over a root whose parent denies search, and its report through the actual
+        # acceptance boundary, which records unavailable and its gap. The positive
+        # control, an absent entry, is accepted (Router 6353798690).
+        absent = self._observe_with(Path(self.directory.name) / "absent-root")
+        self.assertIsNone(absent["incomplete"])
+        member = self._run(self._answering(absent), "import-untyped")["producers"][0][
+            "environment_observation"
+        ]
+        self.assertEqual("endpoints_equal", member["status"])
+        parent = Path(self.directory.name) / "closed-parent"
+        closed = parent / "root"
+        closed.mkdir(parents=True)
+        parent.chmod(0o600)
+        try:
+            try:
+                closed.stat()
+            except PermissionError:
+                pass
+            else:
+                # An elevated process reads past the permission, so the control
+                # cannot occur here: reported as skipped, never passed.
+                self.skipTest("this process is not denied the closed root")
+            observed = self._observe_with(closed)
+        finally:
+            parent.chmod(0o700)
+        self.assertEqual("unreadable", observed["incomplete"])
+        inventory = self._run(self._answering(observed), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
+
+    def test_an_observation_without_its_completion_marker_is_a_gap(self) -> None:
+        # Characterization: a report lacking `incomplete` is not the observer's format,
+        # so its absence is never read as complete (PAO 6353587922).
+        observation = json.loads(self._observation())
+        del observation["incomplete"]
+        member = self._run(self._answering(observation), "import-untyped")["producers"][
+            0
+        ]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+
+    def test_the_fixture_launchers_refuse_an_unexpected_launch(self) -> None:
+        # A launcher answers only the observation the collector must compose, never
+        # any other command, so that a wrong launch fails its test (CodeAnt on #452).
+        wrong = [
+            sys.executable,
+            "-I",
+            "/elsewhere/python_environment_observation.py",
+            json.dumps(self.module.ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
+            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+        ]
+        report = Path(self.directory.name) / "unexpected-launch.json"
+        for name, launcher in (
+            ("the environment launcher", self._environment(("fixture-1.0",))),
+            (
+                "the answering launcher",
+                self._answering(json.loads(self._observation())),
+            ),
+            ("the fixture launcher", self._fake_run),
+        ):
+            with self.subTest(name), self.assertRaises(AssertionError):
+                launcher(
+                    wrong,
+                    cwd=self.root,
+                    environment={},
+                    report=report,
+                    deadline=time.monotonic() + 60,
+                    limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                )
+
+    def test_the_fixture_pins_the_observation_it_answers(self) -> None:
+        # The expected launch is pinned, never read from the collector: a collector
+        # whose caps, format or observer has moved is refused, so that such a regression
+        # fails its tests (cubic 4355103949).
+        changed = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "roots": 1}
+        report = Path(self.directory.name) / "moved-launch.json"
+        for name, moved in (
+            ("caps", ("ENVIRONMENT_OBSERVATION_CAPS", changed)),
+            ("format", ("ENVIRONMENT_OBSERVATION_FORMAT", "elsewhere/v1")),
+            ("observer", ("_OBSERVER", Path("/elsewhere/observer.py"))),
+        ):
+            with self.subTest(name), patch.object(self.module, *moved):
+                command = self.module._environment_command()
+                with self.assertRaises(AssertionError):
+                    self._environment(("fixture-1.0",))(
+                        command,
+                        cwd=self.root,
+                        environment={},
+                        report=report,
+                        deadline=time.monotonic() + 60,
+                        limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                    )
+
+    def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
+        # Characterization: a read of the observation's own report that fails is an
+        # unavailable observation, never an escaping error.
+        original = Path.read_bytes
+
+        def failing(path):
+            if path.name.startswith("diagnostic-environment-"):
+                raise OSError("unreadable report")
+            return original(path)
+
+        with patch.object(Path, "read_bytes", failing):
+            inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])

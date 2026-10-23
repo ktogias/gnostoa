@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Mapping
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, BinaryIO, TextIO
+from typing import TYPE_CHECKING, Any, BinaryIO, TextIO, TypeGuard
 from urllib.parse import quote, unquote, urlparse
 
 from tools import bounded_process, test_suite
@@ -49,7 +49,7 @@ from tools.requirements_lock import (
     locked_requirements,
     normalized_distribution_name,
 )
-from tools.security_scan import SecurityScanError, scan_tracked_tree
+from tools.security_scan import SecurityScanError, _strict_json_loads, scan_tracked_tree
 
 if TYPE_CHECKING:
     # Only for its type: the default collection, collect_quality_evidence, never imports
@@ -1427,9 +1427,33 @@ class DiagnosticLimits:
 DEFAULT_DIAGNOSTIC_LIMITS = DiagnosticLimits()
 
 
+@dataclasses.dataclass(frozen=True)
+class _Launch:
+    """The interpreter launch a producer adapter builds its argv from and declares for
+    its runs: what an environment observation is associated by, never a producer name
+    or an argv prefix (Router 6351766731 R2)."""
+
+    executable: str
+    flags: tuple[str, ...]
+
+    def argv(self) -> list[str]:
+        return [self.executable, *self.flags]
+
+
+# The producers' interpreter under -I, its own isolation, as security_scan's child runs
+# (Codex on #436): mypy's and Ruff's adapters declare it, and the environment is observed
+# under it.
+_ISOLATED_PYTHON = _Launch(sys.executable, ("-I",))
+
+
 @dataclasses.dataclass
 class _ProducerResult:
     runs: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # The runs whose adapter declares a launch, with it: in memory only, never written
+    # (Router 6351766731 R2).
+    launched: list[tuple[_Launch, dict[str, Any]]] = dataclasses.field(
+        default_factory=list
+    )
     truncated: bool = False
     findings: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unanalyzed: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -1451,8 +1475,14 @@ class _ProducerResult:
         else:
             self.excess += 1
 
+    def add_run(self, record: dict[str, Any], launch: _Launch) -> None:
+        """A run its adapter launched as `launch`."""
+        self.runs.append(record)
+        self.launched.append((launch, record))
+
     def merge(self, other: _ProducerResult) -> None:
         self.runs += other.runs
+        self.launched += other.launched
         self.truncated = self.truncated or other.truncated
         self.findings += other.findings
         self.excess += other.excess
@@ -1589,7 +1619,10 @@ def _bounded_run(
     starts nothing (Codex on #436)."""
     if time.monotonic() >= deadline:
         return None, "not started: the inventory deadline had passed", False
-    print("+ " + " ".join(command[:8]), flush=True)
+    # An argument past 200 bytes, as the environment observation's script, is named by
+    # its size: the log keeps the interpreter and its flags (#389 F3 S2-C).
+    shown = (a if len(a) <= 200 else f"<{len(a)} bytes>" for a in command[:8])
+    print("+ " + " ".join(shown), flush=True)
     try:
         stream = _new_file(report)
     except OSError as exc:
@@ -1726,6 +1759,197 @@ def _run_record(
     return record
 
 
+# The producers' installed environment, as their own interpreter resolves it under -I:
+# the staged tree is not their only input. One tree under two installed sets gave mypy
+# two findings with every other recorded field identical (#389 F3 S2-C, the C6 probe in
+# 6347549109). Two bounded metadata observations, one before the version reads and one
+# after the producers, name the interpreter, its import roots and their top-level
+# entries, and each `*.dist-info` with a digest of the RECORD bytes read. What differs
+# between them is a gap. Equal endpoints prove neither continuity, since a change
+# restored in between is not seen (PAO 6347682576), nor installed content, since a
+# RECORD digest attests that file's bytes, not the files it lists (Router 6347672936).
+ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v1"
+ENVIRONMENT_OBSERVATION_SCOPE = (
+    "metadata observed at two endpoints: neither continuous nor installed content"
+)
+# What the observation does not see, stated so that endpoints_equal is never read as
+# complete equality (owner 6351449420 item 4). The staged tree on MYPYPATH is bound by
+# tree_binding, not by this observation.
+ENVIRONMENT_OBSERVATION_UNOBSERVED = (
+    "installed file contents beyond the RECORD bytes",
+    "data inside installed packages, typeshed among them",
+    "import resolution beyond the interpreter's -I path",
+    "changes between the endpoints",
+)
+# Measured in gnostoa:development-445: 4 import-path entries (3 directories and an
+# absent zip, no archive), 430 entries (201 in the largest root), 69 distributions, RECORD at most 1,608,909 bytes
+# and 2,258,869 in all, names at most 59 bytes (#389 F3 S2-C). Each cap keeps a wide
+# margin and is enforced while the observation enumerates or reads, before anything is
+# sorted. A file read, a RECORD or an archive on the path, counts against both file caps.
+ENVIRONMENT_OBSERVATION_CAPS = {
+    "roots": 32,
+    "entries_per_root": 4096,
+    "entries": 16384,
+    "distributions": 1024,
+    "file_bytes": 8 * 1024 * 1024,
+    "file_bytes_total": 32 * 1024 * 1024,
+    "string_bytes": 4096,
+    "output_bytes": 1024 * 1024,
+}
+# The observer, tools/python_environment_observation.py: the toolkit's own module beside
+# this one, so the collector's own revision, run by its path and never from the staged
+# tree, the working directory or PATH (Router 6351766731 R1).
+_OBSERVER = Path(__file__).resolve().parent / "python_environment_observation.py"
+_ENVIRONMENT_UNAVAILABLE_GAP = (
+    "producer environment identity unavailable: an observation before or after the "
+    "producers did not complete, was capped or was cut, so no installed set is "
+    "identified"
+)
+_ENVIRONMENT_CHANGED_GAP = (
+    "producer environment changed between its observations: the metadata observed "
+    "before the producers differs from the metadata observed after them"
+)
+
+
+def _is_text_list(value: object) -> TypeGuard[list[str]]:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+# The v1 contract of the observer's report, which is evidence the collector reads, not a
+# wire member: every field is required, and an unknown or repeated field is not v1. A
+# missing `incomplete` is therefore never read as a completed observation (cubic
+# 4354512437; PAO 6353587922; Router 6353798690).
+_OBSERVATION_FIELDS = frozenset(
+    {
+        "format",
+        "incomplete",
+        "interpreter",
+        "roots",
+        "entries",
+        "archives",
+        "distributions",
+    }
+)
+
+
+def _valid_observation(observed: object) -> bool:
+    """A complete observation in the collector's own format, every field the shape the
+    script writes; anything else is no observation (cubic 4353631703)."""
+    if not isinstance(observed, dict):
+        return False
+    interpreter, roots, entries = (
+        observed.get("interpreter"),
+        observed.get("roots"),
+        observed.get("entries"),
+    )
+    archives, distributions = observed.get("archives"), observed.get("distributions")
+    return (
+        # Exactly the fields the observer writes, and no other (cubic 4354512437).
+        set(observed) == _OBSERVATION_FIELDS
+        and observed.get("format") == ENVIRONMENT_OBSERVATION_FORMAT
+        and observed.get("incomplete") is None
+        and isinstance(interpreter, dict)
+        and set(interpreter) == {"executable", "version"}
+        and all(isinstance(interpreter.get(k), str) for k in ("executable", "version"))
+        and _is_text_list(roots)
+        and isinstance(entries, dict)
+        and set(entries) == set(roots)
+        and all(_is_text_list(names) for names in entries.values())
+        and isinstance(archives, list)
+        and all(_is_text_list(a) and len(a) == 2 for a in archives)
+        and isinstance(distributions, list)
+        and all(_is_text_list(d) and len(d) == 3 for d in distributions)
+    )
+
+
+def _environment_command() -> list[str]:
+    return [
+        *_ISOLATED_PYTHON.argv(),
+        str(_OBSERVER),
+        json.dumps(ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
+        ENVIRONMENT_OBSERVATION_FORMAT,
+    ]
+
+
+def _regular_observer(path: Path) -> bool:
+    """The observer is a regular file reached without a link: checked before any
+    launch, so that a missing or linked one is no observation (Router 6351766731
+    R1)."""
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _observe_environment(
+    root: Path, run: Path, limits: DiagnosticLimits, deadline: float, when: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """One bounded metadata observation of the producers' environment, run as they
+    run, isolated with -I and under the inventory's deadline and max_report_bytes: its
+    report's evidence and its interpreter, or None for each when it does not complete,
+    is incomplete, is cut or is not the observation's own format."""
+    if not _regular_observer(_OBSERVER):
+        return None, None
+    report = run / f"diagnostic-environment-{when}.json"
+    status, gap, invalid = _bounded_run(
+        _environment_command(),
+        cwd=root,
+        environment=dict(os.environ),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    if gap is not None or invalid or status != 0:
+        return None, None
+    # One read: the bytes parsed are the bytes the evidence names, and a read that
+    # fails is an unavailable observation, never an escaping error (Sourcery on #452).
+    # The strict loader refuses a duplicate field rather than keep its last value
+    # (cubic 4354512437): security_scan's, consumed rather than copied (#365 F1).
+    try:
+        content = report.read_bytes()
+        observed = _strict_json_loads(content.decode("utf-8"))
+    except (OSError, ValueError, RecursionError, SecurityScanError):
+        return None, None
+    if not _valid_observation(observed):
+        return None, None
+    return (
+        {
+            "path": report.relative_to(run).as_posix(),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        },
+        dict(observed["interpreter"]),
+    )
+
+
+def _environment_observation(
+    before: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    after: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    gaps: list[str],
+) -> dict[str, Any]:
+    """The optional record member: its own format, its endpoint scope and caps, both
+    observations' evidence, and their status. Its absence from a v2 record means not
+    observed, never equal or trusted."""
+    if before[0] is None or after[0] is None:
+        status = "unavailable"
+        gaps.append(_ENVIRONMENT_UNAVAILABLE_GAP)
+    elif before[0]["sha256"] != after[0]["sha256"]:
+        status = "endpoints_differ"
+        gaps.append(_ENVIRONMENT_CHANGED_GAP)
+    else:
+        status = "endpoints_equal"
+    return {
+        "format": ENVIRONMENT_OBSERVATION_FORMAT,
+        "scope": ENVIRONMENT_OBSERVATION_SCOPE,
+        "caps": dict(ENVIRONMENT_OBSERVATION_CAPS),
+        "unobserved": list(ENVIRONMENT_OBSERVATION_UNOBSERVED),
+        "status": status,
+        "interpreter": before[1],
+        "before": before[0],
+        "after": after[0],
+    }
+
+
 def _producer_version(
     root: Path, run: Path, producer: str, limits: DiagnosticLimits, deadline: float
 ) -> str | None:
@@ -1735,7 +1959,7 @@ def _producer_version(
     #436). None when it cannot be read."""
     report = run / f"diagnostic-{producer}-version.txt"
     status, gap, _invalid = _bounded_run(
-        [sys.executable, "-I", "-m", producer, "--version"],
+        [*_ISOLATED_PYTHON.argv(), "-m", producer, "--version"],
         cwd=root,
         environment=dict(os.environ),
         report=report,
@@ -1771,10 +1995,9 @@ def _mypy_command(
     prefix = f"{key}/" if key else ""
     flags = [] if key else ["--explicit-package-bases"]
     command = [
-        sys.executable,
         # -I, the interpreter's own isolation, as security_scan's child runs: -P left
         # the user site on, so a usercustomize ran in every producer (Codex on #436).
-        "-I",
+        *_ISOLATED_PYTHON.argv(),
         "-m",
         "mypy",
         "--config-file=",
@@ -1930,8 +2153,9 @@ def _run_mypy(
             deadline=deadline,
             limits=limits,
         )
-        result.runs.append(
-            _run_record(name, "mypy", command, status, report, run, version)
+        result.add_run(
+            _run_record(name, "mypy", command, status, report, run, version),
+            _ISOLATED_PYTHON,
         )
         result.truncated = result.truncated or invalid
         gap = _mypy_gap(report, prefix, status, gap, result, limits.max_findings)
@@ -1987,10 +2211,9 @@ def _run_ruff(
     allowance = limits.max_findings if max_findings is None else max_findings
     result = _ProducerResult()
     command = [
-        sys.executable,
         # -I, the interpreter's own isolation, as security_scan's child runs: -P left
         # the user site on, so a usercustomize ran in every producer (Codex on #436).
-        "-I",
+        *_ISOLATED_PYTHON.argv(),
         "-m",
         "ruff",
         "check",
@@ -2016,8 +2239,9 @@ def _run_ruff(
         deadline=deadline,
         limits=limits,
     )
-    result.runs.append(
-        _run_record("ruff", "ruff", command, status, report, run, version)
+    result.add_run(
+        _run_record("ruff", "ruff", command, status, report, run, version),
+        _ISOLATED_PYTHON,
     )
     result.truncated = result.truncated or invalid
     # A complete report is read even after a gap, so that nothing ruff emitted is
@@ -2188,6 +2412,33 @@ def _source_size(root: Path, path: str) -> int:
         return -1
 
 
+def _attach_environment_observation(
+    result: _ProducerResult,
+    root: Path,
+    run: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    before: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    gaps: list[str],
+) -> None:
+    """The second observation, after the producers, and the member on the runs it
+    describes."""
+    # Past the refusal's predicate no inventory is written, so, as for a later
+    # producer, no later observation starts (cubic on #436).
+    after = (
+        _observe_environment(root, run, limits, deadline, "after")
+        if result.count() <= limits.max_findings
+        else (None, None)
+    )
+    observation = _environment_observation(before, after, gaps)
+    # The observation describes the runs launched as it was, by the launch their
+    # adapter declares: whatever their producer, and never by a name, an argv prefix
+    # or for an in-process run (Router 6351766731 R2).
+    for launch, record in result.launched:
+        if launch == _ISOLATED_PYTHON:
+            record["environment_observation"] = observation
+
+
 def _run_producers(
     root: Path,
     run: Path,
@@ -2225,6 +2476,7 @@ def _run_producers(
         else:
             paths.append(path)
     if paths:
+        before = _observe_environment(root, run, limits, deadline, "before")
         versions = {
             producer: _producer_version(root, run, producer, limits, deadline)
             for producer in ("mypy", "ruff")
@@ -2254,6 +2506,9 @@ def _run_producers(
                     max_findings=limits.max_findings - result.count(),
                 )
             )
+        _attach_environment_observation(
+            result, root, run, limits, deadline, before, gaps
+        )
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
     tracked = set(expected) - set(withheld)
