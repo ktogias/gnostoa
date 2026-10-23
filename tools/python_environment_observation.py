@@ -171,32 +171,43 @@ class _Observation:
 
     def record_digest(self, root: str, name: str) -> str | None:
         """The digest of a distribution's RECORD, opened relative to its `*.dist-info`
-        directory, which is itself opened without following a link."""
+        directory, itself opened without following a link relative to the import root
+        opened once. The RECORD's rows are checked against that same root, so a RECORD
+        and the files it names always come from one directory (Q on #453)."""
         if _DIRECTORY_OPEN is None:
             self.stop("unreadable")
             return None
         try:
-            directory = os.open(os.path.join(root, name), _DIRECTORY_OPEN)
+            # The import root itself is followed, as the interpreter and the listing
+            # follow it; nothing under it is.
+            base = os.open(root, _DIRECTORY_OPEN & ~os.O_NOFOLLOW)
         except OSError:
             self.stop("unreadable")
             return None
-        chunks: list[bytes] = []
         try:
-            digest = self.digest_of("RECORD", directory, chunks)
+            directory = os.open(name, _DIRECTORY_OPEN, dir_fd=base)
+        except OSError:
+            os.close(base)
+            self.stop("unreadable")
+            return None
+        try:
+            return self.record_in(root, base, directory)
         finally:
             os.close(directory)
+            os.close(base)
+
+    def record_in(self, root: str, base: int, directory: int) -> str | None:
+        """The digest of the RECORD in the opened `*.dist-info` `directory`, and the
+        check of its rows against the opened import root `base`."""
+        chunks: list[bytes] = []
+        digest = self.digest_of("RECORD", directory, chunks)
         if digest is not None:
-            self.verify_record(root, b"".join(chunks))
+            self.verify_record(root, base, b"".join(chunks))
         return digest
 
-    def verify_record(self, root: str, content: bytes) -> None:
-        """Every hashed row of a RECORD, read once, against the file it names in
-        `root`. A row without a hash stays outside the check."""
-        try:
-            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        except OSError:
-            self.stop("unreadable")
-            return
+    def verify_record(self, root: str, directory: int, content: bytes) -> None:
+        """Every hashed row of a RECORD, read once, against the file it names under
+        the opened root `directory`. A row without a hash stays outside the check."""
         try:
             for row in csv.reader(io.StringIO(content.decode("utf-8"))):
                 if self.incomplete:
@@ -205,8 +216,6 @@ class _Observation:
                     self.verify_row(root, directory, row)
         except (UnicodeDecodeError, csv.Error):
             self.stop("record_malformed")
-        finally:
-            os.close(directory)
 
     def verify_row(self, root: str, directory: int, row: list[str]) -> None:
         """One RECORD row: its sha256 claim against the bytes of the file it names."""
