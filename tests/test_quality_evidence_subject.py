@@ -1739,6 +1739,88 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             os.mkfifo(root / "mm" / "__init__.py")
             self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
 
+    @staticmethod
+    def _claim(content: bytes) -> str:
+        """A well-formed sha256 RECORD claim for `content`."""
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+        return digest.decode()
+
+    def test_a_row_outside_its_root_is_outside_the_check_and_never_accessed(
+        self,
+    ) -> None:
+        # E1 (Router #389 6361519666): a valid console-script or data row naming a path
+        # lexically outside the import root is classified before any filesystem access:
+        # never opened, stat'ed or hashed, never verified, and it does not stop an
+        # otherwise complete observation. The outside target is a FIFO, so any access
+        # would leave the observation incomplete.
+        outside = Path(self.directory.name) / "outside-bin"
+        outside.mkdir()
+        os.mkfifo(outside / "tool")
+        row = f"../outside-bin/tool,sha256={self._claim(b'x')},1"
+        root = self._recorded_root("with-script", row)
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(1, len(observed["distributions"]))
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        touched: list[str] = []
+        real_open, real_stat = os.open, os.stat
+
+        def opening(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_open(path, *args, **kwargs)
+
+        def stating(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_stat(path, *args, **kwargs)
+
+        with (
+            patch.object(observer.os, "open", opening),
+            patch.object(observer.os, "stat", stating),
+        ):
+            result = json.loads(observer.observe([str(root)], caps, form))
+        self.assertIsNone(result["incomplete"])
+        self.assertFalse(
+            [t for t in touched if "outside-bin" in t or t == ".." or t == "tool"]
+        )
+
+    def test_an_ambiguous_or_in_root_alias_row_stops_the_observation(self) -> None:
+        # E1 is lexical and narrow: a traversal after a component, a path written to
+        # leave the root and come back into it, an absolute path into the root, and
+        # dot or empty components are not "outside"; each stops the observation, so
+        # an in-scope mismatch can never hide behind them (Router #389 6361519666).
+        claim = self._claim(b"x")
+        root = Path(self.directory.name) / "aliased"
+        cases = (
+            ("a traversal after a component", "mm/../../x.py"),
+            ("a relative alias back into the root", "../aliased/mm/__init__.py"),
+            ("an absolute alias into the root", f"{root}/mm/__init__.py"),
+            ("a dot component", "mm/./__init__.py"),
+            ("an empty component", "mm//__init__.py"),
+        )
+        for name, path in cases:
+            with self.subTest(name):
+                shutil.rmtree(root, ignore_errors=True)
+                self._recorded_root("aliased", f"{path},sha256={claim},1")
+                observed = self._observe_with(root)
+                self.assertEqual("record_ambiguous_path", observed["incomplete"])
+
+    def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
+        # C6 kept under E1: adding a distribution whose in-root rows match, with an
+        # outside console script, changes a complete observation rather than making it
+        # unavailable (Router #389 6361519666).
+        root = Path(self.directory.name) / "growing"
+        root.mkdir()
+        (root / "a.py").write_text("", encoding="utf-8")
+        before = self._observe_with(root)
+        shutil.rmtree(root)
+        self._recorded_root("growing", f"../bin/mm,sha256={self._claim(b'x')},1")
+        after = self._observe_with(root)
+        self.assertIsNone(before["incomplete"])
+        self.assertIsNone(after["incomplete"])
+        self.assertNotEqual(before["distributions"], after["distributions"])
+
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
         # unavailable observation, never an escaping error.
