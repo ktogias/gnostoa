@@ -2131,6 +2131,20 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         with self.assertRaises(csv.Error):
             next(observer._record_lines(endless))
         self.assertGreater(len(endless), 40)
+        # CodeAnt on #453: a line whose end falls in the chunk that takes it past the
+        # bound is refused before it is joined; one at the bound, its newline
+        # included, is a line.
+        bound = observer._RECORD_LINE_CHARACTERS
+        for length, refused in ((bound, False), (bound + 1, True)):
+            with self.subTest(length=length):
+                data = b"x" * (length - 1) + b"\n"
+                chunks = [data[i : i + 65536] for i in range(0, len(data), 65536)]
+                lines = observer._record_lines(chunks)
+                if refused:
+                    with self.assertRaises(csv.Error):
+                        next(lines)
+                else:
+                    self.assertEqual(length, len(next(lines)))
 
     def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
         # Router 6364506650 (B): the composed caps admit a matching in-root payload of
