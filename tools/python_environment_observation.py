@@ -21,7 +21,8 @@ ambiguous path or a listed file that cannot be read stops the observation too. A
 row naming a path outside its import root, a console script or data file, is outside
 the check: classified lexically, never accessed and never verified (E1, Router #389
 6361519666). A RECORD that agrees is not installed-content identity: rows without a hash,
-rows outside the root, files no RECORD lists and import resolution stay unobserved.
+rows outside the root, files outside RECORD-owned directories and import resolution stay
+unobserved.
 
 The entries no RECORD lists are observed too, in the RECORD-owned directories: each
 in-root top-level directory under which some in-root row names a file, walked whole
@@ -29,9 +30,12 @@ without following a link (D-U, H-out: #389 F3-S2-DU-HOUT-FINAL-PROOF, Router 637
 Each such entry is reported with its kind: a regular file with its digest, a link with
 its target, never followed, and anything else alone, never opened. A file a RECORD lists
 without a hash is listed, so its bytes stay unobserved. Each root is opened once, and
-its listing, its RECORDs and the walk all read that one directory (PAO 6373356762).
-Every directory is charged when it is listed, before it is opened, so open descriptors
-never exceed the walk's depth.
+its listing, its RECORDs and the walk all read that one directory object (PAO
+6373356762): a link to the root retargeted afterwards leaves them on it. That is no
+guarantee against a change made in place, nor that the producers read the same
+generation. Every directory is charged when it is listed, before it is opened, so open
+descriptors never exceed the walk's depth. Listing by descriptor and reading a link
+relative to one are required: without them the observation is unreadable.
 """
 
 import base64

@@ -1544,8 +1544,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # Kill test (X54, round 5): the RECORD is opened relative to the *.dist-info
         # directory the observer opened, so a directory replaced by a link after that
         # open is never followed (cubic 4354512430). The walk then enters that owned
-        # directory again and finds the link in its place: the observation stops as
-        # unreadable, never complete (D-U).
+        # directory again and finds this test's substituted link in its place: the
+        # observation stops as unreadable, never complete (D-U). This is that one
+        # substitution, not a guarantee that any change in place is seen.
         observer = importlib.import_module("tools.python_environment_observation")
         site = self._observed_root("swapped")
         dist = site / "one-1.0.dist-info"
@@ -2619,13 +2620,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
 
     def test_a_later_observation_runs_on_the_remaining_deadline_only(self) -> None:
-        # Characterization (Router 6373641379 item 3): every launch gets the
-        # inventory's one absolute deadline. Once the producers have spent it, the
-        # after-observation, the real observer through the real launcher, starts with
-        # what remains, is cut there and leaves no process: the member is unavailable
-        # and no fresh budget is ever granted. The child sleeps before the observer's
-        # own code, so that it always needs longer than what remains: the cut is the
-        # launcher's, the same for any child.
+        # Characterization (Router 6373641379 item 3), green before D-U too: every
+        # launch gets the inventory's one absolute deadline. The producers are faked;
+        # the launcher's stand-in spends the budget itself, waiting until at most 0.1 s
+        # remains, and then starts the after-observation, the real observer through the
+        # real launcher, with what remains. It is cut there and leaves no process: the
+        # member is unavailable and no fresh budget is ever granted. The child sleeps
+        # before the observer's own code, so that it always needs longer than what
+        # remains: the cut is the launcher's, the same for any child. A synthetic spent
+        # budget, not a run of the real producers.
         real = self.module._bounded_run
         marker = f"# remaining-deadline-{os.getpid()}-{time.monotonic_ns()}"
         launches: list[tuple[bool, float]] = []

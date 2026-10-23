@@ -1795,12 +1795,16 @@ ENVIRONMENT_OBSERVATION_UNOBSERVED = (
 # sorted. A file read, a RECORD, an archive on the path or a file a RECORD lists, counts
 # against both file caps. The file caps were chosen for those files (Router #389
 # 6364506650, B): the RECORD-listed files in the import roots measured 20,172 files and
-# 144,144,781 bytes, the largest 36,986,816 bytes, in that image (6364297742). The walk's
-# caps were chosen for gnostoa:development-4e4ced3a, whose RECORD-owned directories held
-# 967 directories, 23,586 entries, depth 7, 22,769 in-root rows and no unlisted entry
-# (Router #389 6373641379; packet 6372955502): directories and entries as they are
-# listed, depth in directory levels below the root, rows as they are kept and unlisted
-# entries as they are recorded.
+# 144,144,781 bytes, the largest 36,986,816 bytes, in that image (6364297742).
+# The walk's caps bound counts (Router #389 6374387035): directories, each owned one just
+# before it is opened and each subdirectory when it is listed; entries as they are
+# listed; depth in directory levels below the root, an owned directory being 1; in-root
+# RECORD rows as they are kept, each as a fixed-size digest; and unlisted entries as they
+# are recorded. Each overflow is that key's own stop. Their values were chosen for
+# gnostoa:development-4e4ced3a, whose RECORD-owned directories held 967 directories,
+# 23,586 entries, depth 7, 22,769 in-root rows and no unlisted entry (packet 6372955502).
+# The cost measured at each bound, in finite cases, is #389 6374250615's: a measurement,
+# not a maximum.
 ENVIRONMENT_OBSERVATION_CAPS = {
     "roots": 32,
     "entries_per_root": 4096,
