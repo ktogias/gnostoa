@@ -2200,6 +2200,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         with self.subTest("a row of one field"):
             root = self._recorded_root("one-field", "mm/__init__.py")
             self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD with lone-CR row endings"):
+            # Characterization (CodeAnt on #453): lines split on LF only, as the
+            # StringIO iteration they replace split them, so lone-CR rows were and stay
+            # malformed.
+            root = self._recorded_root("lone-cr")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes().replace(b"\n", b"\r"))
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
         with self.subTest("a RECORD ending inside a character"):
             root = self._recorded_root("truncated-utf8")
             record = root / "mm-1.0.dist-info" / "RECORD"
