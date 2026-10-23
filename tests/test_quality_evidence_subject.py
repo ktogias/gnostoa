@@ -981,6 +981,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ({**caps, "entries": 3}, "entries"),
             ({**caps, "file_bytes": 1}, "file_bytes"),
             ({**caps, "file_bytes_total": 100}, "file_bytes_total"),
+            # One distribution in each root: only the second stops it (X64, Claude on
+            # #452).
+            ({**caps, "distributions": 1}, "distributions"),
             ({**caps, "string_bytes": 8}, "string_bytes"),
             ({**caps, "output_bytes": 200}, "output_bytes"),
         )
