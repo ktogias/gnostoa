@@ -387,8 +387,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "entries_per_root": 4096,
             "entries": 16384,
             "distributions": 1024,
-            "file_bytes": 8 * 1024 * 1024,
-            "file_bytes_total": 32 * 1024 * 1024,
+            "file_bytes": 64 * 1024 * 1024,
+            "file_bytes_total": 256 * 1024 * 1024,
             "string_bytes": 4096,
             "output_bytes": 1024 * 1024,
         }
