@@ -378,15 +378,27 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         raise AssertionError(f"unexpected producer: {command}")
 
     def _observation_command(self) -> list[str]:
-        """The observation launch as the collector must compose it, built here rather
-        than taken from the collector, so that a launcher answers it and refuses any
-        other (CodeAnt on #452)."""
+        """The observation launch the collector must compose, pinned here rather than
+        read from it: the observer beside the collector's module, the measured caps and
+        the v1 format. A launcher answers exactly this and refuses any other, so that a
+        moved observer, cap or format fails its tests (CodeAnt and cubic on #452)."""
+        caps = {
+            "roots": 32,
+            "entries_per_root": 4096,
+            "entries": 16384,
+            "distributions": 1024,
+            "file_bytes": 8 * 1024 * 1024,
+            "file_bytes_total": 32 * 1024 * 1024,
+            "string_bytes": 4096,
+            "output_bytes": 1024 * 1024,
+        }
+        observer = Path(self.module.__file__).resolve().parent
         return [
             sys.executable,
             "-I",
-            str(self.module._OBSERVER),
-            json.dumps(self.module.ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
-            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+            str(observer / "python_environment_observation.py"),
+            json.dumps(caps, sort_keys=True),
+            "gnostoa-producer-environment-observation/v1",
         ]
 
     def _observation(
