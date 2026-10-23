@@ -293,11 +293,9 @@ class _Observation:
             self.verify_record(bases, base, chunks)
         return digest
 
-    def verify_record(
-        self, bases: set[str], directory: int, chunks: list[bytes]
-    ) -> None:
+    def verify_record(self, bases: set[str], root: int, chunks: list[bytes]) -> None:
         """Every hashed row of a RECORD, read once, against the file it names under
-        the opened root `directory`. A row without a hash stays outside the check."""
+        the opened root `root`. A row without a hash stays outside the check."""
         try:
             # Strict, so that quoting a lenient reader would repair is malformed (CodeAnt
             # on #453).
@@ -306,11 +304,11 @@ class _Observation:
                 if self.incomplete:
                     return
                 if row:
-                    self.verify_row(bases, directory, row)
+                    self.verify_row(bases, root, row)
         except (UnicodeDecodeError, csv.Error):
             self.stop("record_malformed")
 
-    def verify_row(self, bases: set[str], directory: int, row: list[str]) -> None:
+    def verify_row(self, bases: set[str], root: int, row: list[str]) -> None:
         """One RECORD row: its sha256 claim against the bytes of the file it names."""
         if len(row) != 3:
             self.stop("record_malformed")
@@ -335,7 +333,7 @@ class _Observation:
         if parts is None:
             self.stop("record_ambiguous_path")
             return
-        found = self.digest_listed(directory, parts)
+        found = self.digest_listed(root, parts)
         if found is None:
             return
         digest, length = found
