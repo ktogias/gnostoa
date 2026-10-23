@@ -115,7 +115,15 @@ def _within_any(bases: set[str], target: str) -> bool:
     without the filesystem: the standard-library primitive that knowledge_common's and
     validate_bundle's `_within` use, which this stdlib-only `python -I` observer cannot
     import (owner 6364237541 item 6)."""
-    return any(PurePosixPath(target).is_relative_to(base) for base in bases)
+    # Exact for normalized paths: the base's components begin the target's and no `..`
+    # follows them, since a relative base such as `.` has no components at all (cubic
+    # on #453).
+    path = PurePosixPath(target)
+    return any(
+        path.is_relative_to(base)
+        and ".." not in path.parts[len(PurePosixPath(base).parts) :]
+        for base in bases
+    )
 
 
 def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
