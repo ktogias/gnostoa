@@ -1158,6 +1158,25 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 "an unlisted entry outside the roots",
                 {"unlisted": [["/x", "y", "other", None]]},
             ),
+            (
+                "an unlisted directory with a value",
+                {"unlisted": [[root, "x", "directory", "v"]]},
+            ),
+            # A path is plain and root-relative (cubic on #455).
+            ("an unlisted path absolute", {"unlisted": [[root, "/x", "other", None]]}),
+            (
+                "an unlisted path upward",
+                {"unlisted": [[root, "a/../x", "other", None]]},
+            ),
+            (
+                "an unlisted path with an empty part",
+                {"unlisted": [[root, "a//x", "other", None]]},
+            ),
+            (
+                "an unlisted path with a dot",
+                {"unlisted": [[root, "a/./x", "other", None]]},
+            ),
+            ("an unlisted path empty", {"unlisted": [[root, "", "other", None]]}),
             ("an unknown field", {"unknown": 1}),
             (
                 "an unknown interpreter field",
@@ -2480,12 +2499,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         real_open, real_close = os.open, os.close
         live: set[int] = set()
         peak = [0]
+        opened: list[str] = []
 
         def counting_open(path, flags, *args, **kwargs):
             descriptor = real_open(path, flags, *args, **kwargs)
             if flags & os.O_DIRECTORY:
                 live.add(descriptor)
                 peak[0] = max(peak[0], len(live))
+                opened.append(os.fspath(path))
             return descriptor
 
         def counting_close(descriptor):
@@ -2505,6 +2526,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 )
             )
         self.assertEqual("tree_directories", observed["incomplete"])
+        # No sibling is ever opened: the second is charged when listed and kept, the
+        # third stops the walk, so none is opened (Sourcery and cubic on #455).
+        self.assertEqual([], [name for name in opened if name.startswith("s")])
+        # At most the held root, the *.dist-info and one RECORD path component, which
+        # the RECORD check opens.
         self.assertLessEqual(peak[0], 3)
         self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
 
@@ -2514,7 +2540,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # its RECORDs and its unlisted entries all come from that one directory.
         observer = importlib.import_module("tools.python_environment_observation")
         first = self._unlisted_root("generation-a", b"X = 'a'\n")
-        second = self._unlisted_root("generation-b", b"X = 'b'\n")
+        # A RECORD that differs, so that a RECORD read from the second root shows too
+        # (Sourcery on #455).
+        second = self._recorded_root("generation-b", "mm/other.py,,")
+        (second / "mm" / "extra.py").write_bytes(b"X = 'b'\n")
+        record = first / "mm-1.0.dist-info" / "RECORD"
+        opened = hashlib.sha256(record.read_bytes()).hexdigest()
         link = Path(self.directory.name) / "generation-root"
         for stage in ("_import_roots", "_distributions"):
             with self.subTest(stage):
@@ -2541,6 +2572,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 self.assertEqual(
                     [hashlib.sha256(b"X = 'a'\n").hexdigest()],
                     [entry[3] for entry in observed.get("unlisted") or []],
+                )
+                self.assertEqual(
+                    [opened], [digest for _, _, digest in observed["distributions"]]
                 )
 
     def test_a_walk_that_cannot_read_a_directory_stops_the_observation(self) -> None:
@@ -2602,7 +2636,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         linked = self._recorded_root("fd-walk-linked", "pkg/m.py,,")
         (linked / "pkg").symlink_to(deep, target_is_directory=True)
         for name, root, caps in (
-            ("complete", deep, {}),
+            (None, deep, {}),
             ("tree_entries", deep, {"tree_entries": 3}),
             ("tree_directories", deep, {"tree_directories": 3}),
             ("tree_depth", deep, {"tree_depth": 2}),
@@ -2610,13 +2644,17 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("record_rows", deep, {"record_rows": 2}),
             ("unreadable", linked, {}),
         ):
-            with self.subTest(name):
+            with self.subTest(name or "complete"):
                 before = sorted(os.listdir("/proc/self/fd"))
-                observer.observe(
-                    [str(root)],
-                    self._walk_caps(**caps),
-                    self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                observed = json.loads(
+                    observer.observe(
+                        [str(root)],
+                        self._walk_caps(**caps),
+                        self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                    )
                 )
+                # The exit taken, then the cleanup after it (Sourcery on #455).
+                self.assertEqual(name, observed["incomplete"])
                 self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
 
     def test_a_later_observation_runs_on_the_remaining_deadline_only(self) -> None:
@@ -2686,3 +2724,69 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 except OSError:
                     continue
                 self.assertNotIn(marker.encode(), cmdline)
+
+    def test_a_directory_with_nothing_beneath_it_is_an_unlisted_entry(self) -> None:
+        # RED (Octopus, Sourcery and CodeAnt on #455): an empty directory no RECORD
+        # implies, such as a namespace portion, is recorded as one entry, its deepest
+        # empty directory; a directory holding a listed file or an unlisted entry
+        # already shows, and is not recorded again.
+        root = self._recorded_root("empty-dirs", "mm/held/x.py,,")
+        (root / "mm" / "held").mkdir()
+        (root / "mm" / "held" / "x.py").write_text("", encoding="utf-8")
+        (root / "mm" / "sub").mkdir()
+        (root / "mm" / "deep" / "er").mkdir(parents=True)
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [
+                [str(root), "mm/deep/er", "directory", None],
+                [str(root), "mm/sub", "directory", None],
+            ],
+            observed.get("unlisted"),
+        )
+        (root / "mm" / "sub").rmdir()
+        self.assertNotEqual(observed, self._observe_with(root))
+
+    def test_a_row_that_is_not_a_plain_in_root_path_lists_nothing(self) -> None:
+        # Characterization (Sourcery on #455): a hashless row spelled other than as a
+        # plain in-root path names no file the walk may skip, so a file named only that
+        # way is recorded as unlisted: more is observed, never less.
+        root = self._recorded_root("spelled", "./mm/extra.py,,")
+        (root / "mm" / "extra.py").write_text("V = 1\n", encoding="utf-8")
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [
+                [
+                    str(root),
+                    "mm/extra.py",
+                    "file",
+                    hashlib.sha256(b"V = 1\n").hexdigest(),
+                ]
+            ],
+            observed.get("unlisted"),
+        )
+
+    def test_every_record_row_path_is_charged_to_the_string_cap(self) -> None:
+        # RED (Sourcery on #455): a row's path is a string the observer holds, so one
+        # longer than string_bytes stops the observation, hashless or not.
+        root = self._recorded_root("long-row", f"mm/{'x' * 5000}.py,,")
+        observed = self._observe_with(root)
+        self.assertEqual("string_bytes", observed["incomplete"])
+
+    def test_a_zero_depth_opens_no_owned_directory(self) -> None:
+        # RED (CodeAnt on #455): an owned directory is depth 1, checked before it is
+        # opened like any other.
+        observed = self._observe_with(
+            self._recorded_root("zero-depth"), caps=self._walk_caps(tree_depth=0)
+        )
+        self.assertEqual("tree_depth", observed["incomplete"])
+
+    def test_a_root_named_twice_is_walked_once(self) -> None:
+        # RED (cubic on #455): the same root string twice on the import path is one
+        # directory, opened once, so its owned directories are walked once: one entry,
+        # charged once. Different spellings of one directory stay a residual.
+        root = self._unlisted_root("twice")
+        observed = self._observe_with(root, root, caps=self._walk_caps(unlisted=1))
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(1, len(observed.get("unlisted") or []))
