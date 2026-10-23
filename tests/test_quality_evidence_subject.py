@@ -2155,6 +2155,28 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 self.assertIsNone(observed["incomplete"])
                 self.assertEqual(1, len(observed["distributions"]))
 
+    def test_containment_keeps_the_parents_a_relative_root_cannot_hold(self) -> None:
+        # cubic 4359922819 on #453: a relative root such as `.` has no components, so
+        # a parent-relative target was "within" it and an outside row turned
+        # ambiguous. Containment is exact for normalized paths: the root's components
+        # begin the target's, and no `..` follows them.
+        observer = importlib.import_module("tools.python_environment_observation")
+        real = os.path.realpath(self.directory.name)
+        bases = {".", real}
+        self.assertEqual(("outside", None), observer._record_path(bases, "../bin/tool"))
+        self.assertEqual(
+            ("ambiguous", None),
+            observer._record_path(bases, f"../{os.path.basename(real)}/mm/x.py"),
+        )
+        self.assertEqual(
+            ("inside", ["mm", "x.py"]), observer._record_path(bases, "mm/x.py")
+        )
+        self.assertFalse(observer._within_any({"."}, "../bin/tool"))
+        self.assertFalse(observer._within_any({"../a"}, "../../a/b"))
+        self.assertTrue(observer._within_any({"."}, "mm/x.py"))
+        self.assertTrue(observer._within_any({"../a"}, "../a/b"))
+        self.assertTrue(observer._within_any({"/r"}, "/r"))
+
     def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
         # C6 kept under E1: adding a distribution whose in-root rows match, with an
         # outside console script, changes a complete observation rather than making it
