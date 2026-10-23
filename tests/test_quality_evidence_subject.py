@@ -2053,6 +2053,26 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     "record_malformed", self._observe_with(root)["incomplete"]
                 )
 
+    def test_a_size_that_equals_its_file_as_a_number_is_verified(self) -> None:
+        # Router #453 6368854931 (b), after PAO 6368524836 and CodeAnt 4361108960: the
+        # PyPA RECORD size is a base-ten byte count, so a padded spelling of the right
+        # count agrees; the size stays bounded at 20 ASCII digits before it is read.
+        cases = (
+            ("a one-byte file as 1", b"x", "1"),
+            ("a one-byte file as 01", b"x", "01"),
+            ("a one-byte file as 0001", b"x", "0001"),
+            ("a one-byte file in 20 digits", b"x", "0" * 19 + "1"),
+            ("an empty file as 0", b"", "0"),
+            ("an empty file as 00", b"", "00"),
+            ("an empty size", b"x", ""),
+        )
+        for name, content, size in cases:
+            with self.subTest(name):
+                row = f"mm/data.bin,sha256={self._claim(content)},{size}"
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                (root / "mm" / "data.bin").write_bytes(content)
+                self.assertIsNone(self._observe_with(root)["incomplete"])
+
     def test_a_size_that_disagrees_with_its_file_is_a_mismatch(self) -> None:
         # Sourcery 4358369095 on #453: a row's size is a claim too, compared with the
         # bytes read; one that disagrees stops the observation even when the digest
@@ -2060,10 +2080,10 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         claim = self._claim(b"x")
         cases = (
             ("a different size", "2"),
-            # The longest size admitted, 20 digits as 2**64 has, and a zero-padded
-            # size are compared as text, never converted (Revix 4359050029 on #453).
+            # The longest size admitted, 20 digits as 2**64 has (Revix 4359050029 on
+            # #453), and a padded count that still disagrees.
             ("a 20-digit size", "9" * 20),
-            ("leading zeros", "01"),
+            ("a padded wrong count", "02"),
         )
         for name, size in cases:
             with self.subTest(name):
