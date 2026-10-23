@@ -82,6 +82,9 @@ def _record_lines(chunks: list[bytes]) -> Iterator[str]:
         text = decoder.decode(chunks.pop())
         start = 0
         while (end := text.find("\n", start)) != -1:
+            if held + end + 1 - start > _RECORD_LINE_CHARACTERS:
+                # Refused before it is joined (CodeAnt on #453).
+                raise csv.Error("a RECORD line longer than any row")
             yield "".join(pending) + text[start : end + 1]
             pending.clear()
             held = 0
