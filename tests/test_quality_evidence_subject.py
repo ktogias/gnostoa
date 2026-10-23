@@ -1754,10 +1754,17 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # otherwise complete observation. The outside target is a FIFO, so any access
         # would leave the observation incomplete.
         outside = Path(self.directory.name) / "outside-bin"
-        outside.mkdir()
-        os.mkfifo(outside / "tool")
-        row = f"../outside-bin/tool,sha256={self._claim(b'x')},1"
-        root = self._recorded_root("with-script", row)
+        sibling = Path(self.directory.name) / "with-script-bin"
+        for directory in (outside, sibling):
+            directory.mkdir()
+            os.mkfifo(directory / "tool")
+        claim = f"sha256={self._claim(b'x')},1"
+        root = self._recorded_root(
+            "with-script",
+            f"../outside-bin/tool,{claim}",
+            f"{outside}/tool,{claim}",
+            f"../with-script-bin/tool,{claim}",
+        )
         observed = self._observe_with(root)
         self.assertIsNone(observed["incomplete"])
         self.assertEqual(1, len(observed["distributions"]))
@@ -1765,7 +1772,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
         touched: list[str] = []
-        real_open, real_stat = os.open, os.stat
+        real_open, real_stat, real_lstat = os.open, os.stat, os.lstat
 
         def opening(path, *args, **kwargs):
             touched.append(os.fspath(path))
@@ -1775,14 +1782,20 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             touched.append(os.fspath(path))
             return real_stat(path, *args, **kwargs)
 
+        def lstating(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_lstat(path, *args, **kwargs)
+
         with (
             patch.object(observer.os, "open", opening),
             patch.object(observer.os, "stat", stating),
+            patch.object(observer.os, "lstat", lstating),
         ):
             result = json.loads(observer.observe([str(root)], caps, form))
         self.assertIsNone(result["incomplete"])
+        self.assertTrue(touched)
         self.assertFalse(
-            [t for t in touched if "outside-bin" in t or t == ".." or t == "tool"]
+            [t for t in touched if "-bin" in t or t in ("..", "tool", "outside-bin")]
         )
 
     def test_an_ambiguous_or_in_root_alias_row_stops_the_observation(self) -> None:
@@ -1798,6 +1811,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("an absolute alias into the root", f"{root}/mm/__init__.py"),
             ("a dot component", "mm/./__init__.py"),
             ("an empty component", "mm//__init__.py"),
+            ("the root itself", "../aliased"),
+            ("a bare parent", ".."),
+            ("an absolute alias with a dot", f"{root.parent}/./aliased/mm/__init__.py"),
         )
         for name, path in cases:
             with self.subTest(name):
@@ -1820,6 +1836,51 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIsNone(before["incomplete"])
         self.assertIsNone(after["incomplete"])
         self.assertNotEqual(before["distributions"], after["distributions"])
+
+    def test_the_record_check_refuses_what_it_cannot_parse_or_reach(self) -> None:
+        # Kill tests (round 1: G7, G9, G12, G14): a row of one field, a RECORD that is
+        # not UTF-8, a digest valid only when decoded leniently, and a listed file
+        # reached through a linked directory all stop the observation.
+        module = b'VALUE: str = "s"\n'
+        with self.subTest("a row of one field"):
+            root = self._recorded_root("one-field", "mm/__init__.py")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD that is not UTF-8"):
+            root = self._recorded_root("not-utf8")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes() + b"\xff,,\n")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a digest valid only when decoded leniently"):
+            lenient = self._claim(module)[:10] + "!!" + self._claim(module)[10:]
+            root = self._recorded_root("lenient", f"mm/__init__.py,sha256={lenient},17")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file reached through a linked directory"):
+            root = self._recorded_root("linked-dir")
+            elsewhere = Path(self.directory.name) / "elsewhere-dir"
+            elsewhere.mkdir()
+            (elsewhere / "x.py").write_bytes(module)
+            (root / "mm" / "sub").symlink_to(elsewhere, target_is_directory=True)
+            row = f"mm/sub/x.py,sha256={self._claim(module)},{len(module)}"
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_text(
+                row + "\n" + record.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
+
+    def test_an_alias_through_a_linked_root_is_ambiguous(self) -> None:
+        # Kill test for the real-root comparison: observed through a link to the root,
+        # a row written to leave the link and come back into the real root is an alias,
+        # never "outside" (Router #389 6361519666).
+        real = self._recorded_root("real-root")
+        link = Path(self.directory.name) / "link-root"
+        link.symlink_to(real, target_is_directory=True)
+        record = real / "mm-1.0.dist-info" / "RECORD"
+        row = f"../real-root/mm/__init__.py,sha256={self._claim(b'x')},1"
+        record.write_text(
+            row + "\n" + record.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        observed = self._observe_with(link)
+        self.assertEqual("record_ambiguous_path", observed["incomplete"])
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
