@@ -55,14 +55,17 @@ _DIRECTORY_OPEN = (
 
 def _sha256_claim(encoded: str) -> str | None:
     """A RECORD's sha256 claim, urlsafe base64 without padding, as hex; None unless it
-    is exactly a well-formed 32-byte digest."""
+    is exactly the canonical encoding of a 32-byte digest: the standard alphabet,
+    padding and unused bits set are refused (Sourcery and Codex on #453)."""
     try:
         raw = base64.b64decode(
             encoded + "=" * (-len(encoded) % 4), b"-_", validate=True
         )
     except (binascii.Error, ValueError):
         return None
-    return raw.hex() if len(raw) == 32 else None
+    if len(raw) != 32 or base64.urlsafe_b64encode(raw).rstrip(b"=") != encoded.encode():
+        return None
+    return raw.hex()
 
 
 def _within(bases: set[str], target: str) -> bool:
@@ -78,6 +81,10 @@ def _record_path(root: str, path: str) -> tuple[str, list[str] | None]:
     None) for one written as leading `..` components or as an absolute path that
     resolves outside the root as given and as real; ("ambiguous", None) for anything
     else, an alias back into the root included (E1, Router #389 6361519666)."""
+    if "\x00" in path or path.startswith("//"):
+        # A NUL names no file, and a doubled leading slash is implementation-defined
+        # (Sourcery and Codex on #453): neither is unambiguously anywhere.
+        return "ambiguous", None
     bases = {os.path.normpath(root), os.path.realpath(root)}
     if os.path.isabs(path):
         return (
@@ -123,12 +130,14 @@ class _Observation:
         path: str,
         directory: int | None = None,
         chunks: list[bytes] | None = None,
+        lengths: list[int] | None = None,
     ) -> str | None:
         """A regular file's digest, opened without following a link and without
         blocking, as the existing bounded reader treats one
         (adoption_check._read_regular_bounded), and relative to `directory` when one
         is given: anything else is unreadable. With `chunks`, the bytes digested are
-        kept there too, so that a caller parses the very bytes the digest names."""
+        kept there too, so that a caller parses the very bytes the digest names; with
+        `lengths`, their count."""
         if _SAFE_OPEN is None:
             self.stop("unreadable")
             return None
@@ -167,6 +176,8 @@ class _Observation:
             except OSError:
                 self.stop("unreadable")
                 return None
+        if lengths is not None:
+            lengths.append(size)
         return digest.hexdigest()
 
     def record_digest(self, root: str, name: str) -> str | None:
@@ -240,13 +251,17 @@ class _Observation:
             self.stop("record_ambiguous_path")
             return
         found = self.digest_listed(directory, parts)
-        if found is not None and found != wanted:
+        if found is None:
+            return
+        digest, length = found
+        if digest != wanted or (size and int(size) != length):
+            # The digest or the size the row claims disagrees with the bytes read.
             self.stop("record_mismatch")
 
-    def digest_listed(self, root: int, parts: list[str]) -> str | None:
-        """The digest of a RECORD-listed file, reached from its root's descriptor one
-        component at a time without following a link, so that a row never widens
-        what the observer reads."""
+    def digest_listed(self, root: int, parts: list[str]) -> tuple[str, int] | None:
+        """The digest and length of a RECORD-listed file, reached from its root's
+        descriptor one component at a time without following a link, so that a row
+        never widens what the observer reads."""
         if _DIRECTORY_OPEN is None:
             self.stop("unreadable")
             return None
@@ -261,7 +276,9 @@ class _Observation:
                 if directory != root:
                     os.close(directory)
                 directory = opened
-            return self.digest_of(parts[-1], directory)
+            lengths: list[int] = []
+            digest = self.digest_of(parts[-1], directory, lengths=lengths)
+            return None if digest is None else (digest, lengths[0])
         finally:
             if directory != root:
                 os.close(directory)
