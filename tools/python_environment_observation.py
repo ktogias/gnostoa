@@ -53,6 +53,12 @@ _DIRECTORY_OPEN = (
 )
 
 
+# The longest RECORD size admitted: the digits of 2**64, more than any file can hold.
+# A size is bounded before anything reads its file and is never converted, so no size
+# reaches Python's integer-conversion limit (owner 6364237541; Revix on #453).
+_SIZE_DIGITS = len(str(2**64))
+
+
 def _sha256_claim(encoded: str) -> str | None:
     """A RECORD's sha256 claim, urlsafe base64 without padding, as hex; None unless it
     is exactly the canonical encoding of a 32-byte digest: the standard alphabet,
@@ -266,8 +272,10 @@ class _Observation:
             self.stop("record_unsupported")
             return
         wanted = _sha256_claim(encoded)
-        # ASCII digits only: `isdigit` alone admits digits `int` refuses or rereads.
-        if wanted is None or (size and not (size.isascii() and size.isdigit())):
+        # ASCII digits only, `isdigit` alone admitting digits `int` refuses or rereads,
+        # and at most _SIZE_DIGITS of them.
+        decimal = size.isascii() and size.isdigit() and len(size) <= _SIZE_DIGITS
+        if wanted is None or (size and not decimal):
             self.stop("record_malformed")
             return
         kind, parts = _record_path(bases, path)
