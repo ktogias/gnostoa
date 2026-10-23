@@ -13,9 +13,20 @@ RECORD digest attests that file's bytes, not the files it lists. A cap that stop
 or a root, RECORD or archive it cannot read, makes the observation incomplete, and so no
 identity (Sourcery and cubic on #452). Each cap is enforced while it enumerates or
 reads, before anything is sorted, and a file read counts against both file caps.
+
+Each RECORD's hashed rows are also checked against the files they name, from the same
+RECORD bytes its digest names (#389 F3-S2-RECORD-GUARD, Router 6361147179). A computed
+sha256 that disagrees is `record_mismatch`; an unsupported algorithm, a malformed row, a
+row naming a path outside its root, or a listed file that cannot be read stops the
+observation too. A RECORD that agrees is not installed-content identity: rows without a
+hash, files no RECORD lists and import resolution stay unobserved.
 """
 
+import base64
+import binascii
+import csv
 import hashlib
+import io
 import json
 import os
 import stat
@@ -40,6 +51,18 @@ _DIRECTORY_OPEN = (
 )
 
 
+def _sha256_claim(encoded: str) -> str | None:
+    """A RECORD's sha256 claim, urlsafe base64 without padding, as hex; None unless it
+    is exactly a well-formed 32-byte digest."""
+    try:
+        raw = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), b"-_", validate=True
+        )
+    except (binascii.Error, ValueError):
+        return None
+    return raw.hex() if len(raw) == 32 else None
+
+
 class _Observation:
     """The caps and the first reason the observation stopped, if it did."""
 
@@ -58,11 +81,17 @@ class _Observation:
             return None
         return value
 
-    def digest_of(self, path: str, directory: int | None = None) -> str | None:
+    def digest_of(
+        self,
+        path: str,
+        directory: int | None = None,
+        chunks: list[bytes] | None = None,
+    ) -> str | None:
         """A regular file's digest, opened without following a link and without
         blocking, as the existing bounded reader treats one
         (adoption_check._read_regular_bounded), and relative to `directory` when one
-        is given: anything else is unreadable."""
+        is given: anything else is unreadable. With `chunks`, the bytes digested are
+        kept there too, so that a caller parses the very bytes the digest names."""
         if _SAFE_OPEN is None:
             self.stop("unreadable")
             return None
@@ -96,6 +125,8 @@ class _Observation:
                         self.stop("file_bytes_total")
                         return None
                     digest.update(chunk)
+                    if chunks is not None:
+                        chunks.append(chunk)
             except OSError:
                 self.stop("unreadable")
                 return None
@@ -112,10 +143,81 @@ class _Observation:
         except OSError:
             self.stop("unreadable")
             return None
+        chunks: list[bytes] = []
         try:
-            return self.digest_of("RECORD", directory)
+            digest = self.digest_of("RECORD", directory, chunks)
         finally:
             os.close(directory)
+        if digest is not None:
+            self.verify_record(root, b"".join(chunks))
+        return digest
+
+    def verify_record(self, root: str, content: bytes) -> None:
+        """Every hashed row of a RECORD, read once, against the file it names in
+        `root`. A row without a hash stays outside the check."""
+        try:
+            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            self.stop("unreadable")
+            return
+        try:
+            for row in csv.reader(io.StringIO(content.decode("utf-8"))):
+                if self.incomplete:
+                    return
+                if row:
+                    self.verify_row(directory, row)
+        except (UnicodeDecodeError, csv.Error):
+            self.stop("record_malformed")
+        finally:
+            os.close(directory)
+
+    def verify_row(self, directory: int, row: list[str]) -> None:
+        """One RECORD row: its sha256 claim against the bytes of the file it names."""
+        if len(row) != 3:
+            self.stop("record_malformed")
+            return
+        path, claim, size = row
+        if not claim:
+            return
+        algorithm, _, encoded = claim.partition("=")
+        if algorithm != "sha256":
+            self.stop("record_unsupported")
+            return
+        wanted = _sha256_claim(encoded)
+        if wanted is None or (size and not size.isdigit()):
+            self.stop("record_malformed")
+            return
+        parts = path.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            # An absolute path, or one leaving its root: never opened, never verified.
+            self.stop("record_outside_root")
+            return
+        found = self.digest_listed(directory, parts)
+        if found is not None and found != wanted:
+            self.stop("record_mismatch")
+
+    def digest_listed(self, root: int, parts: list[str]) -> str | None:
+        """The digest of a RECORD-listed file, reached from its root's descriptor one
+        component at a time without following a link, so that a row never widens
+        what the observer reads."""
+        if _DIRECTORY_OPEN is None:
+            self.stop("unreadable")
+            return None
+        directory = root
+        try:
+            for part in parts[:-1]:
+                try:
+                    opened = os.open(part, _DIRECTORY_OPEN, dir_fd=directory)
+                except OSError:
+                    self.stop("unreadable")
+                    return None
+                if directory != root:
+                    os.close(directory)
+                directory = opened
+            return self.digest_of(parts[-1], directory)
+        finally:
+            if directory != root:
+                os.close(directory)
 
     def listing(self, root: str) -> list[str]:
         """`root`'s top-level entry names, within the per-root and total entry caps:

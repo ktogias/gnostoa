@@ -850,7 +850,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import hashlib, json, os, stat, sys\n"
+            "import base64, binascii, csv, hashlib, io, json, os, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
@@ -868,10 +868,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         return json.loads(report.read_text(encoding="utf-8"))
 
     def _observed_root(self, name: str) -> Path:
-        """A root of two modules and one distribution whose RECORD is 64 bytes."""
+        """A root of two modules and one distribution whose RECORD is 64 bytes: valid
+        rows, all without a hash, so outside the RECORD check."""
         root = Path(self.directory.name) / name
         (root / "one-1.0.dist-info").mkdir(parents=True)
-        (root / "one-1.0.dist-info" / "RECORD").write_text("x" * 64, encoding="utf-8")
+        record = "one-1.0.dist-info/RECORD,,\n" + "a.py,,\n" * 5 + "\n\n"
+        (root / "one-1.0.dist-info" / "RECORD").write_text(record, encoding="utf-8")
         for module in ("a.py", "b.py"):
             (root / module).write_text("", encoding="utf-8")
         return root
@@ -1289,20 +1291,26 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             (self.root / place).write_text(forged, encoding="utf-8")
         run = Path(self.directory.name) / "isolated-run"
         run.mkdir()
-        evidence, interpreter = self.module._observe_environment(
+        self.module._observe_environment(
             self.root,
             run,
             self.module.DEFAULT_DIAGNOSTIC_LIMITS,
             time.monotonic() + 120,
             "before",
         )
-        self.assertIsNotNone(evidence)
-        observed = json.loads((run / evidence["path"]).read_text(encoding="utf-8"))
+        # The real environment may leave the observation incomplete, through RECORD
+        # rows outside their root or the caps (Router #389 6361147179), so isolation is
+        # read from the observer's own report, complete or not.
+        report = run / "diagnostic-environment-before.json"
+        observed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
         roots = {os.path.realpath(root) for root in observed["roots"]}
         self.assertNotIn("/forged", observed["roots"])
         self.assertNotIn(os.path.realpath(self.root), roots)
         self.assertNotIn(os.path.realpath(self._observer().parent), roots)
-        self.assertEqual(os.path.realpath(sys.executable), interpreter["executable"])
+        self.assertEqual(
+            os.path.realpath(sys.executable), observed["interpreter"]["executable"]
+        )
 
     def test_the_member_is_additive_to_the_v2_record(self) -> None:
         # Characterization: the v2 record keeps its fields; the member is the one
@@ -1508,11 +1516,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
         caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        opened_record = hashlib.sha256((dist / "RECORD").read_bytes()).hexdigest()
         with patch.object(observer.os, "open", swapping):
             observed = json.loads(observer.observe([str(site)], caps, form))
         self.assertIsNone(observed["incomplete"])
         self.assertEqual(
-            [[str(site), "one-1.0.dist-info", hashlib.sha256(b"x" * 64).hexdigest()]],
+            [[str(site), "one-1.0.dist-info", opened_record]],
             observed["distributions"],
         )
 
