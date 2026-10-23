@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import base64
 import csv
+import dataclasses
 import errno
 import hashlib
 import importlib
@@ -1132,6 +1133,29 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("an archive not a pair", {"archives": [["/fixture/a.zip"]]}),
             ("distributions a mapping", {"distributions": {}}),
             ("a distribution not a triple", {"distributions": [["/fixture", "x"]]}),
+            ("unlisted a mapping", {"unlisted": {}}),
+            ("an unlisted entry not four fields", {"unlisted": [[root, "x", "file"]]}),
+            ("an unlisted kind unknown", {"unlisted": [[root, "x", "socket", None]]}),
+            (
+                "an unlisted file without a digest",
+                {"unlisted": [[root, "x", "file", None]]},
+            ),
+            (
+                "an unlisted file digest not hex",
+                {"unlisted": [[root, "x", "file", "z" * 64]]},
+            ),
+            (
+                "an unlisted link without a target",
+                {"unlisted": [[root, "x", "link", None]]},
+            ),
+            (
+                "an unlisted other with a value",
+                {"unlisted": [[root, "x", "other", "v"]]},
+            ),
+            (
+                "an unlisted entry outside the roots",
+                {"unlisted": [["/x", "y", "other", None]]},
+            ),
             ("an unknown field", {"unknown": 1}),
             (
                 "an unknown interpreter field",
@@ -1349,12 +1373,28 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIn("unobserved", member, "the member names no unobserved scope")
         unobserved = member["unobserved"]
         for scope in (
-            "installed file contents beyond the RECORD bytes",
-            "data inside installed packages, typeshed among them",
+            "installed files a RECORD lists without a hash",
+            "files outside RECORD-owned directories: loose top-level modules and the "
+            "standard library",
+            "rows outside the import root",
             "import resolution beyond the interpreter's -I path",
             "changes between the endpoints",
         ):
             self.assertIn(scope, unobserved)
+
+    def test_an_observation_in_the_previous_format_is_a_gap(self) -> None:
+        # RED (D-U, one shared v2 authority): a v1 report, its fields complete, is
+        # refused by the v2 collector, never relabelled as the new coverage.
+        observation = json.loads(self._observation())
+        del observation["unlisted"]
+        observation["format"] = "gnostoa-producer-environment-observation/v1"
+        member = self._run(self._answering(observation), "import-untyped")["producers"][
+            0
+        ]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertEqual(
+            "gnostoa-producer-environment-observation/v2", member["format"]
+        )
 
     def test_a_record_reached_through_a_link_is_unreadable(self) -> None:
         # Only a regular file, never followed through a link, as the existing bounded
@@ -2318,3 +2358,324 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
         member = inventory["producers"][0]["environment_observation"]
         self.assertEqual("unavailable", member["status"])
+
+    # D-U: the entries of RECORD-owned directories that no RECORD lists (#389
+    # F3-S2-DU-HOUT-FINAL-PROOF; Router 6373641379, H-out). Each test below names its
+    # pre-change evidence mode.
+
+    def _unlisted_root(self, name: str, extra: bytes = b'VALUE: str = "s"\n') -> Path:
+        """The typed `mm` root, with mm/extra.py, which no RECORD lists."""
+        root = self._recorded_root(name)
+        (root / "mm" / "extra.py").write_bytes(extra)
+        return root
+
+    def _walk_caps(self, **overrides: int) -> dict:
+        return {**self.module.ENVIRONMENT_OBSERVATION_CAPS, **overrides}
+
+    def test_a_file_no_record_lists_changes_the_observation(self) -> None:
+        # RED: the probe's class (#389 6372454439). The same root, names, version and
+        # RECORD, with only mm/extra.py's bytes changed, are two observations; the same
+        # bytes observed twice are one.
+        root = self._unlisted_root("unlisted")
+        first, repeated = self._observe_with(root), self._observe_with(root)
+        (root / "mm" / "extra.py").write_bytes(b"VALUE: int = 1\n")
+        changed = self._observe_with(root)
+        self.assertEqual(first, repeated)
+        self.assertIsNone(changed["incomplete"])
+        self.assertNotEqual(first, changed)
+        digest = hashlib.sha256(b"VALUE: int = 1\n").hexdigest()
+        self.assertEqual(
+            [[str(root), "mm/extra.py", "file", digest]], changed.get("unlisted")
+        )
+
+    def test_an_unlisted_entry_is_recorded_by_its_kind_and_never_followed(self) -> None:
+        # RED: a link is recorded by its target and never followed, and anything but a
+        # regular file or a link is recorded without being opened.
+        root = self._recorded_root("unlisted-kinds")
+        target = Path(self.directory.name) / "unlisted-target.py"
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        (root / "mm" / "alias.py").symlink_to(target)
+        (root / "mm" / "tree").symlink_to(self.directory.name, target_is_directory=True)
+        os.mkfifo(root / "mm" / "pipe")
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [
+                [str(root), "mm/alias.py", "link", str(target)],
+                [str(root), "mm/pipe", "other", None],
+                [str(root), "mm/tree", "link", self.directory.name],
+            ],
+            observed.get("unlisted"),
+        )
+
+    def test_a_file_a_record_lists_without_a_hash_stays_unobserved(self) -> None:
+        # RED: H-out. A listed path is never an unlisted entry, hashed or not; a
+        # hashless row's bytes stay the named residual, as pip lists compiled files.
+        root = self._recorded_root("hashless", "mm/__pycache__/x.cpython-312.pyc,,")
+        (root / "mm" / "__pycache__").mkdir()
+        (root / "mm" / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"compiled")
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual([], observed.get("unlisted"))
+
+    def test_each_walk_cap_holds_at_its_bound_and_stops_past_it(self) -> None:
+        # RED: each count at its bound and one past it, over the typed root's own
+        # walk: 2 owned directories (mm, mm-1.0.dist-info), 4 entries, depth 1, 4
+        # in-root rows and no unlisted entry. Rows added for files are hashless.
+        def root_with(name: str, key: str, count: int) -> Path:
+            if key == "tree_entries":
+                files = [f"mm/f{i}.py" for i in range(count)]
+                root = self._recorded_root(name, *(f"{f},," for f in files))
+                for f in files:
+                    (root / f).write_text("", encoding="utf-8")
+            elif key == "record_rows":
+                root = self._recorded_root(
+                    name, *(f"mm/gone{i}.py,," for i in range(count))
+                )
+            else:
+                root = self._recorded_root(name)
+                for i in range(count):
+                    if key == "tree_directories":
+                        (root / "mm" / f"s{i}").mkdir()
+                    elif key == "tree_depth":
+                        (root / "mm" / "/".join(["d"] * (i + 1))).mkdir()
+                    else:
+                        (root / "mm" / f"extra{i}.py").write_text(f"V = {i}\n")
+            return root
+
+        for key, cap, start in (
+            ("tree_entries", 6, 4),
+            ("tree_directories", 4, 2),
+            ("tree_depth", 3, 1),
+            ("record_rows", 6, 4),
+            ("unlisted", 2, 0),
+        ):
+            for added, expected in (
+                (cap - start - 1, None),
+                (cap - start, None),
+                (cap - start + 1, key),
+            ):
+                with self.subTest(key=key, total=start + added):
+                    root = root_with(f"cap-{key}-{added}", key, added)
+                    observed = self._observe_with(
+                        root, caps=self._walk_caps(**{key: cap})
+                    )
+                    self.assertEqual(expected, observed["incomplete"])
+
+    def test_a_directory_is_charged_before_it_is_opened(self) -> None:
+        # RED (PAO 6373356762): 80 sibling directories at a directory cap of 2 stop at
+        # the cap, never holding more directories open than the walk's depth beside
+        # the held root, and leave no descriptor behind.
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("needs /proc/self/fd to count descriptors")
+        observer = importlib.import_module("tools.python_environment_observation")
+        root = self._recorded_root("broad")
+        for i in range(80):
+            (root / "mm" / f"s{i:02d}").mkdir()
+        real_open, real_close = os.open, os.close
+        live: set[int] = set()
+        peak = [0]
+
+        def counting_open(path, flags, *args, **kwargs):
+            descriptor = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                live.add(descriptor)
+                peak[0] = max(peak[0], len(live))
+            return descriptor
+
+        def counting_close(descriptor):
+            live.discard(descriptor)
+            real_close(descriptor)
+
+        before = sorted(os.listdir("/proc/self/fd"))
+        with (
+            patch.object(observer.os, "open", counting_open),
+            patch.object(observer.os, "close", counting_close),
+        ):
+            observed = json.loads(
+                observer.observe(
+                    [str(root)],
+                    self._walk_caps(tree_directories=2),
+                    self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                )
+            )
+        self.assertEqual("tree_directories", observed["incomplete"])
+        self.assertLessEqual(peak[0], 3)
+        self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
+
+    def test_one_observation_reads_one_generation_of_each_root(self) -> None:
+        # RED (PAO 6373356762): a root link retargeted after the listing, or after the
+        # RECORDs, leaves the observation on the root it opened first: its listing,
+        # its RECORDs and its unlisted entries all come from that one directory.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._unlisted_root("generation-a", b"X = 'a'\n")
+        second = self._unlisted_root("generation-b", b"X = 'b'\n")
+        link = Path(self.directory.name) / "generation-root"
+        for stage in ("_import_roots", "_distributions"):
+            with self.subTest(stage):
+                if link.is_symlink():
+                    link.unlink()
+                link.symlink_to(first, target_is_directory=True)
+                original = getattr(observer, stage)
+
+                def retargeting(*args, original=original, **kwargs):
+                    result = original(*args, **kwargs)
+                    link.unlink()
+                    link.symlink_to(second, target_is_directory=True)
+                    return result
+
+                with patch.object(observer, stage, retargeting):
+                    observed = json.loads(
+                        observer.observe(
+                            [str(link)],
+                            self._walk_caps(),
+                            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                        )
+                    )
+                self.assertIsNone(observed["incomplete"])
+                self.assertEqual(
+                    [hashlib.sha256(b"X = 'a'\n").hexdigest()],
+                    [entry[3] for entry in observed.get("unlisted") or []],
+                )
+
+    def test_a_walk_that_cannot_read_a_directory_stops_the_observation(self) -> None:
+        # RED: an owned top that is a link, a subdirectory replaced by a link after it
+        # was listed, and an unreadable subdirectory are each unreadable.
+        observer = importlib.import_module("tools.python_environment_observation")
+        elsewhere = Path(self.directory.name) / "walk-elsewhere"
+        elsewhere.mkdir()
+        linked = self._recorded_root("walk-linked-top", "pkg/m.py,,")
+        (linked / "pkg").symlink_to(elsewhere, target_is_directory=True)
+        swapped = self._recorded_root("walk-swapped")
+        (swapped / "mm" / "sub").mkdir()
+        cases = [
+            ("an owned top that is a link", linked, None),
+            ("a swapped directory", swapped, "sub"),
+        ]
+        if os.geteuid() != 0:
+            locked = self._recorded_root("walk-locked")
+            (locked / "mm" / "locked").mkdir()
+            (locked / "mm" / "locked").chmod(0)
+            self.addCleanup((locked / "mm" / "locked").chmod, 0o755)
+            cases.append(("an unreadable directory", locked, None))
+        real_open = os.open
+        for name, root, swap in cases:
+            with self.subTest(name):
+
+                def swapping(path, flags, *args, root=root, swap=swap, **kwargs):
+                    moved = root / "mm" / swap if swap else None
+                    if (
+                        swap
+                        and path == swap
+                        and moved.is_dir()
+                        and not moved.is_symlink()
+                    ):
+                        moved.rename(root / "mm" / "moved")
+                        moved.symlink_to(
+                            root / "mm" / "moved", target_is_directory=True
+                        )
+                    return real_open(path, flags, *args, **kwargs)
+
+                with patch.object(observer.os, "open", swapping):
+                    observed = json.loads(
+                        observer.observe(
+                            [str(root)],
+                            self._walk_caps(),
+                            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                        )
+                    )
+                self.assertEqual("unreadable", observed["incomplete"])
+
+    def test_the_walk_closes_every_descriptor_on_every_exit(self) -> None:
+        # Characterization at the base, a kill test once the walk exists: complete,
+        # each cap's stop and an unreadable top all leave the descriptors as they were.
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("needs /proc/self/fd to count descriptors")
+        observer = importlib.import_module("tools.python_environment_observation")
+        deep = self._unlisted_root("fd-walk-deep")
+        (deep / "mm" / "a" / "b" / "c").mkdir(parents=True)
+        linked = self._recorded_root("fd-walk-linked", "pkg/m.py,,")
+        (linked / "pkg").symlink_to(deep, target_is_directory=True)
+        for name, root, caps in (
+            ("complete", deep, {}),
+            ("tree_entries", deep, {"tree_entries": 3}),
+            ("tree_directories", deep, {"tree_directories": 3}),
+            ("tree_depth", deep, {"tree_depth": 2}),
+            ("unlisted", deep, {"unlisted": 0}),
+            ("record_rows", deep, {"record_rows": 2}),
+            ("unreadable", linked, {}),
+        ):
+            with self.subTest(name):
+                before = sorted(os.listdir("/proc/self/fd"))
+                observer.observe(
+                    [str(root)],
+                    self._walk_caps(**caps),
+                    self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+                )
+                self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
+
+    def test_a_later_observation_runs_on_the_remaining_deadline_only(self) -> None:
+        # Characterization (Router 6373641379 item 3): every launch gets the
+        # inventory's one absolute deadline. Once the producers have spent it, the
+        # after-observation, the real observer through the real launcher, starts with
+        # what remains, is cut there and leaves no process: the member is unavailable
+        # and no fresh budget is ever granted. The child sleeps before the observer's
+        # own code, so that it always needs longer than what remains: the cut is the
+        # launcher's, the same for any child.
+        real = self.module._bounded_run
+        marker = f"# remaining-deadline-{os.getpid()}-{time.monotonic_ns()}"
+        launches: list[tuple[bool, float]] = []
+        after: dict[str, float] = {}
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            observation = command == self._observation_command()
+            launches.append((observation, deadline))
+            if not observation or len([o for o, _ in launches if o]) == 1:
+                if observation:
+                    report.write_text(self._observation(), encoding="utf-8")
+                    return 0, None, False
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            time.sleep(max(0.0, deadline - time.monotonic() - 0.1))
+            after["remaining"] = deadline - time.monotonic()
+            source = Path(command[2]).read_text(encoding="utf-8")
+            prefix = f"{marker}\nimport time\ntime.sleep(30)\n"
+            started = time.monotonic()
+            outcome = real(
+                [*command[:2], "-c", prefix + source, *command[3:]],
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+            after["seconds"] = time.monotonic() - started
+            return outcome
+
+        self.mypy_records = {"tests/test_sample.py": []}
+        limits = dataclasses.replace(
+            self.module.DEFAULT_DIAGNOSTIC_LIMITS, timeout_seconds=3.0
+        )
+        started = time.monotonic()
+        with patch("tools.quality_evidence._bounded_run", side_effect=run):
+            inventory = self._read(self.collect(self.root, self.output, limits=limits))
+        self.assertLess(time.monotonic() - started, 3.0 + 10)
+        self.assertEqual(1, len({deadline for _, deadline in launches}))
+        self.assertLessEqual(after["remaining"], 0.1)
+        self.assertLess(after["seconds"], 10)
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertIsNone(member["after"])
+        for entry in os.listdir("/proc") if os.path.isdir("/proc") else ():
+            if entry.isdigit():
+                try:
+                    cmdline = (Path("/proc") / entry / "cmdline").read_bytes()
+                except OSError:
+                    continue
+                self.assertNotIn(marker.encode(), cmdline)
