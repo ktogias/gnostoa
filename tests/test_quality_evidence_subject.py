@@ -1695,6 +1695,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     def test_a_record_row_that_cannot_be_verified_stops_the_observation(self) -> None:
         # A hashed row that is not a supported, well-formed sha256 over a readable
         # regular file in the root never passes as verified (Router #389 6361147179).
+        # A well-formed sha256 claim, so that each case isolates its own condition.
+        claim = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).rstrip(b"=")
+        claim = claim.decode()
         cases = (
             (
                 "an unsupported algorithm",
@@ -1702,8 +1705,13 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 "record_unsupported",
             ),
             ("a malformed digest", "mm/__init__.py,sha256=!!!,17", "record_malformed"),
-            ("a malformed size", "mm/__init__.py,sha256=AAAA,many", "record_malformed"),
-            ("a missing listed file", "mm/absent.py,sha256=AAAA,1", "unreadable"),
+            ("a short digest", "mm/__init__.py,sha256=AAAA,17", "record_malformed"),
+            (
+                "a malformed size",
+                f"mm/__init__.py,sha256={claim},many",
+                "record_malformed",
+            ),
+            ("a missing listed file", f"mm/absent.py,sha256={claim},1", "unreadable"),
         )
         for name, row, reason in cases:
             with self.subTest(name):
