@@ -220,7 +220,10 @@ class _Observation:
         """Every hashed row of a RECORD, read once, against the file it names under
         the opened root `directory`. A row without a hash stays outside the check."""
         try:
-            for row in csv.reader(io.StringIO(content.decode("utf-8"))):
+            # Strict, so that quoting a lenient reader would repair is malformed (CodeAnt
+            # on #453).
+            rows = csv.reader(io.StringIO(content.decode("utf-8")), strict=True)
+            for row in rows:
                 if self.incomplete:
                     return
                 if row:
@@ -241,7 +244,8 @@ class _Observation:
             self.stop("record_unsupported")
             return
         wanted = _sha256_claim(encoded)
-        if wanted is None or (size and not size.isdigit()):
+        # ASCII digits only: `isdigit` alone admits digits `int` refuses or rereads.
+        if wanted is None or (size and not (size.isascii() and size.isdigit())):
             self.stop("record_malformed")
             return
         kind, parts = _record_path(root, path)
