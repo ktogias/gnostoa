@@ -1592,6 +1592,36 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             [[str(link), "mm-1.0.dist-info", expected]], observed["distributions"]
         )
 
+    def test_the_observation_closes_every_descriptor_it_opens(self) -> None:
+        # Kill test (R12, round 3): whichever way a distribution's check ends, matched,
+        # mismatched, malformed, outside, ambiguous, unreadable or with a linked
+        # *.dist-info directory, the observer closes every descriptor it opened.
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("needs /proc/self/fd to count descriptors")
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        claim = f"sha256={self._claim(b'x')},1"
+        mismatched = self._recorded_root("fd-mismatched")
+        (mismatched / "mm" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+        linked = self._recorded_root("fd-linked")
+        (linked / "mm-1.0.dist-info").rename(linked / "elsewhere")
+        (linked / "mm-1.0.dist-info").symlink_to(linked / "elsewhere")
+        roots = (
+            self._recorded_root("fd-matched"),
+            mismatched,
+            self._recorded_root("fd-malformed", "mm/__init__.py,md5=x,1"),
+            self._recorded_root("fd-outside", f"../bin/tool,{claim}"),
+            self._recorded_root("fd-ambiguous", f"mm/../x.py,{claim}"),
+            self._recorded_root("fd-unreadable", f"mm/absent/x.py,{claim}"),
+            linked,
+        )
+        for root in roots:
+            with self.subTest(root.name):
+                before = sorted(os.listdir("/proc/self/fd"))
+                observer.observe([str(root)], caps, form)
+                self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
+
     def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
         # An import-path entry that exists but cannot be examined stops the observation
         # as unreadable; only a path that is absent is skipped (PAO 6353587922,
