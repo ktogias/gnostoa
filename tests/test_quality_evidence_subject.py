@@ -1301,9 +1301,10 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             time.monotonic() + 120,
             "before",
         )
-        # The real environment may leave the observation incomplete, through RECORD
-        # rows outside their root or the caps (Router #389 6361147179), so isolation is
-        # read from the observer's own report, complete or not.
+        # The real environment may still leave the observation incomplete, through a
+        # cap, a listed file that cannot be read or a real mismatch; rows outside their
+        # root never do (E1, Octopus on #453). So isolation is read from the
+        # observer's own report, complete or not.
         report = run / "diagnostic-environment-before.json"
         observed = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
