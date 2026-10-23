@@ -1879,6 +1879,24 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     "record_malformed", self._observe_with(root)["incomplete"]
                 )
 
+    def test_a_row_in_loose_quoting_or_a_non_ascii_size_is_malformed(self) -> None:
+        # CodeAnt on #453: a RECORD is read as strict CSV, so quoting that a lenient
+        # reader would repair into a valid path is malformed. A size is ASCII digits
+        # only: a Unicode digit that `int` refuses is malformed, never an escape.
+        module = b'VALUE: str = "s"\n'
+        claim = self._claim(module)
+        cases = (
+            ("loose quoting", f'"mm/__init__."py,sha256={claim},{len(module)}'),
+            ("a superscript size", f"mm/__init__.py,sha256={claim},\u00b2"),
+            ("an Arabic-Indic size", f"mm/__init__.py,sha256={claim},\u0661\u0667"),
+        )
+        for name, row in cases:
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                self.assertEqual(
+                    "record_malformed", self._observe_with(root)["incomplete"]
+                )
+
     def test_a_size_that_disagrees_with_its_file_is_a_mismatch(self) -> None:
         # Sourcery 4358369095 on #453: a row's size is a claim too, compared with the
         # bytes read; one that disagrees stops the observation even when the digest
