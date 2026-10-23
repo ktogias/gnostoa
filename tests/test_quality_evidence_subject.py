@@ -675,6 +675,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     deadline=deadline,
                     limits=limits,
                 )
+            if command != self._observation_command():
+                raise AssertionError(f"unexpected launch: {command}")
             answer = answers.pop(0) if len(answers) > 1 else answers[0]
             if answer is None:
                 return 1, "exited 1", False
@@ -782,7 +784,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         installed: dict[str, tuple[str, ...]] = {"now": ()}
 
         def run(command, *, cwd, environment, report, deadline, limits):
-            if command == self.module._environment_command():
+            if command == self._observation_command():
                 report.write_text(self._observation(installed["now"]), encoding="utf-8")
                 return 0, None, False
             if "--version" not in command and "mypy" in command:
@@ -816,7 +818,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         launches: list[str] = []
 
         def run(command, *, cwd, environment, report, deadline, limits):
-            if command == self.module._environment_command():
+            if command == self._observation_command():
                 launches.append("observation")
             else:
                 launches.append("version" if "--version" in command else command[3])
@@ -907,7 +909,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     limits,
                     answer=answer,
                 ):
-                    if command != self.module._environment_command():
+                    if command != self._observation_command():
                         return self._fake_run(
                             command,
                             cwd=cwd,
@@ -936,7 +938,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
         def run(command, *, cwd, environment, report, deadline, limits):
             nonlocal observations
-            if command != self.module._environment_command():
+            if command != self._observation_command():
                 deadlines.append(("producer", deadline))
                 return self._fake_run(
                     command,
@@ -1007,7 +1009,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         foreign["format"] = "another-observation/v1"
 
         def run(command, *, cwd, environment, report, deadline, limits):
-            if command != self.module._environment_command():
+            if command != self._observation_command():
                 return self._fake_run(
                     command,
                     cwd=cwd,
@@ -1079,7 +1081,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         """A launcher that answers the observation command with exactly `text`."""
 
         def run(command, *, cwd, environment, report, deadline, limits):
-            if command != self.module._environment_command():
+            if command != self._observation_command():
                 return self._fake_run(
                     command,
                     cwd=cwd,

@@ -370,12 +370,24 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             # producers ran in, never the checkout (#389 F3 S2 B).
             report.write_text(self._staged_text(text, cwd), encoding="utf-8")
             return self.ruff_exit, None, False
-        if command == self.module._environment_command():
+        if command == self._observation_command():
             # The producers' environment observation (#389 F3 S2-C): one fixed
             # installed set, unless a test answers the observation itself.
             report.write_text(self._observation(), encoding="utf-8")
             return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
+
+    def _observation_command(self) -> list[str]:
+        """The observation launch as the collector must compose it, built here rather
+        than taken from the collector, so that a launcher answers it and refuses any
+        other (CodeAnt on #452)."""
+        return [
+            sys.executable,
+            "-I",
+            str(self.module._OBSERVER),
+            json.dumps(self.module.ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
+            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+        ]
 
     def _observation(
         self,
