@@ -75,11 +75,12 @@ def _within(bases: set[str], target: str) -> bool:
     )
 
 
-def _record_path(root: str, path: str) -> tuple[str, list[str] | None]:
-    """How a RECORD row's path relates to its import root, lexically and before any
+def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
+    """How a RECORD row's path relates to its import root, given as `bases`, the root
+    as given and the real path of the very directory opened, lexically and before any
     access: ("inside", components) for plain components under the root; ("outside",
     None) for one written as leading `..` components or as an absolute path that
-    normalizes outside both the root as given and its real path; ("ambiguous", None)
+    normalizes outside both bases; ("ambiguous", None)
     for anything else, an alias back into the root included (E1, Router #389
     6361519666). The row's own path is never resolved, since E1 allows no access
     outside the root: a row reaching the root through a link outside it is classified
@@ -88,7 +89,6 @@ def _record_path(root: str, path: str) -> tuple[str, list[str] | None]:
         # A NUL names no file, and a doubled leading slash is implementation-defined
         # (Sourcery and Codex on #453): neither is unambiguously anywhere.
         return "ambiguous", None
-    bases = {os.path.normpath(root), os.path.realpath(root)}
     if os.path.isabs(path):
         return (
             ("ambiguous", None)
@@ -191,35 +191,54 @@ class _Observation:
         if _DIRECTORY_OPEN is None:
             self.stop("unreadable")
             return None
+        flags = _DIRECTORY_OPEN
+        # The root's real path is taken before its open, and checked to name the very
+        # directory opened, so that every row is classified against the root whose
+        # files it names (CodeAnt on #453).
+        real = os.path.realpath(root)
         try:
             # The import root itself is followed, as the interpreter and the listing
             # follow it; nothing under it is.
-            base = os.open(root, _DIRECTORY_OPEN & ~os.O_NOFOLLOW)
+            base = os.open(root, flags & ~os.O_NOFOLLOW)
         except OSError:
             self.stop("unreadable")
             return None
         try:
-            directory = os.open(name, _DIRECTORY_OPEN, dir_fd=base)
-        except OSError:
-            os.close(base)
-            self.stop("unreadable")
-            return None
-        try:
-            return self.record_in(root, base, directory)
+            bases = {os.path.normpath(root), real}
+            return self.record_under(bases, real, base, name, flags)
         finally:
-            os.close(directory)
             os.close(base)
 
-    def record_in(self, root: str, base: int, directory: int) -> str | None:
+    def record_under(
+        self, bases: set[str], real: str, base: int, name: str, flags: int
+    ) -> str | None:
+        """The RECORD of `name` under the opened import root `base`, once `real` is
+        shown to name that very directory."""
+        try:
+            opened, named = os.fstat(base), os.stat(real)
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                # The root changed while it was being opened.
+                self.stop("unreadable")
+                return None
+            directory = os.open(name, flags, dir_fd=base)
+        except OSError:
+            self.stop("unreadable")
+            return None
+        try:
+            return self.record_in(bases, base, directory)
+        finally:
+            os.close(directory)
+
+    def record_in(self, bases: set[str], base: int, directory: int) -> str | None:
         """The digest of the RECORD in the opened `*.dist-info` `directory`, and the
         check of its rows against the opened import root `base`."""
         chunks: list[bytes] = []
         digest = self.digest_of("RECORD", directory, chunks)
         if digest is not None:
-            self.verify_record(root, base, b"".join(chunks))
+            self.verify_record(bases, base, b"".join(chunks))
         return digest
 
-    def verify_record(self, root: str, directory: int, content: bytes) -> None:
+    def verify_record(self, bases: set[str], directory: int, content: bytes) -> None:
         """Every hashed row of a RECORD, read once, against the file it names under
         the opened root `directory`. A row without a hash stays outside the check."""
         try:
@@ -230,11 +249,11 @@ class _Observation:
                 if self.incomplete:
                     return
                 if row:
-                    self.verify_row(root, directory, row)
+                    self.verify_row(bases, directory, row)
         except (UnicodeDecodeError, csv.Error):
             self.stop("record_malformed")
 
-    def verify_row(self, root: str, directory: int, row: list[str]) -> None:
+    def verify_row(self, bases: set[str], directory: int, row: list[str]) -> None:
         """One RECORD row: its sha256 claim against the bytes of the file it names."""
         if len(row) != 3:
             self.stop("record_malformed")
@@ -251,7 +270,7 @@ class _Observation:
         if wanted is None or (size and not (size.isascii() and size.isdigit())):
             self.stop("record_malformed")
             return
-        kind, parts = _record_path(root, path)
+        kind, parts = _record_path(bases, path)
         if kind == "outside":
             return
         if parts is None:
