@@ -2176,6 +2176,23 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertTrue(observer._within_any({"."}, "mm/x.py"))
         self.assertTrue(observer._within_any({"../a"}, "../a/b"))
         self.assertTrue(observer._within_any({"/r"}, "/r"))
+        # The full observer, as PAO-453-OWNER-6364237541-E41F55F8-v1 replayed it: the
+        # same root supplied as `.` and as its absolute path, with a matching module
+        # and a valid hashed row outside the root, is complete either way.
+        root = self._recorded_root(
+            "relative-root", f"../outside.bin,sha256={self._claim(b'x')},1"
+        )
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        here = os.getcwd()
+        os.chdir(root)
+        try:
+            for spelling in (".", str(root)):
+                with self.subTest(spelling=spelling):
+                    observed = json.loads(observer.observe([spelling], caps, form))
+                    self.assertIsNone(observed["incomplete"])
+        finally:
+            os.chdir(here)
 
     def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
         # C6 kept under E1: adding a distribution whose in-root rows match, with an
