@@ -55,8 +55,8 @@ _DIRECTORY_OPEN = (
 
 
 # The longest RECORD size admitted: the digits of 2**64, more than any file can hold.
-# A size is bounded before anything reads its file and is never converted, so no size
-# reaches Python's integer-conversion limit (owner 6364237541; Revix on #453).
+# A size is bounded before anything reads its file, so its conversion never reaches
+# Python's integer-conversion limit (owner 6364237541; Revix on #453).
 _SIZE_DIGITS = len(str(2**64))
 
 
@@ -337,10 +337,11 @@ class _Observation:
         if found is None:
             return
         digest, length = found
-        if digest != wanted or (size and size != str(length)):
+        if digest != wanted or (size and int(size) != length):
             # The digest or the size the row claims disagrees with the bytes read. The
-            # size is compared as the canonical decimal, never converted: a long size
-            # would make `int` raise (Revix on #453).
+            # size is a base-ten byte count, padded or not (Router 6368854931 on #453);
+            # it was bounded at _SIZE_DIGITS ASCII digits above, so `int` cannot reach
+            # Python's conversion limit (Revix on #453).
             self.stop("record_mismatch")
 
     def digest_listed(self, root: int, parts: list[str]) -> tuple[str, int] | None:
