@@ -1594,34 +1594,49 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         )
 
     def test_an_alias_into_the_opened_root_is_ambiguous_after_a_swap(self) -> None:
-        # CodeAnt on #453: a row is classified against the real path of the root that
-        # was opened, not one recomputed later, so a root link retargeted after its
-        # open never turns an alias into that root into an unchecked "outside" row.
+        # CodeAnt on #453 and PAO-453-ROOT-CLASSIFICATION-ANCHOR-7EBFCE9B-v1: a row is
+        # classified against the real path of the root that was opened, not one
+        # recomputed later, so a root link retargeted after its open never turns an
+        # alias into that root, relative or absolute, into an unchecked "outside" row.
         observer = importlib.import_module("tools.python_environment_observation")
-        claim = f"sha256={self._claim(b'x')},1"
-        pinned = self._recorded_root(
-            "alias-root", f"../alias-root/mm/__init__.py,{claim}"
-        )
-        other = self._recorded_root("alias-other")
-        link = Path(self.directory.name) / "linked-alias"
-        link.symlink_to(pinned, target_is_directory=True)
-        retarget = Path(self.directory.name) / "linked-alias.new"
-        opened = os.open
-
-        def swapping(path, flags, *args, **kwargs):
-            descriptor = opened(path, flags, *args, **kwargs)
-            if os.fspath(path) == str(link) and not retarget.exists():
-                retarget.symlink_to(other, target_is_directory=True)
-                os.replace(retarget, link)
-                retarget.mkdir()
-            return descriptor
-
         caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
-        with patch.object(observer.os, "open", swapping):
-            observed = json.loads(observer.observe([str(link)], caps, form))
-        self.assertTrue(retarget.exists())
-        self.assertEqual("record_ambiguous_path", observed["incomplete"])
+        claim = f"sha256={self._claim(b'x')},1"
+        opened = os.open
+        for kind in ("relative", "absolute"):
+            with self.subTest(kind):
+                name = f"alias-{kind}-root"
+                row = (
+                    f"../{name}/mm/__init__.py"
+                    if kind == "relative"
+                    else f"{Path(self.directory.name).resolve() / name}/mm/__init__.py"
+                )
+                pinned = self._recorded_root(name, f"{row},{claim}")
+                other = self._recorded_root(f"alias-{kind}-other")
+                link = Path(self.directory.name) / f"linked-alias-{kind}"
+                link.symlink_to(pinned, target_is_directory=True)
+                retarget = Path(self.directory.name) / f"linked-alias-{kind}.new"
+
+                def swapping(
+                    path,
+                    flags,
+                    *args,
+                    link=link,
+                    other=other,
+                    retarget=retarget,
+                    **kwargs,
+                ):
+                    descriptor = opened(path, flags, *args, **kwargs)
+                    if os.fspath(path) == str(link) and not retarget.exists():
+                        retarget.symlink_to(other, target_is_directory=True)
+                        os.replace(retarget, link)
+                        retarget.mkdir()
+                    return descriptor
+
+                with patch.object(observer.os, "open", swapping):
+                    observed = json.loads(observer.observe([str(link)], caps, form))
+                self.assertTrue(retarget.exists())
+                self.assertEqual("record_ambiguous_path", observed["incomplete"])
 
     def test_a_root_that_changes_while_being_opened_is_unreadable(self) -> None:
         # Kill test for the pinned real path (CodeAnt on #453): a root link retargeted
