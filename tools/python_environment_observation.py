@@ -258,8 +258,10 @@ class _Observation:
         if found is None:
             return
         digest, length = found
-        if digest != wanted or (size and int(size) != length):
-            # The digest or the size the row claims disagrees with the bytes read.
+        if digest != wanted or (size and size != str(length)):
+            # The digest or the size the row claims disagrees with the bytes read. The
+            # size is compared as the canonical decimal, never converted: a long size
+            # would make `int` raise (Revix on #453).
             self.stop("record_mismatch")
 
     def digest_listed(self, root: int, parts: list[str]) -> tuple[str, int] | None:
