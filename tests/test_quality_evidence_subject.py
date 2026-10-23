@@ -2790,3 +2790,17 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observed = self._observe_with(root, root, caps=self._walk_caps(unlisted=1))
         self.assertIsNone(observed["incomplete"])
         self.assertEqual(1, len(observed.get("unlisted") or []))
+
+    def test_an_empty_owned_directory_shows_through_the_root_entries(self) -> None:
+        # Characterization (Claude on #455): an owned top-level directory, even an
+        # empty one owned only through a hashless row whose file is absent, is never an
+        # unlisted entry; its name is one of the root's entries, so adding or removing
+        # it still changes the observation.
+        root = self._recorded_root("empty-top", "empty/missing.py,,")
+        (root / "empty").mkdir()
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertIn("empty", observed["entries"][str(root)])
+        self.assertEqual([], observed["unlisted"])
+        (root / "empty").rmdir()
+        self.assertNotEqual(observed, self._observe_with(root))

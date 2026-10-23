@@ -27,12 +27,15 @@ unobserved.
 The entries no RECORD lists are observed too, in the RECORD-owned directories: each
 in-root top-level directory under which some in-root row names a file, walked whole
 without following a link (D-U, H-out: #389 F3-S2-DU-HOUT-FINAL-PROOF, Router 6373641379).
-Each such entry is reported with its kind: a regular file with its digest, a link with
-its target, never followed, a directory beneath which nothing shows, an empty one among
-them, alone, and anything else alone, never opened. A file a RECORD lists without a
-hash, in its plain in-root spelling, is listed, so its bytes stay unobserved; a row
-spelled otherwise lists nothing, so a file named only that way is recorded. A root
-named twice on the import path is walked once. Each root is opened once, and
+Each such entry is reported with its kind. A regular file is reported with its digest.
+A link is reported with its target and never followed. A subdirectory beneath which
+nothing shows, an empty one for example, is reported by its path alone. Anything else is
+reported by its path alone and never opened. An owned top-level directory is never an
+entry: its name is already one of the root's entries (Revix and Claude on #455). A file
+a RECORD lists without a hash, in its plain in-root spelling, is listed, so its bytes
+stay unobserved; a row spelled otherwise lists nothing, so a file named only that way
+is recorded. A root named twice on the import path is walked once. Each root is opened
+once, and
 its listing, its RECORDs and the walk all read that one directory object (PAO
 6373356762): a link to the root retargeted afterwards leaves them on it. That is no
 guarantee against a change made in place, nor that the producers read the same
