@@ -851,7 +851,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import base64, binascii, csv, hashlib, io, json, os, stat, sys\n"
+            "import base64, binascii, csv, hashlib, io, json, os, pathlib, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"

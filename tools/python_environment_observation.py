@@ -33,6 +33,7 @@ import json
 import os
 import stat
 import sys
+from pathlib import PurePosixPath
 
 # A safe open needs both flags: without either the observation stops as unreadable,
 # never following a link or waiting for a writer (Codex and cubic on #452), as the
@@ -74,11 +75,12 @@ def _sha256_claim(encoded: str) -> str | None:
     return raw.hex()
 
 
-def _within(bases: set[str], target: str) -> bool:
-    return any(
-        target == base or target.startswith(base.rstrip(os.sep) + os.sep)
-        for base in bases
-    )
+def _within_any(bases: set[str], target: str) -> bool:
+    """Whether `target` is one of `bases` or lies under one, component by component and
+    without the filesystem: the standard-library primitive that knowledge_common's and
+    validate_bundle's `_within` use, which this stdlib-only `python -I` observer cannot
+    import (owner 6364237541 item 6)."""
+    return any(PurePosixPath(target).is_relative_to(base) for base in bases)
 
 
 def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
@@ -98,7 +100,7 @@ def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
     if os.path.isabs(path):
         return (
             ("ambiguous", None)
-            if _within(bases, os.path.normpath(path))
+            if _within_any(bases, os.path.normpath(path))
             else ("outside", None)
         )
     parts = path.split("/")
@@ -111,7 +113,7 @@ def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
     if up == 0:
         return "inside", rest
     targets = {os.path.normpath(os.path.join(base, path)) for base in bases}
-    if any(_within(bases, target) for target in targets):
+    if any(_within_any(bases, target) for target in targets):
         return "ambiguous", None
     return "outside", None
 
@@ -222,7 +224,7 @@ class _Observation:
         shown to name that very directory."""
         try:
             opened, named = os.fstat(base), os.stat(real)
-            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+            if not os.path.samestat(opened, named):
                 # The root changed while it was being opened.
                 self.stop("unreadable")
                 return None
