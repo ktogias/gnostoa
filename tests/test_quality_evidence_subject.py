@@ -1610,6 +1610,29 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                 )
 
+    def test_the_fixture_pins_the_observation_it_answers(self) -> None:
+        # The expected launch is pinned, never read from the collector: a collector
+        # whose caps, format or observer has moved is refused, so that such a regression
+        # fails its tests (cubic 4355103949).
+        changed = {**self.module.ENVIRONMENT_OBSERVATION_CAPS, "roots": 1}
+        report = Path(self.directory.name) / "moved-launch.json"
+        for name, moved in (
+            ("caps", ("ENVIRONMENT_OBSERVATION_CAPS", changed)),
+            ("format", ("ENVIRONMENT_OBSERVATION_FORMAT", "elsewhere/v1")),
+            ("observer", ("_OBSERVER", Path("/elsewhere/observer.py"))),
+        ):
+            with self.subTest(name), patch.object(self.module, *moved):
+                command = self.module._environment_command()
+                with self.assertRaises(AssertionError):
+                    self._environment(("fixture-1.0",))(
+                        command,
+                        cwd=self.root,
+                        environment={},
+                        report=report,
+                        deadline=time.monotonic() + 60,
+                        limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                    )
+
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
         # unavailable observation, never an escaping error.
