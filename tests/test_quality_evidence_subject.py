@@ -2070,6 +2070,38 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     "record_mismatch", self._observe_with(root)["incomplete"]
                 )
 
+    def test_a_record_is_parsed_the_same_across_its_read_chunks(self) -> None:
+        # Characterization for the RECORD's streamed parse (Router 6364506650): a
+        # two-byte character split across the reader's 64 KiB chunks, CRLF rows and a
+        # final row without a newline parse as one decoded text does.
+        module = b'VALUE: str = "s"\n'
+        claim = f"sha256={self._claim(module)},{len(module)}"
+        for name in (
+            "a character across the chunk boundary",
+            "CRLF rows",
+            "no final newline",
+        ):
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"))
+                record = root / "mm-1.0.dist-info" / "RECORD"
+                if name == "CRLF rows":
+                    body = record.read_bytes().replace(b"\n", b"\r\n")
+                elif name == "no final newline":
+                    body = record.read_bytes().rstrip(b"\n")
+                else:
+                    # Hashless rows up to byte 65,535, then a row whose path starts
+                    # with a two-byte character at bytes 65,535 and 65,536.
+                    body = record.read_bytes()
+                    filler = b"mm/a.py,,\n"
+                    body += filler * ((65535 - len(body)) // len(filler))
+                    body += b"m" * (65535 - len(body) - len(",,\n")) + b",,\n"
+                    body += "é.py,,\n".encode()
+                    self.assertEqual(b"\xc3", body[65535:65536])
+                    (root / "mm" / "copy.py").write_bytes(module)
+                    body += f"mm/copy.py,{claim}\n".encode()
+                record.write_bytes(body)
+                self.assertIsNone(self._observe_with(root)["incomplete"])
+
     def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
         # Router 6364506650 (B): the composed caps admit a matching in-root payload of
         # the measured real size, a file over the former 8 MiB per-file cap and files
