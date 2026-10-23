@@ -1418,6 +1418,31 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 observed = json.loads(observer.observe([str(root)], caps, form))
                 self.assertEqual("unreadable", observed["incomplete"])
 
+    @staticmethod
+    def _offset_recording(opened, offsets: list[int]):
+        """`opened` (os.fdopen), its streams appending the descriptor's offset after
+        every read to `offsets`: what the reader consumed from the file."""
+
+        class Recording:
+            def __init__(self, stream) -> None:
+                self.stream = stream
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self.stream.close()
+
+            def fileno(self) -> int:
+                return self.stream.fileno()
+
+            def read(self, size: int = -1) -> bytes:
+                chunk = self.stream.read(size)
+                offsets.append(os.lseek(self.fileno(), 0, os.SEEK_CUR))
+                return chunk
+
+        return lambda fd, *args, **kwargs: Recording(opened(fd, *args, **kwargs))
+
     def test_a_read_never_passes_a_file_cap_by_more_than_one_byte(self) -> None:
         # Each read asks for at most what is left of both file caps, and one byte more
         # to see an overflow; the descriptor's offset is what the observer consumed
@@ -1433,30 +1458,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ):
             with self.subTest(name):
                 offsets: list[int] = []
-
-                class Counting:
-                    def __init__(self, stream, offsets=offsets) -> None:
-                        self.stream, self.offsets = stream, offsets
-
-                    def __enter__(self):
-                        return self
-
-                    def __exit__(self, *exc) -> None:
-                        self.stream.close()
-
-                    def fileno(self) -> int:
-                        return self.stream.fileno()
-
-                    def read(self, size: int = -1) -> bytes:
-                        chunk = self.stream.read(size)
-                        self.offsets.append(os.lseek(self.fileno(), 0, os.SEEK_CUR))
-                        return chunk
-
                 observation = observer._Observation(caps)
                 with patch.object(
-                    observer.os,
-                    "fdopen",
-                    lambda fd, *args, **kwargs: Counting(opened(fd, *args, **kwargs)),
+                    observer.os, "fdopen", self._offset_recording(opened, offsets)
                 ):
                     self.assertIsNone(observation.digest_of(str(record)))
                 self.assertEqual(stop, observation.incomplete)
