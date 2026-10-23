@@ -22,6 +22,16 @@ row naming a path outside its import root, a console script or data file, is out
 the check: classified lexically, never accessed and never verified (E1, Router #389
 6361519666). A RECORD that agrees is not installed-content identity: rows without a hash,
 rows outside the root, files no RECORD lists and import resolution stay unobserved.
+
+The entries no RECORD lists are observed too, in the RECORD-owned directories: each
+in-root top-level directory under which some in-root row names a file, walked whole
+without following a link (D-U, H-out: #389 F3-S2-DU-HOUT-FINAL-PROOF, Router 6373641379).
+Each such entry is reported with its kind: a regular file with its digest, a link with
+its target, never followed, and anything else alone, never opened. A file a RECORD lists
+without a hash is listed, so its bytes stay unobserved. Each root is opened once, and
+its listing, its RECORDs and the walk all read that one directory (PAO 6373356762).
+Every directory is charged when it is listed, before it is opened, so open descriptors
+never exceed the walk's depth.
 """
 
 import base64
@@ -51,6 +61,11 @@ _DIRECTORY_OPEN = (
     and hasattr(os, "O_DIRECTORY")
     and os.open in os.supports_dir_fd
     else None
+)
+# The held root's listing and the walk list a directory by its descriptor and read a link
+# relative to one: without either, the observation stops as unreadable.
+_LISTS_BY_DESCRIPTOR = (
+    os.scandir in os.supports_fd and os.readlink in os.supports_dir_fd
 )
 
 
@@ -165,6 +180,12 @@ def _record_path(bases: set[str], path: str) -> tuple[str, list[str] | None]:
     return "outside", None
 
 
+def _path_key(parts: list[str]) -> bytes:
+    """A root-relative path as the walk and the RECORD rows both name it, kept as a
+    digest so that a kept row costs the same whatever its path's length."""
+    return hashlib.sha256(os.fsencode("/".join(parts))).digest()
+
+
 class _Observation:
     """The caps and the first reason the observation stopped, if it did."""
 
@@ -173,6 +194,18 @@ class _Observation:
         self.incomplete: str | None = None
         self.read_total = 0
         self.entries_total = 0
+        # Each import root opened once, its top-level names and the in-root RECORD paths
+        # and owned directories found in it, and the walk's own counts (D-U).
+        self.bases: dict[str, tuple[int, str]] = {}
+        self.names: dict[str, set[str]] = {}
+        self.listed: dict[str, set[bytes]] = {}
+        self.tops: dict[str, set[str]] = {}
+        self.root = ""
+        self.rows = 0
+        self.directories = 0
+        self.walked = 0
+        self.unlisted = 0
+        self.unlisted_bytes = 0
 
     def stop(self, reason: str) -> None:
         self.incomplete = self.incomplete or reason
@@ -238,31 +271,53 @@ class _Observation:
             lengths.append(size)
         return digest.hexdigest()
 
+    def base(self, root: str) -> tuple[int, str] | None:
+        """`root` opened once for the whole observation, with its real path, so that its
+        listing, its RECORDs and its walk read one directory (PAO 6373356762). Every use
+        checks that the real path still names that very directory; once it does not,
+        the observation stops as unreadable."""
+        held = self.bases.get(root)
+        if held is None:
+            if _DIRECTORY_OPEN is None or not _LISTS_BY_DESCRIPTOR:
+                self.stop("unreadable")
+                return None
+            # The real path is taken before the open, so that every row is classified
+            # against the root whose files it names (CodeAnt on #453).
+            real = os.path.realpath(root)
+            try:
+                # The import root itself is followed, as the interpreter follows it;
+                # nothing under it is.
+                held = (os.open(root, _DIRECTORY_OPEN & ~os.O_NOFOLLOW), real)
+            except OSError:
+                self.stop("unreadable")
+                return None
+            self.bases[root] = held
+        try:
+            if os.path.samestat(os.fstat(held[0]), os.stat(held[1])):
+                return held
+        except OSError:
+            pass
+        self.stop("unreadable")
+        return None
+
+    def close(self) -> None:
+        """Close every root opened."""
+        for descriptor, _ in self.bases.values():
+            os.close(descriptor)
+        self.bases.clear()
+
     def record_digest(self, root: str, name: str) -> str | None:
         """The digest of a distribution's RECORD, opened relative to its `*.dist-info`
         directory, itself opened without following a link relative to the import root
         opened once. The RECORD's rows are checked against that same root, so a RECORD
         and the files it names always come from one directory (Q on #453)."""
-        if _DIRECTORY_OPEN is None:
-            self.stop("unreadable")
+        held = self.base(root)
+        if held is None or _DIRECTORY_OPEN is None:
             return None
-        flags = _DIRECTORY_OPEN
-        # The root's real path is taken before its open, and checked to name the very
-        # directory opened, so that every row is classified against the root whose
-        # files it names (CodeAnt on #453).
-        real = os.path.realpath(root)
-        try:
-            # The import root itself is followed, as the interpreter and the listing
-            # follow it; nothing under it is.
-            base = os.open(root, flags & ~os.O_NOFOLLOW)
-        except OSError:
-            self.stop("unreadable")
-            return None
-        try:
-            bases = {os.path.normpath(root), real}
-            return self.record_under(bases, real, base, name, flags)
-        finally:
-            os.close(base)
+        self.root = root
+        base, real = held
+        bases = {os.path.normpath(root), real}
+        return self.record_under(bases, real, base, name, _DIRECTORY_OPEN)
 
     def record_under(
         self, bases: set[str], real: str, base: int, name: str, flags: int
@@ -314,7 +369,8 @@ class _Observation:
             self.stop("record_malformed")
             return
         path, claim, size = row
-        if not claim:
+        kind, parts = self.list_row(bases, path)
+        if not claim or self.incomplete:
             return
         algorithm, _, encoded = claim.partition("=")
         if algorithm != "sha256":
@@ -327,7 +383,6 @@ class _Observation:
         if wanted is None or (size and not decimal):
             self.stop("record_malformed")
             return
-        kind, parts = _record_path(bases, path)
         if kind == "outside":
             return
         if parts is None:
@@ -343,6 +398,21 @@ class _Observation:
             # it was bounded at _SIZE_DIGITS ASCII digits above, so `int` cannot reach
             # Python's conversion limit (Revix on #453).
             self.stop("record_mismatch")
+
+    def list_row(self, bases: set[str], path: str) -> tuple[str, list[str] | None]:
+        """A row's place, hashed or not: an in-root path is kept as a digest, so that the
+        walk never takes a listed file for an unlisted one, and charged to record_rows;
+        its first component, when the root lists it, names an owned directory."""
+        kind, parts = _record_path(bases, path)
+        if kind == "inside" and parts:
+            self.rows += 1
+            if self.rows > self.caps["record_rows"]:
+                self.stop("record_rows")
+                return kind, parts
+            self.listed.setdefault(self.root, set()).add(_path_key(parts))
+            if len(parts) > 1 and parts[0] in self.names.get(self.root, ()):
+                self.tops.setdefault(self.root, set()).add(parts[0])
+        return kind, parts
 
     def digest_listed(self, root: int, parts: list[str]) -> tuple[str, int] | None:
         """The digest and length of a RECORD-listed file, reached from its root's
@@ -371,10 +441,14 @@ class _Observation:
 
     def listing(self, root: str) -> list[str]:
         """`root`'s top-level entry names, within the per-root and total entry caps:
-        what was listed before a stop, as the directory gives them."""
+        what was listed before a stop, as the directory gives them, listed from the root
+        opened once."""
         names: list[str] = []
+        held = self.base(root)
+        if held is None:
+            return names
         try:
-            with os.scandir(root) as listing:
+            with os.scandir(held[0]) as listing:
                 for item in listing:
                     if len(names) == self.caps["entries_per_root"]:
                         self.stop("entries_per_root")
@@ -389,7 +463,122 @@ class _Observation:
                     self.entries_total += 1
         except OSError:
             self.stop("unreadable")
+        self.names[root] = set(names)
         return names
+
+    def unlisted_entries(self, roots: list[str]) -> list[list[str | None]]:
+        """Every entry of each root's owned directories that no in-root RECORD row lists:
+        each owned directory charged as one directory and walked from the root opened
+        once."""
+        found: list[list[str | None]] = []
+        for root in roots:
+            for top in sorted(self.tops.get(root, ())):
+                held = self.base(root) if not self.incomplete else None
+                if held is None:
+                    return found
+                self.directories += 1
+                if self.directories > self.caps["tree_directories"]:
+                    self.stop("tree_directories")
+                    return found
+                self.walk(root, held[0], [top], found)
+        return found
+
+    def walk(
+        self, root: str, parent: int, parts: list[str], found: list[list[str | None]]
+    ) -> None:
+        """The owned directory `parts`, already charged, opened relative to `parent`
+        without following a link and listed; then each subdirectory it lists, once the
+        listing is closed. At most the walk's depth is open at once."""
+        if _DIRECTORY_OPEN is None:
+            self.stop("unreadable")
+            return
+        try:
+            directory = os.open(parts[-1], _DIRECTORY_OPEN, dir_fd=parent)
+        except OSError:
+            self.stop("unreadable")
+            return
+        try:
+            for name in self.scan(root, directory, parts, found):
+                if self.incomplete:
+                    return
+                self.walk(root, directory, [*parts, name], found)
+        finally:
+            os.close(directory)
+
+    def scan(
+        self, root: str, directory: int, parts: list[str], found: list[list[str | None]]
+    ) -> list[str]:
+        """The opened `directory`'s entries, each counted as it is listed: a subdirectory
+        charged and its depth checked before it is kept, and an unlisted entry recorded
+        while the listing is open. Returns the subdirectories, walked after it closes."""
+        subdirectories: list[str] = []
+        listed = self.listed.get(root, set())
+        try:
+            with os.scandir(directory) as listing:
+                for item in listing:
+                    self.walked += 1
+                    if self.walked > self.caps["tree_entries"]:
+                        self.stop("tree_entries")
+                        break
+                    name = self.text(item.name)
+                    if name is None:
+                        break
+                    mode = item.stat(follow_symlinks=False).st_mode
+                    path = [*parts, name]
+                    if stat.S_ISDIR(mode):
+                        self.directories += 1
+                        if self.directories > self.caps["tree_directories"]:
+                            self.stop("tree_directories")
+                        elif len(path) > self.caps["tree_depth"]:
+                            self.stop("tree_depth")
+                        else:
+                            subdirectories.append(name)
+                    elif _path_key(path) not in listed:
+                        self.record(root, directory, path, mode, found)
+                    if self.incomplete:
+                        break
+        except OSError:
+            self.stop("unreadable")
+        return subdirectories
+
+    def record(
+        self,
+        root: str,
+        directory: int,
+        path: list[str],
+        mode: int,
+        found: list[list[str | None]],
+    ) -> None:
+        """One unlisted entry of the opened `directory`: a regular file with its digest,
+        a link with its target, never followed, anything else alone, never opened. Each
+        is charged as it will be written, so that what the walk keeps never passes the
+        output cap (Router 6373641379 item 2)."""
+        self.unlisted += 1
+        if self.unlisted > self.caps["unlisted"]:
+            self.stop("unlisted")
+            return
+        text = self.text("/".join(path))
+        if text is None:
+            return
+        value: str | None = None
+        if stat.S_ISREG(mode):
+            kind, value = "file", self.digest_of(path[-1], directory)
+        elif stat.S_ISLNK(mode):
+            kind = "link"
+            try:
+                value = self.text(os.readlink(path[-1], dir_fd=directory))
+            except OSError:
+                self.stop("unreadable")
+        else:
+            kind = "other"
+        if self.incomplete:
+            return
+        entry = [root, text, kind, value]
+        self.unlisted_bytes += len(json.dumps(entry)) + 2
+        if self.unlisted_bytes > self.caps["output_bytes"]:
+            self.stop("output_bytes")
+            return
+        found.append(entry)
 
 
 def _import_roots(
@@ -453,8 +642,12 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
     """The observation of `path`, the interpreter's import path, as one JSON text
     that fits `output_bytes` with its newline."""
     observation = _Observation(caps)
-    roots, entries, archives = _import_roots(observation, path)
-    distributions = _distributions(observation, roots, entries)
+    try:
+        roots, entries, archives = _import_roots(observation, path)
+        distributions = _distributions(observation, roots, entries)
+        unlisted = [] if observation.incomplete else observation.unlisted_entries(roots)
+    finally:
+        observation.close()
     interpreter = {
         "executable": observation.text(os.path.realpath(sys.executable)),
         "version": observation.text(sys.version),
@@ -468,6 +661,7 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
             "entries": entries,
             "archives": archives,
             "distributions": distributions,
+            "unlisted": sorted(unlisted, key=lambda entry: (entry[0], entry[1])),
         },
         sort_keys=True,
     )

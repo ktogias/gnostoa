@@ -812,7 +812,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             [a, a], [member["before"]["sha256"], member["after"]["sha256"]]
         )
         self.assertEqual(["import-untyped"], self._rules(inventory))
-        self.assertIn("neither continuous nor installed content", member["scope"])
+        self.assertIn(
+            "neither continuous nor complete installed content", member["scope"]
+        )
         self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
         self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
 
@@ -1541,7 +1543,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     def test_a_record_is_read_from_the_directory_opened_not_its_path(self) -> None:
         # Kill test (X54, round 5): the RECORD is opened relative to the *.dist-info
         # directory the observer opened, so a directory replaced by a link after that
-        # open is never followed (cubic 4354512430).
+        # open is never followed (cubic 4354512430). The walk then enters that owned
+        # directory again and finds the link in its place: the observation stops as
+        # unreadable, never complete (D-U).
         observer = importlib.import_module("tools.python_environment_observation")
         site = self._observed_root("swapped")
         dist = site / "one-1.0.dist-info"
@@ -1564,7 +1568,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         opened_record = hashlib.sha256((dist / "RECORD").read_bytes()).hexdigest()
         with patch.object(observer.os, "open", swapping):
             observed = json.loads(observer.observe([str(site)], caps, form))
-        self.assertIsNone(observed["incomplete"])
+        self.assertEqual("unreadable", observed["incomplete"])
         self.assertEqual(
             [[str(site), "one-1.0.dist-info", opened_record]],
             observed["distributions"],
