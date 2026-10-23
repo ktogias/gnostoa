@@ -47,6 +47,7 @@ class _Observation:
         self.caps = caps
         self.incomplete: str | None = None
         self.read_total = 0
+        self.entries_total = 0
 
     def stop(self, reason: str) -> None:
         self.incomplete = self.incomplete or reason
@@ -116,20 +117,43 @@ class _Observation:
         finally:
             os.close(directory)
 
+    def listing(self, root: str) -> list[str]:
+        """`root`'s top-level entry names, within the per-root and total entry caps:
+        what was listed before a stop, as the directory gives them."""
+        names: list[str] = []
+        try:
+            with os.scandir(root) as listing:
+                for item in listing:
+                    if len(names) == self.caps["entries_per_root"]:
+                        self.stop("entries_per_root")
+                        break
+                    if self.entries_total == self.caps["entries"]:
+                        self.stop("entries")
+                        break
+                    name = self.text(item.name)
+                    if name is None:
+                        break
+                    names.append(name)
+                    self.entries_total += 1
+        except OSError:
+            self.stop("unreadable")
+        return names
 
-def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
-    """The observation of `path`, the interpreter's import path, as one JSON text
-    that fits `output_bytes` with its newline."""
-    observation = _Observation(caps)
+
+def _import_roots(
+    observation: _Observation, path: list[str]
+) -> tuple[list[str], dict[str, list[str]], list[list[str | None]]]:
+    """The import path's directories with their sorted entries, and its archives
+    with their digests, within the caps."""
     roots: list[str] = []
     entries: dict[str, list[str]] = {}
     archives: list[list[str | None]] = []
-    total = examined = 0
+    examined = 0
     for entry in path:
         if observation.incomplete:
             break
         # Every entry examined counts, an absent one too (CodeAnt on #452).
-        if examined == caps["roots"]:
+        if examined == observation.caps["roots"]:
             observation.stop("roots")
             break
         examined += 1
@@ -149,25 +173,16 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
             # An archive on the import path, a zip or an egg: its bytes stand for it.
             archives.append([root, observation.digest_of(entry)])
             continue
-        names: list[str] = []
-        try:
-            with os.scandir(entry) as listing:
-                for item in listing:
-                    if len(names) == caps["entries_per_root"]:
-                        observation.stop("entries_per_root")
-                        break
-                    if total == caps["entries"]:
-                        observation.stop("entries")
-                        break
-                    name = observation.text(item.name)
-                    if name is None:
-                        break
-                    names.append(name)
-                    total += 1
-        except OSError:
-            observation.stop("unreadable")
         roots.append(root)
-        entries[root] = sorted(names)
+        entries[root] = sorted(observation.listing(entry))
+    return roots, entries, archives
+
+
+def _distributions(
+    observation: _Observation, roots: list[str], entries: dict[str, list[str]]
+) -> list[list[str | None]]:
+    """Each root's `*.dist-info` entries, with the digest of their RECORD, within
+    the distributions cap."""
     distributions: list[list[str | None]] = []
     for root in roots:
         for name in entries[root]:
@@ -175,10 +190,19 @@ def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
                 break
             if not name.endswith(".dist-info"):
                 continue
-            if len(distributions) == caps["distributions"]:
+            if len(distributions) == observation.caps["distributions"]:
                 observation.stop("distributions")
                 break
             distributions.append([root, name, observation.record_digest(root, name)])
+    return distributions
+
+
+def observe(path: list[str], caps: dict[str, int], format_: str) -> str:
+    """The observation of `path`, the interpreter's import path, as one JSON text
+    that fits `output_bytes` with its newline."""
+    observation = _Observation(caps)
+    roots, entries, archives = _import_roots(observation, path)
+    distributions = _distributions(observation, roots, entries)
     interpreter = {
         "executable": observation.text(os.path.realpath(sys.executable)),
         "version": observation.text(sys.version),

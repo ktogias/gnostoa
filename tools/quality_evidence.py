@@ -2412,6 +2412,33 @@ def _source_size(root: Path, path: str) -> int:
         return -1
 
 
+def _attach_environment_observation(
+    result: _ProducerResult,
+    root: Path,
+    run: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    before: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    gaps: list[str],
+) -> None:
+    """The second observation, after the producers, and the member on the runs it
+    describes."""
+    # Past the refusal's predicate no inventory is written, so, as for a later
+    # producer, no later observation starts (cubic on #436).
+    after = (
+        _observe_environment(root, run, limits, deadline, "after")
+        if result.count() <= limits.max_findings
+        else (None, None)
+    )
+    observation = _environment_observation(before, after, gaps)
+    # The observation describes the runs launched as it was, by the launch their
+    # adapter declares: whatever their producer, and never by a name, an argv prefix
+    # or for an in-process run (Router 6351766731 R2).
+    for launch, record in result.launched:
+        if launch == _ISOLATED_PYTHON:
+            record["environment_observation"] = observation
+
+
 def _run_producers(
     root: Path,
     run: Path,
@@ -2479,20 +2506,9 @@ def _run_producers(
                     max_findings=limits.max_findings - result.count(),
                 )
             )
-        # Past the refusal's predicate no inventory is written, so, as for a later
-        # producer, no later observation starts (cubic on #436).
-        after = (
-            _observe_environment(root, run, limits, deadline, "after")
-            if result.count() <= limits.max_findings
-            else (None, None)
+        _attach_environment_observation(
+            result, root, run, limits, deadline, before, gaps
         )
-        observation = _environment_observation(before, after, gaps)
-        # The observation describes the runs launched as it was, by the launch their
-        # adapter declares: whatever their producer, and never by a name, an argv prefix
-        # or for an in-process run (Router 6351766731 R2).
-        for launch, record in result.launched:
-            if launch == _ISOLATED_PYTHON:
-                record["environment_observation"] = observation
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
     tracked = set(expected) - set(withheld)
