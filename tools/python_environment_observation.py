@@ -548,32 +548,47 @@ class _Observation:
         try:
             with os.scandir(directory) as listing:
                 for item in listing:
-                    self.walked += 1
-                    if self.walked > self.caps["tree_entries"]:
-                        self.stop("tree_entries")
-                        break
-                    name = self.text(item.name)
-                    if name is None:
-                        break
-                    mode = item.stat(follow_symlinks=False).st_mode
-                    path = [*parts, name]
-                    if stat.S_ISDIR(mode):
-                        self.directories += 1
-                        if self.directories > self.caps["tree_directories"]:
-                            self.stop("tree_directories")
-                        elif len(path) > self.caps["tree_depth"]:
-                            self.stop("tree_depth")
-                        else:
-                            subdirectories.append(name)
-                    else:
-                        shown = True
-                        if _path_key(path) not in listed:
-                            self.record(root, directory, path, mode, found)
+                    entry = (root, directory, parts, item)
+                    shown = self.take(entry, listed, subdirectories, found) or shown
                     if self.incomplete:
                         break
         except OSError:
             self.stop("unreadable")
         return subdirectories, shown
+
+    def take(
+        self,
+        entry: tuple[str, int, list[str], os.DirEntry[str]],
+        listed: set[bytes],
+        subdirectories: list[str],
+        found: list[list[str | None]],
+    ) -> bool:
+        """One entry of a listing, counted against tree_entries and string_bytes: a
+        subdirectory is charged and its depth checked before it is kept, and anything
+        else is recorded unless an in-root row lists it. Returns whether it shows, as
+        every entry but a subdirectory does (Sonar python:S3776 on #455)."""
+        root, directory, parts, item = entry
+        self.walked += 1
+        if self.walked > self.caps["tree_entries"]:
+            self.stop("tree_entries")
+            return False
+        name = self.text(item.name)
+        if name is None:
+            return False
+        path = [*parts, name]
+        mode = item.stat(follow_symlinks=False).st_mode
+        if not stat.S_ISDIR(mode):
+            if _path_key(path) not in listed:
+                self.record(root, directory, path, mode, found)
+            return True
+        self.directories += 1
+        if self.directories > self.caps["tree_directories"]:
+            self.stop("tree_directories")
+        elif len(path) > self.caps["tree_depth"]:
+            self.stop("tree_depth")
+        else:
+            subdirectories.append(name)
+        return False
 
     def record(
         self,
