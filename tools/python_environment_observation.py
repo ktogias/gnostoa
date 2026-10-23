@@ -16,10 +16,12 @@ reads, before anything is sorted, and a file read counts against both file caps.
 
 Each RECORD's hashed rows are also checked against the files they name, from the same
 RECORD bytes its digest names (#389 F3-S2-RECORD-GUARD, Router 6361147179). A computed
-sha256 that disagrees is `record_mismatch`; an unsupported algorithm, a malformed row, a
-row naming a path outside its root, or a listed file that cannot be read stops the
-observation too. A RECORD that agrees is not installed-content identity: rows without a
-hash, files no RECORD lists and import resolution stay unobserved.
+sha256 that disagrees is `record_mismatch`; an unsupported algorithm, a malformed row, an
+ambiguous path or a listed file that cannot be read stops the observation too. A valid
+row naming a path outside its import root, a console script or data file, is outside
+the check: classified lexically, never accessed and never verified (E1, Router #389
+6361519666). A RECORD that agrees is not installed-content identity: rows without a hash,
+rows outside the root, files no RECORD lists and import resolution stay unobserved.
 """
 
 import base64
@@ -61,6 +63,41 @@ def _sha256_claim(encoded: str) -> str | None:
     except (binascii.Error, ValueError):
         return None
     return raw.hex() if len(raw) == 32 else None
+
+
+def _within(bases: set[str], target: str) -> bool:
+    return any(
+        target == base or target.startswith(base.rstrip(os.sep) + os.sep)
+        for base in bases
+    )
+
+
+def _record_path(root: str, path: str) -> tuple[str, list[str] | None]:
+    """How a RECORD row's path relates to its import root, lexically and before any
+    access: ("inside", components) for plain components under the root; ("outside",
+    None) for one written as leading `..` components or as an absolute path that
+    resolves outside the root as given and as real; ("ambiguous", None) for anything
+    else, an alias back into the root included (E1, Router #389 6361519666)."""
+    bases = {os.path.normpath(root), os.path.realpath(root)}
+    if os.path.isabs(path):
+        return (
+            ("ambiguous", None)
+            if _within(bases, os.path.normpath(path))
+            else ("outside", None)
+        )
+    parts = path.split("/")
+    up = 0
+    while up < len(parts) and parts[up] == "..":
+        up += 1
+    rest = parts[up:]
+    if not rest or any(part in ("", ".", "..") for part in rest):
+        return "ambiguous", None
+    if up == 0:
+        return "inside", rest
+    targets = {os.path.normpath(os.path.join(base, path)) for base in bases}
+    if any(_within(bases, target) for target in targets):
+        return "ambiguous", None
+    return "outside", None
 
 
 class _Observation:
@@ -165,13 +202,13 @@ class _Observation:
                 if self.incomplete:
                     return
                 if row:
-                    self.verify_row(directory, row)
+                    self.verify_row(root, directory, row)
         except (UnicodeDecodeError, csv.Error):
             self.stop("record_malformed")
         finally:
             os.close(directory)
 
-    def verify_row(self, directory: int, row: list[str]) -> None:
+    def verify_row(self, root: str, directory: int, row: list[str]) -> None:
         """One RECORD row: its sha256 claim against the bytes of the file it names."""
         if len(row) != 3:
             self.stop("record_malformed")
@@ -187,10 +224,11 @@ class _Observation:
         if wanted is None or (size and not size.isdigit()):
             self.stop("record_malformed")
             return
-        parts = path.split("/")
-        if any(part in ("", ".", "..") for part in parts):
-            # An absolute path, or one leaving its root: never opened, never verified.
-            self.stop("record_outside_root")
+        kind, parts = _record_path(root, path)
+        if kind == "outside":
+            return
+        if parts is None:
+            self.stop("record_ambiguous_path")
             return
         found = self.digest_listed(directory, parts)
         if found is not None and found != wanted:
