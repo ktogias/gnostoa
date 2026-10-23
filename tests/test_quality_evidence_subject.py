@@ -1845,6 +1845,10 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("the root itself", "../aliased"),
             ("a bare parent", ".."),
             ("an absolute alias with a dot", f"{root.parent}/./aliased/mm/__init__.py"),
+            # Sourcery 4358369113 and 4358369120 on #453.
+            ("a NUL in a component", "mm/\x00x.py"),
+            ("a doubled leading slash into the root", f"/{root}/mm/__init__.py"),
+            ("a doubled leading slash elsewhere", "//usr/bin/tool"),
         )
         for name, path in cases:
             with self.subTest(name):
@@ -1852,6 +1856,36 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 self._recorded_root("aliased", f"{path},sha256={claim},1")
                 observed = self._observe_with(root)
                 self.assertEqual("record_ambiguous_path", observed["incomplete"])
+
+    def test_a_claim_in_any_but_the_canonical_encoding_is_malformed(self) -> None:
+        # Sourcery 4358369089 on #453: a RECORD claim is urlsafe base64 without
+        # padding, canonically; the standard alphabet, padding, or unused bits set in
+        # its last character are malformed even when they decode to the right digest.
+        claim = self._claim(b"x")
+        self.assertIn("-", claim)
+        last = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        cases = (
+            ("the standard alphabet", claim.replace("-", "+").replace("_", "/")),
+            ("padding", claim + "="),
+            ("unused bits set", claim[:-1] + last[last.index(claim[-1]) + 1]),
+        )
+        for name, encoded in cases:
+            with self.subTest(name):
+                root = self._recorded_root(
+                    name.replace(" ", "-"), f"mm/data.bin,sha256={encoded},1"
+                )
+                (root / "mm" / "data.bin").write_bytes(b"x")
+                self.assertEqual(
+                    "record_malformed", self._observe_with(root)["incomplete"]
+                )
+
+    def test_a_size_that_disagrees_with_its_file_is_a_mismatch(self) -> None:
+        # Sourcery 4358369095 on #453: a row's size is a claim too, compared with the
+        # bytes read; one that disagrees stops the observation even when the digest
+        # agrees.
+        root = self._recorded_root("sized", f"mm/data.bin,sha256={self._claim(b'x')},2")
+        (root / "mm" / "data.bin").write_bytes(b"x")
+        self.assertEqual("record_mismatch", self._observe_with(root)["incomplete"])
 
     def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
         # C6 kept under E1: adding a distribution whose in-root rows match, with an
