@@ -1968,9 +1968,24 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # Sourcery 4358369095 on #453: a row's size is a claim too, compared with the
         # bytes read; one that disagrees stops the observation even when the digest
         # agrees.
-        root = self._recorded_root("sized", f"mm/data.bin,sha256={self._claim(b'x')},2")
-        (root / "mm" / "data.bin").write_bytes(b"x")
-        self.assertEqual("record_mismatch", self._observe_with(root)["incomplete"])
+        claim = self._claim(b"x")
+        cases = (
+            ("a different size", "2"),
+            # Revix 4359050029 on #453: past Python's 4,300-digit limit, a size made
+            # `int` raise; it is compared as text instead.
+            ("a size past int's digit limit", "1" + "0" * 5000),
+            ("leading zeros", "01"),
+        )
+        for name, size in cases:
+            with self.subTest(name):
+                root = self._recorded_root(
+                    name.replace(" ", "-").replace("'", ""),
+                    f"mm/data.bin,sha256={claim},{size}",
+                )
+                (root / "mm" / "data.bin").write_bytes(b"x")
+                self.assertEqual(
+                    "record_mismatch", self._observe_with(root)["incomplete"]
+                )
 
     def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
         # C6 kept under E1: adding a distribution whose in-root rows match, with an
