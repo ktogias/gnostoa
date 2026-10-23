@@ -2064,6 +2064,29 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                     "record_mismatch", self._observe_with(root)["incomplete"]
                 )
 
+    def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
+        # Router 6364506650 (B): the composed caps admit a matching in-root payload of
+        # the measured real size, a file over the former 8 MiB per-file cap and files
+        # over the former 32 MiB aggregate, within every other limit.
+        mebibyte = 1024 * 1024
+        cases = (
+            ("a file over the former per-file cap", (9 * mebibyte,)),
+            ("files over the former aggregate", (7 * mebibyte,) * 5),
+        )
+        for name, sizes in cases:
+            with self.subTest(name):
+                contents = [bytes([index]) * size for index, size in enumerate(sizes)]
+                rows = [
+                    f"mm/big{index}.bin,sha256={self._claim(content)},{len(content)}"
+                    for index, content in enumerate(contents)
+                ]
+                root = self._recorded_root(name.replace(" ", "-"), *rows)
+                for index, content in enumerate(contents):
+                    (root / "mm" / f"big{index}.bin").write_bytes(content)
+                observed = self._observe_with(root)
+                self.assertIsNone(observed["incomplete"])
+                self.assertEqual(1, len(observed["distributions"]))
+
     def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
         # C6 kept under E1: adding a distribution whose in-root rows match, with an
         # outside console script, changes a complete observation rather than making it
