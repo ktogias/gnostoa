@@ -4,6 +4,7 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 from __future__ import annotations
 
 import ast
+import base64
 import errno
 import hashlib
 import importlib
@@ -1635,6 +1636,91 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                         deadline=time.monotonic() + 60,
                         limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                     )
+
+    @staticmethod
+    def _record_row(root: Path, relative: str) -> str:
+        """A RECORD row as an installer writes it: the path, sha256= urlsafe base64
+        without padding, and the size."""
+        content = (root / relative).read_bytes()
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+        return f"{relative},sha256={digest.decode()},{len(content)}"
+
+    def _recorded_root(self, name: str, *rows: str) -> Path:
+        """A root with the typed distribution `mm` 1.0, whose RECORD lists its module,
+        py.typed and METADATA with their real digests, and then any extra `rows`."""
+        root = Path(self.directory.name) / name
+        (root / "mm").mkdir(parents=True)
+        (root / "mm-1.0.dist-info").mkdir()
+        (root / "mm" / "__init__.py").write_text('VALUE: str = "s"\n', encoding="utf-8")
+        (root / "mm" / "py.typed").write_text("", encoding="utf-8")
+        (root / "mm-1.0.dist-info" / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: mm\nVersion: 1.0\n", encoding="utf-8"
+        )
+        listed = [
+            self._record_row(root, f)
+            for f in ("mm/__init__.py", "mm/py.typed", "mm-1.0.dist-info/METADATA")
+        ]
+        record = [*listed, *rows, "mm-1.0.dist-info/RECORD,,"]
+        (root / "mm-1.0.dist-info" / "RECORD").write_text(
+            "\n".join(record) + "\n", encoding="utf-8"
+        )
+        return root
+
+    def test_a_record_that_matches_its_files_is_a_complete_observation(self) -> None:
+        # Characterization: every hashed RECORD row agrees with its file, so the
+        # observation completes (F3-S2-RECORD-GUARD positive control).
+        observed = self._observe_with(self._recorded_root("matched"))
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(1, len(observed["distributions"]))
+
+    def test_an_installed_file_that_differs_from_its_record_stops_the_observation(
+        self,
+    ) -> None:
+        # The installed module's bytes changed while its RECORD, METADATA, version and
+        # names did not: the observation stops as record_mismatch, through the
+        # observer and through the collector's acceptance boundary (Router #389
+        # 6361147179; the f837 probe 6360875795).
+        root = self._recorded_root("mismatched")
+        (root / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        observed = self._observe_with(root)
+        self.assertEqual("record_mismatch", observed["incomplete"])
+        inventory = self._run(self._answering(observed), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
+
+    def test_a_record_row_that_cannot_be_verified_stops_the_observation(self) -> None:
+        # A hashed row that is not a supported, well-formed sha256 over a readable
+        # regular file in the root never passes as verified (Router #389 6361147179).
+        cases = (
+            (
+                "an unsupported algorithm",
+                "mm/__init__.py,md5=abcd,17",
+                "record_unsupported",
+            ),
+            ("a malformed digest", "mm/__init__.py,sha256=!!!,17", "record_malformed"),
+            ("a malformed size", "mm/__init__.py,sha256=AAAA,many", "record_malformed"),
+            ("a missing listed file", "mm/absent.py,sha256=AAAA,1", "unreadable"),
+        )
+        for name, row, reason in cases:
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                self.assertEqual(reason, self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file reached through a link"):
+            root = self._recorded_root("linked-listed")
+            target = Path(self.directory.name) / "elsewhere-module.py"
+            target.write_text('VALUE: str = "s"\n', encoding="utf-8")
+            (root / "mm" / "__init__.py").unlink()
+            (root / "mm" / "__init__.py").symlink_to(target)
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file that is not a regular file"):
+            root = self._recorded_root("fifo-listed")
+            (root / "mm" / "__init__.py").unlink()
+            os.mkfifo(root / "mm" / "__init__.py")
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
