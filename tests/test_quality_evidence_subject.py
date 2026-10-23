@@ -1556,6 +1556,42 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertTrue(retarget.exists())
         self.assertEqual("record_mismatch", observed["incomplete"])
 
+    def test_a_distribution_is_opened_from_the_root_already_opened(self) -> None:
+        # Kill test for the root binding (Q and Sourcery on #453): the *.dist-info
+        # directory is opened relative to the import root's descriptor, so a root link
+        # retargeted right after that open never pairs another root's RECORD with this
+        # root's files. Here the first root agrees with its RECORD and the second does
+        # not, with a RECORD of other bytes.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("consistent-root")
+        second = self._recorded_root("inconsistent-root", "mm/extra.txt,,")
+        (second / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        link = Path(self.directory.name) / "linked-consistent"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-consistent.new"
+        expected = hashlib.sha256(
+            (first / "mm-1.0.dist-info" / "RECORD").read_bytes()
+        ).hexdigest()
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            if os.fspath(path) == str(link) and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [[str(link), "mm-1.0.dist-info", expected]], observed["distributions"]
+        )
+
     def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
         # An import-path entry that exists but cannot be examined stops the observation
         # as unreadable; only a path that is absent is skipped (PAO 6353587922,
