@@ -4,12 +4,15 @@ and comparison binding (#389 F3 S2 B, Router 6326577610)."""
 from __future__ import annotations
 
 import ast
+import base64
+import csv
 import errno
 import hashlib
 import importlib
 import json
 import os
 import shutil
+import string
 import sys
 import tempfile
 import time
@@ -849,7 +852,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # The script's own imports are loaded first, so that only its import path, not
         # the standard library, is replaced.
         prefix = (
-            "import hashlib, json, os, stat, sys\n"
+            "import base64, codecs, collections.abc, csv, hashlib, json, os\n"
+            "import pathlib, stat, sys\n"
             f"sys.path[:] = {[str(r) for r in roots]!r}\n"
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
@@ -867,10 +871,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         return json.loads(report.read_text(encoding="utf-8"))
 
     def _observed_root(self, name: str) -> Path:
-        """A root of two modules and one distribution whose RECORD is 64 bytes."""
+        """A root of two modules and one distribution whose RECORD is 64 bytes: valid
+        rows, all without a hash, so outside the RECORD check."""
         root = Path(self.directory.name) / name
         (root / "one-1.0.dist-info").mkdir(parents=True)
-        (root / "one-1.0.dist-info" / "RECORD").write_text("x" * 64, encoding="utf-8")
+        record = "one-1.0.dist-info/RECORD,,\n" + "a.py,,\n" * 5 + "\n\n"
+        (root / "one-1.0.dist-info" / "RECORD").write_text(record, encoding="utf-8")
         for module in ("a.py", "b.py"):
             (root / module).write_text("", encoding="utf-8")
         return root
@@ -1288,20 +1294,27 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             (self.root / place).write_text(forged, encoding="utf-8")
         run = Path(self.directory.name) / "isolated-run"
         run.mkdir()
-        evidence, interpreter = self.module._observe_environment(
+        self.module._observe_environment(
             self.root,
             run,
             self.module.DEFAULT_DIAGNOSTIC_LIMITS,
             time.monotonic() + 120,
             "before",
         )
-        self.assertIsNotNone(evidence)
-        observed = json.loads((run / evidence["path"]).read_text(encoding="utf-8"))
+        # The real environment may still leave the observation incomplete, through a
+        # cap, a listed file that cannot be read or a real mismatch; rows outside their
+        # root never do (E1, Octopus on #453). So isolation is read from the
+        # observer's own report, complete or not.
+        report = run / "diagnostic-environment-before.json"
+        observed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, observed["format"])
         roots = {os.path.realpath(root) for root in observed["roots"]}
         self.assertNotIn("/forged", observed["roots"])
         self.assertNotIn(os.path.realpath(self.root), roots)
         self.assertNotIn(os.path.realpath(self._observer().parent), roots)
-        self.assertEqual(os.path.realpath(sys.executable), interpreter["executable"])
+        self.assertEqual(
+            os.path.realpath(sys.executable), observed["interpreter"]["executable"]
+        )
 
     def test_the_member_is_additive_to_the_v2_record(self) -> None:
         # Characterization: the v2 record keeps its fields; the member is the one
@@ -1500,20 +1513,190 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
         def swapping(path, flags, *args, **kwargs):
             descriptor = opened(path, flags, *args, **kwargs)
-            if os.fspath(path) == str(dist) and flags & os.O_DIRECTORY:
+            named = os.fspath(path) in (str(dist), dist.name)
+            if named and flags & os.O_DIRECTORY and not moved.exists():
                 dist.rename(moved)
                 dist.symlink_to(elsewhere, target_is_directory=True)
             return descriptor
 
         caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        opened_record = hashlib.sha256((dist / "RECORD").read_bytes()).hexdigest()
         with patch.object(observer.os, "open", swapping):
             observed = json.loads(observer.observe([str(site)], caps, form))
         self.assertIsNone(observed["incomplete"])
         self.assertEqual(
-            [[str(site), "one-1.0.dist-info", hashlib.sha256(b"x" * 64).hexdigest()]],
+            [[str(site), "one-1.0.dist-info", opened_record]],
             observed["distributions"],
         )
+
+    def test_a_record_and_the_files_it_names_come_from_one_root(self) -> None:
+        # Q 4358351672 on #453: the RECORD and the files its rows name are read from
+        # one opened import root, so a root link retargeted between the two never
+        # verifies one directory's RECORD against another directory's files.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("first-root")
+        second = self._recorded_root("second-root")
+        (first / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        link = Path(self.directory.name) / "linked-site"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-site.new"
+        dist = "mm-1.0.dist-info"
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            named = os.fspath(path) in (str(link / dist), dist)
+            if named and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertEqual("record_mismatch", observed["incomplete"])
+
+    def test_a_distribution_is_opened_from_the_root_already_opened(self) -> None:
+        # Kill test for the root binding (Q and Sourcery on #453): the *.dist-info
+        # directory is opened relative to the import root's descriptor, so a root link
+        # retargeted right after that open never pairs another root's RECORD with this
+        # root's files. Here the first root agrees with its RECORD and the second does
+        # not, with a RECORD of other bytes.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("consistent-root")
+        second = self._recorded_root("inconsistent-root", "mm/extra.txt,,")
+        (second / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        link = Path(self.directory.name) / "linked-consistent"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-consistent.new"
+        expected = hashlib.sha256(
+            (first / "mm-1.0.dist-info" / "RECORD").read_bytes()
+        ).hexdigest()
+        opened = os.open
+
+        def swapping(path, flags, *args, **kwargs):
+            descriptor = opened(path, flags, *args, **kwargs)
+            if os.fspath(path) == str(link) and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return descriptor
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os, "open", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(
+            [[str(link), "mm-1.0.dist-info", expected]], observed["distributions"]
+        )
+
+    def test_an_alias_into_the_opened_root_is_ambiguous_after_a_swap(self) -> None:
+        # CodeAnt on #453 and PAO-453-ROOT-CLASSIFICATION-ANCHOR-7EBFCE9B-v1: a row is
+        # classified against the real path of the root that was opened, not one
+        # recomputed later, so a root link retargeted after its open never turns an
+        # alias into that root, relative or absolute, into an unchecked "outside" row.
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        claim = f"sha256={self._claim(b'x')},1"
+        opened = os.open
+        for kind in ("relative", "absolute"):
+            with self.subTest(kind):
+                name = f"alias-{kind}-root"
+                row = (
+                    f"../{name}/mm/__init__.py"
+                    if kind == "relative"
+                    else f"{Path(self.directory.name).resolve() / name}/mm/__init__.py"
+                )
+                pinned = self._recorded_root(name, f"{row},{claim}")
+                other = self._recorded_root(f"alias-{kind}-other")
+                link = Path(self.directory.name) / f"linked-alias-{kind}"
+                link.symlink_to(pinned, target_is_directory=True)
+                retarget = Path(self.directory.name) / f"linked-alias-{kind}.new"
+
+                def swapping(
+                    path,
+                    flags,
+                    *args,
+                    link=link,
+                    other=other,
+                    retarget=retarget,
+                    **kwargs,
+                ):
+                    descriptor = opened(path, flags, *args, **kwargs)
+                    if os.fspath(path) == str(link) and not retarget.exists():
+                        retarget.symlink_to(other, target_is_directory=True)
+                        os.replace(retarget, link)
+                        retarget.mkdir()
+                    return descriptor
+
+                with patch.object(observer.os, "open", swapping):
+                    observed = json.loads(observer.observe([str(link)], caps, form))
+                self.assertTrue(retarget.exists())
+                self.assertEqual("record_ambiguous_path", observed["incomplete"])
+
+    def test_a_root_that_changes_while_being_opened_is_unreadable(self) -> None:
+        # Kill test for the pinned real path (CodeAnt on #453): a root link retargeted
+        # between the read of its real path and its open leaves a real path naming
+        # another directory than the one opened, and the observation stops.
+        observer = importlib.import_module("tools.python_environment_observation")
+        first = self._recorded_root("racing-first")
+        second = self._recorded_root("racing-second")
+        link = Path(self.directory.name) / "linked-racing"
+        link.symlink_to(first, target_is_directory=True)
+        retarget = Path(self.directory.name) / "linked-racing.new"
+        resolved = os.path.realpath
+
+        def swapping(path, *args, **kwargs):
+            real = resolved(path, *args, **kwargs)
+            if os.fspath(path) == str(link) and not retarget.exists():
+                retarget.symlink_to(second, target_is_directory=True)
+                os.replace(retarget, link)
+                retarget.mkdir()
+            return real
+
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        with patch.object(observer.os.path, "realpath", swapping):
+            observed = json.loads(observer.observe([str(link)], caps, form))
+        self.assertTrue(retarget.exists())
+        self.assertEqual("unreadable", observed["incomplete"])
+
+    def test_the_observation_closes_every_descriptor_it_opens(self) -> None:
+        # Kill test (R12, round 3): whichever way a distribution's check ends, matched,
+        # mismatched, malformed, outside, ambiguous, unreadable or with a linked
+        # *.dist-info directory, the observer closes every descriptor it opened.
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("needs /proc/self/fd to count descriptors")
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        claim = f"sha256={self._claim(b'x')},1"
+        mismatched = self._recorded_root("fd-mismatched")
+        (mismatched / "mm" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+        linked = self._recorded_root("fd-linked")
+        (linked / "mm-1.0.dist-info").rename(linked / "elsewhere")
+        (linked / "mm-1.0.dist-info").symlink_to(linked / "elsewhere")
+        roots = (
+            self._recorded_root("fd-matched"),
+            mismatched,
+            self._recorded_root("fd-malformed", "mm/__init__.py,md5=x,1"),
+            self._recorded_root("fd-outside", f"../bin/tool,{claim}"),
+            self._recorded_root("fd-ambiguous", f"mm/../x.py,{claim}"),
+            self._recorded_root("fd-unreadable", f"mm/absent/x.py,{claim}"),
+            linked,
+        )
+        for root in roots:
+            with self.subTest(root.name):
+                before = sorted(os.listdir("/proc/self/fd"))
+                observer.observe([str(root)], caps, form)
+                self.assertEqual(before, sorted(os.listdir("/proc/self/fd")))
 
     def test_an_inaccessible_root_is_unreadable_never_absent(self) -> None:
         # An import-path entry that exists but cannot be examined stops the observation
@@ -1635,6 +1818,491 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                         deadline=time.monotonic() + 60,
                         limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                     )
+
+    @staticmethod
+    def _record_row(root: Path, relative: str) -> str:
+        """A RECORD row as an installer writes it: the path, sha256= urlsafe base64
+        without padding, and the size."""
+        content = (root / relative).read_bytes()
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+        return f"{relative},sha256={digest.decode()},{len(content)}"
+
+    def _recorded_root(self, name: str, *rows: str) -> Path:
+        """A root with the typed distribution `mm` 1.0, whose RECORD lists its module,
+        py.typed and METADATA with their real digests, and then any extra `rows`."""
+        root = Path(self.directory.name) / name
+        (root / "mm").mkdir(parents=True)
+        (root / "mm-1.0.dist-info").mkdir()
+        (root / "mm" / "__init__.py").write_text('VALUE: str = "s"\n', encoding="utf-8")
+        (root / "mm" / "py.typed").write_text("", encoding="utf-8")
+        (root / "mm-1.0.dist-info" / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: mm\nVersion: 1.0\n", encoding="utf-8"
+        )
+        listed = [
+            self._record_row(root, f)
+            for f in ("mm/__init__.py", "mm/py.typed", "mm-1.0.dist-info/METADATA")
+        ]
+        record = [*listed, *rows, "mm-1.0.dist-info/RECORD,,"]
+        (root / "mm-1.0.dist-info" / "RECORD").write_text(
+            "\n".join(record) + "\n", encoding="utf-8"
+        )
+        return root
+
+    def test_a_record_that_matches_its_files_is_a_complete_observation(self) -> None:
+        # Characterization: every hashed RECORD row agrees with its file, so the
+        # observation completes (F3-S2-RECORD-GUARD positive control).
+        observed = self._observe_with(self._recorded_root("matched"))
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(1, len(observed["distributions"]))
+
+    def test_an_installed_file_that_differs_from_its_record_stops_the_observation(
+        self,
+    ) -> None:
+        # The installed module's bytes changed while its RECORD, METADATA, version and
+        # names did not: the observation stops as record_mismatch, through the
+        # observer and through the collector's acceptance boundary (Router #389
+        # 6361147179; the f837 probe 6360875795).
+        root = self._recorded_root("mismatched")
+        (root / "mm" / "__init__.py").write_text("VALUE: int = 1\n", encoding="utf-8")
+        observed = self._observe_with(root)
+        self.assertEqual("record_mismatch", observed["incomplete"])
+        inventory = self._run(self._answering(observed), "import-untyped")
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("unavailable", member["status"])
+        self.assertRegex(
+            inventory["coverage"]["reason"] or "",
+            r"producer environment identity unavailable",
+        )
+
+    def test_a_record_row_that_cannot_be_verified_stops_the_observation(self) -> None:
+        # A hashed row that is not a supported, well-formed sha256 over a readable
+        # regular file in the root never passes as verified (Router #389 6361147179).
+        # A well-formed sha256 claim, so that each case isolates its own condition.
+        claim = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).rstrip(b"=")
+        claim = claim.decode()
+        cases = (
+            (
+                "an unsupported algorithm",
+                "mm/__init__.py,md5=abcd,17",
+                "record_unsupported",
+            ),
+            ("a malformed digest", "mm/__init__.py,sha256=!!!,17", "record_malformed"),
+            ("a short digest", "mm/__init__.py,sha256=AAAA,17", "record_malformed"),
+            (
+                "a malformed size",
+                f"mm/__init__.py,sha256={claim},many",
+                "record_malformed",
+            ),
+            ("a missing listed file", f"mm/absent.py,sha256={claim},1", "unreadable"),
+        )
+        for name, row, reason in cases:
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                self.assertEqual(reason, self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file reached through a link"):
+            root = self._recorded_root("linked-listed")
+            target = Path(self.directory.name) / "elsewhere-module.py"
+            target.write_text('VALUE: str = "s"\n', encoding="utf-8")
+            (root / "mm" / "__init__.py").unlink()
+            (root / "mm" / "__init__.py").symlink_to(target)
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file that is not a regular file"):
+            root = self._recorded_root("fifo-listed")
+            (root / "mm" / "__init__.py").unlink()
+            os.mkfifo(root / "mm" / "__init__.py")
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
+
+    @staticmethod
+    def _claim(content: bytes) -> str:
+        """A well-formed sha256 RECORD claim for `content`."""
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+        return digest.decode()
+
+    def test_a_row_outside_its_root_is_outside_the_check_and_never_accessed(
+        self,
+    ) -> None:
+        # E1 (Router #389 6361519666): a valid console-script or data row naming a path
+        # lexically outside the import root is classified before any filesystem access:
+        # never opened, stat'ed or hashed, never verified, and it does not stop an
+        # otherwise complete observation. The outside target is a FIFO, so any access
+        # would leave the observation incomplete.
+        outside = Path(self.directory.name) / "outside-bin"
+        sibling = Path(self.directory.name) / "with-script-bin"
+        for directory in (outside, sibling):
+            directory.mkdir()
+            os.mkfifo(directory / "tool")
+        claim = f"sha256={self._claim(b'x')},1"
+        root = self._recorded_root(
+            "with-script",
+            f"../outside-bin/tool,{claim}",
+            f"{outside}/tool,{claim}",
+            f"../with-script-bin/tool,{claim}",
+        )
+        observed = self._observe_with(root)
+        self.assertIsNone(observed["incomplete"])
+        self.assertEqual(1, len(observed["distributions"]))
+        observer = importlib.import_module("tools.python_environment_observation")
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        touched: list[str] = []
+        real_open, real_stat, real_lstat = os.open, os.stat, os.lstat
+
+        def opening(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_open(path, *args, **kwargs)
+
+        def stating(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_stat(path, *args, **kwargs)
+
+        def lstating(path, *args, **kwargs):
+            touched.append(os.fspath(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with (
+            patch.object(observer.os, "open", opening),
+            patch.object(observer.os, "stat", stating),
+            patch.object(observer.os, "lstat", lstating),
+        ):
+            result = json.loads(observer.observe([str(root)], caps, form))
+        self.assertIsNone(result["incomplete"])
+        self.assertTrue(touched)
+        self.assertFalse(
+            [t for t in touched if "-bin" in t or t in ("..", "tool", "outside-bin")]
+        )
+
+    def test_an_ambiguous_or_in_root_alias_row_stops_the_observation(self) -> None:
+        # E1 is lexical and narrow: a traversal after a component, a path written to
+        # leave the root and come back into it, an absolute path into the root, and
+        # dot or empty components are not "outside"; each stops the observation, so
+        # an in-scope mismatch can never hide behind them (Router #389 6361519666).
+        claim = self._claim(b"x")
+        root = Path(self.directory.name) / "aliased"
+        cases = (
+            ("a traversal after a component", "mm/../../x.py"),
+            ("a relative alias back into the root", "../aliased/mm/__init__.py"),
+            ("an absolute alias into the root", f"{root}/mm/__init__.py"),
+            ("a dot component", "mm/./__init__.py"),
+            ("an empty component", "mm//__init__.py"),
+            ("the root itself", "../aliased"),
+            ("a bare parent", ".."),
+            ("an absolute alias with a dot", f"{root.parent}/./aliased/mm/__init__.py"),
+            # Kill test (G19, round 6): a parent component, which only normalization
+            # removes, since pathlib collapses a dot but never `..`.
+            (
+                "an absolute alias through a parent",
+                f"{root.parent}/elsewhere/../aliased/mm/__init__.py",
+            ),
+            # Sourcery 4358369113 and 4358369120 on #453.
+            ("a NUL in a component", "mm/\x00x.py"),
+            ("a doubled leading slash into the root", f"/{root}/mm/__init__.py"),
+            ("a doubled leading slash elsewhere", "//usr/bin/tool"),
+        )
+        for name, path in cases:
+            with self.subTest(name):
+                shutil.rmtree(root, ignore_errors=True)
+                self._recorded_root("aliased", f"{path},sha256={claim},1")
+                observed = self._observe_with(root)
+                self.assertEqual("record_ambiguous_path", observed["incomplete"])
+
+    def test_a_claim_in_any_but_the_canonical_encoding_is_malformed(self) -> None:
+        # Sourcery 4358369089 on #453: a RECORD claim is urlsafe base64 without
+        # padding, canonically; the standard alphabet, padding, or unused bits set in
+        # its last character are malformed even when they decode to the right digest.
+        claim = self._claim(b"x")
+        self.assertIn("-", claim)
+        last = string.ascii_uppercase + string.ascii_lowercase + string.digits + "-_"
+        cases = (
+            ("the standard alphabet", claim.replace("-", "+").replace("_", "/")),
+            ("padding", claim + "="),
+            ("unused bits set", claim[:-1] + last[last.index(claim[-1]) + 1]),
+            # Characterization (Sonar python:S5713 on #453): base64 raises a plain
+            # ValueError, not binascii.Error, for a claim that is not ASCII.
+            ("a non-ASCII claim", "é" + claim[1:]),
+        )
+        for name, encoded in cases:
+            with self.subTest(name):
+                root = self._recorded_root(
+                    name.replace(" ", "-"), f"mm/data.bin,sha256={encoded},1"
+                )
+                (root / "mm" / "data.bin").write_bytes(b"x")
+                self.assertEqual(
+                    "record_malformed", self._observe_with(root)["incomplete"]
+                )
+
+    def test_a_row_in_loose_quoting_or_a_non_ascii_size_is_malformed(self) -> None:
+        # CodeAnt on #453: a RECORD is read as strict CSV, so quoting that a lenient
+        # reader would repair into a valid path is malformed. A size is ASCII digits
+        # only: a Unicode digit that `int` refuses is malformed, never an escape.
+        module = b'VALUE: str = "s"\n'
+        claim = self._claim(module)
+        cases = (
+            ("loose quoting", f'"mm/__init__."py,sha256={claim},{len(module)}'),
+            ("a superscript size", f"mm/__init__.py,sha256={claim},\u00b2"),
+            ("an Arabic-Indic size", f"mm/__init__.py,sha256={claim},\u0661\u0667"),
+            # Owner 6364237541 item 2: a size is bounded before anything reads it, at
+            # 20 digits, as 2**64 has; one digit more, or past Python's 4,300-digit
+            # conversion limit, is malformed.
+            ("a 21-digit size", f"mm/__init__.py,sha256={claim},{'9' * 21}"),
+            ("a 4,301-digit size", f"mm/__init__.py,sha256={claim},{'1' * 4301}"),
+        )
+        for name, row in cases:
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                self.assertEqual(
+                    "record_malformed", self._observe_with(root)["incomplete"]
+                )
+
+    def test_a_size_that_equals_its_file_as_a_number_is_verified(self) -> None:
+        # Router #453 6368854931 (b), after PAO 6368524836 and CodeAnt 4361108960: the
+        # PyPA RECORD size is a base-ten byte count, so a padded spelling of the right
+        # count agrees; the size stays bounded at 20 ASCII digits before it is read.
+        cases = (
+            ("a one-byte file as 1", b"x", "1"),
+            ("a one-byte file as 01", b"x", "01"),
+            ("a one-byte file as 0001", b"x", "0001"),
+            ("a one-byte file in 20 digits", b"x", "0" * 19 + "1"),
+            ("an empty file as 0", b"", "0"),
+            ("an empty file as 00", b"", "00"),
+            ("an empty size", b"x", ""),
+        )
+        for name, content, size in cases:
+            with self.subTest(name):
+                row = f"mm/data.bin,sha256={self._claim(content)},{size}"
+                root = self._recorded_root(name.replace(" ", "-"), row)
+                (root / "mm" / "data.bin").write_bytes(content)
+                self.assertIsNone(self._observe_with(root)["incomplete"])
+
+    def test_a_size_that_disagrees_with_its_file_is_a_mismatch(self) -> None:
+        # Sourcery 4358369095 on #453: a row's size is a claim too, compared with the
+        # bytes read; one that disagrees stops the observation even when the digest
+        # agrees.
+        claim = self._claim(b"x")
+        cases = (
+            ("a different size", "2"),
+            # The longest size admitted, 20 digits as 2**64 has (Revix 4359050029 on
+            # #453), and a padded count that still disagrees.
+            ("a 20-digit size", "9" * 20),
+            ("a padded wrong count", "02"),
+        )
+        for name, size in cases:
+            with self.subTest(name):
+                root = self._recorded_root(
+                    name.replace(" ", "-").replace("'", ""),
+                    f"mm/data.bin,sha256={claim},{size}",
+                )
+                (root / "mm" / "data.bin").write_bytes(b"x")
+                self.assertEqual(
+                    "record_mismatch", self._observe_with(root)["incomplete"]
+                )
+
+    def test_a_record_is_parsed_the_same_across_its_read_chunks(self) -> None:
+        # Characterization for the RECORD's streamed parse (Router 6364506650): a
+        # two-byte character split across the reader's 64 KiB chunks, CRLF rows and a
+        # final row without a newline parse as one decoded text does.
+        module = b'VALUE: str = "s"\n'
+        claim = f"sha256={self._claim(module)},{len(module)}"
+        for name in (
+            "a character across the chunk boundary",
+            "a row across the chunk boundary",
+            "CRLF rows",
+            "no final newline",
+        ):
+            with self.subTest(name):
+                root = self._recorded_root(name.replace(" ", "-"))
+                record = root / "mm-1.0.dist-info" / "RECORD"
+                if name == "CRLF rows":
+                    body = record.read_bytes().replace(b"\n", b"\r\n")
+                elif name == "no final newline":
+                    body = record.read_bytes().rstrip(b"\n")
+                elif name == "a row across the chunk boundary":
+                    # Hashless rows, then a hashed row that starts 20 bytes before the
+                    # first chunk ends, so that its parse needs both chunks.
+                    (root / "mm" / "copy.py").write_bytes(module)
+                    body = record.read_bytes()
+                    filler = b"mm/a.py,,\n"
+                    body += filler * ((65516 - len(body)) // len(filler))
+                    body += b"m" * (65516 - len(body) - len(",,\n")) + b",,\n"
+                    body += f"mm/copy.py,{claim}\n".encode()
+                    self.assertEqual(65516, body.index(b"mm/copy.py,"))
+                else:
+                    # Hashless rows up to byte 65,535, then a row whose path starts
+                    # with a two-byte character at bytes 65,535 and 65,536.
+                    body = record.read_bytes()
+                    filler = b"mm/a.py,,\n"
+                    body += filler * ((65535 - len(body)) // len(filler))
+                    body += b"m" * (65535 - len(body) - len(",,\n")) + b",,\n"
+                    body += "é.py,,\n".encode()
+                    self.assertEqual(b"\xc3", body[65535:65536])
+                    (root / "mm" / "copy.py").write_bytes(module)
+                    body += f"mm/copy.py,{claim}\n".encode()
+                record.write_bytes(body)
+                self.assertIsNone(self._observe_with(root)["incomplete"])
+
+    def test_a_record_is_never_held_whole_while_it_is_parsed(self) -> None:
+        # Router 6364506650: the RECORD's bytes are released as its lines are parsed,
+        # and a line longer than any row the CSV reader accepts is refused before it is
+        # held, so a RECORD at the per-file cap costs about its own size.
+        observer = importlib.import_module("tools.python_environment_observation")
+        chunks = [b"mm/a.py,,\n" * 6553] * 64
+        lines = observer._record_lines(chunks)
+        self.assertEqual("mm/a.py,,\n", next(lines))
+        self.assertEqual(63, len(chunks))
+        self.assertEqual(6553 * 64 - 1, sum(1 for _ in lines))
+        self.assertEqual([], chunks)
+        endless = [b"x" * 65536] * 64
+        with self.assertRaises(csv.Error):
+            next(observer._record_lines(endless))
+        self.assertGreater(len(endless), 40)
+        # CodeAnt on #453: a line whose end falls in the chunk that takes it past the
+        # bound is refused before it is joined; one at the bound, its newline
+        # included, is a line.
+        bound = observer._RECORD_LINE_CHARACTERS
+        for length, refused in ((bound, False), (bound + 1, True)):
+            with self.subTest(length=length):
+                data = b"x" * (length - 1) + b"\n"
+                chunks = [data[i : i + 65536] for i in range(0, len(data), 65536)]
+                lines = observer._record_lines(chunks)
+                if refused:
+                    with self.assertRaises(csv.Error):
+                        next(lines)
+                else:
+                    self.assertEqual(length, len(next(lines)))
+
+    def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
+        # Router 6364506650 (B): the composed caps admit a matching in-root payload of
+        # the measured real size, a file over the former 8 MiB per-file cap and files
+        # over the former 32 MiB aggregate, within every other limit.
+        mebibyte = 1024 * 1024
+        cases = (
+            ("a file over the former per-file cap", (9 * mebibyte,)),
+            ("files over the former aggregate", (7 * mebibyte,) * 5),
+        )
+        for name, sizes in cases:
+            with self.subTest(name):
+                contents = [bytes([index]) * size for index, size in enumerate(sizes)]
+                rows = [
+                    f"mm/big{index}.bin,sha256={self._claim(content)},{len(content)}"
+                    for index, content in enumerate(contents)
+                ]
+                root = self._recorded_root(name.replace(" ", "-"), *rows)
+                for index, content in enumerate(contents):
+                    (root / "mm" / f"big{index}.bin").write_bytes(content)
+                observed = self._observe_with(root)
+                self.assertIsNone(observed["incomplete"])
+                self.assertEqual(1, len(observed["distributions"]))
+
+    def test_containment_keeps_the_parents_a_relative_root_cannot_hold(self) -> None:
+        # cubic 4359922819 on #453: a relative root such as `.` has no components, so
+        # a parent-relative target was "within" it and an outside row turned
+        # ambiguous. Containment is exact for normalized paths: the root's components
+        # begin the target's, and no `..` follows them.
+        observer = importlib.import_module("tools.python_environment_observation")
+        real = os.path.realpath(self.directory.name)
+        bases = {".", real}
+        self.assertEqual(("outside", None), observer._record_path(bases, "../bin/tool"))
+        self.assertEqual(
+            ("ambiguous", None),
+            observer._record_path(bases, f"../{os.path.basename(real)}/mm/x.py"),
+        )
+        self.assertEqual(
+            ("inside", ["mm", "x.py"]), observer._record_path(bases, "mm/x.py")
+        )
+        self.assertFalse(observer._within_any({"."}, "../bin/tool"))
+        self.assertFalse(observer._within_any({"../a"}, "../../a/b"))
+        self.assertTrue(observer._within_any({"."}, "mm/x.py"))
+        self.assertTrue(observer._within_any({"../a"}, "../a/b"))
+        self.assertTrue(observer._within_any({"/r"}, "/r"))
+        # The full observer, as PAO-453-OWNER-6364237541-E41F55F8-v1 replayed it: the
+        # same root supplied as `.` and as its absolute path, with a matching module
+        # and a valid hashed row outside the root, is complete either way.
+        root = self._recorded_root(
+            "relative-root", f"../outside.bin,sha256={self._claim(b'x')},1"
+        )
+        caps = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
+        form = self.module.ENVIRONMENT_OBSERVATION_FORMAT
+        here = os.getcwd()
+        os.chdir(root)
+        try:
+            for spelling in (".", str(root)):
+                with self.subTest(spelling=spelling):
+                    observed = json.loads(observer.observe([spelling], caps, form))
+                    self.assertIsNone(observed["incomplete"])
+        finally:
+            os.chdir(here)
+
+    def test_a_new_distribution_in_scope_changes_the_observation(self) -> None:
+        # C6 kept under E1: adding a distribution whose in-root rows match, with an
+        # outside console script, changes a complete observation rather than making it
+        # unavailable (Router #389 6361519666).
+        root = Path(self.directory.name) / "growing"
+        root.mkdir()
+        (root / "a.py").write_text("", encoding="utf-8")
+        before = self._observe_with(root)
+        shutil.rmtree(root)
+        self._recorded_root("growing", f"../bin/mm,sha256={self._claim(b'x')},1")
+        after = self._observe_with(root)
+        self.assertIsNone(before["incomplete"])
+        self.assertIsNone(after["incomplete"])
+        self.assertNotEqual(before["distributions"], after["distributions"])
+
+    def test_the_record_check_refuses_what_it_cannot_parse_or_reach(self) -> None:
+        # Kill tests (round 1: G7, G9, G12, G14): a row of one field, a RECORD that is
+        # not UTF-8, a digest valid only when decoded leniently, and a listed file
+        # reached through a linked directory all stop the observation.
+        module = b'VALUE: str = "s"\n'
+        with self.subTest("a row of one field"):
+            root = self._recorded_root("one-field", "mm/__init__.py")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD with lone-CR row endings"):
+            # Characterization (CodeAnt on #453): lines split on LF only, as the
+            # StringIO iteration they replace split them, so lone-CR rows were and stay
+            # malformed.
+            root = self._recorded_root("lone-cr")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes().replace(b"\n", b"\r"))
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD ending inside a character"):
+            root = self._recorded_root("truncated-utf8")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes() + "é".encode()[:1])
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a RECORD that is not UTF-8"):
+            root = self._recorded_root("not-utf8")
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_bytes(record.read_bytes() + b"\xff,,\n")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a digest valid only when decoded leniently"):
+            lenient = self._claim(module)[:10] + "!!" + self._claim(module)[10:]
+            root = self._recorded_root("lenient", f"mm/__init__.py,sha256={lenient},17")
+            self.assertEqual("record_malformed", self._observe_with(root)["incomplete"])
+        with self.subTest("a listed file reached through a linked directory"):
+            root = self._recorded_root("linked-dir")
+            elsewhere = Path(self.directory.name) / "elsewhere-dir"
+            elsewhere.mkdir()
+            (elsewhere / "x.py").write_bytes(module)
+            (root / "mm" / "sub").symlink_to(elsewhere, target_is_directory=True)
+            row = f"mm/sub/x.py,sha256={self._claim(module)},{len(module)}"
+            record = root / "mm-1.0.dist-info" / "RECORD"
+            record.write_text(
+                row + "\n" + record.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            self.assertEqual("unreadable", self._observe_with(root)["incomplete"])
+
+    def test_an_alias_through_a_linked_root_is_ambiguous(self) -> None:
+        # Kill test for the real-root comparison: observed through a link to the root,
+        # a row written to leave the link and come back into the real root is an alias,
+        # never "outside" (Router #389 6361519666).
+        real = self._recorded_root("real-root")
+        link = Path(self.directory.name) / "link-root"
+        link.symlink_to(real, target_is_directory=True)
+        record = real / "mm-1.0.dist-info" / "RECORD"
+        row = f"../real-root/mm/__init__.py,sha256={self._claim(b'x')},1"
+        record.write_text(
+            row + "\n" + record.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        observed = self._observe_with(link)
+        self.assertEqual("record_ambiguous_path", observed["incomplete"])
 
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an

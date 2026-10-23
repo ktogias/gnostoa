@@ -1785,14 +1785,17 @@ ENVIRONMENT_OBSERVATION_UNOBSERVED = (
 # absent zip, no archive), 430 entries (201 in the largest root), 69 distributions, RECORD at most 1,608,909 bytes
 # and 2,258,869 in all, names at most 59 bytes (#389 F3 S2-C). Each cap keeps a wide
 # margin and is enforced while the observation enumerates or reads, before anything is
-# sorted. A file read, a RECORD or an archive on the path, counts against both file caps.
+# sorted. A file read, a RECORD, an archive on the path or a file a RECORD lists, counts
+# against both file caps. The file caps were chosen for those files (Router #389
+# 6364506650, B): the RECORD-listed files in the import roots measured 20,172 files and
+# 144,144,781 bytes, the largest 36,986,816 bytes, in that image (6364297742).
 ENVIRONMENT_OBSERVATION_CAPS = {
     "roots": 32,
     "entries_per_root": 4096,
     "entries": 16384,
     "distributions": 1024,
-    "file_bytes": 8 * 1024 * 1024,
-    "file_bytes_total": 32 * 1024 * 1024,
+    "file_bytes": 64 * 1024 * 1024,
+    "file_bytes_total": 256 * 1024 * 1024,
     "string_bytes": 4096,
     "output_bytes": 1024 * 1024,
 }
