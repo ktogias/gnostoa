@@ -1579,6 +1579,35 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ]["environment_observation"]
         self.assertEqual("unavailable", member["status"])
 
+    def test_the_fixture_launchers_refuse_an_unexpected_launch(self) -> None:
+        # A launcher answers only the observation the collector must compose, never
+        # any other command, so that a wrong launch fails its test (CodeAnt on #452).
+        wrong = [
+            sys.executable,
+            "-I",
+            "/elsewhere/python_environment_observation.py",
+            json.dumps(self.module.ENVIRONMENT_OBSERVATION_CAPS, sort_keys=True),
+            self.module.ENVIRONMENT_OBSERVATION_FORMAT,
+        ]
+        report = Path(self.directory.name) / "unexpected-launch.json"
+        for name, launcher in (
+            ("the environment launcher", self._environment(("fixture-1.0",))),
+            (
+                "the answering launcher",
+                self._answering(json.loads(self._observation())),
+            ),
+            ("the fixture launcher", self._fake_run),
+        ):
+            with self.subTest(name), self.assertRaises(AssertionError):
+                launcher(
+                    wrong,
+                    cwd=self.root,
+                    environment={},
+                    report=report,
+                    deadline=time.monotonic() + 60,
+                    limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                )
+
     def test_a_report_that_cannot_be_read_is_a_gap(self) -> None:
         # Characterization: a read of the observation's own report that fails is an
         # unavailable observation, never an escaping error.
