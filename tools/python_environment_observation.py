@@ -79,8 +79,11 @@ def _record_path(root: str, path: str) -> tuple[str, list[str] | None]:
     """How a RECORD row's path relates to its import root, lexically and before any
     access: ("inside", components) for plain components under the root; ("outside",
     None) for one written as leading `..` components or as an absolute path that
-    resolves outside the root as given and as real; ("ambiguous", None) for anything
-    else, an alias back into the root included (E1, Router #389 6361519666)."""
+    normalizes outside both the root as given and its real path; ("ambiguous", None)
+    for anything else, an alias back into the root included (E1, Router #389
+    6361519666). The row's own path is never resolved, since E1 allows no access
+    outside the root: a row reaching the root through a link outside it is classified
+    outside, a declared residual (Revix on #453)."""
     if "\x00" in path or path.startswith("//"):
         # A NUL names no file, and a doubled leading slash is implementation-defined
         # (Sourcery and Codex on #453): neither is unambiguously anywhere.
