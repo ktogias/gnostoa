@@ -1768,16 +1768,23 @@ def _run_record(
 # between them is a gap. Equal endpoints prove neither continuity, since a change
 # restored in between is not seen (PAO 6347682576), nor installed content, since a
 # RECORD digest attests that file's bytes, not the files it lists (Router 6347672936).
-ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v1"
+# v2 adds the entries of RECORD-owned directories that no RECORD lists (D-U, H-out:
+# Router #389 6373641379). This one version names the observer's report, the closed
+# acceptance below and the member written from it, so none of them is relabelled alone
+# (PAO 6372664518).
+ENVIRONMENT_OBSERVATION_FORMAT = "gnostoa-producer-environment-observation/v2"
 ENVIRONMENT_OBSERVATION_SCOPE = (
-    "metadata observed at two endpoints: neither continuous nor installed content"
+    "metadata, and the entries of RECORD-owned directories that no RECORD lists, "
+    "observed at two endpoints: neither continuous nor complete installed content"
 )
 # What the observation does not see, stated so that endpoints_equal is never read as
 # complete equality (owner 6351449420 item 4). The staged tree on MYPYPATH is bound by
 # tree_binding, not by this observation.
 ENVIRONMENT_OBSERVATION_UNOBSERVED = (
-    "installed file contents beyond the RECORD bytes",
-    "data inside installed packages, typeshed among them",
+    "installed files a RECORD lists without a hash",
+    "files outside RECORD-owned directories: loose top-level modules and the "
+    "standard library",
+    "rows outside the import root",
     "import resolution beyond the interpreter's -I path",
     "changes between the endpoints",
 )
@@ -1789,6 +1796,15 @@ ENVIRONMENT_OBSERVATION_UNOBSERVED = (
 # against both file caps. The file caps were chosen for those files (Router #389
 # 6364506650, B): the RECORD-listed files in the import roots measured 20,172 files and
 # 144,144,781 bytes, the largest 36,986,816 bytes, in that image (6364297742).
+# The walk's caps bound counts (Router #389 6374387035): directories, each owned one just
+# before it is opened and each subdirectory when it is listed; entries as they are
+# listed; depth in directory levels below the root, an owned directory being 1; in-root
+# RECORD rows as they are kept, each as a fixed-size digest; and unlisted entries as they
+# are recorded. Each overflow is that key's own stop. Their values were chosen for
+# gnostoa:development-4e4ced3a, whose RECORD-owned directories held 967 directories,
+# 23,586 entries, depth 7, 22,769 in-root rows and no unlisted entry (packet 6372955502).
+# The cost measured at each bound, in finite cases, is #389 6374250615's: a measurement,
+# not a maximum.
 ENVIRONMENT_OBSERVATION_CAPS = {
     "roots": 32,
     "entries_per_root": 4096,
@@ -1798,6 +1814,11 @@ ENVIRONMENT_OBSERVATION_CAPS = {
     "file_bytes_total": 256 * 1024 * 1024,
     "string_bytes": 4096,
     "output_bytes": 1024 * 1024,
+    "tree_directories": 8192,
+    "tree_entries": 131072,
+    "tree_depth": 32,
+    "record_rows": 131072,
+    "unlisted": 1024,
 }
 # The observer, tools/python_environment_observation.py: the toolkit's own module beside
 # this one, so the collector's own revision, run by its path and never from the staged
@@ -1818,7 +1839,7 @@ def _is_text_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-# The v1 contract of the observer's report, which is evidence the collector reads, not a
+# The v2 contract of the observer's report, which is evidence the collector reads, not a
 # wire member: every field is required, and an unknown or repeated field is not v1. A
 # missing `incomplete` is therefore never read as a completed observation (cubic
 # 4354512437; PAO 6353587922; Router 6353798690).
@@ -1831,8 +1852,37 @@ _OBSERVATION_FIELDS = frozenset(
         "entries",
         "archives",
         "distributions",
+        "unlisted",
     }
 )
+_UNLISTED_KINDS = frozenset({"file", "link", "directory", "other"})
+
+
+def _valid_unlisted(entry: object, roots: list[str]) -> bool:
+    """An unlisted entry as the observer writes it: one of its roots, a plain path
+    relative to it, a kind, and the kind's value, a file's sha256, a link's target or
+    nothing."""
+    if not (isinstance(entry, list) and len(entry) == 4):
+        return False
+    root, path, kind, value = entry
+    if not (
+        isinstance(root, str)
+        and root in roots
+        and isinstance(path, str)
+        # Plain and root-relative: no absolute path and no empty, `.` or `..` part
+        # (cubic on #455).
+        and all(part not in ("", ".", "..") for part in path.split("/"))
+        and isinstance(kind, str)
+        and kind in _UNLISTED_KINDS
+    ):
+        return False
+    if kind == "file":
+        return (
+            isinstance(value, str)
+            and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value)
+        )
+    return isinstance(value, str) if kind == "link" else value is None
 
 
 def _valid_observation(observed: object) -> bool:
@@ -1862,6 +1912,8 @@ def _valid_observation(observed: object) -> bool:
         and all(_is_text_list(a) and len(a) == 2 for a in archives)
         and isinstance(distributions, list)
         and all(_is_text_list(d) and len(d) == 3 for d in distributions)
+        and isinstance(observed.get("unlisted"), list)
+        and all(_valid_unlisted(entry, roots) for entry in observed["unlisted"])
     )
 
 

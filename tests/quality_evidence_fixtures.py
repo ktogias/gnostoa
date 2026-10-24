@@ -380,7 +380,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _observation_command(self) -> list[str]:
         """The observation launch the collector must compose, pinned here rather than
         read from it: the observer beside the collector's module, the measured caps and
-        the v1 format. A launcher answers exactly this and refuses any other, so that a
+        the v2 format. A launcher answers exactly this and refuses any other, so that a
         moved observer, cap or format fails its tests (CodeAnt and cubic on #452)."""
         caps = {
             "roots": 32,
@@ -391,6 +391,11 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "file_bytes_total": 256 * 1024 * 1024,
             "string_bytes": 4096,
             "output_bytes": 1024 * 1024,
+            "tree_directories": 8192,
+            "tree_entries": 131072,
+            "tree_depth": 32,
+            "record_rows": 131072,
+            "unlisted": 1024,
         }
         observer = Path(self.module.__file__).resolve().parent
         return [
@@ -398,7 +403,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "-I",
             str(observer / "python_environment_observation.py"),
             json.dumps(caps, sort_keys=True),
-            "gnostoa-producer-environment-observation/v1",
+            "gnostoa-producer-environment-observation/v2",
         ]
 
     def _observation(
@@ -419,6 +424,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                 "entries": {root: names},
                 "archives": [],
                 "distributions": [[root, name, "0" * 64] for name in names],
+                "unlisted": [],
             },
             sort_keys=True,
         )
