@@ -3744,7 +3744,7 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertIn("build==1.5.0", development_lock)
         self.assertIn("pyproject-hooks==1.2.0", development_lock)
-        self.assertIn("setuptools==83.0.0", development_lock)
+        self.assertIn("setuptools==84.1.0", development_lock)
 
     def _write_runtime_lock_template_fixture(
         self,
