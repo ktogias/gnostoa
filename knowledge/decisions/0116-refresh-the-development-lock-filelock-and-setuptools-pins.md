@@ -187,8 +187,10 @@ security fix, so the first patched versions are pinned, as Decision 0095 does.
    ```
 
    Its `install` list holds exactly two entries, `filelock 4.2.1` and `setuptools 84.1.0`:
-   no transitive distribution moves. The `development` image rebuilt from this lock
-   installs all 57 locked distributions hash-checked.
+   no transitive distribution moves. In the `development` image rebuilt from this lock,
+   all 68 of its pins are installed, hash-checked, at their locked versions:
+   - 11 by the runtime lock's install, which runs first;
+   - the other 57 by the development lock's own install report.
 
 7. **Preparation authority.** `pyproject.toml` is a preparation-authority path of Decision
    0090, so the exact-parent preparation wrapper refuses this candidate, and that refusal is
