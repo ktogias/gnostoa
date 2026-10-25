@@ -474,12 +474,12 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     def _tracked_python(self) -> list[str]:
         return sorted(p for p in self.files if p.endswith(".py"))
 
-    # D1: an explicit v2 record of the frozen commit, its tree and the staged
+    # D1: an explicit record (v3 since #459) of the frozen commit, its tree and the staged
     # identity; the checkout's dirty state is never read, and the source binding stays
     # UNVERIFIED with its residual.
-    def test_the_record_is_v2_and_binds_the_staged_tree(self) -> None:
+    def test_the_record_is_v3_and_binds_the_staged_tree(self) -> None:
         inventory = self._read(self.collect(self.root, self.output))
-        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
+        self.assertEqual("gnostoa-diagnostic-inventory/v3", inventory["schema"])
         head = self._git("rev-parse", "HEAD")
         tree = self._git("rev-parse", "HEAD^{tree}")
         self.assertEqual(
@@ -717,8 +717,8 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         the inventory's deadline, or after it when negative."""
         real = self.module._run_producers
 
-        def ending(staged, run, expected, limits, gaps, deadline):
-            result = real(staged, run, expected, limits, gaps, deadline)
+        def ending(staged, run, expected, limits, gaps, deadline, *plan):
+            result = real(staged, run, expected, limits, gaps, deadline, *plan)
             while time.monotonic() < deadline - before:
                 time.sleep(0.02)
             return result

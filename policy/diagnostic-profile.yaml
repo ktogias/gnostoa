@@ -1,0 +1,38 @@
+# The diagnostic inventory's protected family profile (#389 A0-MP1; Decision 0117).
+# The inventory reads it only from the producer tree, the kit root its own code runs
+# from, never from the tree it analyzes. It decides, before any producer runs, which
+# families run, with which selectors, on which files: each family's FULL scope, and its
+# DIFF scope's changed files, whole; complexity acquires only the functions a change
+# adds a line to. Nothing obtained is dropped afterwards.
+#
+# Unactivated: no assurance claim reads the inventory yet. These are the admitted
+# contract's values (Router 6381924685 on #389), qualification hypotheses, not accepted
+# losses. PLR6301 and SIM117 are not selected.
+schema: gnostoa-diagnostic-profile/v1
+id: gnostoa.project-risk
+scopes:
+  all:
+    exclude: []
+  non-test:
+    exclude:
+      - tests/
+families:
+  - id: typing
+    producer: mypy
+    diff: all
+    full: non-test
+  - id: protected-access
+    producer: ruff
+    select: [SLF001]
+    diff: all
+    full: non-test
+  - id: literal-secrets
+    producer: ruff
+    select: [S106]
+    diff: all
+    full: all
+  - id: complexity
+    producer: complexity
+    reported_above: 15
+    diff: all
+    full: null

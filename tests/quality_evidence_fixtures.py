@@ -5,6 +5,7 @@ inventory's test modules. It holds no test, so discovery runs none of it twice."
 from __future__ import annotations
 
 import contextlib
+import functools
 import importlib
 import json
 import os
@@ -131,12 +132,41 @@ class _RaisingRead:
         raise self.error(f"injected at the stream read of {size} bytes")
 
 
+# Every family on every file, as the inventory ran before its profile: the producers'
+# own tests keep their whole selection, and the protected profile has its own tests
+# (#389 A0-MP1).
+_EVERY_FAMILY = {
+    "schema": "gnostoa-diagnostic-profile/v1",
+    "id": "fixture.every-family",
+    "scopes": {"all": {"exclude": []}},
+    "families": [
+        {"id": "typing", "producer": "mypy", "diff": "all", "full": "all"},
+        {
+            "id": "every-rule",
+            "producer": "ruff",
+            "select": ["SLF001", "PLR6301", "SIM117", "S106"],
+            "diff": "all",
+            "full": "all",
+        },
+        {
+            "id": "complexity",
+            "producer": "complexity",
+            "reported_above": 15,
+            "diff": "all",
+            "full": "all",
+        },
+    ],
+}
+
+
 class _DiagnosticFixture(unittest.TestCase):
     """A small tracked repository, and the helpers the inventory tests share."""
 
     def setUp(self) -> None:
         self.module = importlib.import_module("tools.quality_evidence")
-        self.collect = self.module.collect_diagnostic_inventory
+        self.collect = functools.partial(
+            self.module._collect_diagnostic_inventory, profile=_EVERY_FAMILY
+        )
         # Each test runs without the caller's Git overrides, which the inventory
         # refuses: preparation's own environment sets GIT_CONFIG_* for its children
         # (Router 6223042901 on #436, R1). The refusal tests set theirs explicitly.
@@ -283,6 +313,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         self.mypy_exit: dict[str, int] = {}
         self.mypy_text: str | None = None
         self.ruff_exit = 1
+        self.ruff_as_ruff = False
         self.ruff_text: str | None = None
         self.commands: list[tuple[list[str], Path, dict[str, str]]] = []
 
@@ -361,14 +392,14 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             status = self.mypy_exit.get(prefix or ".", 1 if lines else 0)
             return status, None if status in (0, 1) else f"exited {status}", False
         if "ruff" in command:
-            text = (
-                self.ruff_text
-                if self.ruff_text is not None
-                else json.dumps(self.ruff_records)
-            )
+            records = self._ruff_answer(command)
+            text = self.ruff_text if self.ruff_text is not None else json.dumps(records)
             # Ruff names the files it read absolutely, under the staged source the
             # producers ran in, never the checkout (#389 F3 S2 B).
             report.write_text(self._staged_text(text, cwd), encoding="utf-8")
+            if self.ruff_exit is None:
+                # Ruff's own status: 1 only when it reports a diagnostic (_ruff_gap).
+                return (1 if records else 0), None, False
             return self.ruff_exit, None, False
         if command == self._observation_command():
             # The producers' environment observation (#389 F3 S2-C): one fixed
@@ -376,6 +407,30 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             report.write_text(self._observation(), encoding="utf-8")
             return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
+
+    def _ruff_answer(self, command: list[str]) -> list:
+        """The records the fake Ruff reports for `command`: every record a test holds,
+        for the report-parsing and budget tests, unless `ruff_as_ruff` makes it answer
+        as Ruff does, with only its selected rules on the files it was given (#389
+        A0-MP1). A record that names no rule or no file of the fixture stays either
+        way."""
+        if not self.ruff_as_ruff:
+            return list(self.ruff_records)
+        selected = set(command[command.index("--select") + 1].split(","))
+        given = set(command[command.index("--") + 1 :])
+        root = self.root.resolve()
+
+        def reported(record) -> bool:
+            if not isinstance(record, dict):
+                return True
+            code, name = record.get("code"), record.get("filename")
+            if not isinstance(code, str) or not isinstance(name, str):
+                return True
+            if not Path(name).is_relative_to(root):
+                return True
+            return code in selected and Path(name).relative_to(root).as_posix() in given
+
+        return [record for record in self.ruff_records if reported(record)]
 
     def _observation_command(self) -> list[str]:
         """The observation launch the collector must compose, pinned here rather than

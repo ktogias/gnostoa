@@ -769,7 +769,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         runs = {r["invocation"]: r for r in inventory["producers"]}
         self.assertNotIn("environment_observation", runs["complexity"])
         member = runs["mypy:main"]["environment_observation"]
-        self.assertEqual(member, runs["ruff"]["environment_observation"])
+        self.assertEqual(member, runs["ruff:every-rule"]["environment_observation"])
         self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_FORMAT, member["format"])
         self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_SCOPE, member["scope"])
         self.assertEqual(self.module.ENVIRONMENT_OBSERVATION_CAPS, member["caps"])
@@ -1361,12 +1361,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             os.path.realpath(sys.executable), observed["interpreter"]["executable"]
         )
 
-    def test_the_member_is_additive_to_the_v2_record(self) -> None:
-        # Characterization: the v2 record keeps its fields; the member is the one
+    def test_the_member_is_additive_to_the_record(self) -> None:
+        # Characterization: the record keeps its fields; the member is the one
         # optional addition, absent where nothing was observed (complexity), and its
         # unobserved scope is the one field added to it (Router 6351766731).
         inventory = self._run(self._environment(("fixture-1.0",)), "import-untyped")
-        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
+        self.assertEqual("gnostoa-diagnostic-inventory/v3", inventory["schema"])
         known = {"invocation", "producer", "version", "argv", "exit_status", "report"}
         for record in inventory["producers"]:
             self.assertLessEqual(set(record) - known, {"environment_observation"})
