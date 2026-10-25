@@ -1322,3 +1322,63 @@ guardrails:
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_default_profile_that_cannot_be_resolved_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs
+  - id: inventory-shadow-readback
+    title: The diagnostic inventory runs over a Pull Request head as a no-secret shadow readback that lists every obtained finding once
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0118-produce-the-diagnostic-inventory-over-a-pull-request-head-as-a-no-secret-shadow-readback.md#decision
+    implementation:
+      - tools/analyzer_inventory.py#readbacks
+      - tools/analyzer_inventory.py#unavailable
+      - ci/analyzer_readback.py#inventory_base
+      - ci/analyzer_readback.py#inventory_collect
+      - .github/workflows/analyzer-readback.yml
+    tests:
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_every_obtained_finding_is_in_exactly_one_readback
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_a_readback_never_claims_more_than_the_composite
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_a_complete_composite_gives_complete_readbacks_of_their_own_kind
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_without_a_comparison_every_finding_is_the_full_readback_s
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_another_commit_never_reads_as_the_requested_head
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_the_requested_head_s_run_is_complete_whatever_its_coverage
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_the_readbacks_name_the_inventory_they_came_from
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_a_record_of_another_schema_is_refused
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_an_inventory_that_was_not_written_reads_unavailable
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_the_base_is_the_merge_base_and_its_branch_tip_is_kept
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_comparison_that_names_no_merge_base_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_head_the_pull_request_no_longer_has_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_collect_writes_the_inventory_and_its_two_readbacks
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_collect_never_overwrites_a_document
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_inventory_refusal_is_recorded_and_fails_the_run
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_written_inventory_whose_readbacks_fail_is_recorded_and_fails
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_token_only_the_inventory_file_holds_is_never_uploaded
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_only_the_named_inventory_is_uploaded
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_token_split_across_scan_chunks_is_found
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_file_holds_no_needle_when_there_is_none
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_link_in_the_uploaded_directory_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_scan_without_the_token_reads_no_file_whole
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_error_is_reported_by_its_type_never_its_text
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_upload_the_document_does_not_name_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_inventory_that_says_two_things_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_inventory_nested_past_the_bound_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_an_inventory_over_its_byte_bound_is_refused
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_collect_takes_no_output_path
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_the_exit_decision_reads_its_document_strictly
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_the_document_carries_no_credential
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_document_holding_the_job_s_token_is_never_written
+      - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_depth_one_fetch_of_head_and_base_is_enough
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_workflow_has_the_readback_and_the_shadow_inventory_job
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_outlasts_the_collector_s_own_budget
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_upload_names_the_document_and_the_inventory_alone
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_holds_no_readback_slot
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_holds_no_secret_and_reads_only
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_runs_on_a_pinned_image
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_can_never_change_the_run_s_conclusion
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_admits_the_readback_s_events_except_the_admission_call
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_binds_main_and_the_subject_as_the_readback_does
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_tools_are_main_s_hash_locked_ones
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_head_is_fetched_as_data_and_never_checked_out
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_inventory_runs_main_s_runner_and_uploads_its_document
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_collect_step_holds_no_credential
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_each_pinned_action_names_its_release
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_an_event_s_fields_reach_only_the_resolver

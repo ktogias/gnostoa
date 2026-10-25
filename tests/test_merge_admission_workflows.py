@@ -467,11 +467,23 @@ class AdmissionWorkflowTests(unittest.TestCase):
         import inspect
 
         jobs = _load(ADMISSION)["jobs"]
-        (call,) = _load(READBACK)["jobs"].values()
-        path = sum(
-            int(jobs[name]["timeout-minutes"])
-            for name in ("subjects", "invalidate", "admit")
-        ) + int(call["timeout-minutes"])
+        # The call lasts as long as the longest job it runs may. The shadow inventory
+        # (Decision 0118) never runs in it, so its limit is not the call's (Claude on
+        # #460).
+        called = {
+            name: job
+            for name, job in _load(READBACK)["jobs"].items()
+            if "inputs.admission != true" not in job["if"]
+        }
+        self.assertEqual({"readback"}, set(called))
+        call = max(int(job["timeout-minutes"]) for job in called.values())
+        path = (
+            sum(
+                int(jobs[name]["timeout-minutes"])
+                for name in ("subjects", "invalidate", "admit")
+            )
+            + call
+        )
         spec = importlib.util.spec_from_file_location(
             "gnostoa_guard_deadline", ROOT / "ci" / "merge_admission_guard.py"
         )
@@ -481,6 +493,8 @@ class AdmissionWorkflowTests(unittest.TestCase):
         spec.loader.exec_module(guard)
         default = inspect.signature(guard.guard).parameters["deadline_seconds"].default
         self.assertGreaterEqual(default, path * 60)
+        # The guard's own account: the critical path "and a margin" (Claude on #460).
+        self.assertGreater(default, path * 60)
 
     def test_invalidation_precedes_every_acquisition(self) -> None:
         jobs = _load(ADMISSION)["jobs"]

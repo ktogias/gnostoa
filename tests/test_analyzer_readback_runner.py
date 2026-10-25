@@ -1057,6 +1057,9 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         )
         self.assertNotIn("pull_request:", workflow)
         self.assertNotIn("pull_request_target", workflow)
+        # The workflow grants nothing itself, and each job only the reads it needs
+        # (SonarCloud githubactions:S8264 on #460, as merge-admission.yml on #426).
+        self.assertEqual({}, loaded["permissions"])
         self.assertEqual(
             {
                 "contents": "read",
@@ -1064,7 +1067,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 "statuses": "read",
                 "checks": "read",
             },
-            loaded["permissions"],
+            loaded["jobs"]["readback"]["permissions"],
         )
         # Readbacks queue, one at a time, and none is cancelled: a flood of requests
         # waits rather than spending the analyzers' rate limits (Amazon Q on #388),
@@ -1075,8 +1078,10 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 "cancel-in-progress": False,
                 "queue": "max",
             },
-            loaded["concurrency"],
+            loaded["jobs"]["readback"]["concurrency"],
         )
+        # The readback job's slot, never the whole run's (CodeAnt on #460).
+        self.assertNotIn("concurrency", loaded)
         job = loaded["jobs"]["readback"]
         # The whole condition is pinned, so no arm can be added, dropped or regrouped
         # unseen (Kody on #388):
