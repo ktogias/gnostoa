@@ -119,6 +119,7 @@ inherited, copied or loaded by adopting projects.
 - [Refresh the development lock's certifi for a compromised root certificate](decisions/0115-refresh-the-development-lock-certifi-for-a-compromised-root.md)
 - [Refresh the development lock's filelock and setuptools pins for four advisories](decisions/0116-refresh-the-development-lock-filelock-and-setuptools-pins.md)
 - [Select the diagnostic inventory's families through a protected profile, before any producer runs](decisions/0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md)
+- [Produce the diagnostic inventory over a Pull Request head as a no-secret shadow readback](decisions/0118-produce-the-diagnostic-inventory-over-a-pull-request-head-as-a-no-secret-shadow-readback.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

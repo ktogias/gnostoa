@@ -47,19 +47,9 @@ on:
       SONAR_TOKEN:
         required: true
 
-permissions:
-  contents: read
-  pull-requests: read
-  statuses: read
-  checks: read
-
-# Readbacks queue, one at a time, and none is cancelled: a flood of requests waits
-# rather than spending the analyzers' rate limits, as review-current-state.yml's
-# runs do (Decision 0086).
-concurrency:
-  group: gnostoa-analyzer-readback
-  cancel-in-progress: false
-  queue: max
+# The workflow grants nothing itself; each job grants only the reads it needs
+# (SonarCloud githubactions:S8264 on #460, as merge-admission.yml does since #426).
+permissions: {}
 
 jobs:
   readback:
@@ -81,6 +71,21 @@ jobs:
     environment: analyzer-readback
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Readbacks queue, one at a time, and none is cancelled: a flood of requests
+    # waits rather than spending the analyzers' rate limits, as the runs of
+    # review-current-state.yml do (Decision 0086). The slot is this job's, not the
+    # run's: a run holds a workflow-level group until every job ends, so the shadow
+    # inventory beside it would keep the slot for its whole collection (CodeAnt on
+    # #460).
+    concurrency:
+      group: gnostoa-analyzer-readback
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+      checks: read
     steps:
       # No ref is named: the checkout takes its event's own revision, main's
       # `github.sha`, which the next step verifies (Decision 0096 rule 11).
@@ -151,4 +156,130 @@ jobs:
           # admission point's call its run attempt too (Codex on #426).
           name: ${{ steps.subject.outputs.artifact }}
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
+          if-no-files-found: error
+
+  # Decision 0118 (#389 A0-MP1 slice 2): the project's own analyzer, as a shadow. It
+  # runs protected main's diagnostic inventory, with main's hash-locked tools, over the
+  # head's objects fetched as data: nothing in the head selects the code, the tools or
+  # the profile, and nothing in it runs (P5', #389 6381812211). It holds no secret and
+  # no environment, and its failure is its own, never the readback's. It admits the
+  # readback's events but the admission call, where nothing reads it yet: its
+  # document reaches no bundle, map or declaration until slice 3 (#389 6392516998).
+  inventory:
+    if: >-
+      github.ref == 'refs/heads/main'
+      && inputs.admission != true
+      && (github.event_name == 'workflow_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || (github.event_name == 'workflow_run'
+              && (github.event.workflow_run.conclusion == 'success'
+                  || github.event.workflow_run.conclusion == 'failure'
+                  || github.event.workflow_run.conclusion == 'timed_out')
+              && github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.path == '.github/workflows/verification.yml'))
+    # One image for qualification evidence, as the repository's other
+    # qualification jobs pin (Revix on #460).
+    runs-on: ubuntu-24.04
+    # Past the collector's own 900 s budget, with room for the setup before it and
+    # the scan and upload after it, so its bounded refusal is written (CodeAnt on
+    # #460). It never runs in the admission call, whose guard waits for readback.
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Resolve the readback subject
+        id: subject
+        env:
+          EVENT_NAME: ${{ inputs.admission == true && 'workflow_call' || github.event_name }}
+          DISPATCH_PULL: ${{ inputs.pull_number }}
+          DISPATCH_HEAD: ${{ inputs.head }}
+          REQUEST_PULL: ${{ github.event.client_payload.pull_number }}
+          REQUEST_HEAD: ${{ github.event.client_payload.head }}
+          RUN_PULLS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -eu
+          PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
+      # Protected main's lock, every artifact by its hash: the head's lock is data.
+      - name: Install main's development tools
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/development.lock
+      - name: Resolve the comparison base
+        id: base
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
+          REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+        run: |
+          set -eu
+          PYTHONPATH=. python ci/analyzer_readback.py inventory base \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${PULL_NUMBER}" \
+            --head "${REQUESTED_HEAD}" >> "${GITHUB_OUTPUT}"
+      # Objects only: the checkout stays main's, and the inventory reads the head's
+      # own tree from them.
+      - name: Fetch the head's objects as data
+        env:
+          REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          set -eu
+          git fetch --no-tags --no-recurse-submodules --depth=1 \
+            origin "${REQUESTED_HEAD}" "${BASE}"
+      - name: Inventory the head
+        id: inventory
+        env:
+          PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
+          REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+          BASE_TIP: ${{ steps.base.outputs.base_tip }}
+          BASE: ${{ steps.base.outputs.base }}
+          # The runner writes under its temporary directory, never a path it is given.
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -u
+          output="${RUNNER_TEMP}/gnostoa-inventory"
+          status=0
+          PYTHONPATH=. python ci/analyzer_readback.py inventory collect \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${PULL_NUMBER}" \
+            --head "${REQUESTED_HEAD}" \
+            --base-tip "${BASE_TIP}" \
+            --base "${BASE}" || status=$?
+          # Written whole only on 0, or 1 for a recorded refusal: an error (2) may
+          # leave a partial document, which is never uploaded.
+          if [ "${status}" -le 1 ] && [ -f "${output}/gnostoa-inventory-readback.json" ]; then
+            echo "document=written" >> "${GITHUB_OUTPUT}"
+          fi
+          exit "${status}"
+      - name: Upload the shadow inventory
+        if: ${{ !cancelled() && steps.inventory.outputs.document == 'written' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.subject.outputs.artifact }}-inventory
+          # The two files Decision 0118 publishes, the inventory by the runner's own
+          # pattern (INVENTORY_UPLOAD): never the whole directory, which can hold the
+          # producers' raw reports or a staged source left in the run (CodeAnt on #460).
+          path: |
+            ${{ runner.temp }}/gnostoa-inventory/gnostoa-inventory-readback.json
+            ${{ runner.temp }}/gnostoa-inventory/diagnostic-*/diagnostic-inventory.json
           if-no-files-found: error

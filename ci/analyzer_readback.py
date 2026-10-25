@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -209,11 +211,19 @@ def _check_runs_payload(payload: object) -> list[Any]:
     return runs
 
 
-def _pull_head(client: GitHubReader, repository: str, pull_number: int) -> str:
+def _pull(client: GitHubReader, repository: str, pull_number: int) -> Mapping[str, Any]:
     document, _ = client.get(f"{_API_ROOT}/repos/{repository}/pulls/{pull_number}")
-    pull = _mapping(document, "GitHub Pull Request")
-    head = _mapping(pull.get("head"), "GitHub Pull Request head")
-    return _exact_head(head.get("sha"), "GitHub Pull Request head")
+    return _mapping(document, "GitHub Pull Request")
+
+
+def _pull_side(pull: Mapping[str, Any], side: str) -> str:
+    """The exact commit of the Pull Request's `side`, "head" or "base"."""
+    label = f"GitHub Pull Request {side}"
+    return _exact_head(_mapping(pull.get(side), label).get("sha"), label)
+
+
+def _pull_head(client: GitHubReader, repository: str, pull_number: int) -> str:
+    return _pull_side(_pull(client, repository, pull_number), "head")
 
 
 def _statuses(
@@ -635,7 +645,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments[:1] == ["inventory"]:
+        return _inventory_main(arguments[1:])
+    args = _parser().parse_args(arguments)
     if args.pull_number <= 0:
         print("ERROR: pull number must be positive", file=sys.stderr)
         return 2
@@ -698,6 +711,281 @@ def _bound_status(bundle: dict[str, Any]) -> int:
         file=sys.stderr,
     )
     return 1
+
+
+# The diagnostic inventory's shadow readback (Decision 0118; #389 A0-MP1 slice 2): this
+# runner's `inventory` command, which the readback workflow's no-secret `inventory`
+# job runs from protected main's checkout with main's hash-locked tools. The head's
+# objects are fetched into that checkout as data, and the inventory analyzes the
+# head's own tree: nothing in the head selects the code, the tools or the profile, and
+# nothing in it runs (P5', #389 6381812211). It is a shadow: no bundle, map or
+# declaration reads its document until slice 3 (#389 6392516998). The inventory is
+# imported only here, so the readback's own command loads none of it.
+INVENTORY_SCHEMA = "gnostoa-inventory-readback/v1"
+# Where `collect` writes, under the process's temporary directory (the workflow sets
+# TMPDIR to the runner's): never a path a caller supplies (SonarCloud
+# pythonsecurity:S8707 on #460).
+INVENTORY_DIRECTORY = "gnostoa-inventory"
+# What the job publishes beside the document, as its upload step names it: the
+# collector's inventory in its run directory, and nothing else under the directory
+# (Decision 0118). Neither the producers' raw reports nor a staged source the collector
+# could not remove is published (CodeAnt on #460).
+INVENTORY_UPLOAD = "diagnostic-*/diagnostic-inventory.json"
+# The collector's own report bound (`DiagnosticLimits.max_report_bytes`).
+_INVENTORY_MAX_BYTES = 64 * 1024 * 1024
+INVENTORY_DOCUMENT = "gnostoa-inventory-readback.json"
+
+
+def inventory_base(
+    client: GitHubReader, *, repository: str, pull_number: int, requested_head: str
+) -> tuple[str, str]:
+    """The Pull Request's base branch tip and its merge base with the requested head,
+    once the Pull Request still has that head (Decisions 0091 and 0107). A comparison
+    that names no merge base is refused."""
+    pull = _pull(client, repository, pull_number)
+    head = _pull_side(pull, "head")
+    if head != requested_head:
+        raise RunnerError("the Pull Request's head is no longer the requested head")
+    tip = _pull_side(pull, "base")
+    document, _ = client.get(
+        f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1"
+    )
+    merge_base = _mapping(
+        _mapping(document, "GitHub comparison").get("merge_base_commit"),
+        "GitHub comparison merge base",
+    )
+    return tip, _exact_head(merge_base.get("sha"), "GitHub comparison merge base")
+
+
+def inventory_collect(
+    root: Path,
+    output_directory: Path,
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    base_tip: str,
+    base: str,
+    observed_at: str | None = None,
+) -> Path:
+    """Inventory `requested_head` against `base` under `output_directory`, and write,
+    create-only, the document that records it: the subject, both bases, the
+    inventory file's SHA-256 and its two readbacks. A refused inventory is recorded
+    by its type alone, with unavailable readbacks."""
+    from tools import analyzer_inventory, quality_evidence
+    from tools.review_check import assert_document_depth, strict_json_loads
+
+    # The directory the job uploads exists from the start, so the scan always lists
+    # it, a refused inventory's included.
+    output_directory.mkdir(parents=True, exist_ok=True)
+    path = output_directory / INVENTORY_DOCUMENT
+    if path.exists():
+        raise RunnerError("output path already exists")
+    observed = observed_at or _now()
+    subject = {
+        "repository": repository,
+        "pull_number": pull_number,
+        "requested_head": requested_head,
+        "observed_at": observed,
+    }
+    inventory: dict[str, str] | None = None
+    try:
+        written = quality_evidence.collect_diagnostic_inventory(
+            root, output_directory, base=base, expected_revision=requested_head
+        )
+        # Bounded, and strictly parsed: the record carries the head's text (Revix on
+        # #460, strict-bounded-json-parsing).
+        # Named and digested first, streamed: the file is uploaded whatever its size,
+        # so the document names it even when the bound below refuses it (CodeAnt on
+        # #460).
+        inventory = {
+            "file": written.relative_to(output_directory.resolve()).as_posix(),
+            "sha256": _file_sha256(written),
+        }
+        raw = _read_bounded(written)
+        record = strict_json_loads(raw.decode("utf-8"), label="the inventory")
+        assert_document_depth(record, "the inventory")
+        readbacks = analyzer_inventory.readbacks(
+            record,
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_at=observed,
+        )
+    except (quality_evidence.QualityEvidenceError, OSError, ValueError) as exc:
+        # A refusal, or a written inventory that cannot be read back (the adapter's
+        # AnalyzerReadbackError and a JSON error are ValueErrors; Q on #460), by its
+        # type alone: its text may name local paths.
+        readbacks = analyzer_inventory.unavailable(
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_at=observed,
+            reason=type(exc).__name__,
+        )
+    serialized = canonical_json(
+        {
+            "schema": INVENTORY_SCHEMA,
+            **subject,
+            "base_tip": base_tip,
+            "base": base,
+            "inventory": inventory,
+            "readbacks": readbacks,
+        }
+    )
+    # The boundary is the workflow's: its collect step holds no token at all, so it
+    # has none to leak (cubic on #460). A run whose environment does hold one, by
+    # hand or from another step, is refused if any uploaded file or the document
+    # holds it; with no token in the environment there is nothing to check.
+    secrets = [os.environ.get("GITHUB_TOKEN", ""), os.environ.get("GH_TOKEN", "")]
+    # What the upload step's pattern matches is exactly the inventory the document
+    # names, or nothing when it names none.
+    named = (
+        [] if inventory is None else [output_directory.resolve() / inventory["file"]]
+    )
+    if _uploaded_files(output_directory) != named:
+        raise RunnerError(
+            "the upload would publish an inventory the document does not name"
+        )
+    _assert_uploads_secret_free(output_directory, secrets)
+    _assert_secret_free(serialized, secrets)
+    _write_create_only(path, serialized)
+    return path
+
+
+_SCAN_CHUNK_BYTES = 1_048_576
+
+
+def _file_sha256(path: Path) -> str:
+    """`path`'s SHA-256, read in bounded chunks, so no file is held whole."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(_SCAN_CHUNK_BYTES):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _read_bounded(path: Path) -> bytes:
+    """`path`'s bytes, refused past the collector's own report bound: the inventory
+    and its document are read only this way (Revix on #460,
+    strict-bounded-json-parsing)."""
+    with path.open("rb") as handle:
+        raw = handle.read(_INVENTORY_MAX_BYTES + 1)
+    if len(raw) > _INVENTORY_MAX_BYTES:
+        raise ValueError("the file exceeds its byte bound")
+    return raw
+
+
+def _uploaded_files(directory: Path) -> list[Path]:
+    """The files the upload step publishes beside the document: its pattern's matches
+    under `directory`, each a regular file reached through no link, which the pinned
+    upload-artifact would follow (`followSymbolicLinks: true`; Claude on #460)."""
+    files = sorted(directory.resolve().glob(INVENTORY_UPLOAD))
+    for path in files:
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+            raise RunnerError("an uploaded file is reached through a link")
+    return files
+
+
+def _holds_any(path: Path, needles: list[bytes], chunk: int) -> bool:
+    """Whether `path` holds any needle, read in bounded chunks, each searched with
+    the end of the one before, so no file is ever held whole (cubic on #460)."""
+    if not needles:
+        return False
+    keep = max(len(needle) for needle in needles) - 1
+    tail = b""
+    with path.open("rb") as handle:
+        while block := handle.read(chunk):
+            window = tail + block
+            if any(needle in window for needle in needles):
+                return True
+            tail = window[-keep:] if keep else b""
+    return False
+
+
+def _assert_uploads_secret_free(
+    directory: Path, secrets: list[str], *, chunk: int = _SCAN_CHUNK_BYTES
+) -> None:
+    """Refuse an upload from `directory` that would publish what this did not read: a
+    link, or an uploaded file that holds a secret's bytes; the document is checked as
+    it is serialized."""
+    files = _uploaded_files(directory)
+    needles = [secret.encode("utf-8") for secret in secrets if secret]
+    if needles and any(_holds_any(path, needles, chunk) for path in files):
+        raise RunnerError("an uploaded file contains credential bytes")
+
+
+def _inventory_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="analyzer_readback.py inventory")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("base", "collect"):
+        command = commands.add_parser(name)
+        command.add_argument("--repository", required=True)
+        command.add_argument("--pull-number", type=int, required=True)
+        command.add_argument("--head", required=True)
+        if name == "collect":
+            command.add_argument("--base-tip", required=True)
+            command.add_argument("--base", required=True)
+    return parser
+
+
+def _inventory_main(argv: list[str]) -> int:
+    """`base` prints the step outputs `base_tip` and `base`; `collect` writes the
+    document, and fails when it records a refused inventory."""
+    args = _inventory_parser().parse_args(argv)
+    try:
+        _repository(args.repository)
+        if args.pull_number <= 0:
+            raise RunnerError("pull number must be positive")
+        head = _exact_head(args.head, "head")
+        if args.command == "base":
+            tip, merge_base = inventory_base(
+                GitHubReadClient.from_environment(),
+                repository=args.repository,
+                pull_number=args.pull_number,
+                requested_head=head,
+            )
+            print(f"base_tip={tip}")
+            print(f"base={merge_base}")
+            return 0
+        path = inventory_collect(
+            Path.cwd(),
+            Path(tempfile.gettempdir()) / INVENTORY_DIRECTORY,
+            repository=args.repository,
+            pull_number=args.pull_number,
+            requested_head=head,
+            base_tip=_exact_head(args.base_tip, "base tip"),
+            base=_exact_head(args.base, "base"),
+        )
+        # Read back inside the handlers, so its failure is reported by type too
+        # (Claude on #460).
+        from tools.review_check import assert_document_depth, strict_json_loads
+
+        label = "the inventory document"
+        document = strict_json_loads(_read_bounded(path).decode("utf-8"), label=label)
+        assert_document_depth(document, label)
+        readbacks = _mapping(document, label).get("readbacks")
+        if not isinstance(readbacks, list):
+            raise RunnerError("the inventory document's readbacks are malformed")
+        refused = any(
+            _mapping(r, "an inventory readback").get("completeness")
+            == "READBACK_UNAVAILABLE"
+            for r in readbacks
+        )
+    except RunnerError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    except (ValueError, OSError) as exc:
+        # By its type alone: its text can name local paths (Revix on #460).
+        print(f"ERROR: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    if refused:
+        print(
+            "ERROR: the inventory was not read back; its document records why",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
