@@ -25,13 +25,14 @@ import uuid
 from collections.abc import Mapping
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, BinaryIO, TextIO, TypeGuard
+from typing import TYPE_CHECKING, Any, BinaryIO, TextIO, TypeGuard, cast
 from urllib.parse import quote, unquote, urlparse
 
 from tools import bounded_process, test_suite
 from tools.analyzer_readback import (
     MAX_FINDINGS,
     AnalyzerReadbackError,
+    canonical_json,
     deduplicate_findings,
     normalize_finding,
 )
@@ -1380,8 +1381,10 @@ def collect_quality_evidence(
 # listed with its producer, code, mapping status, path and range. Coverage is never
 # COMPLETE in this slice: the source binding is UNVERIFIED (the Router's I3 and U1 on
 # #436), so the COMPLETE and PARTIAL statuses stay unreachable until it is proven.
+# Which families run, with which selectors, on which files, is the protected profile's
+# choice, made before any producer starts (#389 A0-MP1, Decision 0117).
 
-DIAGNOSTIC_SCHEMA = "gnostoa-diagnostic-inventory/v2"
+DIAGNOSTIC_SCHEMA = "gnostoa-diagnostic-inventory/v3"
 DIAGNOSTIC_INVENTORY = "diagnostic-inventory.json"
 # Provisional mappings, calibrated on #389's thirteen reference heads (6201413011) and not
 # qualified: a mapped code is evidence about a DeepSource rule, never a substitute for it.
@@ -1404,6 +1407,281 @@ _DIAGNOSTIC_FIXTURE_ROOT = "tests/fixtures/"
 _UNRESOLVED_IMPORTS = frozenset({"import-not-found", "import-untyped"})
 _QUOTED = re.compile(r'"([^"]+)"')
 _DECISIONS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHandler)
+
+# The protected family profile, read from the producer tree (#389 A0-MP1, owner
+# 6384969093). Its shape is checked by the jsonschema validator the guardrail manifest
+# uses; the rules across its fields by _check_profile.
+DIAGNOSTIC_PROFILE = "policy/diagnostic-profile.yaml"
+# The producer tree's own: beside the collector's code, never the staged tree, the
+# working directory or a configured kit root (Router 6351766731 R1, as _OBSERVER).
+_PRODUCER_TREE = Path(__file__).resolve().parent.parent
+_PROFILE = _PRODUCER_TREE / DIAGNOSTIC_PROFILE
+DIAGNOSTIC_PROFILE_SCHEMA = "gnostoa-diagnostic-profile/v1"
+# mypy first, so that its own budget check counts every finding so far; the in-process
+# metric last (cubic on #436).
+_PRODUCER_ORDER = ("mypy", "ruff", "complexity")
+# The producers launched as processes, whose environment is observed.
+_LAUNCHED_PRODUCERS = ("mypy", "ruff")
+# Each identifier's whole text, checked by fullmatch in _check_profile: a schema
+# pattern's $ also matches before a trailing newline (Revix on #459).
+_NAME_TEXT = r"[a-z][a-z0-9-]{0,62}"
+_PROFILE_ID_TEXT = r"[a-z][a-z0-9.-]{0,127}"
+# Directory prefixes of the tree: relative, never a . or .. segment or a NUL, each
+# ending in a slash.
+_EXCLUDE_TEXT = r"(?:(?!\.{1,2}/)[^/\x00]+/)+"
+_PROFILE_NAME = {"type": "string", "pattern": f"^{_NAME_TEXT}$"}
+_PROFILE_SCOPE = {"anyOf": [_PROFILE_NAME, {"type": "null"}]}
+_PROFILE_SHAPE: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["schema", "id", "scopes", "families"],
+    "additionalProperties": False,
+    "properties": {
+        "schema": {"const": DIAGNOSTIC_PROFILE_SCHEMA},
+        "id": {"type": "string", "pattern": f"^{_PROFILE_ID_TEXT}$"},
+        "scopes": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": _PROFILE_NAME,
+            "additionalProperties": {
+                "type": "object",
+                "required": ["exclude"],
+                "additionalProperties": False,
+                "properties": {
+                    "exclude": {
+                        "type": "array",
+                        "uniqueItems": True,
+                        "items": {"type": "string", "pattern": f"^{_EXCLUDE_TEXT}$"},
+                    }
+                },
+            },
+        },
+        "families": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/family"},
+        },
+    },
+    "$defs": {
+        "family": {
+            "type": "object",
+            "required": ["id", "producer", "diff", "full"],
+            "additionalProperties": False,
+            "properties": {
+                "id": _PROFILE_NAME,
+                "producer": {"enum": list(_PRODUCER_ORDER)},
+                "diff": _PROFILE_SCOPE,
+                "full": _PROFILE_SCOPE,
+                "select": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"type": "string"},
+                },
+                "reported_above": {"type": "integer", "minimum": 0},
+            },
+            "allOf": [
+                {
+                    "if": {"properties": {"producer": {"const": "ruff"}}},
+                    "then": {
+                        "required": ["select"],
+                        "not": {"required": ["reported_above"]},
+                    },
+                },
+                {
+                    "if": {"properties": {"producer": {"const": "complexity"}}},
+                    "then": {
+                        "required": ["reported_above"],
+                        "not": {"required": ["select"]},
+                    },
+                },
+                {
+                    "if": {"properties": {"producer": {"const": "mypy"}}},
+                    "then": {
+                        "not": {
+                            "anyOf": [
+                                {"required": ["select"]},
+                                {"required": ["reported_above"]},
+                            ]
+                        }
+                    },
+                },
+            ],
+        }
+    },
+}
+
+
+def load_diagnostic_profile(path: Path | None = None) -> dict[str, Any]:
+    """The diagnostic inventory's protected profile, validated: by default
+    `policy/diagnostic-profile.yaml` beside the collector's own code, as its observer
+    is, so its own revision's, never the analyzed tree's (#389 A0-MP1). The kit
+    locator's KNOWLEDGE_KIT_ROOT is not consulted: it accepts any tree holding its
+    markers, the analyzed one included (the PAO's 6387738095 on #389), and in the
+    runtime image it names the image's kit while a checkout's code runs. A profile
+    that cannot be read, or breaks its contract, is refused."""
+    from tools.knowledge_common import KnowledgeFormatError, load_yaml
+
+    try:
+        # The default is never followed out of the producer tree, a link included
+        # (CodeAnt on #459), and one that cannot be resolved, a link loop included,
+        # is refused as well (Revix on #459).
+        source = path if path is not None else _confined_profile()
+        profile = load_yaml(source)
+    except (KnowledgeFormatError, UnicodeDecodeError) as exc:
+        # By its type alone, never its text or a path, as the comparison's other
+        # failures are (Revix's sanitized-error-diagnostics on #459).
+        raise QualityEvidenceError(
+            f"cannot load the diagnostic profile: {type(exc).__name__}"
+        ) from None
+    return _validated_profile(profile)
+
+
+def _confined_profile() -> Path:
+    """The default profile's resolved path inside the producer tree, by the existing
+    confinement owner; a resolution that fails is its format error."""
+    from tools.knowledge_common import KnowledgeFormatError, confine_to_root
+
+    try:
+        return confine_to_root(
+            _PROFILE, _PRODUCER_TREE, label="the diagnostic profile"
+        )[0]
+    except (OSError, RuntimeError) as exc:
+        raise KnowledgeFormatError(
+            f"the diagnostic profile cannot be resolved: {type(exc).__name__}"
+        ) from None
+
+
+def _validated_profile(profile: object) -> dict[str, Any]:
+    """A deep copy of `profile`, once its shape and its cross-field rules hold. It is
+    untrusted until then, so typed as an object (Revix on #459)."""
+    from jsonschema import Draft202012Validator
+
+    errors = sorted(
+        Draft202012Validator(_PROFILE_SHAPE).iter_errors(profile),
+        key=lambda error: error.json_path,
+    )
+    if errors:
+        raise QualityEvidenceError(
+            f"diagnostic profile: {errors[0].json_path}: {errors[0].message}"
+        )
+    # The shape is now an object of the profile's form.
+    checked = cast("Mapping[str, Any]", profile)
+    _check_profile(checked)
+    copied: dict[str, Any] = json.loads(canonical_json(checked))
+    return copied
+
+
+def _check_profile(profile: Mapping[str, Any]) -> None:
+    """The rules its shape cannot state: every identifier's whole text, then, family by
+    family, _check_family's, and _check_selection's for the Ruff codes."""
+    _check_identifiers(profile)
+    seen: set[str] = set()
+    producers: set[str] = set()
+    rules: dict[str, str] = {}
+    for family in profile["families"]:
+        _check_family(profile, family, seen, producers)
+        _check_selection(family, rules)
+
+
+def _check_identifiers(profile: Mapping[str, Any]) -> None:
+    """The profile's id, scope names, exclusions and family ids, each matched whole."""
+    texts = [(_PROFILE_ID_TEXT, profile["id"])]
+    texts += [(_NAME_TEXT, name) for name in profile["scopes"]]
+    texts += [
+        (_EXCLUDE_TEXT, prefix)
+        for scope in profile["scopes"].values()
+        for prefix in scope["exclude"]
+    ]
+    texts += [(_NAME_TEXT, family["id"]) for family in profile["families"]]
+    for pattern, text in texts:
+        if re.fullmatch(pattern, text) is None:
+            raise QualityEvidenceError(f"diagnostic profile: {text!r} is not whole")
+
+
+def _check_family(
+    profile: Mapping[str, Any],
+    family: Mapping[str, Any],
+    seen: set[str],
+    producers: set[str],
+) -> None:
+    """A family is declared once, names declared scopes and acquires something; there
+    is one mypy family and one complexity family at most."""
+    name, producer = family["id"], family["producer"]
+    if name in seen:
+        raise QualityEvidenceError(
+            f"diagnostic profile: family {name!r} is declared twice"
+        )
+    seen.add(name)
+    scopes = [family["diff"], family["full"]]
+    undeclared = [
+        scope
+        for scope in scopes
+        if scope is not None and scope not in profile["scopes"]
+    ]
+    if undeclared:
+        raise QualityEvidenceError(
+            f"diagnostic profile: family {name!r} names an undeclared scope {undeclared[0]!r}"
+        )
+    if scopes == [None, None]:
+        raise QualityEvidenceError(
+            f"diagnostic profile: family {name!r} acquires nothing"
+        )
+    if producer != "ruff" and producer in producers:
+        raise QualityEvidenceError(
+            f"diagnostic profile: a second {producer} family, {name!r}"
+        )
+    producers.add(producer)
+
+
+def _check_selection(family: Mapping[str, Any], rules: dict[str, str]) -> None:
+    """Each Ruff code is one the inventory maps, and is selected by one family only."""
+    name = family["id"]
+    for code in family.get("select", ()):
+        if code not in DIAGNOSTIC_RUFF_SELECT:
+            raise QualityEvidenceError(
+                f"diagnostic profile: family {name!r} selects {code!r}, which the inventory does not map"
+            )
+        if code in rules:
+            raise QualityEvidenceError(
+                f"diagnostic profile: {code!r} is selected by {rules[code]!r} and {name!r}"
+            )
+        rules[code] = name
+
+
+def _in_scope(profile: Mapping[str, Any], scope: str | None, path: str) -> bool:
+    """Whether `path` lies in the profile's named scope; never in a null one."""
+    if scope is None:
+        return False
+    excluded = profile["scopes"][scope]["exclude"]
+    return not any(path.startswith(prefix) for prefix in excluded)
+
+
+def _diff_only(
+    profile: Mapping[str, Any], family: Mapping[str, Any], expected: list[str]
+) -> list[str]:
+    """The family's DIFF-scope paths that its FULL scope does not reach: acquired only
+    when a change touches them."""
+    return [
+        path
+        for path in expected
+        if _in_scope(profile, family["diff"], path)
+        and not _in_scope(profile, family["full"], path)
+    ]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Changes:
+    """What the DIFF scopes acquire by, read before any producer runs: the changed
+    paths and, for the paths complexity acquires by function, the lines each change
+    adds; or, when they are unknown, why (#389 A0-MP1)."""
+
+    paths: frozenset[str] | None
+    lines: Mapping[str, list[int]]
+    unknown: str | None = None
+    # Each path whose added lines could not be read, with why: that path's alone,
+    # never the changed paths or another path's lines (CodeAnt and Claude on #459).
+    lines_unread: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1460,6 +1738,10 @@ class _ProducerResult:
     partial: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     # Valid findings counted past the allowance, never kept (the Router's M1 on #436).
     excess: int = 0
+    # Each family's own analysis of its targets, by _family_row (#389 A0-MP1).
+    families: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Every path some family targeted (#459).
+    targeted: set[str] = dataclasses.field(default_factory=set)
 
     def count(self) -> int:
         """The raw count of valid findings, those kept and those only counted."""
@@ -2262,7 +2544,12 @@ def _run_ruff(
     deadline: float,
     version: str | None,
     max_findings: int | None = None,
+    *,
+    select: tuple[str, ...] | list[str] = DIAGNOSTIC_RUFF_SELECT,
+    name: str = "ruff",
 ) -> _ProducerResult:
+    """Ruff's run of `select` over `paths`, named `name`: a family's own run is
+    `ruff:<family>` (#389 A0-MP1)."""
     allowance = limits.max_findings if max_findings is None else max_findings
     result = _ProducerResult()
     command = [
@@ -2279,13 +2566,13 @@ def _run_ruff(
         "--target-version",
         "py{}{}".format(*_PYTHON_TARGET),
         "--select",
-        ",".join(DIAGNOSTIC_RUFF_SELECT),
+        ",".join(select),
         "--output-format",
         "json",
         "--",
         *paths,
     ]
-    report = run / "diagnostic-ruff.json"
+    report = run / f"diagnostic-{name.replace(':', '-')}.json"
     status, gap, invalid = _bounded_run(
         command,
         cwd=root,
@@ -2295,7 +2582,7 @@ def _run_ruff(
         limits=limits,
     )
     result.add_run(
-        _run_record("ruff", "ruff", command, status, report, run, version),
+        _run_record(name, "ruff", command, status, report, run, version),
         _ISOLATED_PYTHON,
     )
     result.truncated = result.truncated or invalid
@@ -2323,7 +2610,7 @@ def _run_ruff(
         result.keep(finding, allowance)
     gap = _ruff_gap(status, gap, records)
     if gap is not None:
-        result.unanalyzed.update({path: f"ruff {gap}" for path in paths})
+        result.unanalyzed.update({path: f"{name} {gap}" for path in paths})
     return result
 
 
@@ -2342,19 +2629,30 @@ def _column(lines: list[str], line: int, offset: int) -> int:
 
 
 def _function_findings(
-    tree: ast.AST, path: str, lines: list[str]
+    tree: ast.AST,
+    path: str,
+    lines: list[str],
+    *,
+    reported_above: int = COMPLEXITY_REPORTED_ABOVE,
+    added: list[int] | None = None,
 ) -> list[dict[str, Any]]:
+    """The functions above `reported_above`; with `added`, the sorted lines a change
+    adds, only the functions whose range holds one of them, chosen before any value is
+    computed: acquisition, never a filter (#389 A0-MP1)."""
     findings = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        value = cyclomatic_complexity(node)
-        if value <= COMPLEXITY_REPORTED_ABOVE:
             continue
         end_line = node.end_lineno or node.lineno
         # The range covers what the value counts: from the earliest decorator
         # expression's line, in the function's column (Codex, the Router's D-a on #436).
         start_line = min((d.lineno for d in node.decorator_list), default=node.lineno)
+        span = {"path": path, "range": {"start_line": start_line, "end_line": end_line}}
+        if added is not None and not _in_diff(span, {path: added}):
+            continue
+        value = cyclomatic_complexity(node)
+        if value <= reported_above:
+            continue
         location = (
             start_line,
             _column(lines, start_line, node.col_offset),
@@ -2377,6 +2675,8 @@ def _run_complexity(
     *,
     max_source_bytes: int = DEFAULT_DIAGNOSTIC_LIMITS.max_source_bytes,
     max_findings: int = DEFAULT_DIAGNOSTIC_LIMITS.max_findings,
+    reported_above: int = COMPLEXITY_REPORTED_ABOVE,
+    functions: Mapping[str, list[int]] | None = None,
 ) -> _ProducerResult:
     """The complexity metric, in this process: checked against the inventory deadline
     before each file (Codex, cubic and Claude on #436), and never reading more than
@@ -2386,7 +2686,8 @@ def _run_complexity(
     sys.maxsize: each is that file's named gap (Codex, the Router's L2 on #436).
     max_findings is what the earlier producers left of the inventory's own: past it,
     no next file starts, and the caller's refusal follows (CodeAnt, the Router's C1
-    on #436)."""
+    on #436). A path in `functions` is measured only in the functions a change adds
+    a line to, by its sorted added lines (#389 A0-MP1)."""
     result = _ProducerResult()
     result.runs.append(
         {
@@ -2435,7 +2736,13 @@ def _run_complexity(
                 f"complexity could not parse: {type(exc).__name__}"
             )
             continue
-        result.findings += _function_findings(tree, path, _source_lines(source))
+        result.findings += _function_findings(
+            tree,
+            path,
+            _source_lines(source),
+            reported_above=reported_above,
+            added=None if functions is None else functions.get(path),
+        )
     return result
 
 
@@ -2494,6 +2801,123 @@ def _attach_environment_observation(
             record["environment_observation"] = observation
 
 
+def _family_targets(
+    profile: Mapping[str, Any],
+    family: Mapping[str, Any],
+    expected: list[str],
+    changes: _Changes,
+) -> tuple[list[str], dict[str, list[int]], str | None]:
+    """The family's targets, in the tracked order: its FULL scope's, and its DIFF
+    scope's changed paths, whole; the added lines of those it acquires through DIFF
+    alone; and why its DIFF targets are unknown, if they are."""
+    full = {path for path in expected if _in_scope(profile, family["full"], path)}
+    diff_only = _diff_only(profile, family, expected)
+    changed = changes.paths or frozenset()
+    added = {path for path in diff_only if path in changed}
+    targets = [path for path in expected if path in full or path in added]
+    functions = {path: list(changes.lines.get(path, [])) for path in added}
+    return targets, functions, changes.unknown if diff_only else None
+
+
+def _family_row(
+    family: Mapping[str, Any],
+    targets: list[str] | None,
+    unanalyzed: Mapping[str, str],
+    partial: Mapping[str, Any],
+    unknown: str | None,
+) -> dict[str, Any]:
+    """One family's own analysis of its targets, counted in files: COMPLETE only when
+    they are known and each was analyzed, none included; never coverage alone, since the
+    composite also carries the inventory's shared gaps (the PAO's R2 on #389
+    6387305292)."""
+    reasons = []
+    if unknown is not None:
+        reasons.append(f"its DIFF targets are unknown: {unknown}")
+    if targets is None:
+        reasons.append("never analyzed")
+    known = targets or []
+    missing = [path for path in known if path in unanalyzed]
+    if missing:
+        reasons.append(f"{len(missing)} of {len(known)} targets unanalyzed")
+    # Every file the family's own run reports an unresolved import for, a followed one
+    # outside its targets included (CodeAnt on #459).
+    partly = [path for path in partial if path not in unanalyzed]
+    if reasons:
+        analysis = "INCOMPLETE"
+    elif partly:
+        analysis = "PARTIAL"
+    else:
+        analysis = "COMPLETE"
+    if partly:
+        reasons.append(f"{len(partly)} files with unresolved imports")
+    return {
+        "family": family["id"],
+        "producer": family["producer"],
+        "analysis": analysis,
+        # Unknown DIFF targets make the count unknown, never the known part's
+        # (CodeAnt on #459); what was analyzed of the known part stays counted.
+        "targets": None if targets is None or unknown is not None else len(known),
+        "analyzed": None if targets is None else len(known) - len(missing),
+        "reason": "; ".join(reasons) or None,
+    }
+
+
+def _run_family(
+    root: Path,
+    run: Path,
+    family: Mapping[str, Any],
+    paths: list[str],
+    functions: Mapping[str, list[int]],
+    limits: DiagnosticLimits,
+    deadline: float,
+    versions: Mapping[str, str | None],
+    allowance: int,
+) -> _ProducerResult:
+    """The family's producer, with its own selection, over `paths`."""
+    if family["producer"] == "mypy":
+        return _run_mypy(root, run, paths, limits, deadline, versions["mypy"])
+    if family["producer"] == "ruff":
+        return _run_ruff(
+            root,
+            run,
+            paths,
+            limits,
+            deadline,
+            versions["ruff"],
+            allowance,
+            select=family["select"],
+            name=f"ruff:{family['id']}",
+        )
+    return _run_complexity(
+        root,
+        paths,
+        deadline,
+        max_source_bytes=limits.max_source_bytes,
+        max_findings=allowance,
+        reported_above=family["reported_above"],
+        functions=functions,
+    )
+
+
+def _withheld(
+    root: Path, expected: list[str], limits: DiagnosticLimits
+) -> dict[str, str]:
+    """The tracked paths no producer may read, each with why: a symlink, whose content
+    may lie outside the tree; one that is not a regular file; and one larger than the
+    one source bound every producer shares (CodeAnt on #436)."""
+    withheld: dict[str, str] = {}
+    for path in expected:
+        if _symlinked(root, path):
+            withheld[path] = "a symlink, never analyzed"
+        elif not _regular_file(root, path):
+            withheld[path] = "missing or not a regular file, never analyzed"
+        elif _source_size(root, path) > limits.max_source_bytes:
+            withheld[path] = (
+                f"larger than {limits.max_source_bytes} bytes, never analyzed"
+            )
+    return withheld
+
+
 def _run_producers(
     root: Path,
     run: Path,
@@ -2501,72 +2925,104 @@ def _run_producers(
     limits: DiagnosticLimits,
     gaps: list[str],
     deadline: float,
+    profile: Mapping[str, Any],
+    changes: _Changes,
 ) -> _ProducerResult:
-    """Every producer over the analyzable tracked Python set: never a symlinked path,
-    whose content may lie outside the tree, and nothing when over budget."""
+    """Each of the profile's families over its own targets, among the analyzable tracked
+    Python set: never a symlinked path, whose content may lie outside the tree, and
+    nothing when over budget. What runs on which file is decided here, before any
+    producer starts, never by dropping what one obtained (#389 A0-MP1)."""
     result = _ProducerResult()
+    plans = [
+        (family, *_family_targets(profile, family, expected, changes))
+        for family in sorted(
+            profile["families"], key=lambda f: _PRODUCER_ORDER.index(f["producer"])
+        )
+    ]
     if len(expected) > limits.max_files:
         gaps.append(
             f"budget: {len(expected)} tracked Python files exceed max_files {limits.max_files}"
         )
         result.unanalyzed = dict.fromkeys(expected, "budget: not analyzed")
+        result.families = [
+            _family_row(family, targets, result.unanalyzed, {}, unknown)
+            for family, targets, _, unknown in plans
+        ]
         return result
-    paths = []
-    withheld: list[str] = []
-    for path in expected:
-        if _symlinked(root, path):
-            result.unanalyzed[path] = "a symlink, never analyzed"
-            withheld.append(path)
-        elif not _regular_file(root, path):
-            result.unanalyzed[path] = "missing or not a regular file, never analyzed"
-            withheld.append(path)
-        elif _source_size(root, path) > limits.max_source_bytes:
-            # One bound for every producer, not only the metric (CodeAnt on #436).
-            result.unanalyzed[path] = (
-                f"larger than {limits.max_source_bytes} bytes, never analyzed"
-            )
-            # Never analyzed, so a finding a producer reaches it by is out of scope too
-            # (cubic on #436).
-            withheld.append(path)
-        else:
-            paths.append(path)
-    if paths:
+    result.unanalyzed = _withheld(root, expected, limits)
+    # Never analyzed, so a finding a producer reaches one by is out of scope too
+    # (cubic on #436).
+    withheld = set(result.unanalyzed)
+    paths = [path for path in expected if path not in result.unanalyzed]
+    unread = dict(result.unanalyzed)
+    analyzable = set(paths)
+    used = {
+        family["producer"]
+        for family, targets, _, _ in plans
+        if analyzable.intersection(targets)
+    }
+    # Only a launched producer's environment is observed: the metric runs in process,
+    # so a profile without one observes nothing (CodeAnt on #459).
+    launched = [producer for producer in _LAUNCHED_PRODUCERS if producer in used]
+    versions: dict[str, str | None] = {}
+    before: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
+    if launched:
         before = _observe_environment(root, run, limits, deadline, "before")
         versions = {
             producer: _producer_version(root, run, producer, limits, deadline)
-            for producer in ("mypy", "ruff")
+            for producer in launched
         }
-        result.merge(_run_mypy(root, run, paths, limits, deadline, versions["mypy"]))
+    for family, targets, functions, unknown in plans:
         # The existing refusal's predicate, the raw count above max_findings: once it
-        # holds, no later producer starts, and that refusal follows (cubic on #436).
-        if result.count() <= limits.max_findings:
-            result.merge(
-                _run_ruff(
-                    root,
-                    run,
-                    paths,
-                    limits,
-                    deadline,
-                    versions["ruff"],
-                    limits.max_findings - result.count(),
-                )
+        # holds, no later family starts, and that refusal follows (cubic on #436).
+        if result.count() > limits.max_findings:
+            break
+        # A complexity target whose added lines could not be read is withheld and
+        # named; the family's other targets still run (Claude on #459).
+        unreadable = {
+            path: f"{family['id']}: {changes.lines_unread[path]}"
+            for path in functions
+            if family["producer"] == "complexity" and path in changes.lines_unread
+        }
+        selected = [
+            path for path in targets if path in analyzable and path not in unreadable
+        ]
+        outcome = (
+            _run_family(
+                root,
+                run,
+                family,
+                selected,
+                functions,
+                limits,
+                deadline,
+                versions,
+                limits.max_findings - result.count(),
             )
-        if result.count() <= limits.max_findings:
-            result.merge(
-                _run_complexity(
-                    root,
-                    paths,
-                    deadline,
-                    max_source_bytes=limits.max_source_bytes,
-                    max_findings=limits.max_findings - result.count(),
-                )
+            if selected
+            else _ProducerResult()
+        )
+        outcome.unanalyzed.update(unreadable)
+        # What a family that ran targeted: the composite counts only these, never a
+        # family the findings budget stopped (CodeAnt and Claude on #459).
+        result.targeted.update(targets)
+        result.families.append(
+            _family_row(
+                family,
+                targets,
+                {**unread, **outcome.unanalyzed},
+                outcome.partial,
+                unknown,
             )
+        )
+        result.merge(outcome)
+    if launched:
         _attach_environment_observation(
             result, root, run, limits, deadline, before, gaps
         )
     # A withheld path's findings come from a producer following an import into it
     # (Codex on #436): they stay listed, and are not tracked-source evidence.
-    tracked = set(expected) - set(withheld)
+    tracked = set(expected) - withheld
     for finding in result.findings:
         # Whether the finding's named file is tracked: never proof that every input
         # that shaped it was tracked or bound to HEAD (the Router's U1 on #436).
@@ -2709,16 +3165,16 @@ def _diff_scope(
     cap: int = DEFAULT_DIAGNOSTIC_LIMITS.max_report_bytes,
     *,
     head: str,
+    unreadable: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, set[int]]]:
     """The paths the frozen commit `head` changes since `base`, and the lines each
     change adds, read per path by the GitHub patch reader's own hunk accounting
     (Claude on #436). `head` is the one commit the inventory froze, never a later
-    `HEAD` (Router #389 6325382720, D4). It is imported here, so that the default
-    collection never loads the merge-evidence reader. With `wanted`, only those
-    paths are read line by line: a changed path that no finding names is listed,
-    never read whole (CodeAnt on #436)."""
-    from tools.merge_evidence_github import _added_lines
-
+    `HEAD` (Router #389 6325382720, D4). With `wanted`, only those paths are read
+    line by line: a changed path that no finding names is listed, never read whole
+    (CodeAnt on #436). With `unreadable`, a path whose own patch the comparison
+    refuses is recorded there with its reason, and the others are still read; without
+    it, that refusal is the whole comparison's (cubic and Claude on #459)."""
     # The base must be the commit it names: a tree, a blob, a tag that peels to
     # another id, a missing object or an unusable answer is the comparison's gap,
     # never a comparison labelled as its base (Codex, routed by the Router
@@ -2750,33 +3206,47 @@ def _diff_scope(
     for path in changed:
         if wanted is not None and path not in wanted:
             continue
-        patch = _diagnostic_git(
-            root,
-            deadline,
-            "diff",
-            "-U0",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            base,
-            head,
-            "--",
-            f":(literal){path}",
-            cap=cap,
-        )
-        if "\n@@" not in patch:
-            # No textual hunk proves that no line was added: a binary, mode-only or
-            # otherwise unaccounted change is the comparison's gap, never an empty set
-            # (the PAO and the Router on #436).
-            raise _ComparisonRefused(f"the comparison of {path} has no textual hunk")
-        read = _added_lines(patch[patch.index("\n@@") + 1 :])
-        if read is None:
-            raise _ComparisonRefused(
-                f"the comparison of {path} is not a sequence of hunks"
-            )
-        lines[path] = {number for number, _ in read[0]}
+        try:
+            lines[path] = _patch_added_lines(root, base, head, path, deadline, cap)
+        except _ComparisonRefused as exc:
+            if unreadable is None:
+                raise
+            unreadable[path] = str(exc)
     return {"base": base, "changed_paths": changed}, lines
+
+
+def _patch_added_lines(
+    root: Path, base: str, head: str, path: str, deadline: float, cap: int
+) -> set[int]:
+    """The lines the change adds to `path`, by its own patch; or the comparison's
+    refusal of that patch. The merge-evidence reader is imported here, so that the
+    default collection never loads it."""
+    from tools.merge_evidence_github import _added_lines
+
+    patch = _diagnostic_git(
+        root,
+        deadline,
+        "diff",
+        "-U0",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        base,
+        head,
+        "--",
+        f":(literal){path}",
+        cap=cap,
+    )
+    if "\n@@" not in patch:
+        # No textual hunk proves that no line was added: a binary, mode-only or
+        # otherwise unaccounted change is the comparison's gap, never an empty set
+        # (the PAO and the Router on #436).
+        raise _ComparisonRefused(f"the comparison of {path} has no textual hunk")
+    read = _added_lines(patch[patch.index("\n@@") + 1 :])
+    if read is None:
+        raise _ComparisonRefused(f"the comparison of {path} is not a sequence of hunks")
+    return {number for number, _ in read[0]}
 
 
 def _in_diff(finding: Mapping[str, Any], changed: Mapping[str, list[int]]) -> bool:
@@ -2794,6 +3264,77 @@ def _in_diff(finding: Mapping[str, Any], changed: Mapping[str, list[int]]) -> bo
     return index < len(lines) and lines[index] <= end
 
 
+def _compare(
+    root: Path,
+    base: str,
+    wanted: set[str],
+    deadline: float,
+    cap: int,
+    *,
+    head: str | None,
+    unreadable: dict[str, str] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, list[int]] | None, str | None]:
+    """The frozen commit `head` against `base`: the diff scope and the added lines of
+    each changed path in `wanted`, each ordered once for the bisects (cubic, the
+    Router's I1 on #436); or the gap that says why there is no comparison. Its two
+    consumers are the DIFF scopes' acquisition and the findings' annotation (#389
+    A0-MP1)."""
+    try:
+        exact_sha(base, "base")
+    except ValueError:
+        return None, None, f"base {base!r} is not a 40-hex commit id"
+    try:
+        if head is None:
+            raise _ComparisonRefused("no commit was frozen to compare")
+        diff, lines = _diff_scope(
+            root, base, deadline, wanted, cap, head=head, unreadable=unreadable
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # The comparison's own reasons are written as they are; any other failure by
+        # its type alone, never its text (the Router's X1 and Y2 on #436).
+        own = isinstance(exc, (_ComparisonUnavailable, _ComparisonRefused))
+        reason = str(exc) if own else type(exc).__name__
+        return None, None, f"cannot compare with base {base}: {reason}"
+    return diff, {path: sorted(numbers) for path, numbers in lines.items()}, None
+
+
+def _acquisition_changes(
+    root: Path,
+    profile: Mapping[str, Any],
+    expected: list[str],
+    base: str | None,
+    head: str | None,
+    deadline: float,
+    cap: int,
+) -> _Changes:
+    """The changes the DIFF scopes acquire by, read before any producer runs. Only a
+    family whose DIFF scope reaches past its FULL one needs them, and only complexity
+    needs their added lines; with neither, no comparison is read."""
+    reached = {
+        family["id"]: _diff_only(profile, family, expected)
+        for family in profile["families"]
+    }
+    if not any(reached.values()):
+        return _Changes(frozenset(), {})
+    if base is None:
+        return _Changes(None, {}, "no comparison base")
+    # One comparison: the changed paths, and complexity's added lines path by path; a
+    # path whose own patch is refused withholds only itself (cubic and Claude on #459).
+    wanted = {
+        path
+        for family in profile["families"]
+        if family["producer"] == "complexity"
+        for path in reached[family["id"]]
+    }
+    unread: dict[str, str] = {}
+    diff, lines, gap = _compare(
+        root, base, wanted, deadline, cap, head=head, unreadable=unread
+    )
+    if diff is None or lines is None:
+        return _Changes(None, {}, gap)
+    return _Changes(frozenset(diff["changed_paths"]), lines, lines_unread=unread)
+
+
 def _annotate_diff(
     root: Path,
     base: str,
@@ -2809,33 +3350,11 @@ def _annotate_diff(
     comparison is the frozen commit `head`'s. Without one, only the base's form is
     checked and nothing is compared, which is the comparison's own gap (Router #389
     6325382720, D4)."""
-    diff: dict[str, Any] | None = None
-    changed: dict[str, list[int]] | None = None
-    try:
-        exact_sha(base, "base")
-    except ValueError:
-        gaps.append(f"base {base!r} is not a 40-hex commit id")
-    else:
-        try:
-            if head is None:
-                raise _ComparisonRefused("no commit was frozen to compare")
-            diff, lines = _diff_scope(
-                root,
-                base,
-                deadline,
-                {finding["path"] for finding in findings},
-                cap,
-                head=head,
-            )
-            # Each path's changed lines ordered once, for every finding's bisect
-            # (cubic, the Router's I1 on #436).
-            changed = {path: sorted(numbers) for path, numbers in lines.items()}
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            # The comparison's own reasons are written as they are; any other failure
-            # by its type alone, never its text (the Router's X1 and Y2 on #436).
-            own = isinstance(exc, (_ComparisonUnavailable, _ComparisonRefused))
-            reason = str(exc) if own else type(exc).__name__
-            gaps.append(f"cannot compare with base {base}: {reason}")
+    diff, changed, gap = _compare(
+        root, base, {finding["path"] for finding in findings}, deadline, cap, head=head
+    )
+    if gap is not None:
+        gaps.append(gap)
     for finding in findings:
         finding["native"]["in_diff"] = (
             None if changed is None else _in_diff(finding, changed)
@@ -3233,6 +3752,10 @@ def _analyze_frozen(
     owner: _TreeLimits,
     gaps: list[str],
     deadline: float,
+    *,
+    profile: Mapping[str, Any],
+    base: str | None,
+    head: str | None,
 ) -> tuple[list[str] | None, _ProducerResult, str | None, bool]:
     """The frozen tree's tracked Python set, the producers' result over its staged
     bytes, the staged identity and whether it was observed unchanged after them.
@@ -3243,6 +3766,9 @@ def _analyze_frozen(
     if isinstance(expected, str):
         gaps.append(expected)
         return None, _ProducerResult(), None, False
+    changes = _acquisition_changes(
+        root, profile, expected, base, head, deadline, limits.max_report_bytes
+    )
     staging = _stage(root, tree, run, owner)
     if isinstance(staging, str):
         gaps.append(staging)
@@ -3252,7 +3778,9 @@ def _analyze_frozen(
         return expected, _ProducerResult(unanalyzed=unstaged), None, False
     staged, identity = staging
     try:
-        result = _run_producers(staged, run, expected, limits, gaps, deadline)
+        result = _run_producers(
+            staged, run, expected, limits, gaps, deadline, profile, changes
+        )
         bound = _reobserved(root, staged, tree, owner, run)
     except BaseException as primary:
         _note_retained(primary, _discard_staged(staged, owner))
@@ -3291,30 +3819,62 @@ def _diagnostic_coverage(
     result: _ProducerResult,
     gaps: list[str],
     pages: int,
+    families: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """The composite: the conjunction of the families' rows with the inventory's
+    shared gaps, each INCOMPLETE family named (the PAO's R2 on #389 6387305292)."""
     reasons = list(gaps)
     if expected is not None and not expected:
         reasons.append("no tracked Python file")
     if result.unanalyzed:
         reasons.append(f"{len(result.unanalyzed)} tracked Python files unanalyzed")
+    reasons += [
+        f"family {row['family']} INCOMPLETE: {row['reason']}"
+        for row in families
+        if row["analysis"] == "INCOMPLETE"
+    ]
+    partial = [row for row in families if row["analysis"] == "PARTIAL"]
     status = "COMPLETE"
     if reasons:
         status = "INCOMPLETE"
-    elif result.partial:
+    elif result.partial or partial:
         status = "PARTIAL"
     if result.partial:
         reasons.append(f"{len(result.partial)} files with unresolved imports")
+    # Each PARTIAL family is named too: the composite is the rows' conjunction (Revix
+    # on #459).
+    reasons += [f"family {row['family']} PARTIAL: {row['reason']}" for row in partial]
     known = expected or []
     return readback_coverage(
         status,
         pages=pages,
-        count=len(known) - len(set(result.unanalyzed) & set(known)),
+        count=len(
+            [p for p in known if p in result.targeted and p not in result.unanalyzed]
+        ),
         total=None if expected is None else len(expected),
         reason="; ".join(reasons) or None,
     )
 
 
-def _inventory_configuration(limits: DiagnosticLimits) -> dict[str, Any]:
+def _family_rows(
+    profile: Mapping[str, Any], result: _ProducerResult
+) -> list[dict[str, Any]]:
+    """Each of the profile's families' row, in its order: a family the analysis never
+    reached has an INCOMPLETE one, never none (the PAO's R2 on #389 6387305292)."""
+    rows = {row["family"]: row for row in result.families}
+    return [
+        rows.get(family["id"]) or _family_row(family, None, {}, {}, None)
+        for family in profile["families"]
+    ]
+
+
+def _inventory_configuration(
+    limits: DiagnosticLimits, profile: Mapping[str, Any], origin: str
+) -> dict[str, Any]:
+    # The repository's shared canonical digest, in its prefixed form (Revix on #459).
+    from tools.review_model import canonical_digest
+
+    complexity = [f for f in profile["families"] if f["producer"] == "complexity"]
     return {
         "rule_map": [
             {
@@ -3325,10 +3885,21 @@ def _inventory_configuration(limits: DiagnosticLimits) -> dict[str, Any]:
             }
             for (tool, code), rule in sorted(DIAGNOSTIC_RULE_MAP.items())
         ],
-        "ruff_select": list(DIAGNOSTIC_RUFF_SELECT),
+        "ruff_select": [
+            code
+            for family in profile["families"]
+            if family["producer"] == "ruff"
+            for code in family["select"]
+        ],
+        "profile": {
+            "digest": canonical_digest(profile),
+            "value": profile,
+            # The producer tree's, or one a private caller supplied (#459).
+            "origin": origin,
+        },
         "complexity": {
             "metric": COMPLEXITY_METRIC,
-            "reported_above": COMPLEXITY_REPORTED_ABOVE,
+            "reported_above": complexity[0]["reported_above"] if complexity else None,
             "qualification": "UNQUALIFIED",
             # The grammar the metric parses: the producers' declared target, bound
             # best-effort as Python's feature_version is, which promises no AST
@@ -3428,12 +3999,39 @@ def collect_diagnostic_inventory(
 ) -> Path:
     """Write the experimental diagnostic inventory of the tracked Python set into a
     new run directory under `output_directory`, and return its path. Only an
-    explicit call runs it. More findings than `limits.max_findings` write no
-    inventory at all: the raw reports stay in the run directory. It is never
-    COMPLETE while its source binding is UNVERIFIED."""
+    explicit call runs it. The producer tree's protected profile selects what runs,
+    and no caller supplies another (cubic and Revix on #459); a profile that breaks
+    its contract is refused before anything runs. More findings than
+    `limits.max_findings` write no inventory at all: the raw reports stay in the run
+    directory. It is never COMPLETE while its source binding is UNVERIFIED."""
+    return _collect_diagnostic_inventory(
+        repository_root,
+        output_directory,
+        base=base,
+        expected_revision=expected_revision,
+        limits=limits,
+    )
+
+
+def _collect_diagnostic_inventory(
+    repository_root: Path,
+    output_directory: Path,
+    *,
+    base: str | None = None,
+    expected_revision: str | None = None,
+    limits: DiagnosticLimits = DEFAULT_DIAGNOSTIC_LIMITS,
+    profile: Mapping[str, Any] | None = None,
+) -> Path:
+    """The inventory under `profile`, validated as the protected one is, or without
+    one under the producer tree's: the private path for the tests and labelled
+    qualification variants. The record names which origin governed it."""
     _check_limits(limits)
     _check_expected_revision(expected_revision)
     _refuse_caller_git_overrides()
+    origin = "producer-tree" if profile is None else "argument"
+    profile = (
+        load_diagnostic_profile() if profile is None else _validated_profile(profile)
+    )
     from tools import exact_tree
 
     root = repository_root.resolve()
@@ -3449,7 +4047,16 @@ def collect_diagnostic_inventory(
         expected, result, identity, bound = None, _ProducerResult(), None, False
     else:
         expected, result, identity, bound = _analyze_frozen(
-            root, tree, run, limits, owner, gaps, deadline
+            root,
+            tree,
+            run,
+            limits,
+            owner,
+            gaps,
+            deadline,
+            profile=profile,
+            base=base,
+            head=commit,
         )
     gaps.append(_SOURCE_BINDING_GAP if bound else _UNCONFINED_PRODUCERS_GAP)
     source = _source_record(commit, tree, identity, expected_revision, bound)
@@ -3504,6 +4111,8 @@ def collect_diagnostic_inventory(
         deadline,
         source=source,
         limits=limits,
+        profile=profile,
+        origin=origin,
         result=result,
         expected=expected,
         diff=diff,
@@ -3518,6 +4127,8 @@ def _publish(
     *,
     source: dict[str, Any],
     limits: DiagnosticLimits,
+    profile: Mapping[str, Any],
+    origin: str,
     result: _ProducerResult,
     expected: list[str] | None,
     diff: dict[str, Any] | None,
@@ -3530,12 +4141,14 @@ def _publish(
     are rebuilt once (Codex, the Router's T1 and S-c on #436). Only the write and
     close follow that reading."""
 
+    families = _family_rows(profile, result)
+
     def encoded() -> bytes:
         document = {
             "schema": DIAGNOSTIC_SCHEMA,
             "status": "EXPERIMENTAL",
             "source": source,
-            "configuration": _inventory_configuration(limits),
+            "configuration": _inventory_configuration(limits, profile, origin),
             "producers": result.runs,
             "scope": {
                 "full": {
@@ -3550,7 +4163,10 @@ def _publish(
                 },
                 "diff": diff,
             },
-            "coverage": _diagnostic_coverage(expected, result, gaps, len(result.runs)),
+            "coverage": _diagnostic_coverage(
+                expected, result, gaps, len(result.runs), families
+            ),
+            "families": families,
             "findings": findings,
         }
         return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")

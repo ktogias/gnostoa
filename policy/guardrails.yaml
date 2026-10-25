@@ -1278,3 +1278,47 @@ guardrails:
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_derives_tree_from_the_observed_commit
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_rejects_repository_subdirectory_as_explicit_root
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard
+
+  - id: protected-diagnostic-profile
+    title: The diagnostic inventory runs only what the producer tree's profile selects, and drops nothing it obtained
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md#decision
+    implementation:
+      - tools/quality_evidence.py#load_diagnostic_profile
+      - tools/quality_evidence.py#_run_producers
+      - tools/quality_evidence.py#_diagnostic_coverage
+      - policy/diagnostic-profile.yaml
+    tests:
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_typing_and_protected_access_run_on_non_test_full_only
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_the_excluded_rules_are_never_run
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_changed_file_is_acquired_whole_and_an_unchanged_test_file_is_not
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_complexity_is_acquired_only_for_a_function_a_change_adds_a_line_to
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_each_family_has_a_row_and_the_composite_names_the_incomplete_one
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_partial_family_is_named_in_the_composite
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_an_unresolved_import_in_a_followed_file_is_the_family_s
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_mode_only_change_keeps_the_known_changed_files
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_profile_without_a_launched_producer_observes_no_environment
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_the_composite_counts_only_files_a_family_analyzed
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_one_unreadable_file_never_withholds_another_s_functions
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_the_changed_names_are_scanned_once_for_acquisition
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_family_the_findings_budget_stopped_targeted_nothing
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_an_unknown_comparison_never_makes_a_diff_family_complete
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_profile_in_the_analyzed_tree_is_never_read
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_kit_root_naming_the_analyzed_tree_never_governs
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_kit_root_naming_the_producer_tree_is_kept
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_an_obtained_finding_outside_every_selected_scope_stays_listed
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_family_the_analysis_never_reached_is_incomplete
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_no_profile_promotes_the_source_binding
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_the_protected_profile_holds_the_admitted_contract
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_the_public_collector_takes_no_profile
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_the_profile_s_origin_is_recorded
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_the_inventory_records_the_profile_it_ran
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_the_profile_s_threshold_governs_the_metric
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_with_a_duplicate_key_is_refused
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_default_profile_resolving_outside_the_producer_tree_is_refused
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_missing_protected_profile_is_refused_before_anything_runs
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_default_profile_that_cannot_be_resolved_is_refused
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs

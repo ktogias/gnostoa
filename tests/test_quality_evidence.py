@@ -21,6 +21,7 @@ from unittest.mock import ANY, Mock, patch
 
 from quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
+    _EVERY_FAMILY,
     _EXTRA_COMPLEX,
     _SOURCE_BINDING_GAP,
     _DiagnosticFixture,
@@ -916,7 +917,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         )
         self.assertEqual(17, complexity[0]["native"]["value"])
         self.assertEqual("PY-R1000", complexity[0]["native"]["deepsource_rule"])
-        self.assertEqual("gnostoa-diagnostic-inventory/v2", inventory["schema"])
+        self.assertEqual("gnostoa-diagnostic-inventory/v3", inventory["schema"])
         self.assertEqual("EXPERIMENTAL", inventory["status"])
 
     def test_a_non_mapped_diagnostic_and_a_second_rule_on_one_line_stay_distinct(
@@ -1090,7 +1091,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # PARTIAL by itself, and INCOMPLETE for the unverified source binding (I3).
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
         self.assertEqual(
-            _SOURCE_BINDING_GAP + "; 1 files with unresolved imports",
+            _SOURCE_BINDING_GAP
+            + "; 1 files with unresolved imports"
+            + "; family typing PARTIAL: 1 files with unresolved imports",
             inventory["coverage"]["reason"],
         )
         self.assertEqual(
@@ -1151,7 +1154,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
         self.assertTrue(
             any(
-                u["reason"].startswith("ruff ")
+                u["reason"].startswith("ruff:every-rule ")
                 for u in inventory["scope"]["full"]["unanalyzed"]
             )
         )
@@ -1179,11 +1182,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 reasons = {
                     u["path"]: u["reason"]
                     for u in inventory["scope"]["full"]["unanalyzed"]
-                    if u["reason"].startswith("ruff ")
+                    if u["reason"].startswith("ruff:every-rule ")
                 }
                 if gap:
                     self.assertEqual(
-                        "ruff exited 1 without a finding record",
+                        "ruff:every-rule exited 1 without a finding record",
                         reasons.get("tools/sample.py"),
                     )
                 else:
@@ -1366,9 +1369,10 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
         runs = {r["invocation"]: r for r in inventory["producers"]}
         self.assertEqual(
-            {"mypy:main", "mypy:tests/fixtures/one", "ruff", "complexity"}, set(runs)
+            {"mypy:main", "mypy:tests/fixtures/one", "ruff:every-rule", "complexity"},
+            set(runs),
         )
-        for name in ("mypy:main", "ruff"):
+        for name in ("mypy:main", "ruff:every-rule"):
             argv = runs[name]["argv"]
             # -I, the interpreter's own isolation: the PYTHON* variables are inherited
             # but ignored, and the user site is off (Codex and CodeAnt on #436).
@@ -1380,7 +1384,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.assertEqual(
                 file_evidence(report)["sha256"], runs[name]["report"]["sha256"]
             )
-        self.assertIn("--isolated", runs["ruff"]["argv"])
+        self.assertIn("--isolated", runs["ruff:every-rule"]["argv"])
         self.assertIn("--config-file=", runs["mypy:main"]["argv"])
         observation = self.module._environment_command()
         for command, _, _ in self.commands:
@@ -1710,7 +1714,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             str(raised.exception),
         )
         self.assertEqual([], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY)))
-        self.assertTrue(list(self.output.rglob("diagnostic-ruff.json")))
+        self.assertTrue(list(self.output.rglob("diagnostic-ruff-every-rule.json")))
 
     def test_a_negative_source_bound_is_refused(self) -> None:
         # cubic on #436: read() of a negative size reads the whole file, so such a
@@ -1943,7 +1947,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         unanalyzed = {
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
-        self.assertIn("ruff timed out", unanalyzed["tests/test_sample.py"])
+        self.assertIn("ruff:every-rule timed out", unanalyzed["tests/test_sample.py"])
 
     def test_a_version_is_recorded_only_from_a_clean_answer(self) -> None:
         # A failed run, or output that does not name the producer, records no version.
@@ -1982,7 +1986,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
         self.assertEqual(
-            "ruff timed out at the inventory deadline",
+            "ruff:every-rule timed out at the inventory deadline",
             unanalyzed["tests/test_sample.py"],
         )
         self.assertEqual(
@@ -2037,7 +2041,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
         self.assertIn("mypy:main aborted", reasons["tests/test_sample.py"])
-        self.assertIn("ruff unparsable report", reasons["tests/test_sample.py"])
+        self.assertIn(
+            "ruff:every-rule unparsable report", reasons["tests/test_sample.py"]
+        )
 
     def test_every_limit_is_checked_before_any_work(self) -> None:
         # CodeAnt on #436: a negative or non-finite limit is refused up front, before
@@ -2121,7 +2127,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertEqual(
             1,
             len(list(self.output.glob("*/diagnostic-*-ruff.json")))
-            + len(list(self.output.glob("*/diagnostic-ruff.json"))),
+            + len(list(self.output.glob("*/diagnostic-ruff-every-rule.json"))),
         )
 
     def test_a_capture_that_fails_mid_report_writes_no_inventory(self) -> None:
@@ -2484,6 +2490,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 limits,
                 [],
                 deadline,
+                _EVERY_FAMILY,
+                self.module._Changes(frozenset(), {}),
             )
         self.assertEqual(12, result.count())
         self.assertEqual(4, len(result.findings))
@@ -2759,7 +2767,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.assertEqual(
                     [], list(self.output.rglob(self.module.DIAGNOSTIC_INVENTORY))
                 )
-                self.assertTrue(list(self.output.rglob("diagnostic-ruff.json")))
+                self.assertTrue(
+                    list(self.output.rglob("diagnostic-ruff-every-rule.json"))
+                )
         with self.subTest("the late branch's rebuild fails"):
             shutil.rmtree(self.output, ignore_errors=True)
             clock, dumps = [1000.0], json.dumps
@@ -2804,6 +2814,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         arguments = dict(
             source={"revision": None},
             limits=self.module.DiagnosticLimits(),
+            profile=_EVERY_FAMILY,
+            origin="argument",
             result=self.module._ProducerResult(),
             expected=[],
             diff=None,
@@ -3344,9 +3356,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 "unreadable mypy report: PermissionError",
             ),
             "an unreadable ruff report": (
-                "diagnostic-ruff.json",
+                "diagnostic-ruff-every-rule.json",
                 "tests/test_sample.py",
-                "ruff unparsable report: PermissionError",
+                "ruff:every-rule unparsable report: PermissionError",
             ),
         }
         for label, (pattern, path, expected) in cases.items():
@@ -3382,7 +3394,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
             }
             self.assertIn(
-                "ruff unparsable report: ValueError", reasons["tests/test_sample.py"]
+                "ruff:every-rule unparsable report: ValueError",
+                reasons["tests/test_sample.py"],
             )
             written = self._written()
             self.assertNotIn("/elsewhere/", written)
@@ -3410,11 +3423,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 3, len([f for f in inventory["findings"] if f["tool"]["id"] == "ruff"])
             )
             self.assertIn(
-                "ruff exited 0 with a finding record",
+                "ruff:every-rule exited 0 with a finding record",
                 self._reasons(inventory).get("tests/test_sample.py", ""),
             )
             self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-            report = self.run_directory / "diagnostic-ruff.json"
+            report = self.run_directory / "diagnostic-ruff-every-rule.json"
             self.assertEqual(
                 json.dumps(self.ruff_records).replace(
                     str(self.root.resolve()), str(self.run_directory / "source")
@@ -3476,7 +3489,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 1, len([f for f in inventory["findings"] if f["tool"]["id"] == "ruff"])
             )
             reasons = self._reasons(inventory)
-            self.assertIn("ruff unparsable report", reasons["tests/test_sample.py"])
+            self.assertIn(
+                "ruff:every-rule unparsable report", reasons["tests/test_sample.py"]
+            )
             self.assertNotIn("exited 0", reasons["tests/test_sample.py"])
 
     def test_local_work_past_the_deadline_is_reported(self) -> None:
@@ -3527,7 +3542,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
         self.assertIn("unparsable mypy report", reasons["tools/sample.py"])
-        self.assertIn("ruff unparsable report", reasons["tools/sample.py"])
+        self.assertIn("ruff:every-rule unparsable report", reasons["tools/sample.py"])
         self.assertIn(
             "valid",
             {f["message"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"},
@@ -3619,7 +3634,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
         self.assertIn("unparsable mypy report", reasons["tools/sample.py"])
-        self.assertIn("ruff unparsable report", reasons["tools/sample.py"])
+        self.assertIn("ruff:every-rule unparsable report", reasons["tools/sample.py"])
 
     def test_a_malformed_position_the_clamp_would_erase_is_a_gap(self) -> None:
         # Round 12's mutants on #436: the clamps make a column of -0.5 into 1, drop the
