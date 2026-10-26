@@ -1291,7 +1291,9 @@ guardrails:
       - tools/quality_evidence.py#_diagnostic_coverage
       - policy/diagnostic-profile.yaml
     tests:
-      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_typing_and_protected_access_run_on_non_test_full_only
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_typing_runs_on_non_test_full_only
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_protected_access_is_acquired_on_changed_files_only
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_protected_access_acquires_a_changed_non_test_file_whole
       - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_the_excluded_rules_are_never_run
       - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_changed_file_is_acquired_whole_and_an_unchanged_test_file_is_not
       - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_complexity_is_acquired_only_for_a_function_a_change_adds_a_line_to

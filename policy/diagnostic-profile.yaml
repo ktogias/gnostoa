@@ -7,7 +7,8 @@
 #
 # Unactivated: no assurance claim reads the inventory yet. These are the admitted
 # contract's values (Router 6381924685 on #389), qualification hypotheses, not accepted
-# losses. PLR6301 and SIM117 are not selected.
+# losses, except protected access's FULL scope: the owner's N (#389 6405282317) accepts
+# its loss. PLR6301 and SIM117 are not selected.
 schema: gnostoa-diagnostic-profile/v1
 id: gnostoa.project-risk
 scopes:
@@ -25,7 +26,9 @@ families:
     producer: ruff
     select: [SLF001]
     diff: all
-    full: non-test
+    # No FULL scope: the owner's N (#389 6405282317), accepting that SLF001 on code a
+    # change does not touch is not acquired. Every acquired finding still denies (M17).
+    full: null
   - id: literal-secrets
     producer: ruff
     select: [S106]
