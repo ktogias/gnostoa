@@ -34,6 +34,15 @@ sources:
   - id: pre-mutation
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6387512548
     title: The pre-change evidence, lineage and prior art of this slice
+  - id: semantic
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6404710463
+    title: "The PAO's semantic assessment of the 30 standing findings: 25 intentional bounded accesses, 5 model mismatches"
+  - id: narrow-route
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6404850729
+    title: "The Router's narrow route, with N as the profile choice"
+  - id: owner-n
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6405282317
+    title: "The owner's selection of N: protected access's FULL scope null, its loss accepted"
   - id: reuse-review
     resource: ./0062-require-proportionate-prior-art-and-reuse-review.md
     title: Proportionate prior-art and reuse review
@@ -106,10 +115,26 @@ and no family's analysis could be told apart (source `migration-packet`, rows 1 
 
 ## Consequences
 
-- The profile holds the admitted contract's values (source `route`): typing and protected
-  access on every changed Python file and on non-test FULL; literal secrets everywhere;
-  complexity above 15 on changed functions only; PLR6301 and SIM117 not selected. They
-  are qualification hypotheses, not accepted losses.
+- The profile holds the admitted contract's values (source `route`): typing on every
+  changed Python file and on non-test FULL; protected access on every changed Python
+  file; literal secrets everywhere; complexity above 15 on changed functions only;
+  PLR6301 and SIM117 not selected. They are qualification hypotheses, not accepted
+  losses, with one exception.
+- **The exception is protected access's FULL scope, which is `null`** (the owner's N,
+  source `owner-n`, on the Router's narrow route, source `narrow-route`).
+  - **Why:** the PAO found the 25 standing `SLF001` findings on unchanged code to be
+    intentional bounded accesses, not defects (source `semantic`).
+  - **The accepted loss:** an `SLF001` on code a change does not touch is not acquired,
+    so a genuine private-interface problem outside a change can go unseen by this
+    family.
+  - **What stays:** every acquired finding still denies (M17), and a changed file is
+    still acquired whole, so fix-on-touch stays.
+  - **What it does not touch:** the same assessment's 5 model mismatches are typing
+    findings, and N leaves them alone (Cubic on #462). Two are in non-test files, which
+    typing's FULL scope acquires on every head. The other three are in
+    `tests/quality_evidence_fixtures.py`, which typing's FULL scope does not reach (Cubic
+    on #462): they are acquired only when mypy follows the import from a changed test
+    (Claude on #462). Each one acquired still denies until it is resolved.
 - Because mypy and Ruff acquire whole files, a selected DIFF scope makes every standing
   finding in a changed file listed, and so fix-on-touch (source `scope-consequence`). The
   alternatives, including dropping tests from those DIFF scopes, stay for the one

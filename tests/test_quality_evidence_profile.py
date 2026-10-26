@@ -25,9 +25,10 @@ from quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
 ROOT = Path(__file__).resolve().parent.parent
 
 # The admitted contract's values (Router 6381924685's risk table, from r2 6381493734):
-# typing and protected access on every changed Python file and on non-test FULL,
-# literal secrets everywhere, complexity above 15 on changed functions only. PLR6301
-# and SIM117 are not selected. Unactivated: no claim reads it yet.
+# typing on every changed Python file and on non-test FULL, protected access on every
+# changed Python file only (the owner's N, #389 6405282317), literal secrets
+# everywhere, complexity above 15 on changed functions only. PLR6301 and SIM117 are
+# not selected.
 PROTECTED = {
     "schema": "gnostoa-diagnostic-profile/v1",
     "id": "gnostoa.project-risk",
@@ -39,7 +40,7 @@ PROTECTED = {
             "producer": "ruff",
             "select": ["SLF001"],
             "diff": "all",
-            "full": "non-test",
+            "full": None,
         },
         {
             "id": "literal-secrets",
@@ -149,22 +150,59 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
 
     # RED on protected main: it runs every selector on every file.
 
-    def test_typing_and_protected_access_run_on_non_test_full_only(self) -> None:
+    def test_typing_runs_on_non_test_full_only(self) -> None:
         self._protected()
         typed = self._mypy_files()
         self.assertIn("tools/sample.py", typed)
         self.assertEqual(set(), {f for f in typed if f.startswith("tests/")})
-        self.assertIn("tools/sample.py", self._ruff_files("SLF001"))
-        self.assertEqual(
-            set(), {f for f in self._ruff_files("SLF001") if f.startswith("tests/")}
-        )
         self.assertIn("tests/test_sample.py", self._ruff_files("S106"))
+
+    def test_protected_access_is_acquired_on_changed_files_only(self) -> None:
+        """RED (the owner's N, #389 6405282317): protected access has no FULL scope.
+        An `SLF001` on an unchanged non-test file is not acquired, one on a changed
+        file is, and typing's FULL on non-test files still acquires its finding."""
+        self.ruff_records.append(
+            self._ruff(
+                "tools/sample.py", 1, 1, "SLF001", "Private member accessed: `_kept`"
+            )
+        )
+        self.mypy_records["tools/sample.py"] = [
+            self._mypy("tools/sample.py", 1, 1, "arg-type", "a non-test FULL finding")
+        ]
+        self._change(
+            "tests/test_sample.py",
+            '"""Diagnostic fixture: test side."""',
+            '"""Diagnostic fixture: test side, changed."""',
+        )
+        inventory = self._protected(base=self.base)
+        self.assertEqual({"tests/test_sample.py"}, self._ruff_files("SLF001"))
+        self.assertIn("tools/sample.py", self._mypy_files())
+        self.assertEqual(
+            [], self._find(inventory, "ruff", "SLF001", "tools/sample.py", 1)
+        )
+        self.assertTrue(
+            self._find(
+                inventory,
+                "ruff",
+                "SLF001",
+                "tests/test_sample.py",
+                self.lines["private"],
+            )
+        )
+        self.assertTrue(self._find(inventory, "mypy", "arg-type", "tools/sample.py", 1))
 
     def test_the_excluded_rules_are_never_run(self) -> None:
         self.ruff_records.append(
             self._ruff("tools/sample.py", 1, 1, "SIM117", "Use a single `with`")
         )
-        inventory = self._protected()
+        # A changed file, so that both selected rules run: protected access has no
+        # FULL scope (the owner's N, #389 6405282317).
+        self._change(
+            "tests/test_sample.py",
+            '"""Diagnostic fixture: test side."""',
+            '"""Diagnostic fixture: test side, changed."""',
+        )
+        inventory = self._protected(base=self.base)
         selected = set().union(*(_select(c) for c in self._producer_commands("ruff")))
         self.assertEqual({"SLF001", "S106"}, selected)
         self.assertEqual(
@@ -197,6 +235,23 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         ):
             listed = self._find(inventory, tool, rule, "tests/test_sample.py", line)
             self.assertEqual([False], [f["native"]["in_diff"] for f in listed], rule)
+
+    def test_protected_access_acquires_a_changed_non_test_file_whole(self) -> None:
+        """A changed non-test file is still acquired whole, so a standing `SLF001` on
+        its unchanged lines is listed: fix-on-touch outside tests too (CodeAnt on
+        #462)."""
+        self.ruff_records.append(
+            self._ruff(
+                "tools/sample.py", 1, 1, "SLF001", "Private member accessed: `_kept`"
+            )
+        )
+        self._change("tools/sample.py", "total = 0", "total = 1", after="def sixteen")
+        inventory = self._protected(base=self.base)
+        self.assertIn("tools/sample.py", self._ruff_files("SLF001"))
+        # Listed once, and outside the change: line 1 is not a line it added (CodeAnt
+        # on #462).
+        listed = self._find(inventory, "ruff", "SLF001", "tools/sample.py", 1)
+        self.assertEqual([False], [f["native"]["in_diff"] for f in listed])
 
     def test_complexity_is_acquired_only_for_a_function_a_change_adds_a_line_to(
         self,
@@ -408,6 +463,9 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
                 # (CodeAnt on #459).
                 self.assertEqual("INCOMPLETE", rows["typing"]["analysis"])
                 self.assertEqual("INCOMPLETE", rows["complexity"]["analysis"])
+                # Protected access too: its changed files are unknown, with or without
+                # a FULL scope (a characterization; the owner's N, #389 6405282317).
+                self.assertEqual("INCOMPLETE", rows["protected-access"]["analysis"])
                 self.assertEqual("COMPLETE", rows["literal-secrets"]["analysis"])
                 self.assertEqual(
                     [None, None], [rows[f]["targets"] for f in ("typing", "complexity")]
