@@ -315,6 +315,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         self.ruff_exit = 1
         self.ruff_as_ruff = False
         self.ruff_text: str | None = None
+        # Each producer's `--version` answer, 1.0.0 unless a test sets one; None
+        # answers as an unreadable version (#389 P2).
+        self.versions: dict[str, str | None] = {}
         self.commands: list[tuple[list[str], Path, dict[str, str]]] = []
 
     @staticmethod
@@ -374,7 +377,10 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
-            report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
+            version = self.versions.get(command[3], "1.0.0")
+            if version is None:
+                return 1, "exited 1", False
+            report.write_text(f"{command[3]} {version}\n", encoding="utf-8")
             return 0, None, False
         if "mypy" in command:
             prefix = Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
