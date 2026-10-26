@@ -1382,3 +1382,36 @@ guardrails:
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_collect_step_holds_no_credential
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_each_pinned_action_names_its_release
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_an_event_s_fields_reach_only_the_resolver
+  - id: inventory-source-binding
+    title: The diagnostic inventory's source binding is BOUND only when its own run meets P1-P4, and then names the owner's accepted residual
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0120-derive-the-diagnostic-inventory-s-source-binding-from-its-own-run.md#decision
+    implementation:
+      - tools/quality_evidence.py#_unmet_predicates
+      - tools/quality_evidence.py#_unmet_pins
+      - tools/quality_evidence.py#_source_record
+    tests:
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_every_predicate_holding_binds_the_source
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_bound_source_names_the_continuity_it_does_not_prove
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_bound_source_never_completes_a_partial_family
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_a_bound_source_never_completes_an_unknown_comparison
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p1_a_tree_not_observed_unchanged_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p1_a_subject_that_cannot_be_frozen_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p1_a_subject_not_re_read_after_collection_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_version_other_than_its_pin_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_an_unreadable_version_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_producer_without_a_pin_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_an_unreadable_lock_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_producer_that_never_ran_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_family_whose_every_target_is_withheld_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_the_pins_are_read_before_any_producer_starts
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_no_pin_applies_when_no_producer_launches
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_lock_linked_out_of_the_producer_tree_is_never_read
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_lock_that_cannot_be_resolved_is_never_read
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p2_a_lock_in_the_analyzed_tree_is_never_read
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p4_unequal_environment_endpoints_never_bind
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p4_an_unavailable_environment_observation_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_p4_a_launched_run_without_an_observation_never_binds
+      - tests/test_quality_evidence_profile.py::DiagnosticProfileTests.test_no_profile_promotes_the_source_binding

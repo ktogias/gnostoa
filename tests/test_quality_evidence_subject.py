@@ -785,26 +785,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # A -> B -> A: the dependency appears while mypy runs and is gone again before
         # the last observation (PAO 6347682576; cubic on #452). The endpoints compare
         # equal, which is all the member states, although mypy's finding is B's.
-        installed: dict[str, tuple[str, ...]] = {"now": ()}
-
-        def run(command, *, cwd, environment, report, deadline, limits):
-            if command == self._observation_command():
-                report.write_text(self._observation(installed["now"]), encoding="utf-8")
-                return 0, None, False
-            if "--version" not in command and "mypy" in command:
-                installed["now"] = ("probe-dep-1.0",)
-            elif "--version" not in command and "ruff" in command:
-                installed["now"] = ()
-            return self._fake_run(
-                command,
-                cwd=cwd,
-                environment=environment,
-                report=report,
-                deadline=deadline,
-                limits=limits,
-            )
-
-        inventory = self._run(run, "import-untyped")
+        inventory = self._run(self._restored_environment(), "import-untyped")
         member = inventory["producers"][0]["environment_observation"]
         self.assertEqual("endpoints_equal", member["status"])
         a = hashlib.sha256(self._observation(()).encode("utf-8")).hexdigest()

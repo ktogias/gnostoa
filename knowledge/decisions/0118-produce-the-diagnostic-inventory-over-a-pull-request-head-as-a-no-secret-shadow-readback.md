@@ -109,7 +109,8 @@ slice therefore produces them beside the gate, not in it.
 
 - Every Pull Request head readback now also yields the producer route's evidence from
   real runs, before anything is activated. While the source binding is `UNVERIFIED`,
-  both readbacks are INCOMPLETE.
+  both readbacks are INCOMPLETE. Decision 0120 derives the binding from the run's own
+  record.
 - Each readback run gains the lock's install and the inventory, about 12 seconds of
   analysis measured over #459's head. Decision 0107's concurrency group becomes the
   readback job's rather than the run's: a run holds a workflow-level group until every

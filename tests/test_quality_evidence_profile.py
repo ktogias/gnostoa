@@ -9,16 +9,18 @@ gaps. A profile in the analyzed tree is never read."""
 from __future__ import annotations
 
 import copy
+import importlib
 import inspect
 import json
 import os
+import re
 import stat
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quality_evidence_fixtures import _DiagnosticInventoryFixture
+from quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -56,6 +58,19 @@ PROTECTED = {
     ],
 }
 FAMILIES = {"typing", "protected-access", "literal-secrets", "complexity"}
+# The owner's accepted residual (#389 6405841272), which only a BOUND record names: for
+# the bounded diagnostic source binding, and no stronger claim.
+ACCEPTED_RESIDUAL = {
+    "decision": "OWNER-389-M8-RISK-FOLLOWUP-6405282317-51519EC6-v1",
+    "limitations": [
+        "import resolution and the loaded paths outside RECORD-owned roots are not "
+        "established",
+        "the standard library is bound to the Python version, not content-hashed",
+        "the sources' continuity between the endpoint observations is not proven",
+        "listed files without content hashes, such as .pyc, are not "
+        "content-authenticated",
+    ],
+}
 
 
 def _files(command: list[str]) -> list[str]:
@@ -503,11 +518,408 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         )
 
     def test_no_profile_promotes_the_source_binding(self) -> None:
-        inventory = self._protected(base=self.base)
+        # The producer tree's own profile, supplied through the private path: every
+        # other predicate holds, and P3 alone fails (#389 P1-P4).
+        from tools.knowledge_common import load_yaml
+
+        self.versions = dict(PINS)
+        own = load_yaml(ROOT / "policy" / "diagnostic-profile.yaml")
+        inventory = self._inventory_with(own, base=self.base)
         self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
+        self.assertIsNone(inventory["source"].get("accepted_residual"))
         self.assertEqual("EXPERIMENTAL", inventory["status"])
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
         self.assertIn("source binding UNVERIFIED", inventory["coverage"]["reason"])
+        self.assertEqual(["P3"], self._unmet(inventory))
+        self.assertIn(
+            "source binding P3 unmet: the profile was supplied, not the producer "
+            "tree's",
+            inventory["coverage"]["reason"],
+        )
+
+    # The source binding, derived from the run's own record (#389 P1-P4; owner M8 A
+    # 6405841272, Router 6405959599): BOUND only when the frozen tree was staged and
+    # observed unchanged (P1), each launched producer answered its pin (P2), the
+    # producer tree's profile governed (P3) and each launched run's environment
+    # endpoints are equal (P4). Each negative breaks one predicate, every other
+    # holding, and names it.
+
+    def _bound(self, **options) -> dict:
+        """The protected route with every predicate holding: the producers answer
+        their pins."""
+        self.versions = dict(PINS)
+        return self._protected(**options)
+
+    def _observed(self, *answers: str | None, **options) -> dict:
+        """The protected route, the producers at their pins, and its environment
+        observations answered in turn; None fails as an unreadable observation."""
+        self.versions = dict(PINS)
+        pending = list(answers)
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command != self._observation_command():
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
+            # Named, rather than an IndexError, if the collector observes more often
+            # than the test answered (Amazon Q on #463).
+            self.assertTrue(pending, "more environment observations than answered")
+            answer = pending.pop(0)
+            if answer is None:
+                return 1, "exited 1", False
+            report.write_text(answer, encoding="utf-8")
+            return 0, None, False
+
+        with patch("tools.quality_evidence._bounded_run", side_effect=run):
+            path = self.module.collect_diagnostic_inventory(
+                self.root, self.output, **options
+            )
+        # Every answer was taken: a collector that observes less often fails too
+        # (cubic on #463).
+        self.assertEqual([], pending, "fewer environment observations than answered")
+        return self._read(path)
+
+    @staticmethod
+    def _unmet(inventory: dict) -> list[str]:
+        """The predicates the record names unmet, in its order."""
+        # A COMPLETE composite records no reason at all.
+        reason = inventory["coverage"].get("reason") or ""
+        return re.findall(r"source binding (P[1-4]) unmet", reason)
+
+    def _unbound(self, inventory: dict, predicate: str, detail: str) -> None:
+        """UNVERIFIED, with no accepted residual, the binding's residual still a gap,
+        and `predicate` the only one unmet, for `detail`."""
+        source = inventory["source"]
+        self.assertEqual("UNVERIFIED", source["source_binding"])
+        self.assertIsNone(source.get("accepted_residual"))
+        self.assertIn("source binding UNVERIFIED", inventory["coverage"]["reason"])
+        self.assertEqual([predicate], self._unmet(inventory))
+        self.assertIn(
+            f"source binding {predicate} unmet: {detail}",
+            inventory["coverage"]["reason"],
+        )
+
+    def test_every_predicate_holding_binds_the_source(self) -> None:
+        inventory = self._bound(base=self.base)
+        source = inventory["source"]
+        self.assertEqual("EXACT_TREE_STAGED", source["tree_binding"])
+        self.assertEqual("BOUND", source["source_binding"])
+        self.assertEqual(ACCEPTED_RESIDUAL, source["accepted_residual"])
+        self.assertEqual([], self._unmet(inventory))
+        self.assertNotIn("source binding", inventory["coverage"].get("reason") or "")
+        # The fixture's every family is COMPLETE, so the composite now is too.
+        self.assertEqual("COMPLETE", inventory["coverage"]["status"])
+        self.assertEqual("EXPERIMENTAL", inventory["status"])
+        launched = [r for r in inventory["producers"] if r["producer"] in PINS]
+        self.assertEqual({"mypy", "ruff"}, {r["producer"] for r in launched})
+        for run in launched:
+            self.assertEqual(PINS[run["producer"]], run["version"])
+            self.assertEqual(
+                "endpoints_equal", run["environment_observation"]["status"]
+            )
+
+    def test_a_bound_source_names_the_continuity_it_does_not_prove(self) -> None:
+        # A -> B -> A: the environment changes while mypy runs and is restored before
+        # the last observation. The endpoints are equal, so the source binds, and
+        # the record names, as the owner's accepted residual, the continuity it does
+        # not prove (PAO 6347682576; owner 6405841272, limitation 3).
+        self.versions = dict(PINS)
+        restored = self._restored_environment()
+        with patch("tools.quality_evidence._bounded_run", side_effect=restored):
+            path = self.module.collect_diagnostic_inventory(
+                self.root, self.output, base=self.base
+            )
+        inventory = self._read(path)
+        member = inventory["producers"][0]["environment_observation"]
+        self.assertEqual("endpoints_equal", member["status"])
+        self.assertIn(
+            "neither continuous nor complete installed content", member["scope"]
+        )
+        self.assertEqual("BOUND", inventory["source"]["source_binding"])
+        self.assertIn(
+            "the sources' continuity between the endpoint observations is not proven",
+            inventory["source"]["accepted_residual"]["limitations"],
+        )
+
+    def test_a_bound_source_never_completes_a_partial_family(self) -> None:
+        self.mypy_records = {
+            "tools/sample.py": [
+                self._mypy(
+                    "tools/sample.py",
+                    1,
+                    0,
+                    "import-not-found",
+                    'Cannot find implementation or library stub for module named "x"',
+                )
+            ]
+        }
+        inventory = self._bound(base=self.base)
+        self.assertEqual("BOUND", inventory["source"]["source_binding"])
+        self.assertEqual("PARTIAL", self._rows(inventory)["typing"]["analysis"])
+        self.assertNotEqual("COMPLETE", inventory["coverage"]["status"])
+
+    def test_a_bound_source_never_completes_an_unknown_comparison(self) -> None:
+        inventory = self._bound(base="0" * 40)
+        self.assertEqual("BOUND", inventory["source"]["source_binding"])
+        self.assertEqual("INCOMPLETE", self._rows(inventory)["typing"]["analysis"])
+        self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
+
+    def test_p1_a_tree_not_observed_unchanged_never_binds(self) -> None:
+        # Staged and analyzed, then its final observation fails: every producer ran
+        # at its pin and observed equal endpoints.
+        owner = importlib.import_module("tools.exact_tree")
+        failing = owner.ExactTreeError("identity-unavailable")
+        with patch.object(
+            owner, "observed_tree", side_effect=self._then(owner.observed_tree, failing)
+        ):
+            inventory = self._bound(base=self.base)
+        self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
+        self._unbound(
+            inventory, "P1", "the frozen tree was not staged and observed unchanged"
+        )
+
+    def test_p1_a_subject_that_cannot_be_frozen_never_binds(self) -> None:
+        inventory = self._bound(base=self.base, expected_revision="0" * 40)
+        self.assertIsNone(inventory["source"]["tree"])
+        self._unbound(
+            inventory, "P1", "the frozen tree was not staged and observed unchanged"
+        )
+
+    def test_p1_a_subject_not_re_read_after_collection_never_binds(self) -> None:
+        with patch.object(self.module, "has_git_metadata", side_effect=[True, False]):
+            inventory = self._bound(base=self.base)
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self._unbound(
+            inventory,
+            "P1",
+            "the subject's Git metadata was not confirmed after the run",
+        )
+
+    def test_p2_a_version_other_than_its_pin_never_binds(self) -> None:
+        self.versions = {**PINS, "ruff": "0.0.0"}
+        inventory = self._protected(base=self.base)
+        self._unbound(
+            inventory, "P2", f"ruff's version '0.0.0' is not its pin {PINS['ruff']!r}"
+        )
+
+    def test_p2_an_unreadable_version_never_binds(self) -> None:
+        self.versions = {**PINS, "mypy": None}
+        inventory = self._protected(base=self.base)
+        self._unbound(inventory, "P2", "mypy's version could not be read")
+
+    def test_p2_a_producer_without_a_pin_never_binds(self) -> None:
+        real = self.module.locked_requirements
+        read: list[Path] = []
+
+        def without_ruff(path: Path) -> list:
+            read.append(path)
+            return [r for r in real(path) if r["normalized_name"] != "ruff"]
+
+        with patch(
+            "tools.quality_evidence.locked_requirements", side_effect=without_ruff
+        ):
+            inventory = self._bound(base=self.base)
+        self._unbound(inventory, "P2", "ruff has no pin in the producer tree's lock")
+        # The producer tree's lock, never the analyzed tree's.
+        self.assertEqual([ROOT / "requirements" / "development.lock"], read)
+
+    def test_p2_an_unreadable_lock_never_binds(self) -> None:
+        # Named by its type alone: the failure's text, here a host path, never
+        # reaches the record (the Router's X1 on #436; Amazon Q and Revix on #463).
+        from tools.requirements_lock import LockFormatError
+
+        host = "/host/only/requirements/development.lock"
+        failures = (
+            LockFormatError(f"cannot read {host}"),
+            OSError(2, "gone", host),
+            # A lock that is not UTF-8 (CodeAnt on #463).
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with patch(
+                    "tools.quality_evidence.locked_requirements", side_effect=failure
+                ):
+                    inventory = self._bound(base=self.base)
+                self._unbound(
+                    inventory,
+                    "P2",
+                    "the producer tree's lock could not be read: "
+                    f"{type(failure).__name__}",
+                )
+                self.assertNotIn(host, json.dumps(inventory))
+
+    def test_p2_a_producer_that_never_ran_never_binds(self) -> None:
+        # Over max_files nothing is analyzed: the tree is staged, but no launched
+        # producer the families needed ran, so nothing binds (cubic on #463).
+        limits = self.module.DiagnosticLimits(max_files=1)
+        inventory = self._bound(base=self.base, limits=limits)
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self.assertEqual([], inventory["producers"])
+        self._unbound(inventory, "P2", "mypy never ran, ruff never ran")
+
+    def test_p2_a_family_whose_every_target_is_withheld_never_binds(self) -> None:
+        # Every file is over the source bound, so withheld: no producer can run, and
+        # nothing binds; each family's row states the coverage (cubic and Claude on
+        # #463). An empty file is under any bound, so the fixture's are removed.
+        for empty in [p for p in self.root.rglob("*.py") if p.stat().st_size == 0]:
+            empty.unlink()
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "no empty Python file")
+        limits = self.module.DiagnosticLimits(max_source_bytes=1)
+        inventory = self._bound(base=self.base, limits=limits)
+        self.assertEqual("EXACT_TREE_STAGED", inventory["source"]["tree_binding"])
+        self.assertEqual([], inventory["producers"])
+        self._unbound(inventory, "P2", "mypy never ran, ruff never ran")
+        rows = self._rows(inventory).values()
+        self.assertEqual({"INCOMPLETE"}, {r["analysis"] for r in rows if r["targets"]})
+        # With the lock unreadable too, both causes are named (Claude on #463).
+        from tools.requirements_lock import LockFormatError
+
+        with patch(
+            "tools.quality_evidence.locked_requirements",
+            side_effect=LockFormatError("unreadable"),
+        ):
+            inventory = self._bound(base=self.base, limits=limits)
+        self._unbound(
+            inventory,
+            "P2",
+            "the producer tree's lock could not be read: LockFormatError, "
+            "mypy never ran, ruff never ran",
+        )
+
+    def test_p2_the_pins_are_read_before_any_producer_starts(self) -> None:
+        # Once, as the profile is, so no later change to the lock is read (CodeAnt
+        # on #463).
+        order: list[str] = []
+        real = self.module.locked_requirements
+
+        def pins(path: Path) -> list:
+            order.append("lock")
+            return real(path)
+
+        def run(command, **options):
+            order.append("launch")
+            return self._fake_run(command, **options)
+
+        self.versions = dict(PINS)
+        with (
+            patch("tools.quality_evidence.locked_requirements", side_effect=pins),
+            patch("tools.quality_evidence._bounded_run", side_effect=run),
+        ):
+            path = self.module.collect_diagnostic_inventory(
+                self.root, self.output, base=self.base
+            )
+        self.assertEqual(["lock"], order[:1])
+        self.assertEqual(1, order.count("lock"))
+        self.assertIn("launch", order)
+        self.assertEqual("BOUND", self._read(path)["source"]["source_binding"])
+
+    def test_p2_no_pin_applies_when_no_producer_launches(self) -> None:
+        # The producer tree's profile selects only the in-process metric: nothing
+        # launches, so even an unreadable lock leaves P2 met (CodeAnt on #463).
+        from tools.requirements_lock import LockFormatError
+
+        profile = {
+            "schema": "gnostoa-diagnostic-profile/v1",
+            "id": "complexity-only",
+            "scopes": {"all": {"exclude": []}},
+            "families": [
+                {
+                    "id": "complexity",
+                    "producer": "complexity",
+                    "reported_above": 15,
+                    "diff": "all",
+                    "full": "all",
+                }
+            ],
+        }
+        with (
+            patch(
+                "tools.quality_evidence.load_diagnostic_profile", return_value=profile
+            ),
+            patch(
+                "tools.quality_evidence.locked_requirements",
+                side_effect=LockFormatError("unreadable"),
+            ),
+        ):
+            inventory = self._bound(base=self.base)
+        self.assertEqual(
+            "producer-tree", inventory["configuration"]["profile"]["origin"]
+        )
+        self.assertEqual(
+            [], [r for r in inventory["producers"] if r["producer"] in PINS]
+        )
+        self.assertEqual([], self._unmet(inventory))
+        self.assertEqual("BOUND", inventory["source"]["source_binding"])
+
+    def test_p2_a_lock_linked_out_of_the_producer_tree_is_never_read(self) -> None:
+        # The lock's path is a link to a valid lock outside the producer tree, whose
+        # pins the producers answer: it is refused by the profile's own confinement
+        # owner, never followed (CodeAnt on #463).
+        planted = Path(self.directory.name) / "planted.lock"
+        planted.write_bytes((ROOT / "requirements" / "development.lock").read_bytes())
+        link = Path(self.directory.name) / "linked.lock"
+        link.symlink_to(planted)
+        with patch("tools.quality_evidence._PRODUCER_LOCK", link):
+            inventory = self._bound(base=self.base)
+        self._unbound(
+            inventory,
+            "P2",
+            "the producer tree's lock could not be read: KnowledgeFormatError",
+        )
+
+    def test_p2_a_lock_that_cannot_be_resolved_is_never_read(self) -> None:
+        # A link to itself: this interpreter's resolve() raises on the loop, and the
+        # inventory still completes, the lock named unreadable by type alone (cubic
+        # on #463).
+        link = Path(self.directory.name) / "looping.lock"
+        link.symlink_to(link)
+        with patch("tools.quality_evidence._PRODUCER_LOCK", link):
+            inventory = self._bound(base=self.base)
+        self.assertEqual(["P2"], self._unmet(inventory))
+        self.assertRegex(
+            inventory["coverage"]["reason"],
+            r"source binding P2 unmet: the producer tree's lock could not be read: "
+            r"(RuntimeError|OSError|KnowledgeFormatError)(;|$)",
+        )
+        self.assertNotIn(str(link), json.dumps(inventory))
+
+    def test_p2_a_lock_in_the_analyzed_tree_is_never_read(self) -> None:
+        # The analyzed tree pins the fake producers' own 1.0.0: still unmet.
+        lock = self.root / "requirements" / "development.lock"
+        lock.parent.mkdir(exist_ok=True)
+        lock.write_text("mypy==1.0.0\nruff==1.0.0\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "an analyzed tree with its own lock")
+        inventory = self._protected(base=self.base)
+        self._unbound(
+            inventory, "P2", f"mypy's version '1.0.0' is not its pin {PINS['mypy']!r}"
+        )
+
+    def test_p4_unequal_environment_endpoints_never_bind(self) -> None:
+        inventory = self._observed(
+            self._observation(()), self._observation(("probe-dep-1.0",)), base=self.base
+        )
+        self._unbound(
+            inventory, "P4", "mypy:main's environment endpoints are endpoints_differ"
+        )
+
+    def test_p4_an_unavailable_environment_observation_never_binds(self) -> None:
+        inventory = self._observed(self._observation(), None, base=self.base)
+        self._unbound(
+            inventory, "P4", "mypy:main's environment endpoints are unavailable"
+        )
+
+    def test_p4_a_launched_run_without_an_observation_never_binds(self) -> None:
+        with patch("tools.quality_evidence._attach_environment_observation"):
+            inventory = self._bound(base=self.base)
+        self._unbound(inventory, "P4", "mypy:main's environment was not observed")
 
 
 class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):

@@ -1379,8 +1379,8 @@ def collect_quality_evidence(
 # experimental qualification material: collect_quality_evidence and the CLI never run it,
 # it is no assurance receipt, and it filters nothing. Every diagnostic its producers emit is
 # listed with its producer, code, mapping status, path and range. Coverage is never
-# COMPLETE in this slice: the source binding is UNVERIFIED (the Router's I3 and U1 on
-# #436), so the COMPLETE and PARTIAL statuses stay unreachable until it is proven.
+# COMPLETE while its source binding is UNVERIFIED (the Router's I3 and U1 on #436): it is
+# BOUND only when the run's own record meets P1-P4 (Decision 0120).
 # Which families run, with which selectors, on which files, is the protected profile's
 # choice, made before any producer starts (#389 A0-MP1, Decision 0117).
 
@@ -1416,6 +1416,9 @@ DIAGNOSTIC_PROFILE = "policy/diagnostic-profile.yaml"
 # working directory or a configured kit root (Router 6351766731 R1, as _OBSERVER).
 _PRODUCER_TREE = Path(__file__).resolve().parent.parent
 _PROFILE = _PRODUCER_TREE / DIAGNOSTIC_PROFILE
+# The pins the launched producers must answer: the producer tree's lock, which the
+# shadow readback's job installs (Decision 0118), never the analyzed tree's (P2).
+_PRODUCER_LOCK = _PRODUCER_TREE / "requirements" / "development.lock"
 DIAGNOSTIC_PROFILE_SCHEMA = "gnostoa-diagnostic-profile/v1"
 # mypy first, so that its own budget check counts every finding so far; the in-process
 # metric last (cubic on #436).
@@ -3382,6 +3385,144 @@ _UNOBSERVED_ATTRIBUTION_GAP = (
 )
 
 
+# The owner's four accepted limitations, for a bounded diagnostic source-binding claim
+# only (#389 6405841272): a BOUND record names them in place of the residual's gap
+# (Decision 0120). They claim no complete source observation.
+_SOURCE_BINDING_RESIDUAL: Mapping[str, Any] = {
+    "decision": "OWNER-389-M8-RISK-FOLLOWUP-6405282317-51519EC6-v1",
+    "limitations": (
+        "import resolution and the loaded paths outside RECORD-owned roots are not "
+        "established",
+        "the standard library is bound to the Python version, not content-hashed",
+        "the sources' continuity between the endpoint observations is not proven",
+        "listed files without content hashes, such as .pyc, are not "
+        "content-authenticated",
+    ),
+}
+
+
+def _producer_pins() -> dict[str, str] | str:
+    """The producer tree's pins, read once before any producer starts, as its profile
+    is (Decision 0117; CodeAnt on #463), through the lock's owner; or why they could
+    not be read, by type alone, since a failure's text can name host paths (the
+    Router's X1 on #436; Amazon Q, Revix and cubic on #463). A lock that is not
+    UTF-8 is such a failure (CodeAnt on #463), and so is one that resolves outside
+    the producer tree, a link included, by the profile's own confinement owner
+    (CodeAnt on #463)."""
+    from tools.knowledge_common import confine_to_root
+
+    try:
+        lock = confine_to_root(
+            _PRODUCER_LOCK, _PRODUCER_TREE, label="the producer tree's lock"
+        )[0]
+        return {r["normalized_name"]: r["version"] for r in locked_requirements(lock)}
+    # RuntimeError holds LockFormatError and a link loop's resolution; ValueError holds
+    # the confinement owner's KnowledgeFormatError and a lock that is not UTF-8.
+    except (OSError, RuntimeError, ValueError) as exc:
+        return f"the producer tree's lock could not be read: {type(exc).__name__}"
+
+
+def _unmet_pins(
+    launched: list[dict[str, Any]], needed: list[str], pins: dict[str, str] | str
+) -> list[str]:
+    """P2's failures: a producer a family needed that never ran (cubic on #463), and
+    each launched run's own version against its producer's pin. Every run is
+    checked, though a producer's runs share one version read, so none can mask
+    another (Revix on #463); each failure is named once."""
+    if not launched and not needed:
+        # Nothing launched and nothing needed to: no pin applies, readable or not
+        # (CodeAnt on #463).
+        return []
+    ran = {run["producer"] for run in launched}
+    unmet = [f"{producer} never ran" for producer in needed if producer not in ran]
+    if isinstance(pins, str):
+        # No pin can be compared, and each needed producer that never ran is still
+        # named (Claude on #463).
+        return [pins, *unmet]
+    for run in launched:
+        producer, version = run["producer"], run.get("version")
+        if version is None:
+            detail = f"{producer}'s version could not be read"
+        elif producer not in pins:
+            detail = f"{producer} has no pin in the producer tree's lock"
+        elif version != pins[producer]:
+            detail = (
+                f"{producer}'s version {version!r} is not its pin {pins[producer]!r}"
+            )
+        else:
+            continue
+        if detail not in unmet:
+            unmet.append(detail)
+    return unmet
+
+
+def _unmet_predicates(
+    bound: bool,
+    rebound: bool,
+    origin: str,
+    runs: list[dict[str, Any]],
+    families: list[dict[str, Any]],
+    pins: dict[str, str] | str,
+) -> list[str]:
+    """The source binding's unmet predicates, one gap each, read from the run's own
+    record and the producer tree (Decision 0120). P1: the frozen tree staged and
+    observed unchanged, and the subject re-read as its own. P2: each launched producer
+    a family needed ran, at its pin. P3: the producer tree's profile. P4: each
+    launched run's environment endpoints equal. An in-process family launches
+    nothing, so neither P2 nor P4 reads it; a tree never staged ran nothing, which P1
+    names, and P2 then reads nothing."""
+    launched = [run for run in runs if run["producer"] in _LAUNCHED_PRODUCERS]
+    # A family with targets, or whose targets are unknown, needs its producer run;
+    # one with none needs nothing (cubic on #463). Withheld or over-budget targets
+    # still count: BOUND claims nothing about a producer that analyzed nothing,
+    # whose family's own INCOMPLETE row states the coverage (cubic on #463).
+    needed = sorted(
+        {
+            row["producer"]
+            for row in families
+            if row["producer"] in _LAUNCHED_PRODUCERS and row["targets"] != 0
+        }
+    )
+    unmet: dict[str, list[str]] = {"P1": [], "P2": [], "P3": [], "P4": []}
+    if not bound:
+        unmet["P1"].append("the frozen tree was not staged and observed unchanged")
+    elif not rebound:
+        # Its own gap names the failure once; this one names the predicate (the
+        # Router's 6239259708 on #436).
+        unmet["P1"].append("the subject's Git metadata was not confirmed after the run")
+    # Once any producer ran, or the tree was staged, each needed one must have run,
+    # whether or not the tree was observed unchanged afterwards (Amazon Q on #463).
+    if launched or bound:
+        unmet["P2"] = _unmet_pins(launched, needed, pins)
+    if origin != "producer-tree":
+        unmet["P3"].append("the profile was supplied, not the producer tree's")
+    for run in launched:
+        observation = run.get("environment_observation")
+        if not isinstance(observation, Mapping):
+            unmet["P4"].append(f"{run['invocation']}'s environment was not observed")
+        elif observation.get("status") != "endpoints_equal":
+            unmet["P4"].append(
+                f"{run['invocation']}'s environment endpoints are "
+                f"{observation.get('status')}"
+            )
+    return [
+        f"source binding {label} unmet: {', '.join(details)}"
+        for label, details in unmet.items()
+        if details
+    ]
+
+
+def _record_binding(gaps: list[str], at: int, bound: bool, unmet: list[str]) -> str:
+    """BOUND when no predicate is unmet; otherwise UNVERIFIED, with the residual still
+    a gap at `at`, chosen by the tree binding (the Router's G451-R9 on #389), and each
+    unmet predicate named after it (Decision 0120)."""
+    if not unmet:
+        return "BOUND"
+    residual = _SOURCE_BINDING_GAP if bound else _UNCONFINED_PRODUCERS_GAP
+    gaps[at:at] = [residual, *unmet]
+    return "UNVERIFIED"
+
+
 def _forget_attribution(findings: list[dict[str, Any]]) -> None:
     """Make every finding's diff attribution unknown, positive and negative alike."""
     for finding in findings:
@@ -3799,18 +3940,29 @@ def _source_record(
     identity: str | None,
     expected_revision: str | None,
     bound: bool,
+    binding: str,
 ) -> dict[str, Any]:
     """The subject as v2 records it: the frozen commit and tree, and the staged
     identity only while the tree was staged and observed unchanged after the
     producers. The checkout is never read, so no dirty state is recorded (Router
-    #389 6325382720, D1)."""
+    #389 6325382720, D1). A BOUND binding names the owner's accepted residual, an
+    UNVERIFIED one none (Decision 0120)."""
+    residual = (
+        {
+            "decision": _SOURCE_BINDING_RESIDUAL["decision"],
+            "limitations": list(_SOURCE_BINDING_RESIDUAL["limitations"]),
+        }
+        if binding == "BOUND"
+        else None
+    )
     return {
         "revision": commit,
         "tree": tree,
         "staged_identity": identity if bound else None,
         "tree_binding": "EXACT_TREE_STAGED" if bound else "NOT_STAGED",
         "expected_revision": expected_revision,
-        "source_binding": "UNVERIFIED",
+        "source_binding": binding,
+        "accepted_residual": residual,
     }
 
 
@@ -4003,7 +4155,8 @@ def collect_diagnostic_inventory(
     and no caller supplies another (cubic and Revix on #459); a profile that breaks
     its contract is refused before anything runs. More findings than
     `limits.max_findings` write no inventory at all: the raw reports stay in the run
-    directory. It is never COMPLETE while its source binding is UNVERIFIED."""
+    directory. It is never COMPLETE while its source binding is UNVERIFIED, and its
+    binding is BOUND only when its own run meets P1-P4 (Decision 0120)."""
     return _collect_diagnostic_inventory(
         repository_root,
         output_directory,
@@ -4032,6 +4185,7 @@ def _collect_diagnostic_inventory(
     profile = (
         load_diagnostic_profile() if profile is None else _validated_profile(profile)
     )
+    pins = _producer_pins()
     from tools import exact_tree
 
     root = repository_root.resolve()
@@ -4058,8 +4212,9 @@ def _collect_diagnostic_inventory(
             base=base,
             head=commit,
         )
-    gaps.append(_SOURCE_BINDING_GAP if bound else _UNCONFINED_PRODUCERS_GAP)
-    source = _source_record(commit, tree, identity, expected_revision, bound)
+    # The binding's gaps keep this place in the reason; they are known only once the
+    # subject has been re-read (Decision 0120).
+    binding_at = len(gaps)
     if result.truncated:
         # A report cut at max_report_bytes, or whose capture failed, holds a prefix
         # whose rest is unknown, so, as over max_findings, nothing is published (Codex
@@ -4102,6 +4257,11 @@ def _collect_diagnostic_inventory(
         # and the deduplication below keeps it unknown (the Router's G451-R6 on #389).
         _forget_attribution(result.findings)
         gaps.append(_UNOBSERVED_ATTRIBUTION_GAP)
+    unmet = _unmet_predicates(
+        bound, rebound, origin, result.runs, _family_rows(profile, result), pins
+    )
+    binding = _record_binding(gaps, binding_at, bound, unmet)
+    source = _source_record(commit, tree, identity, expected_revision, bound, binding)
     try:
         findings = deduplicate_findings(result.findings)
     except AnalyzerReadbackError as exc:
