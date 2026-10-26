@@ -23,7 +23,7 @@ from quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
     _EVERY_FAMILY,
     _EXTRA_COMPLEX,
-    _SOURCE_BINDING_GAP,
+    _UNBOUND_FIXTURE_GAP,
     _DiagnosticFixture,
     _DiagnosticInventoryFixture,
 )
@@ -995,7 +995,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 "pages": 4,
                 "count": 4,
                 "total": 4,
-                "reason": _SOURCE_BINDING_GAP,
+                "reason": _UNBOUND_FIXTURE_GAP,
             },
             inventory["coverage"],
         )
@@ -1091,7 +1091,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # PARTIAL by itself, and INCOMPLETE for the unverified source binding (I3).
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
         self.assertEqual(
-            _SOURCE_BINDING_GAP
+            _UNBOUND_FIXTURE_GAP
             + "; 1 files with unresolved imports"
             + "; family typing PARTIAL: 1 files with unresolved imports",
             inventory["coverage"]["reason"],
@@ -1241,7 +1241,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         shutil.rmtree(self.output, ignore_errors=True)
         inventory = self._inventory(expected_revision=self.base)
         self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-        self.assertEqual(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
+        self.assertEqual(_UNBOUND_FIXTURE_GAP, inventory["coverage"]["reason"])
         self.assertEqual(self.base, inventory["source"]["revision"])
         self.assertNotIn("tracked_tree_dirty", inventory["source"])
 
@@ -1899,7 +1899,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 )
                 inventory = self._inventory()
                 self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
-                self.assertEqual(_SOURCE_BINDING_GAP, inventory["coverage"]["reason"])
+                self.assertEqual(_UNBOUND_FIXTURE_GAP, inventory["coverage"]["reason"])
                 self.assertEqual("UNVERIFIED", inventory["source"]["source_binding"])
                 self.assertEqual(
                     "EXACT_TREE_STAGED", inventory["source"]["tree_binding"]

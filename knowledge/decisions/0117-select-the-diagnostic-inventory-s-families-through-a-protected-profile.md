@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Select the diagnostic inventory's families through a protected profile, before any producer runs
-description: "The diagnostic inventory runs only what the producer tree's policy/diagnostic-profile.yaml selects: each family's producer, selectors and FULL and DIFF scopes, with complexity acquired per changed function. The choice is made before any producer starts, so nothing obtained is dropped; each family has its own coverage row, and the composite is their conjunction with the inventory's shared gaps. A profile in the analyzed tree is never read. The profile is unactivated, and the source binding stays UNVERIFIED."
+description: "The diagnostic inventory runs only what the producer tree's policy/diagnostic-profile.yaml selects: each family's producer, selectors and FULL and DIFF scopes, with complexity acquired per changed function. The choice is made before any producer starts, so nothing obtained is dropped; each family has its own coverage row, and the composite is their conjunction with the inventory's shared gaps. A profile in the analyzed tree is never read. The profile is unactivated, and no profile content changes the source binding, which Decision 0120 derives from the run's own record."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -96,12 +96,13 @@ and no family's analysis could be told apart (source `migration-packet`, rows 1 
    comparison, a family whose DIFF scope reaches past its FULL one is INCOMPLETE, and
    its target count unknown. The composite keeps every shared gap and names each
    INCOMPLETE and PARTIAL family.
-4. **Nothing is activated.** No assurance claim reads the inventory. The source binding
-   stays `UNVERIFIED`, and no profile content changes it; its derivation comes with the
-   disposition of the M8 residual: import resolution beyond `-I`, typeshed and the
-   standard library, continuity between the two observations, and installed files
-   their RECORD lists without a hash (source `migration-packet`, section B′).
-   Authenticating the producing generation belongs to the readback route's slice.
+4. **Nothing is activated.** No assurance claim reads the inventory. No profile content
+   changes the source binding: a supplied profile never binds. Decision 0120 derives the
+   binding from the run's own record, and names as the owner's accepted residual the M8
+   residual: import resolution beyond `-I`, typeshed and the standard library,
+   continuity between the two observations, and installed files their RECORD lists
+   without a hash (source `migration-packet`, section B′). Authenticating the producing
+   generation belongs to the readback route's slice.
 
 ## Consequences
 

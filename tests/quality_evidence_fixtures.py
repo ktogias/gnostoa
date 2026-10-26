@@ -9,6 +9,7 @@ import functools
 import importlib
 import json
 import os
+import re
 import subprocess  # nosec B404 -- test-only: drives git on temporary fixture repositories
 import sys
 import tempfile
@@ -108,6 +109,33 @@ _SOURCE_BINDING_GAP = (
     "source binding UNVERIFIED: the producers' installed environment and import graph "
     "is not proven confined to the staged tracked inputs; only the frozen tree's bytes "
     "are bound, observed before and after the producers, not throughout them"
+)
+# The launched producers' pins, read from the producer tree's lock bytes here, never
+# through the collector's own parser (#389 P2, Decision 0120). A name matches in any
+# case, as the parser normalizes it (CodeAnt on #463).
+PINS = {
+    name.lower(): version
+    for name, version in re.findall(
+        r"^(mypy|ruff)==([^\s\\]+)",
+        (
+            Path(__file__).resolve().parent.parent / "requirements" / "development.lock"
+        ).read_text(encoding="utf-8"),
+        re.MULTILINE | re.IGNORECASE,
+    )
+}
+if not {"mypy", "ruff"} <= PINS.keys():
+    # Named, rather than a KeyError below at import (Amazon Q on #463).
+    raise RuntimeError("requirements/development.lock does not pin both mypy and ruff")
+# A default fixture run's binding gaps: the residual, its producers' 1.0.0, which no
+# pin matches (P2), and the supplied profile of the private path (P3). Decision 0120.
+_UNBOUND_FIXTURE_GAP = "; ".join(
+    [
+        _SOURCE_BINDING_GAP,
+        "source binding P2 unmet: "
+        f"mypy's version '1.0.0' is not its pin {PINS['mypy']!r}, "
+        f"ruff's version '1.0.0' is not its pin {PINS['ruff']!r}",
+        "source binding P3 unmet: the profile was supplied, not the producer tree's",
+    ]
 )
 
 
@@ -315,6 +343,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         self.ruff_exit = 1
         self.ruff_as_ruff = False
         self.ruff_text: str | None = None
+        # Each producer's `--version` answer, 1.0.0 unless a test sets one; None
+        # answers as an unreadable version (#389 P2).
+        self.versions: dict[str, str | None] = {}
         self.commands: list[tuple[list[str], Path, dict[str, str]]] = []
 
     @staticmethod
@@ -374,7 +405,10 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
-            report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
+            version = self.versions.get(command[3], "1.0.0")
+            if version is None:
+                return 1, "exited 1", False
+            report.write_text(f"{command[3]} {version}\n", encoding="utf-8")
             return 0, None, False
         if "mypy" in command:
             prefix = Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
@@ -460,6 +494,33 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             json.dumps(caps, sort_keys=True),
             "gnostoa-producer-environment-observation/v2",
         ]
+
+    def _restored_environment(self):
+        """A launcher whose environment is A, becomes B while mypy runs, and is A
+        again after Ruff, before the last observation: the case equal endpoints
+        cannot see (PAO 6347682576; cubic on #452)."""
+        # Unannotated, as in the fixture's other untyped helpers: an annotation in
+        # an untyped body is a mypy note the inventory acquires.
+        installed = {"now": ()}
+
+        def run(command, *, cwd, environment, report, deadline, limits):
+            if command == self._observation_command():
+                report.write_text(self._observation(installed["now"]), encoding="utf-8")
+                return 0, None, False
+            if "--version" not in command and "mypy" in command:
+                installed["now"] = ("probe-dep-1.0",)
+            elif "--version" not in command and "ruff" in command:
+                installed["now"] = ()
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
+
+        return run
 
     def _observation(
         self,

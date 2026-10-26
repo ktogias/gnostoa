@@ -490,6 +490,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 "tree_binding": "EXACT_TREE_STAGED",
                 "expected_revision": None,
                 "source_binding": "UNVERIFIED",
+                "accepted_residual": None,
             },
             inventory["source"],
         )
