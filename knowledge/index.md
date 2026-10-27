@@ -121,6 +121,7 @@ inherited, copied or loaded by adopting projects.
 - [Select the diagnostic inventory's families through a protected profile, before any producer runs](decisions/0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md)
 - [Produce the diagnostic inventory over a Pull Request head as a no-secret shadow readback](decisions/0118-produce-the-diagnostic-inventory-over-a-pull-request-head-as-a-no-secret-shadow-readback.md)
 - [Derive the diagnostic inventory's source binding from its own run](decisions/0120-derive-the-diagnostic-inventory-s-source-binding-from-its-own-run.md)
+- [Refresh the development lock's msgpack pin for an unbounded memory leak](decisions/0121-refresh-the-development-lock-msgpack-pin.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
