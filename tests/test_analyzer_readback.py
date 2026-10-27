@@ -5,11 +5,12 @@ import http.client
 import inspect
 import io
 import json
+import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import patch
@@ -1320,7 +1321,7 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self,
     ) -> None:
         older_run = "11111111-1111-1111-1111-111111111111"
-        statuses = [
+        statuses: list[dict[str, Any]] = [
             {
                 "context": "DeepSource: Python",
                 "source_kind": "commit_status",
@@ -1540,10 +1541,10 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 with self.assertRaises(analyzer_deepsource.ProviderReadFailure):
-                    analyzer_deepsource._validate_api_url(url)
+                    analyzer_deepsource.validate_api_url(url)
 
     def test_deepsource_redirect_reauthenticates_only_same_origin(self) -> None:
-        handler = analyzer_deepsource._DeepSourceRedirectHandler()
+        handler = analyzer_deepsource.DeepSourceRedirectHandler()
         request = urllib.request.Request("https://api.deepsource.com/graphql/")
         request.add_unredirected_header("Authorization", "Bearer secret-value")
         redirected = handler.redirect_request(
@@ -1559,7 +1560,7 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("Bearer secret-value", redirected.get_header("Authorization"))
 
     def test_deepsource_redirect_cannot_leak_authorization_off_origin(self) -> None:
-        handler = analyzer_deepsource._DeepSourceRedirectHandler()
+        handler = analyzer_deepsource.DeepSourceRedirectHandler()
         request = urllib.request.Request("https://api.deepsource.com/graphql/")
         request.add_unredirected_header("Authorization", "Bearer secret-value")
         with self.assertRaises(analyzer_deepsource.ProviderReadFailure):
@@ -2088,10 +2089,10 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 with self.assertRaises(analyzer_codacy.ProviderReadFailure):
-                    analyzer_codacy._validate_api_url(url)
+                    analyzer_codacy.validate_api_url(url)
 
     def test_codacy_redirect_reauthenticates_only_same_origin(self) -> None:
-        handler = analyzer_codacy._CodacyRedirectHandler()
+        handler = analyzer_codacy.CodacyRedirectHandler()
         request = urllib.request.Request("https://app.codacy.com/api/v3/user")
         request.add_unredirected_header("api-token", "secret-value")
         redirected = handler.redirect_request(
@@ -2107,7 +2108,7 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("secret-value", redirected.get_header("Api-token"))
 
     def test_codacy_redirect_cannot_leak_token_off_origin(self) -> None:
-        handler = analyzer_codacy._CodacyRedirectHandler()
+        handler = analyzer_codacy.CodacyRedirectHandler()
         request = urllib.request.Request("https://app.codacy.com/api/v3/user")
         request.add_unredirected_header("api-token", "secret-value")
         with self.assertRaises(analyzer_codacy.ProviderReadFailure):
@@ -2134,16 +2135,16 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
                 raise http.client.IncompleteRead(b"")
 
         deep = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
-        deep._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        self.enterContext(patch.object(deep, "_opener", _IncompleteReadOpener()))
         with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as deep_error:
             deep.graphql(
-                analyzer_deepsource._RUN_QUERY,
+                analyzer_deepsource.RUN_QUERY,
                 {"runUid": RUN_UID, "cursor": None},
             )
         self.assertEqual("UNAVAILABLE", deep_error.exception.kind)
 
         codacy = analyzer_codacy.CodacyRestClient("test-token")
-        codacy._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        self.enterContext(patch.object(codacy, "_opener", _IncompleteReadOpener()))
         with self.assertRaises(analyzer_codacy.ProviderReadFailure) as codacy_error:
             codacy.get("https://app.codacy.com/api/v3/user")
         self.assertEqual("UNAVAILABLE", codacy_error.exception.kind)
@@ -2172,7 +2173,7 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
                     "network must not be reached for an unadmitted query"
                 )
 
-        client._opener = _FailOpener()  # type: ignore[assignment]
+        self.enterContext(patch.object(client, "_opener", _FailOpener()))
         with self.assertRaisesRegex(
             analyzer_deepsource.ProviderReadFailure,
             "unsupported GraphQL read operation",
@@ -2192,14 +2193,14 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
                     "https://api.deepsource.com/graphql/",
                     500,
                     "provider failure",
-                    {},
+                    http.client.HTTPMessage(),
                     io.BytesIO(sentinel.encode("utf-8")),
                 )
 
-        client._opener = _HttpErrorOpener()  # type: ignore[assignment]
+        self.enterContext(patch.object(client, "_opener", _HttpErrorOpener()))
         with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
             client.graphql(
-                analyzer_deepsource._RUN_QUERY,
+                analyzer_deepsource.RUN_QUERY,
                 {"runUid": RUN_UID, "cursor": None},
             )
         self.assertNotIn(sentinel, str(raised.exception))
@@ -2437,8 +2438,9 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         for name in _QUERIES:
             with self.subTest(query=name):
                 query = getattr(analyzer_deepsource, name, None)
-                self.assertIsInstance(query, str, f"{name} is not defined")
-                self.assertIn(query, analyzer_deepsource._ADMITTED_GRAPHQL_READ_QUERIES)
+                if not isinstance(query, str):
+                    self.fail(f"{name} is not defined")
+                self.assertIn(query, analyzer_deepsource.ADMITTED_GRAPHQL_READ_QUERIES)
                 self.assertTrue(query.lstrip().startswith("query "))
                 self.assertNotIn("mutation", query)
                 # Exact-literal admission: a variant is still refused.
@@ -2605,7 +2607,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
 
     def test_duplicate_identities_are_refused(self) -> None:
-        cases = {
+        cases: dict[str, dict[tuple[str, str, str | None], Any]] = {
             "issue": {
                 ("AnalyzerCatalogue", "python", "c1"): catalogue_page(
                     [catalogue_issue("TYP-050")], num_issues=3, total=3
@@ -2688,7 +2690,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
     def test_a_spent_deadline_reads_no_further_page(self) -> None:
         fake = CapabilityFake(stable())
         ticks = iter([0.0, 0.0, 1000.0] + [1000.0] * 50)
-        with patch("time.monotonic", side_effect=ticks):
+        with patch("time.monotonic", side_effect=_on_this_thread(lambda: next(ticks))):
             receipt = self._read(fake, deadline_seconds=10.0)
         self.assertEqual("INCOMPLETE", receipt["coverage"]["status"])
         self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
@@ -2701,7 +2703,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
     def test_a_read_stopped_before_any_page_keeps_nothing(self) -> None:
         fake = CapabilityFake(stable())
         ticks = iter([0.0] + [1000.0] * 50)
-        with patch("time.monotonic", side_effect=ticks):
+        with patch("time.monotonic", side_effect=_on_this_thread(lambda: next(ticks))):
             receipt = self._read(fake, deadline_seconds=10.0)
         self.assertEqual([], fake.calls)
         self.assertEqual("DEADLINE", receipt["coverage"]["reason"])
@@ -2747,7 +2749,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         )
 
     def test_a_connection_past_the_page_bound_is_refused(self) -> None:
-        bound = analyzer_deepsource._MAX_PAGES
+        bound = analyzer_deepsource.MAX_PAGES
         overrides: dict[tuple[str, str, str | None], Any] = {}
         for index in range(bound + 1):
             cursor = None if index == 0 else f"c{index}"
@@ -2911,7 +2913,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
     def test_the_fake_refuses_a_query_it_does_not_answer(self) -> None:
         fake = CapabilityFake(stable())
         with self.assertRaisesRegex(AssertionError, "answers no such query"):
-            fake.graphql(analyzer_deepsource._RUN_QUERY, {})
+            fake.graphql(analyzer_deepsource.RUN_QUERY, {})
 
     def test_a_deadline_that_is_not_a_finite_positive_number_is_refused(self) -> None:
         # Amazon Q on #441: a non-positive budget; and NaN or an infinite one would
@@ -3044,7 +3046,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         fake = CapabilityFake(stable())
         with self.assertRaisesRegex(AssertionError, "answers no account"):
             fake.graphql(
-                analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY,
+                analyzer_deepsource.REPOSITORY_ANALYZERS_QUERY,
                 {"name": "gnostoa", "login": "other", "cursor": None},
             )
 
@@ -3151,7 +3153,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         # revix on #441 (4317057984, rule fail-closed-unknown-evidence): an unread list
         # is never an empty one.
         ticks = iter([0.0] + [1000.0] * 50)
-        with patch("time.monotonic", side_effect=ticks):
+        with patch("time.monotonic", side_effect=_on_this_thread(lambda: next(ticks))):
             stopped = self._read(CapabilityFake(stable()), deadline_seconds=10.0)
         failure = analyzer_deepsource.ProviderReadFailure("ERROR", "malformed")
         later = self._read(
@@ -3175,7 +3177,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         # revix on #441 (4317057997, rule domain-exception-per-module): the module's
         # errors derive from RuntimeError, as ProviderReadFailure does.
         self.assertTrue(
-            issubclass(analyzer_deepsource._DiscoveryIncomplete, RuntimeError)
+            issubclass(analyzer_deepsource.DiscoveryIncomplete, RuntimeError)
         )
 
     def test_the_fake_refuses_a_request_its_answers_do_not_cover(self) -> None:
@@ -3185,7 +3187,7 @@ class DeepSourceCapabilityDiscoveryTests(unittest.TestCase):
         page = analyzers_page()
         fake = CapabilityFake({("RepositoryAnalyzers", "gnostoa", None): [page]})
         variables = {"name": "gnostoa", "login": "ktogias", "cursor": None}
-        query = analyzer_deepsource._REPOSITORY_ANALYZERS_QUERY
+        query = analyzer_deepsource.REPOSITORY_ANALYZERS_QUERY
         self.assertIs(page, fake.graphql(query, variables))
         with self.assertRaisesRegex(AssertionError, "no more answers"):
             fake.graphql(query, variables)
@@ -3564,7 +3566,7 @@ class CapabilityContractTests(unittest.TestCase):
         self.assertEqual("PROVIDER_ERROR", inventory["reason"])
 
     def test_a_catalogue_refused_unread_is_not_partly_read(self) -> None:
-        overrides = {
+        overrides: dict[tuple[str, str, str | None], Any] = {
             ("RepositoryAnalyzers", "gnostoa", None): analyzers_page(
                 [analyzer(), analyzer("ruby", version=None)]
             )
@@ -4039,6 +4041,19 @@ class _TimedOpener:
         return self.response
 
 
+def _on_this_thread(scripted: Callable[[], float]) -> Callable[[], float]:
+    """A `time.monotonic` stand-in that runs `scripted` for the thread that builds it
+    and the real clock for every other thread (#389, the #441 deadline test). A worker
+    an earlier test abandoned can still be reading the clock; through this, it reads
+    the real one and consumes none of the scripted ticks."""
+    real, caller = time.monotonic, threading.current_thread()
+
+    def clock() -> float:
+        return scripted() if threading.current_thread() is caller else real()
+
+    return clock
+
+
 class _DripRaw(io.RawIOBase):
     """One byte per receive, after a real pause from byte `slow_from` on."""
 
@@ -4091,14 +4106,14 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
     def _client(self, opener: object) -> analyzer_deepsource.DeepSourceGraphQLClient:
         client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
         # A test double in place of the opener (M13 on #441).
-        client._opener = cast(urllib.request.OpenerDirector, opener)
+        self.enterContext(patch.object(client, "_opener", opener))
         return client
 
     def _graphql(
         self, client: analyzer_deepsource.DeepSourceGraphQLClient, deadline: float
     ) -> Mapping[str, Any]:
         return client.graphql(
-            analyzer_deepsource._RUN_QUERY,
+            analyzer_deepsource.RUN_QUERY,
             {"runUid": "x", "cursor": None},
             deadline=deadline,
         )
@@ -4116,7 +4131,7 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
         clock = [0.0]
         opener = _TimedOpener(_TimedResponse(self._BODY, clock, 0.0))
         client = self._client(opener)
-        client.graphql(analyzer_deepsource._RUN_QUERY, {"runUid": "x", "cursor": None})
+        client.graphql(analyzer_deepsource.RUN_QUERY, {"runUid": "x", "cursor": None})
         self.assertEqual([30], opener.timeouts)
 
     def test_a_spent_deadline_opens_no_connection(self) -> None:
@@ -4148,19 +4163,22 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
 
     def test_a_deadline_bound_body_reads_no_more_than_its_size_bound(self) -> None:
         clock = [0.0]
-        limit = analyzer_deepsource._MAX_RESPONSE_BYTES
+        limit = analyzer_deepsource.MAX_RESPONSE_BYTES
         response = _TimedResponse([b"x" * (1 << 20)] * 6, clock, 0.0)
         with patch("time.monotonic", side_effect=lambda: clock[0]):
             client = self._client(_TimedOpener(response))
-            with self.assertRaisesRegex(
-                analyzer_deepsource.ProviderReadFailure, "exceeds bounded size"
-            ):
-                self._graphql(client, 50.0)
-        # The shared exchange refuses once one chunk takes the body past the cap.
-        self.assertLessEqual(
-            response.given,
-            limit + analyzer_deepsource._EXCHANGE_POLICY.read_chunk_bytes,
-        )
+            with patch.object(
+                github_rest, "exchange", wraps=github_rest.exchange
+            ) as shared:
+                with self.assertRaisesRegex(
+                    analyzer_deepsource.ProviderReadFailure, "exceeds bounded size"
+                ):
+                    self._graphql(client, 50.0)
+        # The shared exchange refuses once one chunk takes the body past the cap, in
+        # the chunk size of the policy DeepSource passes it (#464).
+        shared.assert_called_once()
+        policy = shared.call_args.args[3]
+        self.assertLessEqual(response.given, limit + policy.read_chunk_bytes)
 
     def test_a_timeout_at_the_deadline_is_the_deadline(self) -> None:
         clock = [0.0]
@@ -4253,7 +4271,7 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                     analyzer_deepsource.ProviderReadFailure, "returned errors"
                 ):
                     client.graphql(
-                        analyzer_deepsource._RUN_QUERY,
+                        analyzer_deepsource.RUN_QUERY,
                         {"runUid": "x", "cursor": None},
                         deadline=deadline,
                     )
@@ -4275,7 +4293,7 @@ class DeepSourceClientDeadlineTests(unittest.TestCase):
                         analyzer_deepsource.ProviderReadFailure
                     ) as raised:
                         client.graphql(
-                            analyzer_deepsource._RUN_QUERY,
+                            analyzer_deepsource.RUN_QUERY,
                             {"runUid": "x", "cursor": None},
                             deadline=deadline,
                         )
@@ -4293,7 +4311,7 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
 
     def _client(self) -> analyzer_deepsource.DeepSourceGraphQLClient:
         client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
-        client._opener = cast(urllib.request.OpenerDirector, object())
+        self.enterContext(patch.object(client, "_opener", object()))
         return client
 
     def _call(
@@ -4313,7 +4331,7 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         ):
             try:
                 self._client().graphql(
-                    analyzer_deepsource._RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": "x", "cursor": None},
                     deadline=deadline,
                 )
@@ -4345,7 +4363,22 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
             github_rest, "request_limit", wraps=github_rest.request_limit
         ) as owner:
             self._limit(300.0)
-        owner.assert_called_once_with(300.0, analyzer_deepsource._EXCHANGE_POLICY)
+        owner.assert_called_once()
+        budget, policy = owner.call_args.args
+        self.assertEqual(300.0, budget)
+        # DeepSource's own policy, compared by every bound it sets. Its worker registry
+        # stays private, so only this is checked of it: it is set, where the shared
+        # default (`workers=None`) means github_rest's module-wide registry (#464).
+        self.assertIsNotNone(policy.workers)
+        self.assertEqual(
+            github_rest.Policy(
+                timeout_seconds=30.0,
+                max_response_bytes=analyzer_deepsource.MAX_RESPONSE_BYTES,
+                min_request_seconds=0.0,
+                workers=policy.workers,
+            ),
+            policy,
+        )
 
     def test_no_exchange_starts_without_budget(self) -> None:
         for deadline, kind in (
@@ -4366,7 +4399,7 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
         ticks = iter([0.0] + [10.0] * 20)
         client = self._client()
         with (
-            patch("time.monotonic", side_effect=lambda: next(ticks)),
+            patch("time.monotonic", side_effect=_on_this_thread(lambda: next(ticks))),
             patch.object(
                 github_rest, "exchange", return_value=(self._BODY, {})
             ) as exchange,
@@ -4374,7 +4407,7 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
             # One call inside the expectation (Sonar S5778).
             with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
                 client.graphql(
-                    analyzer_deepsource._RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": "x", "cursor": None},
                     deadline=5.0,
                 )
@@ -4455,12 +4488,12 @@ class DeepSourceRequestCeilingTests(unittest.TestCase):
 
         refusal: analyzer_deepsource.ProviderReadFailure | None = None
         with (
-            patch("time.monotonic", side_effect=now),
+            patch("time.monotonic", side_effect=_on_this_thread(now)),
             patch.object(github_rest, "exchange", side_effect=error),
         ):
             try:
                 self._client().graphql(
-                    analyzer_deepsource._RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": "x", "cursor": None},
                     deadline=deadline,
                 )
