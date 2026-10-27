@@ -2037,3 +2037,15 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
         unknown=discovery["unknown"],
         native={"schema": discovery["schema"]},
     )
+
+
+# The public names the analyzer-readback tests use (#389, #441's lane): each names the
+# private definition above, which stays the one implementation.
+RUN_QUERY = _RUN_QUERY
+REPOSITORY_ANALYZERS_QUERY = _REPOSITORY_ANALYZERS_QUERY
+ADMITTED_GRAPHQL_READ_QUERIES = _ADMITTED_GRAPHQL_READ_QUERIES
+MAX_PAGES = _MAX_PAGES
+MAX_RESPONSE_BYTES = _MAX_RESPONSE_BYTES
+DeepSourceRedirectHandler = _DeepSourceRedirectHandler
+DiscoveryIncomplete = _DiscoveryIncomplete
+validate_api_url = _validate_api_url
