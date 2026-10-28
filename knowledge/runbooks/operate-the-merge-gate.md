@@ -408,11 +408,17 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      evidence. Only the threads replied to are resolved.
    - Every fix is a new head, so a new seal and new review requests follow.
    - The pre-merge check and the exact-head analyzer readback must both be clean:
-     `BOUND`; every applicable claim of protected `main`'s declaration met, which
-     with its singleton claims (#389 F2) means every analyzer `COMPLETE`; and 0
+     `BOUND`; every applicable claim of protected `main`'s declaration met; and 0
      findings obtained from any source, a partial one or one no claim needed
-     included. A degraded source is reported as it is, never as clean. A
-     candidate's own declaration never governs its own merge.
+     included. With its singleton claims (#389 F2), an applicable claim is met when
+     its one item is `COMPLETE`:
+     - **NORMAL:** Codacy, SonarCloud, and the project's own inventory, DIFF and
+       FULL (#389 A0-MP1). DeepSource's readbacks are not NORMAL's, and their
+       findings still deny if obtained.
+     - **Every other class:** DeepSource's DIFF and FULL, Codacy and SonarCloud.
+
+     A degraded source is reported as it is, never as clean. A candidate's own
+     declaration never governs its own merge.
    - The pre-merge check is `premerge-check.sh`, a script in the agent's session
      workspace, not yet versioned; versioning it with the host's helpers is #398's
      follow-up. Until then, an agent without it checks the same, on the exact head:
@@ -491,9 +497,17 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      population shows `<N>` alone at `<approved>`;
    - neither the pull request nor `main` moved.
 
+   **Its wait is finite:** 4,800 s by default. That is the admission's configured
+   path, plus a 5-minute margin:
+   - `subjects` 10 + `invalidate` 10 + `admit` 20 minutes;
+   - the readback call's inventory 20, then its readback 15 (Decision 0119).
+
+   It is a ceiling, not a normal duration or a queue's promised wait. A refusal at it
+   means the run did not finish within its limits.
+
    It never merges itself. On its `PROCEED`, the App reads the head, the title and
-   the body once more and compares them as above, since the guard can wait up to an
-   hour and an edit in that time moves no head (CodeAnt on #426):
+   the body once more and compares them as above, since the guard can wait up to its
+   4,800 s and an edit in that time moves no head (CodeAnt on #426):
    ```sh
    as_app pr view <N> --json headRefOid --jq .headRefOid
    as_app pr view <N> --json title --jq .title > <current-subject> && cmp -s <current-subject> <checked-subject>

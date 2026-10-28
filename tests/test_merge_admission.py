@@ -1149,6 +1149,13 @@ class ClaimsM17Tests(unittest.TestCase):
         )
 
 
+# The 1.0 items the parity guard enumerates, by their 1.0 names.
+_PARITY_DEEPSOURCE = frozenset(
+    {
+        ("analyzer-readback", "deepsource-diff"),
+        ("analyzer-readback", "deepsource-full"),
+    }
+)
 _PARITY_ANALYZERS = frozenset(
     {
         ("analyzer-readback", "deepsource-diff"),
@@ -1181,12 +1188,42 @@ def _parity_evidence(
     return evidence
 
 
+def _moved(evidence: dict[str, Any]) -> dict[str, Any]:
+    """The same evidence under section C's declaration (#389 A0-MP1 slice 3):
+    DeepSource's receipts under their own requirement, and the project's two
+    inventory receipts complete."""
+
+    receipts = []
+    for receipt in evidence["receipts"]:
+        if (receipt["requirement"], receipt["coverage"][0]) in _PARITY_DEEPSOURCE:
+            receipt = {**receipt, "requirement": "deepsource-readback"}
+        receipts.append(receipt)
+    receipts += [
+        {
+            **_receipt(evidence["subject"], [item]),
+            "requirement": "project-risk-readback",
+            "status": "COMPLETE",
+        }
+        for item in ("project-diff", "project-full")
+    ]
+    return {**evidence, "receipts": receipts}
+
+
 class GnostoaDecisionParityTests(unittest.TestCase):
     def test_the_real_policy_keeps_every_merge_decision(self) -> None:
         """Guard for F2's singleton migration: over every combination of complete
         and unavailable items, for every merging class, the real declaration gives
         the decision its 1.0 form (main 935ea6c) gave. M17 may add only its
-        coverage reason, and only where M2-M8 already fails."""
+        coverage reason, and only where M2-M8 already fails.
+
+        Under section C (#389 A0-MP1 slice 3, 6381812211) that holds for every class
+        but NORMAL, with DeepSource's receipts under their own requirement. NORMAL
+        diverges by design: with the project's inventory complete it gets 1.0's
+        decision as if DeepSource were complete. The project's items are therefore
+        not in the 1.0 enumeration, which has no such item (Amazon Q on #461): this
+        guard holds only the decisions that must not change. NORMAL with the
+        inventory missing, partial or UNAVAILABLE is denied by
+        `test_merge_evidence_github.ProjectRiskActivationTests`."""
         from test_assurance_completeness import GNOSTOA_1_0
 
         baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
@@ -1203,12 +1240,18 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         for mask in range(2 ** len(items)):
             down = {pair for index, pair in enumerate(items) if mask >> index & 1}
             for change_class in ("mechanical", "normal", "normative", "critical"):
-                evidence = _parity_evidence(change_class, items, down)
-                old, new = (
-                    merge_admission.evaluate(
-                        evidence, declaration=declaration, change_policy=POLICY
-                    )
-                    for declaration in (baseline, current)
+                old_down = (
+                    down - _PARITY_DEEPSOURCE if change_class == "normal" else down
+                )
+                old = merge_admission.evaluate(
+                    _parity_evidence(change_class, items, old_down),
+                    declaration=baseline,
+                    change_policy=POLICY,
+                )
+                new = merge_admission.evaluate(
+                    _moved(_parity_evidence(change_class, items, down)),
+                    declaration=current,
+                    change_policy=POLICY,
                 )
                 old_failed, new_failed = set(_failed(old)), set(_failed(new))
                 extra = {"M17"} if "M2-M8" in old_failed else set()
@@ -1220,14 +1263,18 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         self.assertEqual([], wrong)
         # The guard's positive control (the Router's 6192773699): with every other
         # criterion valid, all ten items complete ALLOW in each class, and any one
-        # missing item DENYs, so the comparison above is never vacuous.
+        # missing item DENYs, so the comparison above is never vacuous. For NORMAL
+        # a missing DeepSource item no longer DENYs: it is not NORMAL's.
         for change_class in ("mechanical", "normal", "normative", "critical"):
             with self.subTest(change_class=change_class):
                 self.assertEqual(("ALLOW", "ALLOW"), decisions[(0, change_class)])
-                for index in range(len(items)):
-                    self.assertEqual(
-                        ("DENY", "DENY"), decisions[(1 << index, change_class)]
+                for index, pair in enumerate(items):
+                    expected = (
+                        ("ALLOW", "ALLOW")
+                        if change_class == "normal" and pair in _PARITY_DEEPSOURCE
+                        else ("DENY", "DENY")
                     )
+                    self.assertEqual(expected, decisions[(1 << index, change_class)])
 
 
 if __name__ == "__main__":

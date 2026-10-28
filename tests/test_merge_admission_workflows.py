@@ -467,16 +467,16 @@ class AdmissionWorkflowTests(unittest.TestCase):
         import inspect
 
         jobs = _load(ADMISSION)["jobs"]
-        # The call lasts as long as the longest job it runs may. The shadow inventory
-        # (Decision 0118) never runs in it, so its limit is not the call's (Claude on
-        # #460).
-        called = {
-            name: job
-            for name, job in _load(READBACK)["jobs"].items()
-            if "inputs.admission != true" not in job["if"]
-        }
-        self.assertEqual({"readback"}, set(called))
-        call = max(int(job["timeout-minutes"]) for job in called.values())
+        # The call runs the inventory, then the readback that needs it (#389 A0-MP1
+        # slice 3, Decision 0119; the owner's OWNER-389-S3-MA0-TIMING-SCOPE): its path
+        # is their limits' serial sum, never the longer of the two.
+        called = _load(READBACK)["jobs"]
+        self.assertEqual({"inventory", "readback"}, set(called))
+        self.assertEqual("inventory", called["readback"]["needs"])
+        self.assertNotIn("needs", called["inventory"])
+        call = int(called["inventory"]["timeout-minutes"]) + int(
+            called["readback"]["timeout-minutes"]
+        )
         path = (
             sum(
                 int(jobs[name]["timeout-minutes"])
@@ -855,8 +855,20 @@ class ReadbackCallTests(unittest.TestCase):
         self.assertEqual("${{ inputs.head }}", subject["env"]["DISPATCH_HEAD"])
 
     def test_a_call_is_admitted_from_protected_main_only(self) -> None:
-        condition = str(_load(READBACK)["jobs"]["readback"]["if"])
-        self.assertTrue(condition.strip().startswith(MAIN_ONLY))
+        condition = " ".join(str(_load(READBACK)["jobs"]["readback"]["if"]).split())
+        # It runs after the inventory whatever its result, unless the run is
+        # cancelled (#389 A0-MP1 slice 3; Revix on #461), and only under the
+        # main-only condition. Every other clause is one parenthesized group that
+        # MAIN_ONLY ANDs, so no later `||` admits another ref (CodeAnt on #461).
+        prefix = f"!cancelled() && {MAIN_ONLY} && ("
+        self.assertTrue(condition.startswith(prefix))
+        depth, closed = 0, -1
+        for index in range(len(prefix) - 1, len(condition)):
+            depth += {"(": 1, ")": -1}.get(condition[index], 0)
+            if depth == 0:
+                closed = index
+                break
+        self.assertEqual(len(condition) - 1, closed)
         self.assertIn("inputs.admission", condition)
 
     def test_a_call_receives_exactly_the_analyzer_tokens(self) -> None:
@@ -1139,8 +1151,7 @@ class L1ModeTests(unittest.TestCase):
         )
         fake = paged_fake_fixture(replies)
         with self.assertRaises(module.ProviderReadError):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            module._open_pulls(fake, "ktogias/gnostoa")
+            module.open_pulls(fake, "ktogias/gnostoa")
 
     def test_open_heads_refuses_an_incomplete_or_conflicting_population(self) -> None:
         module = adapter_fixture()

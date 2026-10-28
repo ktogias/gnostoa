@@ -80,10 +80,15 @@ _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
 # inventory is its own requirement's item, beside the gate the check manifest
 # gives (1b.3c; G1, #407 6119736075).
 _ANALYZER_ITEMS = {
-    ("deepsource", "DIFF"): ("analyzer-readback", "deepsource-diff"),
-    ("deepsource", "FULL"): ("analyzer-readback", "deepsource-full"),
+    # DeepSource's two readbacks are their own requirement, which NORMAL does not
+    # apply (#389 A0-MP1 slice 3, 6381812211 row 6).
+    ("deepsource", "DIFF"): ("deepsource-readback", "deepsource-diff"),
+    ("deepsource", "FULL"): ("deepsource-readback", "deepsource-full"),
     ("codacy", "DIFF"): ("analyzer-readback", "codacy"),
     ("sonarcloud", "DIFF"): ("sonarcloud", "issue-inventory"),
+    # The project's own inventory (Decision 0118) gives NORMAL's project-risk items.
+    ("gnostoa-inventory", "DIFF"): ("project-risk-readback", "project-diff"),
+    ("gnostoa-inventory", "FULL"): ("project-risk-readback", "project-full"),
 }
 # The kind of read each item stands for, as the producer marks a complete one; a
 # complete read of another kind does not give it (Decision 0091; Codex on #417).
@@ -92,6 +97,8 @@ _ANALYZER_COMPLETENESS = {
     "deepsource-full": "FULL_RUN",
     "codacy": "FULL_RUN",
     "issue-inventory": "FULL_RUN",
+    "project-diff": "DIFF_LOCAL",
+    "project-full": "FULL_RUN",
 }
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import os
 import re
@@ -11,7 +12,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from tools import (
     analyzer_codacy,
@@ -26,6 +27,7 @@ from tools.analyzer_readback import (
     canonical_json,
     coverage,
     normalize_repository,
+    parse_readback,
 )
 
 BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
@@ -468,6 +470,29 @@ def _unavailable_readback(
     )
 
 
+class InventoryInput(NamedTuple):
+    """The same run's inventory, as the readback job receives it (#389 A0-MP1 slice
+    3): the downloaded document, if the workflow names one, and the inventory job's
+    trusted outputs, the document's SHA-256, the job's result and the attempt it ran
+    in, with this run's own attempt."""
+
+    document: Path | None
+    expected_sha256: str | None
+    result: str | None
+    attempt: str | None
+    run_attempt: str | None
+
+
+def _commit_tree(github: GitHubReader, repository: str, head: str) -> str:
+    """The head commit's tree, as GitHub reads it: the inventory's tree is checked
+    against this, never against the document's own claim."""
+
+    document, _ = github.get(f"{_API_ROOT}/repos/{repository}/commits/{head}")
+    commit = _mapping(_mapping(document, "the commit").get("commit"), "the commit")
+    tree = _mapping(commit.get("tree"), "the commit's tree").get("sha")
+    return _exact_head(tree, "the commit's tree")
+
+
 def collect_bundle(
     github: GitHubReader,
     *,
@@ -478,6 +503,7 @@ def collect_bundle(
     codacy: analyzer_codacy.JsonReader | None,
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
+    inventory: InventoryInput | None = None,
 ) -> dict[str, Any]:
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
@@ -615,7 +641,30 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": [diff_local, full, codacy_readback, sonarcloud_readback],
+        "readbacks": [
+            diff_local,
+            full,
+            codacy_readback,
+            sonarcloud_readback,
+            # The project's own inventory, when the workflow gives it, bound to its
+            # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
+            *(
+                []
+                if inventory is None
+                else inventory_bundle_readbacks(
+                    inventory.document,
+                    expected_sha256=inventory.expected_sha256,
+                    result=inventory.result,
+                    attempt=inventory.attempt,
+                    run_attempt=inventory.run_attempt,
+                    repository=repository,
+                    pull_number=pull_number,
+                    requested_head=requested,
+                    tree=functools.partial(_commit_tree, github, repository, requested),
+                    observed_at=observed,
+                )
+            ),
+        ],
     }
 
 
@@ -641,6 +690,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pull-number", type=int, required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    # The same run's inventory and its job's trusted outputs (#389 A0-MP1 slice 3).
+    parser.add_argument("--inventory-document", type=Path)
+    parser.add_argument("--inventory-sha256")
+    parser.add_argument("--inventory-result")
+    parser.add_argument("--inventory-attempt")
+    parser.add_argument("--run-attempt")
     return parser
 
 
@@ -680,6 +735,17 @@ def main(argv: list[str] | None = None) -> int:
             deepsource=deepsource,
             codacy=codacy,
             sonarcloud=sonarcloud,
+            inventory=(
+                None
+                if args.inventory_result is None
+                else InventoryInput(
+                    args.inventory_document,
+                    args.inventory_sha256,
+                    args.inventory_result,
+                    args.inventory_attempt,
+                    args.run_attempt,
+                )
+            ),
         )
         serialized = canonical_json(bundle)
         _assert_secret_free(
@@ -718,9 +784,10 @@ def _bound_status(bundle: dict[str, Any]) -> int:
 # job runs from protected main's checkout with main's hash-locked tools. The head's
 # objects are fetched into that checkout as data, and the inventory analyzes the
 # head's own tree: nothing in the head selects the code, the tools or the profile, and
-# nothing in it runs (P5', #389 6381812211). It is a shadow: no bundle, map or
-# declaration reads its document until slice 3 (#389 6392516998). The inventory is
-# imported only here, so the readback's own command loads none of it.
+# nothing in it runs (P5', #389 6381812211). Since slice 3 (Decision 0119) the
+# readback adds that document to its bundle, bound to the inventory job's outputs, by
+# `inventory_bundle_readbacks`, the readback command's only use of the inventory's
+# modules; it imports them only when the workflow names an inventory (Cubic on #461).
 INVENTORY_SCHEMA = "gnostoa-inventory-readback/v1"
 # Where `collect` writes, under the process's temporary directory (the workflow sets
 # TMPDIR to the runner's): never a path a caller supplies (SonarCloud
@@ -851,6 +918,182 @@ def inventory_collect(
     _assert_secret_free(serialized, secrets)
     _write_create_only(path, serialized)
     return path
+
+
+class _InventoryRefused(Exception):
+    """One reason this run's inventory document cannot reach the bundle; its text is
+    the reason both project readbacks record."""
+
+
+# What the inventory's binding can raise beyond its own refusals: a file system call,
+# a parse, a GitHub read, the profile's load, or a module its helpers import. Each is
+# a refusal of the project readbacks, never of the bundle.
+_INVENTORY_PATH_FAILURES: tuple[type[BaseException], ...] = (
+    OSError,
+    ValueError,
+    ImportError,
+    RunnerError,
+)
+
+
+def _inventory_bytes(
+    document: Path | None,
+    expected_sha256: str | None,
+    result: str | None,
+    attempt: str | None,
+    run_attempt: str | None,
+) -> bytes:
+    """The document's bytes, once the inventory job's trusted outputs name it as this
+    attempt's: the job succeeded, in this attempt, and wrote exactly these bytes."""
+
+    if result != "success":
+        raise _InventoryRefused(f"INVENTORY_JOB_{(result or 'absent').upper()}")
+    if (
+        document is None
+        or not expected_sha256
+        or not document.is_file()
+        or document.is_symlink()
+    ):
+        raise _InventoryRefused("INVENTORY_DOCUMENT_MISSING")
+    if not attempt or attempt != run_attempt:
+        raise _InventoryRefused("INVENTORY_ATTEMPT_STALE")
+    try:
+        raw = _read_bounded(document)
+    except (OSError, ValueError) as exc:
+        raise _InventoryRefused(type(exc).__name__) from None
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise _InventoryRefused("DIGEST_MISMATCH")
+    return raw
+
+
+def _inventory_readback_list(raw: bytes, subject: tuple[str, int, str]) -> list[Any]:
+    """The document's two readbacks, read strictly, once it names this subject."""
+
+    from tools.review_check import assert_document_depth, strict_json_loads
+
+    label = "the inventory document"
+    try:
+        loaded = _mapping(strict_json_loads(raw.decode("utf-8"), label=label), label)
+        assert_document_depth(loaded, label)
+    except (ValueError, RunnerError) as exc:
+        raise _InventoryRefused(type(exc).__name__) from None
+    named = (
+        loaded.get("repository"),
+        loaded.get("pull_number"),
+        loaded.get("requested_head"),
+    )
+    if named != subject:
+        raise _InventoryRefused("WRONG_SUBJECT")
+    readbacks = loaded.get("readbacks")
+    if not isinstance(readbacks, list) or len(readbacks) != 2:
+        raise _InventoryRefused("MALFORMED_READBACKS")
+    return readbacks
+
+
+def _protected_profile_digest() -> str:
+    """The protected profile's digest, computed again from main's checkout. A profile
+    that cannot be loaded refuses the project readbacks alone, so the vendors'
+    readbacks never depend on it (Revix on #461): with the document's and the tree's
+    reads, every external read of this binding is contained."""
+
+    from tools import quality_evidence
+    from tools.review_model import canonical_digest
+
+    try:
+        return canonical_digest(quality_evidence.load_diagnostic_profile())
+    except (quality_evidence.QualityEvidenceError, OSError, ValueError):
+        raise _InventoryRefused("PROFILE_UNAVAILABLE") from None
+
+
+def _check_inventory_readback(
+    readback: object, *, scope: str, requested_head: str, tree: str, profile: str
+) -> None:
+    """One readback: the inventory's own at `scope`, for the requested head, and,
+    unless it is UNAVAILABLE, of the head's tree under the protected profile."""
+
+    from tools import analyzer_inventory
+
+    try:
+        parsed = parse_readback(readback)
+    except ValueError as exc:
+        raise _InventoryRefused(type(exc).__name__) from None
+    if (parsed["provider"], parsed["scope"]) != (analyzer_inventory.PROVIDER, scope):
+        raise _InventoryRefused("MALFORMED_READBACKS")
+    if parsed["requested_head"] != requested_head:
+        raise _InventoryRefused("WRONG_SUBJECT")
+    if parsed["completeness"] == "READBACK_UNAVAILABLE":
+        return
+    native = parsed.get("native") or {}
+    if native.get("tree") != tree:
+        raise _InventoryRefused("WRONG_TREE")
+    if native.get("profile") != profile:
+        raise _InventoryRefused("FOREIGN_PROFILE")
+
+
+def inventory_bundle_readbacks(
+    document: Path | None,
+    *,
+    expected_sha256: str | None,
+    result: str | None,
+    attempt: str | None,
+    run_attempt: str | None,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    tree: Callable[[], str],
+    observed_at: str,
+) -> list[dict[str, Any]]:
+    """The project inventory's two readbacks for the bundle (#389 A0-MP1 slice 3; r4
+    6399931352): this run attempt's inventory document, bound to the inventory job's
+    trusted outputs (its `result`, its attempt, and the SHA-256 main's runner
+    computed of the document), to the subject and its tree, and to the protected
+    profile. Any refusal gives both readbacks UNAVAILABLE with its reason, so the
+    project items deny; a prior document or attempt is never read in its place. The
+    head's tree is read only once the document is bound, and a read that fails is a
+    refusal, so the vendors' readbacks never depend on it (Revix, CodeAnt, Kilo and
+    Cubic on #461)."""
+
+    try:
+        from tools import analyzer_inventory
+    except ImportError:
+        # The adapter builds the refusal itself, so without it there is no project
+        # readback to give: the project items are MISSING, which denies as
+        # UNAVAILABLE does, and the vendors' readbacks stay (Revix on #461).
+        return []
+    try:
+        raw = _inventory_bytes(document, expected_sha256, result, attempt, run_attempt)
+        readbacks = _inventory_readback_list(
+            raw, (repository, pull_number, requested_head)
+        )
+        try:
+            head_tree = tree()
+        except RunnerError:
+            raise _InventoryRefused("TREE_UNAVAILABLE") from None
+        profile = _protected_profile_digest()
+        for scope, readback in zip(("DIFF", "FULL"), readbacks, strict=True):
+            _check_inventory_readback(
+                readback,
+                scope=scope,
+                requested_head=requested_head,
+                tree=head_tree,
+                profile=profile,
+            )
+    except _InventoryRefused as refusal:
+        reason = str(refusal)
+    except _INVENTORY_PATH_FAILURES as exc:
+        # The shape, not one more instance (Claude on #461, after the tree's and the
+        # profile's reads): any other failure of this path is refused here, by its
+        # type alone, so the vendors' readbacks never depend on it.
+        reason = type(exc).__name__
+    else:
+        return readbacks
+    return analyzer_inventory.unavailable(
+        repository=repository,
+        pull_number=pull_number,
+        requested_head=requested_head,
+        observed_at=observed_at,
+        reason=reason,
+    )
 
 
 _SCAN_CHUNK_BYTES = 1_048_576
