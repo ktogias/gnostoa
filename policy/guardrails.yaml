@@ -644,6 +644,7 @@ guardrails:
       - tests/test_review_reconcile_l1_thread_state.py
       - tests/test_review_reconcile_l1_render_compat.py
       - tests/test_review_reconcile_l1_full_review_followups.py
+      - tests/test_review_reconcile_l1_publication_boundary.py
       - tests/test_github_rest.py
 
   - id: required-evidence-completeness

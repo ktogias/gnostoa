@@ -8,7 +8,7 @@ import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
@@ -920,21 +920,9 @@ def _collect_snapshot_once(
         opinion_ambiguities,
         unavailable_opinionated_reviews,
     ) = _mark_effective_reviews(reviews)
-    if opinion_ambiguities or unavailable_opinionated_reviews:
-        review_coverage = dict(review_coverage)
-        if opinion_ambiguities:
-            review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
-        if unavailable_opinionated_reviews:
-            review_coverage["unavailable_opinionated_reviews"] = (
-                unavailable_opinionated_reviews
-            )
-        if review_coverage.get("status") == "COMPLETE":
-            review_coverage["status"] = "PARTIAL"
-            review_coverage["reason"] = (
-                "unavailable_reviewer_identity"
-                if unavailable_opinionated_reviews
-                else "ambiguous_latest_reviewer_opinion"
-            )
+    review_coverage = _review_coverage_with_opinions(
+        review_coverage, opinion_ambiguities, unavailable_opinionated_reviews
+    )
     review_comments, review_comment_coverage = _collect_pages(
         client,
         f"{root}/pulls/{pull_number}/comments?per_page=100",
@@ -951,22 +939,9 @@ def _collect_snapshot_once(
             if isinstance(item.get("observation_id"), str)
         },
     )
-    metadata_status = review_comment_coverage.get("status")
-    combined_status = _combined_coverage_status(
-        review_comment_coverage,
-        review_thread_coverage,
+    review_thread_coverage = _thread_coverage_with_metadata(
+        review_thread_coverage, review_comment_coverage
     )
-    if combined_status != review_thread_coverage.get("status"):
-        review_thread_coverage = dict(review_thread_coverage)
-        review_thread_coverage["status"] = combined_status
-    if metadata_status != "COMPLETE":
-        review_thread_coverage["metadata_status"] = metadata_status
-        review_thread_coverage["metadata_pages"] = review_comment_coverage.get("pages")
-        review_thread_coverage["metadata_count"] = review_comment_coverage.get("count")
-        review_thread_coverage["metadata_reason"] = review_comment_coverage.get(
-            "reason",
-            review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
-        )
     check_runs, check_run_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
@@ -991,28 +966,9 @@ def _collect_snapshot_once(
         count=len(checks),
     )
 
-    cut_candidates = [collection_cut]
-    cut_candidates.extend(
-        item["updated_at"]
-        for item in issue_comments
-        if isinstance(item.get("updated_at"), str)
+    effective_observed_at = _effective_observed_at(
+        collection_cut, issue_comments, reviews, review_threads, checks
     )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in reviews
-        if isinstance(item.get("observed_at"), str)
-    )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in review_threads
-        if isinstance(item.get("observed_at"), str)
-    )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in checks
-        if isinstance(item.get("observed_at"), str)
-    )
-    effective_observed_at = max(cut_candidates, key=parse_rfc3339)
 
     return {
         "schema_version": PROVIDER_STATE_SCHEMA_VERSION,
@@ -1049,6 +1005,89 @@ def _collect_snapshot_once(
         "review_threads": review_threads,
         "checks": checks,
     }
+
+
+def _review_coverage_with_opinions(
+    review_coverage: dict[str, Any],
+    opinion_ambiguities: int,
+    unavailable_opinionated_reviews: int,
+) -> dict[str, Any]:
+    """The reviews' coverage, marked PARTIAL when an effective opinion is ambiguous or
+    its reviewer's identity is unavailable; unchanged, the same object, otherwise."""
+    if not (opinion_ambiguities or unavailable_opinionated_reviews):
+        return review_coverage
+    review_coverage = dict(review_coverage)
+    if opinion_ambiguities:
+        review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
+    if unavailable_opinionated_reviews:
+        review_coverage["unavailable_opinionated_reviews"] = (
+            unavailable_opinionated_reviews
+        )
+    if review_coverage.get("status") == "COMPLETE":
+        review_coverage["status"] = "PARTIAL"
+        review_coverage["reason"] = (
+            "unavailable_reviewer_identity"
+            if unavailable_opinionated_reviews
+            else "ambiguous_latest_reviewer_opinion"
+        )
+    return review_coverage
+
+
+def _thread_coverage_with_metadata(
+    review_thread_coverage: dict[str, Any],
+    review_comment_coverage: dict[str, Any],
+) -> dict[str, Any]:
+    """The threads' coverage combined with the review-comment metadata it was read
+    beside, as the collection reports it."""
+    metadata_status = review_comment_coverage.get("status")
+    combined_status = _combined_coverage_status(
+        review_comment_coverage,
+        review_thread_coverage,
+    )
+    if combined_status != review_thread_coverage.get("status"):
+        review_thread_coverage = dict(review_thread_coverage)
+        review_thread_coverage["status"] = combined_status
+    if metadata_status != "COMPLETE":
+        review_thread_coverage["metadata_status"] = metadata_status
+        review_thread_coverage["metadata_pages"] = review_comment_coverage.get("pages")
+        review_thread_coverage["metadata_count"] = review_comment_coverage.get("count")
+        review_thread_coverage["metadata_reason"] = review_comment_coverage.get(
+            "reason",
+            review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
+        )
+    return review_thread_coverage
+
+
+def _effective_observed_at(
+    collection_cut: str,
+    issue_comments: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
+    review_threads: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+) -> str:
+    """The snapshot's cut: the latest of the collection time and every observation."""
+    cut_candidates = [collection_cut]
+    cut_candidates.extend(
+        item["updated_at"]
+        for item in issue_comments
+        if isinstance(item.get("updated_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in reviews
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in review_threads
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in checks
+        if isinstance(item.get("observed_at"), str)
+    )
+    return max(cut_candidates, key=parse_rfc3339)
 
 
 def _merge_evidence_subject(value: Any) -> dict[str, Any]:
@@ -1482,19 +1521,11 @@ def publication_decision(
     if current_head != collected_head:
         return False, "STALE_HEAD"
     candidate_subject = candidate_projection.get("subject")
-    expected_repository = f"https://github.com/{repository}"
-    expected_change_request = {
-        "kind": "github-pull-request",
-        "id": str(pull_number),
-    }
-    if (
-        not isinstance(candidate_subject, dict)
-        or candidate_subject.get("provider_id") != "github"
-        or candidate_subject.get("repository") != expected_repository
-        or candidate_subject.get("change_request") != expected_change_request
-        or candidate_subject.get("head_commit") != collected_head
-        or not isinstance(candidate_subject.get("base_commit"), str)
-        or not isinstance(candidate_subject.get("merge_base_commit"), str)
+    if not _candidate_subject_matches(
+        candidate_subject,
+        repository=repository,
+        pull_number=pull_number,
+        collected_head=collected_head,
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
     if candidate_subject.get("state") != current_pr.get("state"):
@@ -1504,16 +1535,48 @@ def publication_decision(
         or current_pr.get("merge_base_sha") != candidate_subject["merge_base_commit"]
     ):
         return False, "STALE_COMPARISON"
-    if existing_projection is not None:
-        existing_subject = existing_projection.get("subject")
-        if (
-            isinstance(existing_subject, dict)
-            and existing_subject.get("head_commit") == collected_head
-            and _projection_key(existing_projection)
-            >= _projection_key(candidate_projection)
-        ):
-            return False, "SUPERSEDED_PROJECTION"
+    if _supersedes(existing_projection, candidate_projection, collected_head):
+        return False, "SUPERSEDED_PROJECTION"
     return True, "PUBLISH"
+
+
+def _candidate_subject_matches(
+    candidate_subject: object,
+    *,
+    repository: str,
+    pull_number: int,
+    collected_head: str,
+) -> TypeGuard[dict[str, Any]]:
+    """The candidate projection names this repository's pull request at the collected
+    head, with both of its comparison commits."""
+    return (
+        isinstance(candidate_subject, dict)
+        and candidate_subject.get("provider_id") == "github"
+        and candidate_subject.get("repository") == f"https://github.com/{repository}"
+        and candidate_subject.get("change_request")
+        == {"kind": "github-pull-request", "id": str(pull_number)}
+        and candidate_subject.get("head_commit") == collected_head
+        and isinstance(candidate_subject.get("base_commit"), str)
+        and isinstance(candidate_subject.get("merge_base_commit"), str)
+    )
+
+
+def _supersedes(
+    existing_projection: dict[str, Any] | None,
+    candidate_projection: dict[str, Any],
+    collected_head: str,
+) -> bool:
+    """An existing projection at the collected head that is not older than the
+    candidate."""
+    if existing_projection is None:
+        return False
+    existing_subject = existing_projection.get("subject")
+    return (
+        isinstance(existing_subject, dict)
+        and existing_subject.get("head_commit") == collected_head
+        and _projection_key(existing_projection)
+        >= _projection_key(candidate_projection)
+    )
 
 
 def _existing_projection(
@@ -1662,16 +1725,10 @@ def publish_entry(
 ) -> dict[str, Any]:
     pull_number = _integer(entry.get("pull_number"), "entry.pull_number")
     if entry.get("collection_status") == "UNAVAILABLE":
-        raw_reason = entry.get("reason")
-        reason = (
-            raw_reason
-            if isinstance(raw_reason, str) and raw_reason
-            else "PROVIDER_SUBJECT_UNAVAILABLE"
-        )
         return {
             "pull_number": pull_number,
             "published": False,
-            "reason": reason,
+            "reason": _unavailable_reason(entry),
         }
     collected_head = _sha(entry.get("head_sha"), "entry.head_sha")
     body = _text(entry.get("body"), "entry.body")
@@ -1723,30 +1780,9 @@ def publish_entry(
     if not allowed:
         return {"pull_number": pull_number, "published": False, "reason": reason}
 
-    protected = candidate_projection.get("protected")
-    if isinstance(protected, dict) and protected.get("status") == "AVAILABLE":
-        candidate_protected_revision = protected.get("main_revision")
-        bundle, consumer = _protected_state()
-        if (
-            not isinstance(candidate_protected_revision, str)
-            or bundle.protected_main_revision != candidate_protected_revision
-            or consumer.protected_main_revision != candidate_protected_revision
-        ):
-            return {
-                "pull_number": pull_number,
-                "published": False,
-                "reason": "STALE_PROTECTED_AUTHORITY",
-            }
-        if not _positive_projection_is_fresh(
-            candidate_projection,
-            protected_bundle=bundle,
-            observed_now=_now(),
-        ):
-            return {
-                "pull_number": pull_number,
-                "published": False,
-                "reason": "STALE_PROVIDER_OBSERVATION",
-            }
+    refusal = _protected_publication_refusal(candidate_projection)
+    if refusal is not None:
+        return {"pull_number": pull_number, "published": False, "reason": refusal}
 
     if existing is None:
         client.post(
@@ -1761,6 +1797,40 @@ def publish_entry(
         )
         action = "UPDATED"
     return {"pull_number": pull_number, "published": True, "reason": action}
+
+
+def _unavailable_reason(entry: dict[str, Any]) -> str:
+    """An unavailable entry's own reason, or the provider's unavailability."""
+    raw_reason = entry.get("reason")
+    return (
+        raw_reason
+        if isinstance(raw_reason, str) and raw_reason
+        else "PROVIDER_SUBJECT_UNAVAILABLE"
+    )
+
+
+def _protected_publication_refusal(candidate_projection: dict[str, Any]) -> str | None:
+    """Why a projection that claims protected authority may not be published now: the
+    authority it names is not current, or its provider observation is stale. Called
+    after both reads, where the protected state is acquired."""
+    protected = candidate_projection.get("protected")
+    if not (isinstance(protected, dict) and protected.get("status") == "AVAILABLE"):
+        return None
+    candidate_protected_revision = protected.get("main_revision")
+    bundle, consumer = _protected_state()
+    if (
+        not isinstance(candidate_protected_revision, str)
+        or bundle.protected_main_revision != candidate_protected_revision
+        or consumer.protected_main_revision != candidate_protected_revision
+    ):
+        return "STALE_PROTECTED_AUTHORITY"
+    if not _positive_projection_is_fresh(
+        candidate_projection,
+        protected_bundle=bundle,
+        observed_now=_now(),
+    ):
+        return "STALE_PROVIDER_OBSERVATION"
+    return None
 
 
 def _workflow_run_pull_numbers(raw: str) -> list[int]:
