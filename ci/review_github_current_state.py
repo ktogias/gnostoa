@@ -8,7 +8,7 @@ import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
@@ -1808,6 +1808,12 @@ def _open_pulls(
     return [{"number": number, "head_sha": heads[number]} for number in sorted(heads)]
 
 
+def open_pulls(client: JsonReader, repository: str) -> list[dict[str, Any]]:
+    """The open population with each head, as `_open_pulls` reads it: the one public
+    name for the merge-admission guard's in-process re-read (#389 F1)."""
+    return _open_pulls(client, repository)
+
+
 def _open_pull_numbers(
     client: JsonReader,
     repository: str,
@@ -1848,7 +1854,7 @@ def _semantic_result(code: int, raw: bytes) -> dict[str, Any]:
     from tools import review_outer
 
     try:
-        payload = review_outer._decode_outer_result(code, raw)
+        payload = review_outer.decode_outer_result(code, raw)
     except (RuntimeError, TypeError, ValueError):
         return {"reason": "INVALID_R2A_RESULT"}
 
@@ -1917,7 +1923,7 @@ def _collect_entry(
         bundle, consumer = _protected_state()
         protected_revision = bundle.protected_main_revision
         review_input = build_review_input(snapshot, bundle.document)
-        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
+        code, raw = review_outer.run_prior_effective_current_advisory_with_acquisition(
             review_input,
             acquire_consumer=lambda: consumer,
         )
@@ -1925,7 +1931,7 @@ def _collect_entry(
         acquired = consumer.document.get("acquired_consumer")
         if not isinstance(acquired, dict):
             raise ProviderReadError("protected outer-consumer authority is malformed")
-        review_outer._require_transport_compatible_consumer(acquired)
+        review_outer.require_transport_compatible_consumer(acquired)
         outer = acquired
     except (OSError, RuntimeError, ValueError) as exc:
         semantic = {"reason": type(exc).__name__}
@@ -2292,6 +2298,17 @@ def main(argv: list[str] | None = None) -> int:
         # with its reason, never a traceback, and nothing is written (Claude and
         # CodeAnt on #426).
         raise SystemExit(f"{args.mode}: {exc}") from exc
+
+
+if TYPE_CHECKING:
+    from tools import review_current_state_surface as surface
+
+    # L1's own definitions, checked against the surface the merge-admission guard
+    # reads them through (#389 F1): a changed name or signature here, or there, is a
+    # type error in both checkers.
+    _CLIENT: surface.ClientFactory = GitHubRestClient
+    _COLLECT_SNAPSHOT: surface.SnapshotCollector = collect_snapshot
+    _OPEN_PULLS: surface.OpenPullsReader = open_pulls
 
 
 if __name__ == "__main__":

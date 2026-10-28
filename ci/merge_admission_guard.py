@@ -31,6 +31,7 @@ after the run's readback, recorded in Decision 0112.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -41,7 +42,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Run as `python3 -I ci/merge_admission_guard.py` (runbook `guard_merge`), so no file of
 # the checkout runs at interpreter startup: the checkout joins the path only here.
@@ -61,6 +62,9 @@ from tools.merge_admission_checks import (  # noqa: E402
     read_run,
     run_id,
 )
+
+if TYPE_CHECKING:
+    from tools import review_current_state_surface as surface
 
 _WORKFLOW = ".github/workflows/merge-admission.yml"
 _DISPATCH_TYPE = "gnostoa-merge-admission"
@@ -440,7 +444,11 @@ def rebuilders(
     merge evidence, the evidence built from it, and L1's open population."""
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import review_github_current_state as l1
+    # ci remains flat CLI scripts, and the two type checkers name this sibling
+    # differently: the project's gate as a top-level module, the protected collector
+    # by its path from the root (#389 F1). Imported by its name at run time, as the
+    # statement this replaces did, and typed by the surface L1 checks itself against.
+    l1: surface.Surface = importlib.import_module("review_github_current_state")
 
     from tools import merge_evidence_github
 
@@ -463,8 +471,7 @@ def rebuilders(
             "coverage": "COMPLETE",
             "pulls": [
                 {"pull_number": item["number"], "head": item["head_sha"]}
-                # skipcq: PYL-W0212 -- L1's one enumeration, reused rather than copied
-                for item in l1._open_pulls(reader, repository)
+                for item in l1.open_pulls(reader, repository)
             ],
         }
 

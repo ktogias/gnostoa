@@ -25,6 +25,15 @@ sources:
   - id: completeness-owner
     resource: https://github.com/ktogias/gnostoa/issues/389
     title: Fail closed when required assurance evidence is missing, stale or incomplete
+  - id: owner-b
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6427529942
+    title: "The owner's B: close L1's six inventory findings by real fixes before the cutover"
+  - id: alpha-scope
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6430377203
+    title: "The Router's scoped α proposal: this note, under the merge-admission boundary"
+  - id: alpha-typing
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6430425318
+    title: "The PAO's finding: an untyped guard import is not coverage; a typed interface both checkers share"
 x-project-knowledge:
   id: kit.decision.0112.admit-merges-through-a-required-provider-neutral-merge-admission-verdict
   owners:
@@ -526,6 +535,23 @@ provider-neutral public change-governance contract of
   imports the pure SonarCloud association helper, `tools/sonarcloud_scope.py`.
 - **More owner configuration** is needed by 1b.3 and 1b.4: `SONAR_TOKEN`, the
   `gnostoa-ma0` App and its environment, and the requirement in R-main.
+- **The guard reads L1 through public names and one typed surface** (#389, the owner's
+  B, source `owner-b`; source `alpha-scope`). The guard acquires the existing flat L1
+  module under its existing run-time name and uses L1's public `open_pulls`; L1 uses
+  `tools/review_outer.py`'s public late-bound decoder, pinned-acquisition and transport
+  contracts. The private implementations, and the effect and refusal order, stay where
+  they are owned.
+  - **Why a surface:** the two type checkers name a flat `ci/` script differently, the
+    project's gate as a top-level module and the protected collector by its path from
+    the root. With their current invocations, the direct imports tried each failed in
+    one of them (`import-not-found` in the collector; one file under two module names
+    in the gate), and an untyped import would not be coverage (source
+    `alpha-typing`). A shared interface was selected instead.
+  - **What it holds:** `tools/review_current_state_surface.py` is the static contract
+    both checkers share. The guard's three calls are typed by it, and L1 checks its own
+    three definitions against it, so a changed name or signature on either side is a
+    type error in both checkers.
+  - No declaration, profile, threshold or negative-propagation rule is relaxed.
 
 ## What this supersedes or revises
 
