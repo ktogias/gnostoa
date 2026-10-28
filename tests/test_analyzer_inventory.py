@@ -9,6 +9,7 @@ merge-evidence map or the declaration: those are slice 3's (#389 6392516998).
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import importlib
 import importlib.util
@@ -1215,6 +1216,39 @@ class InventoryBundleTests(_InventoryReadbackFixture):
         self.assertEqual(
             {"FOREIGN_PROFILE"}, {r["coverage"]["reason"] for r in readbacks}
         )
+
+    def test_a_wrongly_typed_readback_refuses_the_project_readbacks_alone(self) -> None:
+        """Revix on #461: a readback whose fields have the wrong JSON types, a
+        non-object `native` among them, is refused by `parse_readback`, whose typed
+        rebuild raises its own ValueError. So the binding refuses both project
+        readbacks by that type, and nothing of the path escapes to the bundle."""
+        path, _, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for field, value in (
+            ("native", []),
+            ("native", "BOUND"),
+            ("scope", 1),
+            ("findings", {}),
+            ("coverage", []),
+            ("requested_head", [head]),
+            ("observed_at", None),
+        ):
+            with self.subTest(field=field, value=value):
+                variant = copy.deepcopy(document)
+                for readback in variant["readbacks"]:
+                    readback[field] = value
+                forged = self.output / f"typed-{field}-{type(value).__name__}.json"
+                forged.write_text(json.dumps(variant), encoding="utf-8")
+                readbacks = self._bound(
+                    forged, hashlib.sha256(forged.read_bytes()).hexdigest(), head, tree
+                )
+                self.assertEqual(
+                    {"READBACK_UNAVAILABLE"}, {r["completeness"] for r in readbacks}
+                )
+                self.assertEqual(
+                    {"AnalyzerReadbackError"},
+                    {r["coverage"]["reason"] for r in readbacks},
+                )
 
     def test_the_bundle_binds_the_document_to_the_tree_github_reads(self) -> None:
         """Cubic on #461: end to end, `collect_bundle` hands the binding the tree

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import secrets
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import tempfile
 import traceback
@@ -1541,12 +1542,14 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
 
     def test_secret_sentinel_is_rejected_before_output(self) -> None:
         # A bundle that holds the credential inside a longer value is refused before
-        # anything is written, and the refusal does not repeat it.
-        leaked = {"subject_binding": "BOUND", "value": "prefix-super-secret-suffix"}
+        # anything is written, and the refusal does not repeat it. The credential is
+        # generated for this run, so no fixed value can be special-cased.
+        credential = secrets.token_hex(16)
+        leaked = {"subject_binding": "BOUND", "value": f"prefix-{credential}-suffix"}
         stderr, stdout = io.StringIO(), io.StringIO()
         with (
             tempfile.TemporaryDirectory() as directory,
-            patch.dict(os.environ, {"GITHUB_TOKEN": "super-secret"}, clear=True),
+            patch.dict(os.environ, {"GITHUB_TOKEN": credential}, clear=True),
             patch.object(
                 runner.GitHubReadClient,
                 "from_environment",
@@ -1560,7 +1563,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             self.assertEqual(2, _main(output))
             self.assertFalse(output.exists())
         self.assertRegex(stderr.getvalue(), r"^ERROR: .*credential bytes")
-        self.assertNotIn("super-secret", stderr.getvalue() + stdout.getvalue())
+        self.assertNotIn(credential, stderr.getvalue() + stdout.getvalue())
 
     def test_output_is_create_only(self) -> None:
         # The first run creates the receipt; a second, with another bundle, refuses

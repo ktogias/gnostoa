@@ -1743,11 +1743,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 with self.subTest(raw=raw):
                     self.assertEqual(([], [listing]), subjects(raw))
                     self.assertEqual([[]], parsed)
+            # A number no Pull Request has is refused before any read.
+            malformed = json.dumps([{"number": 0}])
             with self.assertRaisesRegex(
                 SystemExit,
                 "workflow_run.pull_requests",
             ) as refused:
-                subjects(json.dumps([{"number": 0}]))
+                subjects(malformed)
             self.assertEqual([], parsed)
             self.assertIsInstance(
                 refused.exception.__cause__, adapter.ProviderReadError

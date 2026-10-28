@@ -25,7 +25,8 @@ with tarfile.open(archive) as packed:
     for member in members:
         assert member.isfile()
         handle = packed.extractfile(member)
-        assert handle is not None
+        if handle is None:
+            raise AssertionError(member.name)
         value = handle.read()
         assert len(value) == expected[member.name]["bytes"]
         assert hashlib.sha256(value).hexdigest() == expected[member.name]["sha256"]
