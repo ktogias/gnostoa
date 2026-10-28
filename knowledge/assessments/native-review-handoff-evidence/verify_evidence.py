@@ -24,7 +24,9 @@ with tarfile.open(archive) as packed:
     assert {member.name for member in members} == set(expected)
     for member in members:
         assert member.isfile()
-        value = packed.extractfile(member).read()
+        handle = packed.extractfile(member)
+        assert handle is not None
+        value = handle.read()
         assert len(value) == expected[member.name]["bytes"]
         assert hashlib.sha256(value).hexdigest() == expected[member.name]["sha256"]
 print(f"Verified archive and {len(expected)} retained members; no provider calls")

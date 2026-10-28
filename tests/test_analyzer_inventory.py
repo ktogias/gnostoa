@@ -17,7 +17,7 @@ import json
 import os
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -41,6 +41,24 @@ OTHER = "b" * 40
 # cache, which this job lacks.
 JOB_MARGIN_SECONDS = 300
 API = "https://api.github.com"
+# How the runner reads an uploaded inventory: its digest and its scan in chunks of
+# this size, its strict parse in one read of the collector's report bound and one
+# byte more. The read-size test pins both, so a probe placed across the chunk's
+# boundary cannot drift from it.
+SCAN_CHUNK = 1_048_576
+BOUNDED_READ = 64 * 1024 * 1024 + 1
+
+
+@contextlib.contextmanager
+def _token(value: str | None) -> Iterator[None]:
+    """The environment's GitHub tokens for one collection: `value` as GITHUB_TOKEN,
+    or none at all."""
+    with patch.dict(os.environ):
+        for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+            os.environ.pop(name, None)
+        if value is not None:
+            os.environ["GITHUB_TOKEN"] = value
+        yield
 
 
 def _adapter() -> Any:
@@ -533,73 +551,186 @@ class InventoryRunnerTests(_InventoryReadbackFixture):
                 observed_at=OBSERVED,
             )
         document = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual([left[0].resolve()], runner._uploaded_files(self.output))
+        # What the upload step's pattern matches is the inventory alone.
+        self.assertEqual(
+            [left[0].resolve()],
+            sorted(self.output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
         self.assertEqual(
             left[0].resolve(), (self.output / document["inventory"]["file"]).resolve()
         )
 
+    def _collect_into(self, runner: Any, head: str, output: Path) -> Path:
+        """`inventory_collect` of `head` into `output`, as the job runs it."""
+        return runner.inventory_collect(
+            self.root,
+            output,
+            repository=REPOSITORY,
+            pull_number=PULL,
+            requested_head=head,
+            base_tip=OTHER,
+            base=self.base,
+            observed_at=OBSERVED,
+        )
+
     def test_a_token_split_across_scan_chunks_is_found(self) -> None:
         # cubic on #460: the uploads are scanned in bounded chunks, never whole, so a
-        # token across a chunk boundary must still be found.
+        # token across a chunk boundary must still be found. The uploaded inventory
+        # carries the probe in a string of its own, across the scan's first chunk
+        # boundary, and no readback carries it: only the uploads' scan can find it.
+        # The inventory is named and digested before it is parsed, so the scan reads
+        # it whatever its parse gives.
         runner = _runner()
+        head = self._changed_head()
         probe = "inventoryprobe" + "7" * 12
-        folder = self.output / "diagnostic-run"
-        folder.mkdir(parents=True)
-        (folder / "diagnostic-inventory.json").write_text(
-            "x" * 5 + probe + "y" * 9, encoding="utf-8"
-        )
-        with self.assertRaises(runner.RunnerError):
-            runner._assert_uploads_secret_free(self.output, [probe], chunk=8)
+        real = self.module.collect_diagnostic_inventory
+        written: list[Path] = []
+
+        def straddling(*args, **kwargs):
+            inventory = real(*args, **kwargs)
+            text = inventory.read_text(encoding="utf-8")
+            opening = '{"padding": "'
+            before = SCAN_CHUNK - len(opening) - len(probe) // 2
+            inventory.write_text(
+                opening + "x" * before + probe + "y" * 100_000 + '", ' + text[1:],
+                encoding="utf-8",
+            )
+            written.append(inventory)
+            return inventory
+
+        with (
+            _token(probe),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", straddling),
+            self.assertRaisesRegex(
+                runner.RunnerError, "an uploaded file contains credential bytes"
+            ),
+        ):
+            self._collect_into(runner, head, self.output)
+        self.assertFalse((self.output / "gnostoa-inventory-readback.json").exists())
+        # The probe straddles the first chunk's end, in an inventory over one chunk.
+        raw = written[0].read_bytes()
+        start = raw.index(probe.encode("utf-8"))
+        self.assertLess(start, SCAN_CHUNK)
+        self.assertGreater(start + len(probe), SCAN_CHUNK)
 
     def test_a_file_holds_no_needle_when_there_is_none(self) -> None:
-        # Q on #460: the chunk reader stands on its own, with no needle to find.
+        # Q on #460: the chunk reader stands on its own, with no needle to find. With
+        # no token in the environment, the uploaded inventory is scanned for none,
+        # and the collection completes without error.
         runner = _runner()
-        (self.output / "run").mkdir(parents=True)
-        report = self.output / "run" / "report.json"
-        report.write_text("z" * 40, encoding="utf-8")
-        self.assertIs(False, runner._holds_any(report, [], 8))
+        head = self._changed_head()
+        with (
+            _token(None),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+        ):
+            path = self._collect_into(runner, head, self.output)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(document["inventory"])
+        self.assertEqual(
+            [(self.output / document["inventory"]["file"]).resolve()],
+            sorted(self.output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
 
     def test_a_link_in_the_uploaded_directory_is_refused(self) -> None:
         # Claude on #460: the pinned upload-artifact follows links
         # (followSymbolicLinks: true in its search), so a link would publish a target
         # the scan never read. An uploaded inventory reached through a link, as the
-        # file or as its run directory, is refused, with or without a token.
+        # file or as its run directory, is refused, with or without a token, and no
+        # document is written.
         runner = _runner()
-        outside = Path(self.directory.name) / "outside"
+        head = self._changed_head()
+        real = self.module.collect_diagnostic_inventory
+
+        def linking(kind, outside):
+            """A collector whose inventory, or its run directory, is moved to
+            `outside` and reached through a link in its place."""
+
+            def collect(*args, **kwargs):
+                written = real(*args, **kwargs)
+                link = written if kind == "file" else written.parent
+                outside.mkdir()
+                moved = outside / link.name
+                link.rename(moved)
+                link.symlink_to(moved)
+                return written
+
+            return collect
+
+        for kind in ("file", "directory"):
+            for token in (None, "inventoryprobe"):
+                case = f"{kind}-{'token' if token else 'none'}"
+                # The fixture's producers run under its output directory, one per
+                # case.
+                self.output = output = Path(self.directory.name) / f"output-{case}"
+                outside = Path(self.directory.name) / f"outside-{case}"
+                with self.subTest(link=kind, token=token):
+                    with (
+                        _token(token),
+                        patch(
+                            "tools.quality_evidence._bounded_run",
+                            side_effect=self._fake_run,
+                        ),
+                        patch(
+                            "tools.quality_evidence.collect_diagnostic_inventory",
+                            linking(kind, outside),
+                        ),
+                        self.assertRaisesRegex(runner.RunnerError, "through a link"),
+                    ):
+                        self._collect_into(runner, head, output)
+                    self.assertFalse(
+                        (output / "gnostoa-inventory-readback.json").exists()
+                    )
+        # A link the step's pattern does not match is neither uploaded nor refused,
+        # though its target holds a file of the inventory's name.
+        outside = Path(self.directory.name) / "outside-unmatched"
         outside.mkdir()
         (outside / "diagnostic-inventory.json").write_text("{}", encoding="utf-8")
-        (self.output / "diagnostic-file").mkdir(parents=True)
-        for link, target in (
-            (
-                self.output / "diagnostic-file" / "diagnostic-inventory.json",
-                outside / "diagnostic-inventory.json",
-            ),
-            (self.output / "diagnostic-dir", outside),
+        links: list[Path] = []
+
+        def unmatched(*args, **kwargs):
+            written = real(*args, **kwargs)
+            link = written.parent / "raw-link"
+            link.symlink_to(outside)
+            links.append(link)
+            return written
+
+        self.output = output = Path(self.directory.name) / "output-unmatched"
+        with (
+            _token(None),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", unmatched),
         ):
-            link.symlink_to(target)
-            for secrets in ([], ["inventoryprobe"]):
-                with (
-                    self.subTest(link=link.name, secrets=secrets),
-                    self.assertRaises(runner.RunnerError),
-                ):
-                    runner._assert_uploads_secret_free(self.output, secrets)
-            link.unlink()
-        # A link the step's pattern does not match is never uploaded.
-        (self.output / "diagnostic-file" / "raw-link").symlink_to(outside)
-        self.assertEqual([], runner._uploaded_files(self.output))
+            path = self._collect_into(runner, head, output)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(links[0].is_symlink())
+        self.assertEqual(
+            [(output / document["inventory"]["file"]).resolve()],
+            sorted(output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
 
     def test_a_scan_without_the_token_reads_no_file_whole(self) -> None:
-        # Revix on #460: every read asks for one chunk, never the whole file.
+        # Revix on #460: every read of the scan asks for one chunk, never the whole
+        # file. Once the collector has written it, the uploaded inventory is read in
+        # a fixed order: its digest's chunks, the strict parse's one bounded read,
+        # then the scan's chunks. A small inventory takes one chunk, then the end.
         runner = _runner()
-        (self.output / "diagnostic-run").mkdir(parents=True)
-        (self.output / "diagnostic-run" / "diagnostic-inventory.json").write_text(
-            "z" * 40, encoding="utf-8"
-        )
+        head = self._changed_head()
+        real = self.module.collect_diagnostic_inventory
+        written: list[Path] = []
+
+        def collected(*args, **kwargs):
+            inventory = real(*args, **kwargs)
+            written.append(inventory.resolve())
+            return inventory
+
         sizes: list[object] = []
         real_open = Path.open
 
         def recording(path, *args, **kwargs):
             handle = real_open(path, *args, **kwargs)
+            if not written or path.resolve() != written[0]:
+                return handle
             read = handle.read
 
             def sized(*size):
@@ -609,10 +740,23 @@ class InventoryRunnerTests(_InventoryReadbackFixture):
             handle.read = sized
             return handle
 
-        with patch.object(Path, "open", recording):
-            runner._assert_uploads_secret_free(self.output, ["inventoryprobe"], chunk=8)
-        self.assertTrue(sizes)
-        self.assertEqual({(8,)}, set(sizes))
+        with (
+            _token("inventoryprobe"),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", collected),
+            patch.object(Path, "open", recording),
+        ):
+            self._collect_into(runner, head, self.output)
+        self.assertEqual(
+            [
+                (SCAN_CHUNK,),
+                (SCAN_CHUNK,),
+                (BOUNDED_READ,),
+                (SCAN_CHUNK,),
+                (SCAN_CHUNK,),
+            ],
+            sizes,
+        )
 
     def test_an_upload_the_document_does_not_name_is_refused(self) -> None:
         # What the step's pattern matches must be exactly the inventory the document

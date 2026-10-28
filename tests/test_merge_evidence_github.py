@@ -21,12 +21,12 @@ from typing import Any
 from unittest.mock import patch
 
 import yaml
-from test_review_reconcile_l1 import (
+
+from tests.test_review_reconcile_l1 import (
     adapter_fixture,
     complete_replies_fixture,
     paged_fake_fixture,
 )
-
 from tools import (
     analyzer_inventory,
     analyzer_readback,

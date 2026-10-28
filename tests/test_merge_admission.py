@@ -1224,7 +1224,7 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         guard holds only the decisions that must not change. NORMAL with the
         inventory missing, partial or UNAVAILABLE is denied by
         `test_merge_evidence_github.ProjectRiskActivationTests`."""
-        from test_assurance_completeness import GNOSTOA_1_0
+        from tests.test_assurance_completeness import GNOSTOA_1_0
 
         baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
         current = assurance_completeness.load_declaration(

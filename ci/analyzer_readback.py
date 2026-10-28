@@ -1154,7 +1154,7 @@ def _assert_uploads_secret_free(
     it is serialized."""
     files = _uploaded_files(directory)
     needles = [secret.encode("utf-8") for secret in secrets if secret]
-    if needles and any(_holds_any(path, needles, chunk) for path in files):
+    if any(_holds_any(path, needles, chunk) for path in files):
         raise RunnerError("an uploaded file contains credential bytes")
 
 

@@ -203,17 +203,26 @@ class _CodacyReader:
 # A client factory, the call that drives it, and the error it must fail with: typed, so
 # each invocation is a typed call rather than an untyped lambda's (DeepSource TYP-061).
 _InvokeCase = tuple[Callable[[str], Any], Callable[[Any], Any], type[Exception]]
+# The same, with the header that carries the client's credential and the form it is
+# sent in.
+_SentCredentialCase = tuple[
+    Callable[[str], Any], Callable[[Any], Any], type[Exception], str, str
+]
 
 
 class AnalyzerTransportCredentialTests(unittest.TestCase):
     def test_github_redirect_preserves_same_origin_credentials(self) -> None:
-        client = runner.GitHubReadClient("synthetic-transport-value")
+        # The handlers the client builds its one opener with, observed on their way
+        # to the real `build_opener`, which chains each one given into the opener.
+        with patch(
+            "urllib.request.build_opener", wraps=urllib.request.build_opener
+        ) as build_opener:
+            runner.GitHubReadClient("synthetic-transport-value")
+        build_opener.assert_called_once()
         handlers = [
             handler
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            for handler in client._opener.handlers
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            if isinstance(handler, runner._GitHubRedirectHandler)
+            for handler in build_opener.call_args.args
+            if isinstance(handler, runner.GitHubReadClient.same_origin_redirects)
         ]
         self.assertEqual(1, len(handlers))
         request = urllib.request.Request("https://api.github.com/start")
@@ -238,8 +247,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 )
 
     def test_github_redirect_refuses_unsafe_origins(self) -> None:
-        # skipcq: PYL-W0212 -- white-box test of the runner's internals
-        handler = runner._GitHubRedirectHandler()
+        handler = runner.GitHubReadClient.same_origin_redirects()
         request = urllib.request.Request("https://api.github.com/start")
         request.add_unredirected_header(
             "Authorization", "Bearer synthetic-transport-value"
@@ -278,18 +286,22 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 self.consumed += len(chunk)
                 return chunk
 
-        client = runner.GitHubReadClient("test-token")
         response = _OversizedResponse()
         with (
             patch.object(runner, "_MAX_RESPONSE_BYTES", response_limit),
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            patch.object(client._opener, "open", return_value=response) as open_request,
-            self.assertRaisesRegex(
+            # The client's opener is the one built for it, which answers with the
+            # oversized response.
+            patch("urllib.request.build_opener") as build_opener,
+        ):
+            open_request = build_opener.return_value.open
+            open_request.return_value = response
+            client = runner.GitHubReadClient("test-token")
+            with self.assertRaisesRegex(
                 runner.RunnerError,
                 "GitHub API response exceeds bounded size",
-            ),
-        ):
-            client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
+            ):
+                client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
+        build_opener.assert_called_once()
 
         # Refused, and read no further than one receive past the bound: the shared
         # client reads in single receives (Decision 0100), so the property held here
@@ -345,17 +357,38 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                         connect.assert_not_called()
 
     def test_credential_validation_rejects_without_trimming_or_opener(self) -> None:
-        for factory, error_type in (
-            (runner.GitHubReadClient, runner.RunnerError),
+        cases: tuple[_SentCredentialCase, ...] = (
+            (
+                runner.GitHubReadClient,
+                lambda c: c.get(
+                    "https://api.github.com/repos/ktogias/gnostoa/pulls/312"
+                ),
+                runner.RunnerError,
+                "Authorization",
+                "Bearer {}",
+            ),
             (
                 runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                lambda c: c.graphql(
+                    runner.analyzer_deepsource.RUN_QUERY,
+                    {"runUid": RUN_UID, "cursor": None},
+                ),
                 runner.analyzer_deepsource.ProviderReadFailure,
+                "Authorization",
+                "Bearer {}",
             ),
             (
                 runner.analyzer_codacy.CodacyRestClient,
+                lambda c: c.get(
+                    "https://app.codacy.com/api/v3/analysis/organizations/gh/ktogias/repositories/gnostoa/pull-requests/312"
+                ),
                 runner.analyzer_codacy.ProviderReadFailure,
+                # Codacy's `api-token`, as a request stores a header's name.
+                "Api-token",
+                "{}",
             ),
-        ):
+        )
+        for factory, invoke, error_type, header, sent in cases:
             for value in (
                 " x",
                 "x ",
@@ -374,10 +407,20 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                         factory(value)
                     self.assertNotIn(repr(value), str(caught.exception))
                     opener.assert_not_called()
+            # A valid credential is kept exactly: the request handed to the transport
+            # carries it untrimmed. The transport refuses, so nothing is sent.
             value = "aZ0._~+/=-!"
-            client = factory(value)
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            self.assertEqual(value, client._token)
+            with (
+                self.subTest(client=factory.__name__, value=repr(value)),
+                patch("urllib.request.build_opener") as opener,
+            ):
+                opener.return_value.open.side_effect = OSError("network forbidden")
+                client = factory(value)
+                with self.assertRaises(error_type):
+                    invoke(client)
+                opener.return_value.open.assert_called_once()
+                request = opener.return_value.open.call_args.args[0]
+                self.assertEqual(sent.format(value), request.get_header(header))
 
     def test_transport_value_errors_have_bounded_non_secret_diagnostics(self) -> None:
         cases: tuple[_InvokeCase, ...] = (
@@ -403,13 +446,13 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
         for factory, invoke, error_type in cases:
             with self.subTest(client=factory.__name__):
                 value = "synthetic-transport-credential"
-                client = factory(value)
-                with patch.object(
-                    # skipcq: PYL-W0212 -- white-box test of the runner's internals
-                    client._opener,
-                    "open",
-                    side_effect=ValueError("header " + value),
-                ):
+                # The client's opener is the one built for it, whose transport fails
+                # with an error that quotes the credential.
+                with patch("urllib.request.build_opener") as build_opener:
+                    build_opener.return_value.open.side_effect = ValueError(
+                        "header " + value
+                    )
+                    client = factory(value)
                     try:
                         invoke(client)
                     except Exception as exc:
@@ -419,6 +462,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                         self.assertIsInstance(exc, error_type)
                     else:
                         self.fail("transport failure was accepted")
+                    build_opener.return_value.open.assert_called_once()
 
     def test_main_malformed_github_credentials_do_not_enter_stderr(self) -> None:
         for name in ("GITHUB_TOKEN", "GH_TOKEN"):
@@ -688,6 +732,23 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_review_comment_pages_fit_bound_and_retain_all_comments(self) -> None:
         endpoint = "https://api.github.com/repos/ktogias/gnostoa/pulls/312/comments"
         total_comments = 234
+        # The runner's own bound on one response, as its client reads under it.
+        response_bound = runner.GitHubReadClient(
+            "synthetic-bound-reader"
+        ).policy.max_response_bytes
+        urls = _github_urls()
+        # The bundle's other GitHub reads: the head, twice, and no status or check.
+        others: dict[str, Any] = {
+            urls["pr"]: _pr(),
+            urls["statuses"]: [],
+            urls["checks"]: {"check_runs": []},
+        }
+
+        def discussion(comment_id: int) -> str:
+            """Each comment's own URL, which the projection keeps."""
+            return (
+                f"https://github.com/ktogias/gnostoa/pull/312#discussion_r{comment_id}"
+            )
 
         class _BoundedReviewCommentPages:
             def __init__(self) -> None:
@@ -695,18 +756,23 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
 
             def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
                 self.calls.append(url)
+                if urlsplit(url).path != urlsplit(endpoint).path:
+                    return others[url], {}
                 query = parse_qs(urlsplit(url).query)
                 page_size = int(query["per_page"][0])
                 page = int(query.get("page", ["1"])[0])
                 start = (page - 1) * page_size
                 stop = min(start + page_size, total_comments)
                 comments = [
-                    {"body": "x" * 45_000, "id": comment_id}
+                    {
+                        "body": "x" * 45_000,
+                        "id": comment_id,
+                        "html_url": discussion(comment_id),
+                    }
                     for comment_id in range(start, stop)
                 ]
                 response_size = len(json.dumps(comments).encode("utf-8"))
-                # skipcq: PYL-W0212 -- the runner's own bound, read by this white-box stub
-                if response_size > runner._MAX_RESPONSE_BYTES:
+                if response_size > response_bound:
                     raise runner.RunnerError("GitHub API response exceeds bounded size")
                 headers: dict[str, str] = {}
                 if stop < total_comments:
@@ -716,30 +782,57 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 return comments, headers
 
         client = _BoundedReviewCommentPages()
-        # skipcq: PYL-W0212 -- white-box test of the runner's internals
-        comments = runner._review_comments(client, "ktogias/gnostoa", 312)
-
-        self.assertEqual(list(range(total_comments)), [item["id"] for item in comments])
-        self.assertEqual(5, len(client.calls))
-        self.assertTrue(
-            all(
-                parse_qs(urlsplit(url).query)["per_page"] == ["50"]
-                for url in client.calls
+        # The comments as the bundle projects them for DeepSource, observed on their
+        # way to its public adapter.
+        with patch.object(
+            runner.analyzer_deepsource,
+            "diff_local_from_github",
+            wraps=runner.analyzer_deepsource.diff_local_from_github,
+        ) as diff_local:
+            bundle = runner.collect_bundle(
+                client,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=None,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
             )
+
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(total_comments, bundle["github_projection"]["review_comments"])
+        # Every comment kept, each once and in order.
+        diff_local.assert_called_once()
+        self.assertEqual(
+            [discussion(comment_id) for comment_id in range(total_comments)],
+            [item["url"] for item in diff_local.call_args.kwargs["comments"]],
+        )
+        pages = [
+            url for url in client.calls if urlsplit(url).path == urlsplit(endpoint).path
+        ]
+        self.assertEqual(5, len(pages))
+        self.assertTrue(
+            all(parse_qs(urlsplit(url).query)["per_page"] == ["50"] for url in pages)
         )
 
     def test_github_client_maps_http_protocol_failure_to_runner_error(self) -> None:
-        client = runner.GitHubReadClient("test-token")
-
         class _IncompleteReadOpener:
-            @staticmethod
-            def open(*_args: object, **_kwargs: object) -> object:
+            def __init__(self) -> None:
+                self.opened = 0
+
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                self.opened += 1
                 raise http.client.IncompleteRead(b"")
 
-        # skipcq: PYL-W0212 -- white-box test of the runner's internals
-        client._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        # The client's opener is the one built for it, which fails in the protocol;
+        # it is the one used, so the failure is that one and no other.
+        opener = _IncompleteReadOpener()
+        with patch("urllib.request.build_opener", return_value=opener):
+            client = runner.GitHubReadClient("test-token")
         with self.assertRaisesRegex(runner.RunnerError, "GitHub API unavailable"):
             client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
+        self.assertEqual(1, opener.opened)
 
     def test_repository_segments_reject_path_and_query_injection(self) -> None:
         class _NoNetwork:
@@ -825,22 +918,82 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_deepsource_comment_projection_retains_original_commit_identity(
         self,
     ) -> None:
-        # skipcq: PYL-W0212 -- white-box test of the runner's internals
-        projected = runner._deepsource_comments(
-            [
-                {
-                    "body": "finding",
-                    "path": "tools/example.py",
-                    "line": 7,
-                    "commit_id": HEAD,
-                    "original_commit_id": OTHER,
-                    "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion",
-                    "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                }
-            ]
+        # Two marked DeepSource comments on the head: one carried forward from
+        # another commit, one made on the head itself.
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [
+                    {
+                        "context": "DeepSource: Python",
+                        "state": "success",
+                        "target_url": (
+                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                            f"{RUN_UID}/python/"
+                        ),
+                        "creator": {
+                            "login": "deepsource-io[bot]",
+                            "type": "Bot",
+                        },
+                    }
+                ],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [
+                    {
+                        "body": "<!-- DeepSource: id=carried -->\n<h3>finding</h3>",
+                        "path": "tools/example.py",
+                        "line": 7,
+                        "commit_id": HEAD,
+                        "original_commit_id": OTHER,
+                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    },
+                    {
+                        "body": "<!-- DeepSource: id=on-head -->\n<h3>finding</h3>",
+                        "path": "tools/example.py",
+                        "line": 8,
+                        "commit_id": HEAD,
+                        "original_commit_id": HEAD,
+                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_2",
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    },
+                ],
+            }
         )
+        # The comments as the bundle projects them, observed on their way to
+        # DeepSource's public adapter.
+        with patch.object(
+            runner.analyzer_deepsource,
+            "diff_local_from_github",
+            wraps=runner.analyzer_deepsource.diff_local_from_github,
+        ) as diff_local:
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=None,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        diff_local.assert_called_once()
+        projected = diff_local.call_args.kwargs["comments"]
         self.assertEqual(HEAD, projected[0]["commit_id"])
         self.assertEqual(OTHER, projected[0]["original_commit_id"])
+        self.assertEqual(HEAD, projected[1]["commit_id"])
+        self.assertEqual(HEAD, projected[1]["original_commit_id"])
+        # And the readback tells them apart: the head's own comment is its one
+        # finding, and the carried-forward one is excluded, by name.
+        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
+        diff = readbacks["deepsource-github/v1"]
+        self.assertEqual(["on-head"], [item["id"] for item in diff["findings"]])
+        self.assertEqual(1, diff["native"]["carried_forward_comments_excluded"])
+        self.assertEqual("PARTIAL", diff["coverage"]["status"])
+        self.assertEqual(
+            "CARRIED_FORWARD_COMMENTS_EXCLUDED", diff["coverage"]["reason"]
+        )
 
     def test_check_run_can_supply_deepsource_run_association(self) -> None:
         urls = _github_urls()
@@ -1387,21 +1540,53 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertNotIn("observed_head", full)
 
     def test_secret_sentinel_is_rejected_before_output(self) -> None:
-        with self.assertRaisesRegex(runner.RunnerError, "credential bytes"):
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            runner._assert_secret_free(
-                canonical_json({"value": "prefix-super-secret-suffix"}),
-                ["super-secret"],
-            )
+        # A bundle that holds the credential inside a longer value is refused before
+        # anything is written, and the refusal does not repeat it.
+        leaked = {"subject_binding": "BOUND", "value": "prefix-super-secret-suffix"}
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {"GITHUB_TOKEN": "super-secret"}, clear=True),
+            patch.object(
+                runner.GitHubReadClient,
+                "from_environment",
+                return_value=_GitHubFake({}),
+            ),
+            patch.object(runner, "collect_bundle", return_value=leaked),
+            contextlib.redirect_stderr(stderr),
+            contextlib.redirect_stdout(stdout),
+        ):
+            output = Path(directory) / "readback.json"
+            self.assertEqual(2, _main(output))
+            self.assertFalse(output.exists())
+        self.assertRegex(stderr.getvalue(), r"^ERROR: .*credential bytes")
+        self.assertNotIn("super-secret", stderr.getvalue() + stdout.getvalue())
 
     def test_output_is_create_only(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        # The first run creates the receipt; a second, with another bundle, refuses
+        # the existing path and leaves the first receipt as it was.
+        first = {"subject_binding": "BOUND", "run": "first"}
+        second = {"subject_binding": "BOUND", "run": "second"}
+        stderr = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                runner.GitHubReadClient,
+                "from_environment",
+                return_value=_GitHubFake({}),
+            ),
+            patch.object(runner, "collect_bundle", side_effect=[first, second]),
+            contextlib.redirect_stderr(stderr),
+        ):
             output = Path(directory) / "readback.json"
-            # skipcq: PYL-W0212 -- white-box test of the runner's internals
-            runner._write_create_only(output, "{}")
-            with self.assertRaisesRegex(runner.RunnerError, "already exists"):
-                # skipcq: PYL-W0212 -- white-box test of the runner's internals
-                runner._write_create_only(output, "{}")
+            self.assertEqual(0, _main(output))
+            written = output.read_text(encoding="utf-8")
+            self.assertEqual(canonical_json(first) + "\n", written)
+            self.assertEqual("", stderr.getvalue())
+            self.assertEqual(2, _main(output))
+            self.assertEqual(written, output.read_text(encoding="utf-8"))
+        self.assertEqual("ERROR: output path already exists\n", stderr.getvalue())
 
     def test_guardrail_owns_all_analyzer_readback_surfaces(self) -> None:
         manifest = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
