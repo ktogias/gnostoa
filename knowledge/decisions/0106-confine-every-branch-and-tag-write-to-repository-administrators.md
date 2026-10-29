@@ -153,7 +153,9 @@ Any app outside the bypass list cannot commit, create a branch or tag, or merge.
 Amazon Q's `/q dev`, its label and `/q` with free text each make Amazon Q write,
 so the rules refuse them. That refusal is inferred, not exercised; two facts
 support it:
-- the probe below showed the rules evaluated for every writer;
+- the probe below showed the rules evaluated even for the agents' token, whose
+  user's admin role alone let its push through, and GitHub's rule definitions
+  apply them to every writer without bypass;
 - AWS's troubleshooting page states that branch protection rules prevent Amazon Q
   from creating its branch.
 
