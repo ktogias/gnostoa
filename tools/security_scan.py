@@ -1084,7 +1084,7 @@ def scan_tracked_tree(
 PLUGIN_PINS: dict[str, tuple[str, str]] = {
     "GnostoaAssignmentDetector": (
         "tools/security_scan_plugin.py",
-        "4d817323f82526cfb59d14ece40fe2693af70e11efda6ad92d660bc5980028fe",  # pragma: allowlist secret -- the reviewed plugin's content digest
+        "19e194b0969afa92c3020eb765776789326a7cf6557fcf30d95fbd80551bd798",  # pragma: allowlist secret -- the reviewed plugin's content digest
     ),
 }
 _MAX_PLUGIN_BYTES = 1_048_576
@@ -1150,22 +1150,36 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     return getattr(module, name)
 
 
-def _plugin_lines(root: Path, relative: str) -> list[str]:
+def _plugin_lines(root: Path, relative: str) -> list[str] | None:
+    """The file's lines, split at newlines only, so each is its line in the file (cubic on #470), or None for a file
+    holding NUL bytes, which no protected plugin reads."""
     data = (root / relative).read_bytes()
-    return [] if b"\0" in data else data.decode("utf-8", errors="replace").splitlines()
+    if b"\0" in data:
+        return None
+    lines = data.decode("utf-8", errors="replace").split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return [line.removesuffix("\r") for line in lines]
 
 
-def scan_with_protected_plugins(root: Path, paths: list[str]) -> list[dict[str, Any]]:
+def scan_with_protected_plugins(
+    root: Path, paths: list[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Every protected plugin over `paths` under `root`, read as data: each candidate's path, line and type, never
-    its value. A plugin that is not its pinned bytes fails the scan closed."""
+    its value, and the paths no plugin could read, for the caller to name as a gap. A plugin that is not its pinned
+    bytes fails the scan closed."""
     import types
 
     records: list[dict[str, Any]] = []
+    unread: list[str] = []
     with tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging:
         for name in sorted(PLUGIN_PINS):
             detector = _load_protected_plugin(name, Path(staging))()
             for relative in paths:
                 lines = _plugin_lines(root, relative)
+                if lines is None:
+                    unread += [] if relative in unread else [relative]
+                    continue
                 for index, line in enumerate(lines):
                     context = types.SimpleNamespace(lines=lines, target_index=index)
                     for found in detector.analyze_line(
@@ -1174,4 +1188,4 @@ def scan_with_protected_plugins(root: Path, paths: list[str]) -> list[dict[str, 
                         records.append(
                             {"path": relative, "line": index + 1, "type": found.type}
                         )
-    return records
+    return records, unread

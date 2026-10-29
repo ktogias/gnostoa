@@ -88,17 +88,31 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - ShellCheck: `--norc`, no `-x`, explicit files;
    - Hadolint: an explicit protected `-c`, `--disable-ignore-pragma`, an empty working directory;
    - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes.
-4. **Applicability** comes from the frozen tree: a `.sh` file or a sh/bash/dash/ksh shebang, `Dockerfile*`, GitHub
-   workflows and `ci/github*.yml`, the GitLab CI files, and every tracked file for secrets.
+4. **Applicability** comes from the frozen tree's one listing:
+   - for ShellCheck, a `.sh`, `.bash`, `.dash` or `.ksh` file, or a sh/bash/dash/ksh shebang;
+   - `Dockerfile*`;
+   - GitHub workflows and `ci/github*.yml`;
+   - the GitLab CI files;
+   - every tracked file for secrets.
+
+   A DIFF-only family reaches by that listing, never by the Python paths alone.
 5. **Attributable gaps.** These make a family's row PARTIAL or INCOMPLETE and are named, never a clean result:
    - a ShellCheck directive, a Hadolint pragma or a sourced file;
    - a workflow step whose effective shell is not bash or sh;
    - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, unmappable items);
    - another shell's script;
-   - a missing, linked or altered tool, or a wrong version;
-   - a report its exit status contradicts.
+   - a missing, linked or altered tool, a wrong version, or a run with no status;
+   - a report that is not the pinned tool's: a duplicate key, a non-finite number, or a field its version does not
+     write;
+   - a report its exit status contradicts;
+   - a workflow whose structure is not the documented mapping, or a step whose shell is empty or not text, and a
+     `concurrency.queue` form the projection refuses;
+   - a GitLab item whose tag cannot read its text;
+   - for secrets, a file holding NUL bytes, which the protected plugins never read.
 
-   Every finding a run reports stays listed.
+   Each unanalyzed reason is named in the row, with how many targets it covers and the first. Every finding a run
+   reports stays listed: past `max_findings` no inventory is written at all, and the refusal names the real count.
+   A tool runs from a copy of its verified bytes in the run, so a replacement after the check never runs.
 6. **The queue projection** changes, in an analysis copy only, a validated block-style `concurrency.queue: single|max`
    line into a comment, keeping every other byte and the line count. Every other form is left for actionlint to
    report.
@@ -106,6 +120,12 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    restricted to the scanned files, then the protected plugin `tools/security_scan_plugin.py`. The scanner pins the
    plugin by digest (`PLUGIN_PINS`), reads its bytes through no link, and imports only a private read-only copy. The
    candidate `security-fast` scan and `.secrets.baseline` are unchanged.
+   - **Identity:** the scan refuses any detect-secrets version, plugin or filter set but the protected baseline's.
+     Its run record names that version, and its report binds the scanner, the baseline's digest and each plugin
+     pin.
+   - **Deadline:** a spent inventory deadline starts no scan; the scan itself is bounded by the scanner's timeout.
+   - **Reasons:** a scanner refusal keeps its own classification, which never copies an exception's text or a
+     filename; any other failure is named by its type alone.
 8. **Unsafe-calls** select S301, S307, S324, S602, S605 and S608 on the existing Ruff producer. Its one finding on
    main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest.
 9. **Qualification with the real executables** is `tests/test_quality_evidence_tool_qualification.py`. It runs only
@@ -120,14 +140,21 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
 
 ## Consequences
 
-- **Nothing effective changes at merge.** Activation is a separate decision covering:
-  - the protected inventory job's pinned tool acquisition into `TOOL_ROOT`, and the development image's;
-  - the findings the new families would report on main (Hadolint and actionlint, source `qualification`);
-  - the coverage choices the owner still holds (source `owner-admission`).
+- **Nothing effective changes at merge.** This change is a partial delivery of the admitted H-PYSEC-2 work, not
+  its whole outcome. Two things remain, kept apart.
+  - **The admitted remainder** (implementation, under the same admission):
+    - the pinned tool acquisition into `TOOL_ROOT` for the protected inventory job and the development image;
+    - the development dependencies the producers need there, detect-secrets among them, since the runtime image
+      carries none and a secrets family without it is unanalyzed;
+    - the repairs of the findings the new families report on main (Hadolint and actionlint, source
+      `qualification`).
+  - **The later decision** to enable production coverage: turning any family `active`, and the coverage choices
+    the owner still holds (source `owner-admission`).
 
-  Acquisition waits for activation because, while every new family is off, a release download in the inventory
-  job would add a failure to every pull request's inventory and no coverage. Source `route` keeps the effective
-  production obligations unchanged now.
+  This change leaves acquisition out because, while every new family is off, a mandatory release download would
+  add a failure to every pull request's inventory and no coverage. Source `route` keeps the effective production
+  obligations unchanged now. A dependency added to the effective inventory still needs its validation and its
+  activation boundary.
 - **The frozen tree is listed once.** That one listing serves the Python families and the new families'
   applicability, so an inactive profile enumerates exactly as before.
 - **The inventory document stays v3.** New values ride existing fields, and the adapter reads only the schema string.

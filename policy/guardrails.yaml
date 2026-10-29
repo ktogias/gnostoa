@@ -1350,6 +1350,19 @@ guardrails:
       - tools/quality_evidence.py#_run_v2_family
       - tools/quality_evidence.py#_unanalyzed_notes
       - tools/quality_evidence.py#_run_all_families
+      - tools/quality_evidence.py#_shell_applicability
+      - tools/quality_evidence.py#_verified_tools
+      - tools/quality_evidence.py#_tool_bytes
+      - tools/quality_evidence.py#_tool_notes
+      - tools/quality_evidence.py#_tool_gap
+      - tools/quality_evidence.py#_report_records
+      - tools/quality_evidence.py#_run_shellcheck
+      - tools/quality_evidence.py#_run_hadolint
+      - tools/quality_evidence.py#_run_actionlint
+      - tools/quality_evidence.py#_tool_environment
+      - tools/quality_evidence.py#_step_shell_notes
+      - tools/quality_evidence.py#_job_step_notes
+      - tools/quality_evidence.py#_secrets_identity
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
       - tools/security_scan.py#scan_with_protected_plugins
@@ -1382,8 +1395,32 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_dockerfile_env_secret_is_listed_by_the_secrets_family
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_workflow_secret_reference_is_not_listed
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_scanner_pins_its_plugin_by_digest
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_spent_budget_starts_no_secrets_scan
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_scanner_failure_is_named_by_its_type_alone
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_file_holding_nul_bytes_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_finding_after_a_form_feed_keeps_its_file_line_number
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_secrets_run_names_the_scanner_version_it_was_held_to
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_baseline_held_to_other_scanner_settings_leaves_the_family_unanalyzed
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_secrets_run_binds_its_scanner_and_plugin_identity
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_run_with_no_status_and_no_gap_is_never_clean
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_report_with_a_duplicate_key_is_a_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_refused_queue_form_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_malformed_workflow_structure_is_a_named_gap_and_still_linted
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_distinct_gitlab_jobs_are_each_analyzed
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_diff_only_family_acquires_changed_non_python_files
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_verified_bytes_are_the_bytes_that_run
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_calls_family_finds_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_dockerfile_assignment_is_reported_and_a_reference_is_not
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_makefile_assignment_is_reported_and_a_reference_is_not
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_yaml_mapping_is_reported_and_a_reference_or_placeholder_is_not
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_literal_dollar_is_part_of_a_value_and_only_a_reference_is_not
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hash_without_whitespace_before_it_is_part_of_a_yaml_value
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_value_starting_with_a_slash_is_a_path_only_when_it_is_one
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_an_encrypted_private_key_body_is_reported
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hostile_line_is_read_in_linear_time
 
   - id: inventory-readback
     title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)
