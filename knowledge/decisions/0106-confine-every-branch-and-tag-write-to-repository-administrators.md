@@ -278,21 +278,22 @@ Read back and exercised on 2026-10-07:
   for both rulesets, `repositoryRoleDatabaseId: 5` and
   `repositoryRoleName: "admin"`, with `bypassMode: ALWAYS`:
 
-  ```graphql
-  query {
-    repository(owner: "ktogias", name: "gnostoa") {
-      rulesets(first: 10) {
-        nodes {
-          databaseId
-          name
-          bypassActors(first: 10) {
-            nodes { bypassMode repositoryRoleName repositoryRoleDatabaseId }
-          }
+```graphql
+query {
+  repository(owner: "ktogias", name: "gnostoa") {
+    rulesets(first: 10) {
+      nodes {
+        databaseId
+        name
+        bypassActors(first: 10) {
+          nodes { bypassMode repositoryRoleName repositoryRoleDatabaseId }
         }
       }
     }
   }
-  ```
+}
+```
+
 - **What the rules refuse.** GitHub's documentation defines each of the four rules:
   - "Restrict creations" reads: "Only users with bypass permissions can create
     branches or tags whose name matches the pattern you specify".
@@ -307,9 +308,10 @@ Read back and exercised on 2026-10-07:
 - **They apply to any branch name.** `GET repos/ktogias/gnostoa/rules/branches/probe-anything`
   listed `creation`, `update`, `deletion` and `non_fast_forward` from `24640984`.
 - **They are evaluated for agents too.** A push creating, then deleting, a
-  temporary branch through the agents' token succeeded, with GitHub reporting:
-  - `Bypassed rule violations … Cannot create ref due to creations being restricted`;
-  - `Cannot delete this branch`.
+  temporary branch through the agents' token succeeded. For each, GitHub named the
+  rule it bypassed under `Bypassed rule violations for refs/heads/…`:
+  - for the creation, `Cannot create ref due to creations being restricted`;
+  - for the deletion, `Cannot delete this branch`.
 
   So the rules are evaluated, and only the admin bypass let the push through.
 - **The owner's read of the settings**, which the agents' token cannot read:
@@ -336,14 +338,18 @@ where it concerns `main`, the branch ruleset's bypass and the agents' identities
 - **The agents' identities.** The agents open Pull Requests as their machine user,
   `gnostoa-agent-user`, and push and merge as their App, not through the owner's
   token. Neither holds the admin role: the App has no admin, and the machine user,
-  a collaborator since, has the Write role.
-- **What describes 2026-10-07 only.** In the Decision: that the branch ruleset
+  now a collaborator, has the Write role.
+- **What describes 2026-10-07 only.** In the Context: that `main` requires no
+  approval and no code owner's review. In the Decision: that the branch ruleset
   governs merging into `main`, that Pull Requests are opened as the owner, that
-  only the admin role can write a branch, and that an agent acts as the
-  administrator. In the description: that no installed app can place code on any
-  ref. In the Consequences: that the rulesets do not constrain agents because they
-  act through the owner's token, that the owner is the only collaborator, and that
-  no writer outside the admin role has a bypass entry.
+  only the admin role can write a branch, that an app outside the bypass list
+  cannot merge, and that an agent acts as the administrator. In the description:
+  that no installed app can place code on any ref. In the Consequences: that the
+  rulesets do not constrain agents because they act through the owner's token,
+  that the owner is the only collaborator, and that no writer outside the admin
+  role has a bypass entry. Any other statement above about `main`, merging, the
+  agents' identities or the bypass also describes 2026-10-07 only; Decision 0110
+  and the merge-gate runbook are the current record for those.
 - **What is unchanged.** The tag ruleset `24640985` still admits only the admin
   role, so the agents' App cannot write a tag. On every branch but `main`, no app
   outside the bypass can write. Read back on 2026-10-29
