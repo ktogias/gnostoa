@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Confine every branch and tag write to repository administrators
-description: Two repository rulesets let only the repository admin role create, update, force-push or delete any branch or tag, so an installed app with write access, such as Amazon Q Developer, cannot place unreviewed code or workflows on any ref, or merge into main. Records the measured app permissions, the controls that already held, the gap they left, the rulesets and their verification, as of 2026-10-07; Decision 0110 later took main out of the branch ruleset.
+description: Two repository rulesets let only the repository admin role create, update, force-push or delete any branch or tag, so an installed app with write access, such as Amazon Q Developer, cannot place unreviewed code or workflows on any ref, or merge into main. Records the measured app permissions, the controls that already held, the gap they left, the rulesets and their verification, as of 2026-10-07; Decision 0110 later took main out of the branch ruleset and admitted gnostoa-agent to its bypass.
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -322,17 +322,27 @@ Read back and exercised on 2026-10-07:
 
 [Decision 0110](0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
 changed the branch ruleset on 2026-10-08. It partially supersedes this Decision
-only where it concerns `main` and the agents' identities:
+where it concerns `main`, the branch ruleset's bypass and the agents' identities:
 
-- **`main`.** `24640984` now excludes `main`, and admits `gnostoa-agent` beside
-  the admin role. The ruleset `main merge gate (MA0)`, `24687961`, governs `main`
-  instead: a merge needs the owner's native approval of the exact head.
-- **What that changes above.** The sentences that the branch ruleset governs
-  merging into `main`, that Pull Requests are opened as the owner, and that agents
-  act through the owner's token, describe 2026-10-07. Since then the agents open
-  Pull Requests as their machine user and merge as their GitHub App.
-- **What is unchanged.** The tag ruleset `24640985`, and this Decision for every
-  branch but `main`. Read back on 2026-10-29
+- **`main`.** `24640984` now excludes `main`. The ruleset `main merge gate (MA0)`,
+  `24687961`, governs `main` instead: a merge needs the owner's native approval of
+  the exact head.
+- **The branch bypass.** `24640984` admits `gnostoa-agent`, the agents' GitHub
+  App, beside the admin role. So on every branch but `main`, the admin role and
+  that App can create, update, force-push or delete; every other app, Amazon Q
+  included, still cannot.
+- **The agents' identities.** The agents open Pull Requests as their machine user,
+  `gnostoa-agent-user`, and push and merge as their App, not through the owner's
+  token.
+- **What describes 2026-10-07 only.** In the Decision: that the branch ruleset
+  governs merging into `main`, that Pull Requests are opened as the owner, and that
+  only the admin role can write a branch. In the description: that no installed
+  app can place code on any ref. In the Consequences: that the rulesets do not
+  constrain agents because they act through the owner's token, and that no writer
+  outside the admin role has a bypass entry.
+- **What is unchanged.** The tag ruleset `24640985` still admits only the admin
+  role, so the agents' App cannot write a tag. On every branch but `main`, no app
+  outside the bypass can write. Read back on 2026-10-29
   (`GET repos/ktogias/gnostoa/rulesets/{24640984,24640985}`): both `active`, each
   with the four rules; `24640985` includes `["~ALL"]`, and `24640984` includes
   `["~ALL"]` and excludes `["refs/heads/main"]`. The agents' credentials cannot read
