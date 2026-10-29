@@ -18,14 +18,18 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import platform
+import time
+import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _DiagnosticInventoryFixture
+from tests.test_quality_evidence_profile import _original
 
 _SC_NATIVE = {
     "file": "tool",
@@ -70,6 +74,8 @@ _WORKFLOW = (
     "      - run: echo $FOO\n"
 )
 _GITLAB = "job:\n  script:\n    - echo $FOO\n"
+# The repository's protected reviewed baseline, which the producer tree's secrets family holds the scan to.
+_REVIEWED_BASELINE = Path(__file__).resolve().parent.parent / ".secrets.baseline"
 _NEW_FAMILIES = (
     "shell-lint",
     "dockerfile-lint",
@@ -163,7 +169,8 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
                 },
             ],
         }
-        self.tool_answers: dict[str, tuple[int, object]] = {
+        self.executed: list[tuple[str, str]] = []
+        self.tool_answers: dict[str, tuple[int | None, object]] = {
             "shellcheck": (1, {"comments": [dict(_SC_NATIVE, file="ci/tool")]}),
             "hadolint": (1, [_HL_NATIVE]),
             "actionlint": (1, [_AL_NATIVE]),
@@ -187,6 +194,10 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
                 limits=limits,
             )
         self.commands.append((list(command), Path(cwd), dict(environment)))
+        if not {"--version", "-version"} & set(command):
+            self.executed.append(
+                (name, hashlib.sha256(Path(command[0]).read_bytes()).hexdigest())
+            )
         if report.exists():
             # As the real run does: its report is always a new file (_bounded_run, _new_file).
             return None, "cannot create its report: FileExistsError", False
@@ -430,10 +441,13 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
         command, _, _ = self._commands_of("actionlint")[0]
         config = Path(command[command.index("-config-file") + 1])
         self.assertFalse(config.resolve().is_relative_to(self.root.resolve()))
+        # The pinned ShellCheck governs: the run's verified copy of its bytes (cubic on #470), never the head's.
+        shellcheck = Path(command[command.index("-shellcheck") + 1])
         self.assertEqual(
-            str(self.tool_root / "shellcheck"),
-            command[command.index("-shellcheck") + 1],
+            self.profile["tools"]["shellcheck"]["sha256"][platform.machine()],
+            hashlib.sha256(shellcheck.read_bytes()).hexdigest(),
         )
+        self.assertTrue(shellcheck.resolve().is_relative_to(self.output.resolve()))
         self.assertIn("-pyflakes=", command)
 
     def test_the_queue_projection_changes_only_the_validated_line(self) -> None:
@@ -514,6 +528,10 @@ class GitlabScriptFamilyTests(_ToolFamilyFixture):
         self.assertIn(".gitlab-ci.yml", inventory["coverage"]["reason"])
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("detect_secrets") is not None,
+    "detect-secrets is available only in the exact development verification environment",
+)
 class SecretsFamilyTests(_ToolFamilyFixture):
     # Synthetic values only; the family runs the protected scanner with its pinned plugin over the head's data.
 
@@ -557,16 +575,269 @@ class SecretsFamilyTests(_ToolFamilyFixture):
             path = Path(security_scan.__file__).resolve().parent.parent / relative
             self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
 
+    def test_a_spent_budget_starts_no_secrets_scan(self) -> None:
+        # Amazon Q and cubic on #470: the secrets family keeps the inventory's one deadline.
+        run = Path(self.directory.name) / "run"
+        run.mkdir()
+        with patch("tools.security_scan.scan_tracked_tree") as scan:
+            result, _notes = _original(self.module, "_run_secrets")(
+                self.root,
+                run,
+                ["Dockerfile"],
+                self.module.DEFAULT_DIAGNOSTIC_LIMITS,
+                time.monotonic() - 1,
+                100,
+            )
+        scan.assert_not_called()
+        self.assertIn("deadline", result.unanalyzed["Dockerfile"])
+
+    def test_a_scanner_failure_is_named_by_its_type_alone(self) -> None:
+        # Amazon Q, Revix and cubic on #470: an exception's text can carry a host path.
+        absent = Path(self.directory.name) / "host-only-directory" / "baseline.json"
+        with patch.object(self.module, "_PROTECTED_BASELINE", absent):
+            row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertIn("secrets: FileNotFoundError", row["reason"])
+        self.assertNotIn("host-only-directory", row["reason"])
+
+    def test_a_file_holding_nul_bytes_is_a_named_gap(self) -> None:
+        # cubic on #470: the protected plugins never read such a file, so it must never count as clean.
+        (self.root / "blob.yml").write_bytes(b"password: x\0y\n")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "nul file")
+        row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn("NUL", row["reason"])
+        self.assertIn("blob.yml", row["reason"])
+
+    def test_a_finding_after_a_form_feed_keeps_its_file_line_number(self) -> None:
+        # cubic on #470: lines are the file's, split at newlines only.
+        (self.root / "Dockerfile").write_text(
+            "FROM scratch\n# a\x0cb\nENV DB_PASSWORD=" + "Zq7" * 6 + "\n",
+            encoding="utf-8",  # pragma: allowlist secret -- synthetic fixture value
+        )
+        self._git("commit", "-q", "-am", "form feed")
+        found = [
+            f
+            for f in self._findings(self._collect(base=self.base), "secrets")
+            if f["path"] == "Dockerfile"
+        ]
+        self.assertEqual([3], [f["range"]["start_line"] for f in found])
+
+    def _secrets_runs(self, inventory: dict) -> list[dict]:
+        return [r for r in inventory["producers"] if r["producer"] == "secrets"]
+
+    def test_the_secrets_run_names_the_scanner_version_it_was_held_to(self) -> None:
+        # The scan refuses any settings but the protected baseline's, so its version is the baseline's; the run
+        # record names it (#389 6510431996, residual).
+        baseline = json.loads(_REVIEWED_BASELINE.read_text(encoding="utf-8"))
+        runs = self._secrets_runs(self._collect(base=self.base))
+        self.assertEqual([baseline["version"]], [r["version"] for r in runs])
+
+    def test_a_baseline_held_to_other_scanner_settings_leaves_the_family_unanalyzed(
+        self,
+    ) -> None:
+        # The Router's 6510622435 on #389: the scanner's version, plugins and filters are each held to the protected
+        # reviewed baseline, and a mismatch is an attributable refusal, never a clean row.
+        protected = _REVIEWED_BASELINE
+        reviewed = json.loads(protected.read_text(encoding="utf-8"))
+
+        def other_version(document: dict) -> None:
+            document["version"] = "0.0.1"
+
+        def one_plugin_fewer(document: dict) -> None:
+            document["plugins_used"] = document["plugins_used"][1:]
+
+        def one_filter_fewer(document: dict) -> None:
+            document["filters_used"] = document["filters_used"][1:]
+
+        for change in (other_version, one_plugin_fewer, one_filter_fewer):
+            with self.subTest(change=change.__name__):
+                document = copy.deepcopy(reviewed)
+                change(document)
+                other = Path(self.directory.name) / f"{change.__name__}.baseline"
+                other.write_text(json.dumps(document), encoding="utf-8")
+                with patch.object(self.module, "_PROTECTED_BASELINE", other):
+                    inventory = self._collect(base=self.base)
+                row = self._rows(inventory)["secrets"]
+                self.assertEqual("INCOMPLETE", row["analysis"])
+                self.assertIn(
+                    "settings do not match the reviewed baseline", row["reason"]
+                )
+                self.assertEqual([], self._findings(inventory, "secrets"))
+
+    def test_the_secrets_run_binds_its_scanner_and_plugin_identity(self) -> None:
+        # The Router's 6510622435 on #389: the run record names what the scan was held to, by digest.
+        from tools import security_scan
+
+        inventory = self._collect(base=self.base)
+        (run,) = self._secrets_runs(inventory)
+        identity = self.output.glob(f"diagnostic-*/{run['report']['path']}")
+        document = json.loads(next(identity).read_text(encoding="utf-8"))
+        protected = _REVIEWED_BASELINE
+        self.assertEqual(
+            {
+                "scanner": "detect-secrets",
+                "version": run["version"],
+                "baseline_sha256": hashlib.sha256(protected.read_bytes()).hexdigest(),
+                "plugins": {n: d for n, (_r, d) in security_scan.PLUGIN_PINS.items()},
+            },
+            document,
+        )
+
+    def _commit(self, files: dict[str, str]) -> None:
+        for name, body in files.items():
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "round two")
+
+    def test_a_run_with_no_status_and_no_gap_is_never_clean(self) -> None:
+        # Amazon Q on #470.
+        self.tool_answers["shellcheck"] = (None, {"comments": []})
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn("did not finish", row["reason"])
+
+    def test_a_report_with_a_duplicate_key_is_a_gap(self) -> None:
+        # Revix and cubic on #470: reports are read strictly.
+        self.tool_answers["shellcheck"] = (1, '{"comments": [], "comments": []}')
+        self.tool_answers["hadolint"] = (
+            1,
+            '[{"code": "DL3006", "code": "DL3007", "column": 1, "file": "Dockerfile",'
+            ' "level": "warning", "line": 1, "message": "m"}]',
+        )
+        self.tool_answers["actionlint"] = (1, '[{"message": "m", "message": "n"}]')
+        rows = self._rows(self._collect(base=self.base))
+        for family in ("shell-lint", "dockerfile-lint", "workflow-lint"):
+            with self.subTest(family=family):
+                self.assertEqual("INCOMPLETE", rows[family]["analysis"])
+                self.assertIn("unparsable report", rows[family]["reason"])
+
+    def test_a_refused_queue_form_is_a_named_gap(self) -> None:
+        # cubic on #470: a refused form is left for actionlint, and named.
+        self._commit(
+            {
+                ".github/workflows/w.yml": _WORKFLOW.replace(
+                    "concurrency:\n  group: g\n  cancel-in-progress: false\n  queue: max\n",
+                    "concurrency: {group: g, queue: max}\n",
+                )
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn("flow-style concurrency", row["reason"])
+
+    def test_a_malformed_workflow_structure_is_a_named_gap_and_still_linted(
+        self,
+    ) -> None:
+        # Codex, Revix and cubic on #470.
+        self._commit(
+            {
+                ".github/workflows/w.yml": "on: push\njobs: [build]\n",
+                ".github/workflows/x.yml": (
+                    "on: push\ndefaults: bash\njobs:\n  a:\n    runs-on: x\n    steps:\n"
+                    "      - run: echo\n        shell: ' '\n"
+                ),
+            }
+        )
+        inventory = self._collect(base=self.base)
+        row = self._rows(inventory)["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        for needle in ("w.yml", "x.yml", "not a mapping", "an empty shell"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, row["reason"])
+        self.assertTrue(self._commands_of("actionlint"))
+
+    def test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap(self) -> None:
+        # Revix on #470.
+        self._commit({".gitlab-ci.yml": "job:\n  script:\n    - !!int x\n"})
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn(".gitlab-ci.yml", row["reason"])
+
+    def test_distinct_gitlab_jobs_are_each_analyzed(self) -> None:
+        # Codex and cubic on #470: `build app` and `build_app` once shared one analysis file.
+        self._commit(
+            {
+                ".gitlab-ci.yml": (
+                    "build app:\n  script:\n    - echo $A\nbuild_app:\n  script:\n    - echo ok\n"
+                )
+            }
+        )
+        self._collect(base=self.base)
+        command = next(
+            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
+        )
+        analyzed = command[command.index("--") + 1 :]
+        self.assertEqual(2, len(set(analyzed)), analyzed)
+
+    def test_a_diff_only_family_acquires_changed_non_python_files(self) -> None:
+        # Codex on #470: the comparison was read only when a Python path reached past FULL.
+        profile = copy.deepcopy(self.profile)
+        profile["scopes"]["no-python"] = {"exclude": ["tools/", "tests/"]}
+        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell.update(diff="no-python", full=None)
+        self._change("ci/tool", "echo $1", "echo $2")
+        row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
+        self.assertEqual(1, row["targets"])
+        self.assertTrue(self._commands_of("shellcheck"))
+
+    def test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named(
+        self,
+    ) -> None:
+        # cubic on #470.
+        self._commit(
+            {
+                "ci/lib.bash": "echo $1\n",
+                "ci/lib.ksh": "echo $1\n",
+                "ci/lib.zsh": "echo $1\n",
+            }
+        )
+        inventory = self._collect(base=self.base)
+        command = next(
+            c
+            for c, _cwd, _env in self._commands_of("shellcheck")
+            if "--shell=sh" not in c
+        )
+        self.assertIn("ci/lib.bash", command)
+        self.assertIn("ci/lib.ksh", command)
+        self.assertNotIn("ci/lib.zsh", command)
+        self.assertIn("ci/lib.zsh", self._rows(inventory)["shell-lint"]["reason"])
+
+    def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
+        # cubic on #470: a tool replaced after its check must never be what runs.
+        pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
+        verify = _original(self.module, "_tool_version")
+
+        def then_replace(*args, **kwargs):
+            version = verify(*args, **kwargs)
+            (self.tool_root / "shellcheck").write_bytes(b"#!replaced\n")
+            return version
+
+        with patch.object(self.module, "_tool_version", side_effect=then_replace):
+            self._collect(base=self.base)
+        ran = {digest for name, digest in self.executed if name == "shellcheck"}
+        self.assertEqual({pinned}, ran)
+
 
 class RepositoryCleanTests(_ToolFamilyFixture):
-    # RED on main: the repairs are owed. Each runs the real pinned tool, from the protected tool root.
+    # RED on main: the repairs are owed.
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("ruff") is not None,
+        "Ruff is available only in the exact development verification environment",
+    )
     def test_the_unsafe_calls_family_finds_nothing_in_the_repository(self) -> None:
-        import subprocess  # nosec B404 -- test-only: the pinned ruff on the repository's own files
+        # Ruff runs through the inventory's own bounded runner, and must finish with status 0 and an empty report:
+        # a Ruff that never ran is a failure, never a clean result (cubic on #470).
         import sys
 
         repository = Path(__file__).resolve().parent.parent
-        completed = subprocess.run(  # nosec B603 -- test-only: a literal argv
+        run = Path(self.directory.name) / "clean"
+        run.mkdir()
+        report = run / "ruff.json"
+        status, gap, invalid = _original(self.module, "_bounded_run")(
             [
                 sys.executable,
                 "-I",
@@ -575,7 +846,7 @@ class RepositoryCleanTests(_ToolFamilyFixture):
                 "check",
                 "--isolated",
                 "--no-cache",
-                "--ignore-noqa",
+                "--ignore-noqa",  # a flag, not a marker -- Ruff's option to ignore every inline suppression
                 "--preview",
                 "--select",
                 "S301,S307,S324,S602,S605,S608",
@@ -584,14 +855,14 @@ class RepositoryCleanTests(_ToolFamilyFixture):
                 ".",
             ],
             cwd=repository,
-            capture_output=True,
-            text=True,
-            check=False,
+            environment=_original(self.module, "_tool_environment")(run),
+            report=report,
+            deadline=time.monotonic() + 600,
+            limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
         )
-        self.assertEqual(
-            [],
-            [(r["filename"], r["code"]) for r in json.loads(completed.stdout or "[]")],
-        )
+        self.assertEqual((0, None, False), (status, gap, invalid))
+        records = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual([], [(r["filename"], r["code"]) for r in records])
 
     def test_the_protected_profile_pins_the_official_release_executables(self) -> None:
         # The executables inside the official release assets, whose own digests GitHub publishes (#389 6503632912).

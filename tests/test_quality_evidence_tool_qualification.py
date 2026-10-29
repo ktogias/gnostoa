@@ -180,9 +180,9 @@ class RealToolPositiveTests(_RealToolFixture):
             {(".gitlab-ci.yml", 3)}, self._at(inventory, "gitlab-shellcheck")
         )
         self.assertEqual({("tools/runner.py", 5)}, self._at(inventory, "ruff"))
-        self.assertTrue(
-            {("config/app.yml", 2), ("docker/Dockerfile.env", 2)}
-            <= self._at(inventory, "secrets")
+        self.assertLessEqual(
+            {("config/app.yml", 2), ("docker/Dockerfile.env", 2)},
+            self._at(inventory, "secrets"),
         )
         rows = self._rows(inventory)
         for family in (
