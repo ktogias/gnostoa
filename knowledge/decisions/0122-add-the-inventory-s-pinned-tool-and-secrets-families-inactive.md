@@ -108,13 +108,28 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    candidate `security-fast` scan and `.secrets.baseline` are unchanged.
 8. **Unsafe-calls** select S301, S307, S324, S602, S605 and S608 on the existing Ruff producer. Its one finding on
    main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest.
+9. **Qualification with the real executables** is `tests/test_quality_evidence_tool_qualification.py`. It runs only
+   when `GNOSTOA_QUALIFICATION_TOOL_ROOT` names a directory whose executables are the protected pins. Otherwise it
+   skips, and the skip says why.
+   - **What it runs:** the protected profile with its new families switched on, passed explicitly, so every record
+     names its origin as an argument, never the producer tree's.
+   - **What it covers:** real positives in changed and unchanged files and benign controls; each named gap; an
+     altered, linked or missing executable, and a pin that is the correct digest of the wrong tool; and the
+     findings' path through the readbacks to M17.
+   - **What it is not:** an obligation. It is a qualification instrument, so no guardrail lists it.
 
 ## Consequences
 
-- **Nothing effective changes at merge.** Activation is a separate decision: the protected inventory job's pinned
-  tool acquisition into `TOOL_ROOT`, the development image's, the findings the new families would report on main
-  (Hadolint and actionlint, source `qualification`), and the coverage choices the owner still holds (source
-  `owner-admission`).
+- **Nothing effective changes at merge.** Activation is a separate decision covering:
+  - the protected inventory job's pinned tool acquisition into `TOOL_ROOT`, and the development image's;
+  - the findings the new families would report on main (Hadolint and actionlint, source `qualification`);
+  - the coverage choices the owner still holds (source `owner-admission`).
+
+  Acquisition waits for activation because, while every new family is off, a release download in the inventory
+  job would add a failure to every pull request's inventory and no coverage. Source `route` keeps the effective
+  production obligations unchanged now.
+- **The frozen tree is listed once.** That one listing serves the Python families and the new families'
+  applicability, so an inactive profile enumerates exactly as before.
 - **The inventory document stays v3.** New values ride existing fields, and the adapter reads only the schema string.
 - **Touched files are acquired whole.** The files this change touches were brought clean under the inventory's own
   families: fixture annotations, originals through the mock factory instead of private attribute access, and a public
@@ -138,5 +153,16 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
 
 ## Evidence
 
-The RED (source `red`) failed on main for its stated reasons and passes on this change. The protected inventory over
-this change's head against main reports COMPLETE coverage, with no DIFF or FULL finding.
+- **The RED** (source `red`) failed on main for its stated reasons and passes on this change.
+- **The real-tool qualification found three defects the fake tools could not show:**
+  - a second family's version check could not write the report the first had written, so a family that reused
+    ShellCheck never ran it;
+  - a family's unanalyzed targets were counted and never named;
+  - another shell's script was named by its interpreter, not its path.
+
+  Each fix followed a RED in the default suite. That suite now fakes a run that refuses an existing report, as the
+  real one does.
+- **The project's suite found a regression,** a second listing of the frozen tree, which ran even when every new
+  family was inactive.
+- **The protected inventory** over this change's head against main reports COMPLETE coverage, with no DIFF or FULL
+  finding.

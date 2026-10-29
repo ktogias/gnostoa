@@ -3017,7 +3017,7 @@ def _applicable(
                 selected.append(path)
             elif interpreter in _OTHER_SHELLS:
                 unsupported[path] = (
-                    f"shell-lint: an unsupported interpreter {interpreter!r}"
+                    f"{path}: an unsupported interpreter {interpreter!r}"
                 )
         elif producer == "hadolint" and name.startswith("Dockerfile"):
             selected.append(path)
@@ -3073,9 +3073,12 @@ def _tool_version(
     limits: DiagnosticLimits,
     deadline: float,
     pinned: str,
+    *,
+    family: str,
 ) -> str | None:
-    """The pinned version when the tool's own version output names it, else None."""
-    report = run / f"diagnostic-{name}-version.txt"
+    """The pinned version when the tool's own version output names it, else None. Each family verifies its
+    tools for itself, into a report of its own, since a report is always a new file (_bounded_run)."""
+    report = run / f"diagnostic-{family}-{name}-version.txt"
     flag = "-version" if name == "actionlint" else "--version"
     status, gap, _invalid = _bounded_run(
         [str(tool), flag],
@@ -3765,7 +3768,12 @@ def _run_tool_family(
         tool, why = _verified_tool(profile, tool_name)
         if why is None and tool is not None:
             pinned = profile["tools"][tool_name]["version"]
-            if _tool_version(tool, tool_name, run, limits, deadline, pinned) is None:
+            if (
+                _tool_version(
+                    tool, tool_name, run, limits, deadline, pinned, family=family["id"]
+                )
+                is None
+            ):
                 why = f"tool {tool_name}: its version is not its pin {pinned!r}"
         if why is not None or tool is None:
             return _ProducerResult(
@@ -3845,16 +3853,6 @@ def _run_tool_family(
         root, run, paths, tools["shellcheck"], limits, deadline, allowance, name=name
     )
     return result, notes + unsupported
-
-
-def _tracked_all(root: Path, tree: str, owner: Any) -> list[str] | None:
-    """Every tracked path of the frozen tree, in order, for the v2 families; None when it cannot be listed."""
-    from tools import exact_tree
-
-    try:
-        return sorted(exact_tree.tree_paths(root, tree, limits=owner))
-    except (exact_tree.ExactTreeError, OverflowError):
-        return None
 
 
 def _with_notes(row: dict[str, Any], notes: list[str]) -> dict[str, Any]:
@@ -3938,6 +3936,18 @@ def _run_secrets(
     return result, []
 
 
+def _unanalyzed_notes(unanalyzed: Mapping[str, str]) -> list[str]:
+    """Each reason a v2 family's targets went unanalyzed, with how many and the first of them: its row is the only
+    place they are recorded, since they are not tracked Python files, and a count alone attributes nothing."""
+    by_reason: dict[str, list[str]] = {}
+    for target, reason in sorted(unanalyzed.items()):
+        by_reason.setdefault(reason, []).append(target)
+    return [
+        f"{reason} ({len(targets)} target{'' if len(targets) == 1 else 's'}, first {targets[0]})"
+        for reason, targets in sorted(by_reason.items())
+    ]
+
+
 def _run_v2_family(
     root: Path,
     run: Path,
@@ -3979,6 +3989,7 @@ def _run_v2_family(
         notes += extra
     local = {**withheld, **outcome.unanalyzed}
     outcome.unanalyzed = {}
+    notes += _unanalyzed_notes(local)
     result.families.append(
         _with_notes(_family_row(family, targets, local, {}, unknown), notes)
     )
@@ -5055,10 +5066,11 @@ def _analyze_frozen(
     Nothing is analyzed without a staged source, never the checkout: a known set is
     named unanalyzed, and an unknown one stays unknown (Router #389 6325382720, D3).
     The staged source is removed once the producers are done."""
-    expected = _tracked_python(root, tree, owner)
-    if isinstance(expected, str):
-        gaps.append(expected)
+    listed = _tracked_listing(root, tree, owner)
+    if isinstance(listed, str):
+        gaps.append(listed)
         return None, _ProducerResult(), None, False
+    expected = _python_paths(listed)
     changes = _acquisition_changes(
         root, profile, expected, base, head, deadline, limits.max_report_bytes
     )
@@ -5080,7 +5092,7 @@ def _analyze_frozen(
             deadline,
             profile,
             changes,
-            _tracked_all(root, tree, owner),
+            listed,
         )
         bound = _reobserved(root, staged, tree, owner, run)
     except BaseException as primary:
@@ -5225,10 +5237,11 @@ def _inventory_configuration(
     }
 
 
-def _tracked_python(root: Path, tree: str, owner: _TreeLimits) -> list[str] | str:
-    """The tracked Python set of the frozen tree, listed from its objects, never the
+def _tracked_listing(root: Path, tree: str, owner: _TreeLimits) -> list[str] | str:
+    """Every tracked path of the frozen tree, sorted, listed from its objects, never the
     index or the checkout, within the inventory's one deadline and whole-tree caps;
-    or, for a set that stays unknown, its gap (Router #389 6325382720, D3)."""
+    or, for a set that stays unknown, its gap (Router #389 6325382720, D3). It is
+    listed once, for the Python families and the v2 families alike (#389 H-PYSEC-2)."""
     from tools import exact_tree
 
     try:
@@ -5237,7 +5250,17 @@ def _tracked_python(root: Path, tree: str, owner: _TreeLimits) -> list[str] | st
         return f"cannot enumerate the frozen tree: {exc.code}"
     except OverflowError as exc:
         raise _unrepresentable_timeout("the frozen tree's listing") from exc
-    return sorted(p for p in paths if PurePosixPath(p).suffix == ".py")
+    return sorted(paths)
+
+
+def _python_paths(paths: list[str]) -> list[str]:
+    return [p for p in paths if PurePosixPath(p).suffix == ".py"]
+
+
+def _tracked_python(root: Path, tree: str, owner: _TreeLimits) -> list[str] | str:
+    """The tracked Python set of the frozen tree, from its one listing, or its gap."""
+    listed = _tracked_listing(root, tree, owner)
+    return listed if isinstance(listed, str) else _python_paths(listed)
 
 
 def _check_limits(limits: DiagnosticLimits) -> None:
