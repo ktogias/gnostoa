@@ -114,9 +114,12 @@ provider-neutral public change-governance contract of
      of them.
    - A `1.0` declaration keeps its form and its verdict. Gnostoa's own declaration
      is `1.1` since #389 F2, with each item its own claim at a minimum of one in
-     every merging class. Every `1.0` obligation stays, so a missing item still
-     holds, as a guard over every combination of statuses proves for the verdict
-     and for the merge decision. A substitute becomes
+     each class its requirement applies to. Since #389 A0-MP1 (Decision 0119),
+     DeepSource's two items are every class's but NORMAL's, and the project's own
+     inventory gives NORMAL's two project items. For every class but NORMAL each
+     `1.0` obligation stays, so a missing item still holds, as a guard over every
+     combination of statuses proves for the verdict and for the merge decision;
+     for NORMAL the same guard proves that DeepSource's status no longer decides. A substitute becomes
      eligible only through a reviewed change to the declaration, after its
      qualification (#389 F3).
 3. **The owner's native approval of the exact head is the only per-merge human act.**

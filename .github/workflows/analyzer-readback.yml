@@ -56,9 +56,16 @@ jobs:
     # Each admitted event is named. `workflow_run` matches the triggering workflow
     # by name, so a same-named workflow on any branch could start this job: only a
     # pull_request run of verification.yml counts (Decision 0096 rule 7). A call is
-    # the merge-admission run's, from protected main like every other entry.
+    # the merge-admission run's, from protected main like every other entry. It runs
+    # after the inventory whatever its result, so a failed, cancelled or skipped
+    # inventory is the project items' UNAVAILABLE, never a vanished item (#389
+    # A0-MP1 slice 3); the same admitted-event condition still gates it. A cancelled
+    # run starts nothing more, so it holds no secret and no readback slot (Revix on
+    # #461).
+    needs: inventory
     if: >-
-      github.ref == 'refs/heads/main'
+      !cancelled()
+      && github.ref == 'refs/heads/main'
       && (inputs.admission == true
           || github.event_name == 'workflow_dispatch'
           || github.event_name == 'repository_dispatch'
@@ -103,6 +110,15 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      # The inventory's binding reads its document strictly and the protected
+      # profile, which need main's runtime lock: installed as merge-admission.yml's
+      # jobs install it, before any step that holds a secret (Codex on #461).
+      - name: Install exact runtime dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/runtime.lock
       # Secret-free: each event field reaches only this step, through the
       # environment, and leaves it only once validated. A run that binds no subject
       # fails here, visibly, rather than finishing green without a receipt (#389).
@@ -120,6 +136,17 @@ jobs:
         run: |
           set -eu
           PYTHONPATH=. python ci/analyzer_readback_subject.py >> "${GITHUB_OUTPUT}"
+      # This run attempt's own inventory, by the id its job uploaded it under; data,
+      # never executed. A failed download leaves no document, which the runner
+      # refuses; no other run's or attempt's artifact can be named (#389 slice 3).
+      - name: Download this run's inventory
+        if: ${{ needs.inventory.result == 'success' && needs.inventory.outputs.artifact-id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: ${{ needs.inventory.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/gnostoa-inventory-download
       - name: Read exact-head analyzer evidence
         id: readback
         env:
@@ -131,6 +158,13 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           PULL_NUMBER: ${{ steps.subject.outputs.pull_number }}
           REQUESTED_HEAD: ${{ steps.subject.outputs.head }}
+          # The inventory job's own outputs: its result, the SHA-256 main's runner
+          # computed of the document, and the attempt it ran in, which must be this
+          # one (Cubic on #461); the runner refuses any mismatch.
+          INVENTORY_RESULT: ${{ needs.inventory.result }}
+          INVENTORY_SHA256: ${{ needs.inventory.outputs.document-sha256 }}
+          INVENTORY_ATTEMPT: ${{ needs.inventory.outputs.attempt }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         # The step keeps the runner's status, and says whether it wrote a receipt,
         # so a failure that wrote none uploads nothing (Claude on #388).
         run: |
@@ -141,6 +175,11 @@ jobs:
             --repository "${GITHUB_REPOSITORY}" \
             --pull-number "${PULL_NUMBER}" \
             --head "${REQUESTED_HEAD}" \
+            --inventory-document "${RUNNER_TEMP}/gnostoa-inventory-download/gnostoa-inventory-readback.json" \
+            --inventory-sha256 "${INVENTORY_SHA256}" \
+            --inventory-result "${INVENTORY_RESULT}" \
+            --inventory-attempt "${INVENTORY_ATTEMPT}" \
+            --run-attempt "${RUN_ATTEMPT}" \
             --output "${receipt}" || status=$?
           if [ -f "${receipt}" ]; then
             echo "receipt=written" >> "${GITHUB_OUTPUT}"
@@ -158,18 +197,18 @@ jobs:
           path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
           if-no-files-found: error
 
-  # Decision 0118 (#389 A0-MP1 slice 2): the project's own analyzer, as a shadow. It
-  # runs protected main's diagnostic inventory, with main's hash-locked tools, over the
-  # head's objects fetched as data: nothing in the head selects the code, the tools or
-  # the profile, and nothing in it runs (P5', #389 6381812211). It holds no secret and
-  # no environment, and its failure is its own, never the readback's. It admits the
-  # readback's events but the admission call, where nothing reads it yet: its
-  # document reaches no bundle, map or declaration until slice 3 (#389 6392516998).
+  # Decision 0118 (#389 A0-MP1 slice 2) and 0119 (slice 3): the project's own
+  # analyzer. It runs protected main's diagnostic inventory, with main's hash-locked
+  # tools, over the head's objects fetched as data: nothing in the head selects the
+  # code, the tools or the profile, and nothing in it runs (P5', #389 6381812211). It
+  # holds no secret and no environment. It runs wherever the readback does, the
+  # admission call included, and the readback adds its document to the bundle, bound
+  # to this job's outputs.
   inventory:
     if: >-
       github.ref == 'refs/heads/main'
-      && inputs.admission != true
-      && (github.event_name == 'workflow_dispatch'
+      && (inputs.admission == true
+          || github.event_name == 'workflow_dispatch'
           || github.event_name == 'repository_dispatch'
           || (github.event_name == 'workflow_run'
               && (github.event.workflow_run.conclusion == 'success'
@@ -182,9 +221,17 @@ jobs:
     runs-on: ubuntu-24.04
     # Past the collector's own 900 s budget, with room for the setup before it and
     # the scan and upload after it, so its bounded refusal is written (CodeAnt on
-    # #460). It never runs in the admission call, whose guard waits for readback.
+    # #460). In the admission call the readback waits for it, so the call's path is
+    # this job's limit plus the readback's (#389 slice 3).
     timeout-minutes: 20
-    continue-on-error: true
+    # What the readback needs to read exactly this attempt's document. A re-run of
+    # only the failed jobs keeps an earlier attempt's outputs, so the attempt is
+    # named too (Cubic on #461).
+    outputs:
+      attempt: ${{ github.run_attempt }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      document-sha256: ${{ steps.inventory.outputs.document-sha256 }}
     permissions:
       contents: read
       pull-requests: read
@@ -269,13 +316,17 @@ jobs:
           # leave a partial document, which is never uploaded.
           if [ "${status}" -le 1 ] && [ -f "${output}/gnostoa-inventory-readback.json" ]; then
             echo "document=written" >> "${GITHUB_OUTPUT}"
+            # The document's bytes as main's step wrote them, for the readback.
+            echo "document-sha256=$(sha256sum "${output}/gnostoa-inventory-readback.json" | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
           fi
           exit "${status}"
-      - name: Upload the shadow inventory
+      - name: Upload the inventory
+        id: upload
         if: ${{ !cancelled() && steps.inventory.outputs.document == 'written' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ steps.subject.outputs.artifact }}-inventory
+          # Each attempt's own name, so a re-run neither collides nor reads another.
+          name: ${{ steps.subject.outputs.artifact }}-inventory-${{ github.run_attempt }}
           # The two files Decision 0118 publishes, the inventory by the runner's own
           # pattern (INVENTORY_UPLOAD): never the whole directory, which can hold the
           # producers' raw reports or a staged source left in the run (CodeAnt on #460).

@@ -6,8 +6,10 @@
 # until an item has a producer, it stays MISSING and the verdict INCOMPLETE.
 #
 # Schema 1.1 (#389 F2): each item has its failure domain, and each claim is one
-# item with a minimum of one domain in every merging class, so every 1.0
-# obligation stays and no item stands in for another. GitHub's checks and CodeQL
+# item with a minimum of one domain in each class its requirement applies to, so
+# every 1.0 obligation stays and no item stands in for another. Since Decision 0119,
+# DeepSource's claims are every class's but NORMAL's, and the project's NORMAL's
+# alone (Cubic on #461). GitHub's checks and CodeQL
 # share GitHub, and DeepSource's diff and full reads are one domain (R2, R9). A
 # substitute becomes eligible only through a reviewed change here, after its
 # qualification (#389 F3).
@@ -28,8 +30,18 @@ requirements:
   - id: analyzer-readback
     title: The authenticated analyzer readback is bound to the exact head (Decision 0107)
     applies_to: [mechanical, normal, normative, critical]
-    coverage: [deepsource-diff, deepsource-full, codacy]
-    domains: {deepsource-diff: deepsource, deepsource-full: deepsource, codacy: codacy}
+    coverage: [codacy]
+    domains: {codacy: codacy}
+  - id: deepsource-readback
+    title: DeepSource's readbacks of the exact head, for every class but NORMAL (#389 A0-MP1)
+    applies_to: [mechanical, normative, critical]
+    coverage: [deepsource-diff, deepsource-full]
+    domains: {deepsource-diff: deepsource, deepsource-full: deepsource}
+  - id: project-risk-readback
+    title: The project's own inventory of the exact head, for NORMAL (Decision 0118)
+    applies_to: [normal]
+    coverage: [project-diff, project-full]
+    domains: {project-diff: github, project-full: github}
   - id: sonarcloud
     title: SonarCloud's quality gate and its issue inventory for the exact head (#359)
     applies_to: [mechanical, normal, normative, critical]
@@ -58,12 +70,12 @@ claims:
     independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
   - id: deepsource-diff-findings
     title: DeepSource's diff read of the exact head is complete
-    evidence: [{requirement: analyzer-readback, item: deepsource-diff}]
-    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+    evidence: [{requirement: deepsource-readback, item: deepsource-diff}]
+    independent_domains: {mechanical: 1, normative: 1, critical: 1}
   - id: deepsource-full-findings
     title: DeepSource's full read of the exact head is complete
-    evidence: [{requirement: analyzer-readback, item: deepsource-full}]
-    independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+    evidence: [{requirement: deepsource-readback, item: deepsource-full}]
+    independent_domains: {mechanical: 1, normative: 1, critical: 1}
   - id: codacy-findings
     title: Codacy's read of the exact head is complete
     evidence: [{requirement: analyzer-readback, item: codacy}]
@@ -76,3 +88,11 @@ claims:
     title: SonarCloud's issue inventory of the exact head is complete
     evidence: [{requirement: sonarcloud, item: issue-inventory}]
     independent_domains: {mechanical: 1, normal: 1, normative: 1, critical: 1}
+  - id: project-diff-risk-findings
+    title: The project's inventory of the exact head's changed paths is complete
+    evidence: [{requirement: project-risk-readback, item: project-diff}]
+    independent_domains: {normal: 1}
+  - id: project-full-risk-findings
+    title: The project's inventory of the exact head's whole tree is complete
+    evidence: [{requirement: project-risk-readback, item: project-full}]
+    independent_domains: {normal: 1}

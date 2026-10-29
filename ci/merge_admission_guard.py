@@ -322,10 +322,12 @@ def guard(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     poll_seconds: float = 15.0,
-    # The admission's critical path, each job's own limit, 55 minutes, and a margin:
-    # a deadline refusal means the run did not finish within its limits (CodeAnt on
-    # #426).
-    deadline_seconds: float = 3600.0,
+    # The admission's critical path, each job's own limit, and a 5-minute margin: a
+    # deadline refusal means the run did not finish within its limits (CodeAnt on
+    # #426). The path is 75 minutes since the call runs the inventory, then the
+    # readback that needs it (#389 A0-MP1 slice 3, the owner's
+    # OWNER-389-S3-MA0-TIMING-SCOPE): a ceiling, not a target or a queue's wait.
+    deadline_seconds: float = 4800.0,
 ) -> dict[str, Any]:
     """PROCEED only for a current, correlated admission of the approved head."""
 

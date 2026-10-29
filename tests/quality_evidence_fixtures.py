@@ -16,8 +16,9 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from tools.quality_evidence import (
     QualityEvidenceError,
@@ -139,6 +140,25 @@ _UNBOUND_FIXTURE_GAP = "; ".join(
 )
 
 
+def _calling_through(*, spec: Callable[..., object]) -> Mock:
+    """A new_callable for patch.object(..., spec=True), which hands it the original
+    it replaces as `spec`: a spy that calls that original, and answers as it does."""
+    return Mock(side_effect=spec)
+
+
+def _wrapping(*, spec: Callable[..., object]) -> MagicMock:
+    """A new_callable for patch.object(..., spec=True): the original, `spec`, wrapped
+    as patch.object(..., wraps=original) wraps it."""
+    return MagicMock(wraps=spec)
+
+
+def _v1_subject_spy() -> Mock:
+    """A spy for `_git_state`, v1's subject read, which the diagnostic path never
+    calls: every assertion on it is a negative (D1), so it passes no call through,
+    and fails one loudly."""
+    return Mock(side_effect=AssertionError("v1's _git_state was called"))
+
+
 class _RaisingRead:
     """A stream whose read raises `error`. The real stream's descriptor, its checks
     and its closing are kept."""
@@ -192,15 +212,28 @@ class _DiagnosticFixture(unittest.TestCase):
 
     def setUp(self) -> None:
         self.module = importlib.import_module("tools.quality_evidence")
-        self.collect = functools.partial(
-            self.module._collect_diagnostic_inventory, profile=_EVERY_FAMILY
-        )
+        # The private collector, as unittest.mock hands an original to new_callable
+        # under spec=True; patched with itself for an empty block, so nothing is
+        # replaced. The fixture's profile is bound to it, as before: its record's
+        # origin is "argument", never the producer tree's.
+        originals: list[Callable[..., Path]] = []
+
+        def kept(*, spec: Callable[..., Path]) -> Callable[..., Path]:
+            originals.append(spec)
+            return spec
+
+        with patch.object(
+            self.module, "_collect_diagnostic_inventory", spec=True, new_callable=kept
+        ):
+            pass
+        self.collect = functools.partial(originals[0], profile=_EVERY_FAMILY)
         # Each test runs without the caller's Git overrides, which the inventory
         # refuses: preparation's own environment sets GIT_CONFIG_* for its children
-        # (Router 6223042901 on #436, R1). The refusal tests set theirs explicitly.
-        owner = importlib.import_module("tools.candidate_prepare")
+        # (Router 6223042901 on #436, R1). Every GIT_ name goes, a superset of the
+        # owner's rule in candidate_prepare, each of whose names starts with GIT_.
+        # The refusal tests set theirs explicitly.
         self.enterContext(patch.dict(os.environ))
-        for name in set(os.environ) - set(owner._git_env_without_caller_overrides()):
+        for name in [name for name in os.environ if name.startswith("GIT_")]:
             del os.environ[name]
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -251,7 +284,9 @@ class _DiagnosticFixture(unittest.TestCase):
         ).stdout.strip()
 
     @staticmethod
-    def _then(real, failure):
+    def _then(
+        real: Callable[..., object], failure: BaseException
+    ) -> Callable[..., object]:
         """A side effect that answers through `real` once, then raises `failure`."""
         calls: list[int] = []
 
@@ -486,7 +521,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "record_rows": 131072,
             "unlisted": 1024,
         }
-        observer = Path(self.module.__file__).resolve().parent
+        module_file = self.module.__file__
+        assert module_file is not None
+        observer = Path(module_file).resolve().parent
         return [
             sys.executable,
             "-I",
@@ -622,10 +659,13 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             streams,
         )
 
-    def _opened_sources(self):
-        """A patch recording which tracked sources are opened, and their list."""
+    def _opened_sources(
+        self,
+    ) -> tuple[contextlib.AbstractContextManager[None], list[str]]:
+        """A patch recording which tracked sources the metric opens, and their list.
+        The metric is the original the patch hands its new_callable (spec=True)."""
         opened: list[str] = []
-        real_open, real_metric = os.open, self.module._run_complexity
+        real_open = os.open
         roots = [os.path.realpath(self.root)]
 
         def opening(name, flags, *args, **kwargs):
@@ -635,18 +675,23 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                     opened.append(os.path.relpath(path, root))
             return real_open(name, flags, *args, **kwargs)
 
-        def metric(root, *args, **kwargs):
-            roots.append(os.path.realpath(root))
-            try:
-                return real_metric(root, *args, **kwargs)
-            finally:
-                roots.pop()
+        def measuring(*, spec):
+            def metric(root, *args, **kwargs):
+                roots.append(os.path.realpath(root))
+                try:
+                    return spec(root, *args, **kwargs)
+                finally:
+                    roots.pop()
+
+            return MagicMock(side_effect=metric)
 
         @contextlib.contextmanager
         def spying():
             with (
                 patch.object(self.module.os, "open", side_effect=opening),
-                patch.object(self.module, "_run_complexity", side_effect=metric),
+                patch.object(
+                    self.module, "_run_complexity", spec=True, new_callable=measuring
+                ),
             ):
                 yield
 
@@ -654,17 +699,22 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
     def _with_a_real_main_mypy(self, script: str):
         """A patch of _bounded_run under which the main mypy group runs `script` in a
-        real child, through the real runner; every other producer is the fake."""
-        real = self.module._bounded_run
+        real child, through the real runner; every other producer is the fake. The
+        real runner is the original the patch hands its new_callable (spec=True)."""
 
-        def run(command, **options):
-            cwd = Path(options["cwd"]).resolve()
-            main = cwd == self._source_root(cwd)
-            if main and "mypy" in command and "--version" not in command:
-                return real([sys.executable, "-I", "-c", script], **options)
-            return self._fake_run(command, **options)
+        def delegate(*, spec):
+            def run(command, **options):
+                cwd = Path(options["cwd"]).resolve()
+                main = cwd == self._source_root(cwd)
+                if main and "mypy" in command and "--version" not in command:
+                    return spec([sys.executable, "-I", "-c", script], **options)
+                return self._fake_run(command, **options)
 
-        return patch("tools.quality_evidence._bounded_run", side_effect=run)
+            return MagicMock(side_effect=run)
+
+        return patch.object(
+            self.module, "_bounded_run", spec=True, new_callable=delegate
+        )
 
     def _two_batches(self) -> tuple[str, str]:
         """A child script writing one mypy record, then, a moment later, another."""
@@ -695,26 +745,34 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             return 0, None, False
 
         inside = root.resolve().is_relative_to(self.root.resolve())
-        state = Mock(side_effect=self.module._git_state)
-        comparison = Mock(side_effect=self.module._diagnostic_git)
+        state = _v1_subject_spy()
         with (
             patch(
                 "tools.quality_evidence._bounded_run",
                 side_effect=self._fake_run if inside else quiet,
             ),
             patch.object(self.module, "_git_state", state),
-            patch.object(self.module, "_diagnostic_git", comparison),
+            patch.object(
+                self.module,
+                "_diagnostic_git",
+                spec=True,
+                new_callable=_calling_through,
+            ) as comparison,
         ):
             path = self.collect(root, output, **options)
         return self._read(path), state, comparison
 
     def _refused_spied(self, root: Path, **options):
-        state = Mock(side_effect=self.module._git_state)
-        comparison = Mock(side_effect=self.module._diagnostic_git)
+        state = _v1_subject_spy()
         with (
             patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
             patch.object(self.module, "_git_state", state),
-            patch.object(self.module, "_diagnostic_git", comparison),
+            patch.object(
+                self.module,
+                "_diagnostic_git",
+                spec=True,
+                new_callable=_calling_through,
+            ) as comparison,
             self.assertRaises(QualityEvidenceError) as raised,
         ):
             self.collect(root, self.output, **options)
@@ -725,8 +783,14 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         self.ruff_records = records
         run = Path(tempfile.mkdtemp(prefix="ruff-run-", dir=self.directory.name))
         limits = self.module.DiagnosticLimits(max_findings=max_findings)
-        with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
-            result = self.module._run_ruff(
+        with (
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch.object(
+                self.module, "_run_ruff", spec=True, new_callable=_calling_through
+            ) as ruff,
+        ):
+            # The original, through the spy the patch built around it.
+            result = ruff(
                 self.root,
                 run,
                 ["tests/test_sample.py", "tools/sample.py"],
@@ -738,9 +802,10 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
     def _late_by(self, stage: str):
         """A clock that passes the deadline during `stage`: the inventory document's
-        serialization, or the creation of its output handle (the Router's T1)."""
+        serialization, or the creation of its output handle (the Router's T1), seen
+        at the exclusive open of the inventory's name that creates it."""
         clock = [1000.0]
-        real_dumps, real_new_file = json.dumps, self.module._new_file
+        real_dumps, real_open = json.dumps, os.open
 
         def dumps(value, *args, **kwargs):
             if (
@@ -751,15 +816,19 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                 clock[0] = 10_000.0
             return real_dumps(value, *args, **kwargs)
 
-        def new_file(path):
-            if stage == "output" and path.name == self.module.DIAGNOSTIC_INVENTORY:
+        def opening(name, flags, *args, **kwargs):
+            if (
+                stage == "output"
+                and flags & os.O_CREAT
+                and os.path.basename(name) == self.module.DIAGNOSTIC_INVENTORY
+            ):
                 clock[0] = 10_000.0
-            return real_new_file(path)
+            return real_open(name, flags, *args, **kwargs)
 
         return (
             patch.object(self.module.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(self.module.json, "dumps", side_effect=dumps),
-            patch.object(self.module, "_new_file", side_effect=new_file),
+            patch.object(self.module.os, "open", side_effect=opening),
         )
 
     @staticmethod
@@ -808,7 +877,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         own Git, and every `_diagnostic_git` read (`git_reads`): the freeze's object
         resolution as well as the comparison's (Amazon Q and Claude on #451).
         `candidate_paths` and `_git_state` are watched as D1's negatives: neither is on
-        the diagnostic path, nor may come back onto it."""
+        the diagnostic path, nor may come back onto it; `_git_state`'s spy answers no
+        call (`_v1_subject_spy`)."""
         owner = importlib.import_module("tools.exact_tree")
         with (
             patch.object(
@@ -820,14 +890,12 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             patch.object(owner, "tree_paths", wraps=owner.tree_paths) as scope,
             patch.object(owner, "materialize", wraps=owner.materialize) as stage,
             patch.object(
-                self.module, "_diagnostic_git", wraps=self.module._diagnostic_git
+                self.module, "_diagnostic_git", spec=True, new_callable=_wrapping
             ) as git_reads,
             patch.object(
                 self.module, "candidate_paths", wraps=self.module.candidate_paths
             ) as v1_scope,
-            patch.object(
-                self.module, "_git_state", wraps=self.module._git_state
-            ) as v1_subject,
+            patch.object(self.module, "_git_state", _v1_subject_spy()) as v1_subject,
         ):
             yield {
                 "producer": producer,
@@ -868,30 +936,40 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
     def _uncompared(self, base: str, reader=None) -> dict:
         """Collect against `base` and require the comparison's named gap: no diff
-        read, no comparison published, every finding kept with in_diff null."""
-        real, real_annotate = self.module._diagnostic_git, self.module._annotate_diff
-        chosen = reader or real
+        read, no comparison published, every finding kept with in_diff null. Each
+        real function is the original its patch hands its new_callable (spec=True)."""
         comparing: list[bool] = []
 
-        def annotating(*args, **kwargs):
-            comparing.append(True)
-            try:
-                return real_annotate(*args, **kwargs)
-            finally:
-                comparing.pop()
+        def annotation(*, spec):
+            def annotating(*args, **kwargs):
+                comparing.append(True)
+                try:
+                    return spec(*args, **kwargs)
+                finally:
+                    comparing.pop()
 
-        def comparison_only(root, deadline, *arguments, **options):
-            # The reader under test answers the comparison's reads alone, while the
-            # comparison runs; the freeze's reads of the subject's own commit and tree
-            # stay real, whatever they name (#389 F3 S2 B; Amazon Q on #451).
-            read = chosen if comparing else real
-            return read(root, deadline, *arguments, **options)
+            return MagicMock(side_effect=annotating)
+
+        def comparison(*, spec):
+            chosen = reader or spec
+
+            def comparison_only(root, deadline, *arguments, **options):
+                # The reader under test answers the comparison's reads alone, while
+                # the comparison runs; the freeze's reads of the subject's own commit
+                # and tree stay real, whatever they name (#389 F3 S2 B; Amazon Q on
+                # #451).
+                read = chosen if comparing else spec
+                return read(root, deadline, *arguments, **options)
+
+            return MagicMock(side_effect=comparison_only)
 
         with (
             patch.object(
-                self.module, "_diagnostic_git", side_effect=comparison_only
+                self.module, "_diagnostic_git", spec=True, new_callable=comparison
             ) as git,
-            patch.object(self.module, "_annotate_diff", side_effect=annotating),
+            patch.object(
+                self.module, "_annotate_diff", spec=True, new_callable=annotation
+            ),
         ):
             inventory = self._inventory(base=base)
         self.assertNotIn("diff", [call.args[2] for call in git.call_args_list])

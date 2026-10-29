@@ -9,6 +9,7 @@ merge-evidence map or the declaration: those are slice 3's (#389 6392516998).
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import importlib
 import importlib.util
@@ -17,7 +18,7 @@ import json
 import os
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -41,6 +42,24 @@ OTHER = "b" * 40
 # cache, which this job lacks.
 JOB_MARGIN_SECONDS = 300
 API = "https://api.github.com"
+# How the runner reads an uploaded inventory: its digest and its scan in chunks of
+# this size, its strict parse in one read of the collector's report bound and one
+# byte more. The read-size test pins both, so a probe placed across the chunk's
+# boundary cannot drift from it.
+SCAN_CHUNK = 1_048_576
+BOUNDED_READ = 64 * 1024 * 1024 + 1
+
+
+@contextlib.contextmanager
+def _token(value: str | None) -> Iterator[None]:
+    """The environment's GitHub tokens for one collection: `value` as GITHUB_TOKEN,
+    or none at all."""
+    with patch.dict(os.environ):
+        for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+            os.environ.pop(name, None)
+        if value is not None:
+            os.environ["GITHUB_TOKEN"] = value
+        yield
 
 
 def _adapter() -> Any:
@@ -245,7 +264,8 @@ class _PullRequestReader:
         comparison = (
             {} if merge_base is None else {"merge_base_commit": {"sha": merge_base}}
         )
-        self.answers = {
+        # Any answer GitHub gives, so a test can add the bundle's reads to it.
+        self.answers: dict[str, Any] = {
             f"{API}/repos/{REPOSITORY}/pulls/{PULL}": {
                 "head": {"sha": head},
                 "base": {"sha": base, "ref": "main"},
@@ -532,73 +552,186 @@ class InventoryRunnerTests(_InventoryReadbackFixture):
                 observed_at=OBSERVED,
             )
         document = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual([left[0].resolve()], runner._uploaded_files(self.output))
+        # What the upload step's pattern matches is the inventory alone.
+        self.assertEqual(
+            [left[0].resolve()],
+            sorted(self.output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
         self.assertEqual(
             left[0].resolve(), (self.output / document["inventory"]["file"]).resolve()
         )
 
+    def _collect_into(self, runner: Any, head: str, output: Path) -> Path:
+        """`inventory_collect` of `head` into `output`, as the job runs it."""
+        return runner.inventory_collect(
+            self.root,
+            output,
+            repository=REPOSITORY,
+            pull_number=PULL,
+            requested_head=head,
+            base_tip=OTHER,
+            base=self.base,
+            observed_at=OBSERVED,
+        )
+
     def test_a_token_split_across_scan_chunks_is_found(self) -> None:
         # cubic on #460: the uploads are scanned in bounded chunks, never whole, so a
-        # token across a chunk boundary must still be found.
+        # token across a chunk boundary must still be found. The uploaded inventory
+        # carries the probe in a string of its own, across the scan's first chunk
+        # boundary, and no readback carries it: only the uploads' scan can find it.
+        # The inventory is named and digested before it is parsed, so the scan reads
+        # it whatever its parse gives.
         runner = _runner()
+        head = self._changed_head()
         probe = "inventoryprobe" + "7" * 12
-        folder = self.output / "diagnostic-run"
-        folder.mkdir(parents=True)
-        (folder / "diagnostic-inventory.json").write_text(
-            "x" * 5 + probe + "y" * 9, encoding="utf-8"
-        )
-        with self.assertRaises(runner.RunnerError):
-            runner._assert_uploads_secret_free(self.output, [probe], chunk=8)
+        real = self.module.collect_diagnostic_inventory
+        written: list[Path] = []
+
+        def straddling(*args, **kwargs):
+            inventory = real(*args, **kwargs)
+            text = inventory.read_text(encoding="utf-8")
+            opening = '{"padding": "'
+            before = SCAN_CHUNK - len(opening) - len(probe) // 2
+            inventory.write_text(
+                opening + "x" * before + probe + "y" * 100_000 + '", ' + text[1:],
+                encoding="utf-8",
+            )
+            written.append(inventory)
+            return inventory
+
+        with (
+            _token(probe),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", straddling),
+            self.assertRaisesRegex(
+                runner.RunnerError, "an uploaded file contains credential bytes"
+            ),
+        ):
+            self._collect_into(runner, head, self.output)
+        self.assertFalse((self.output / "gnostoa-inventory-readback.json").exists())
+        # The probe straddles the first chunk's end, in an inventory over one chunk.
+        raw = written[0].read_bytes()
+        start = raw.index(probe.encode("utf-8"))
+        self.assertLess(start, SCAN_CHUNK)
+        self.assertGreater(start + len(probe), SCAN_CHUNK)
 
     def test_a_file_holds_no_needle_when_there_is_none(self) -> None:
-        # Q on #460: the chunk reader stands on its own, with no needle to find.
+        # Q on #460: the chunk reader stands on its own, with no needle to find. With
+        # no token in the environment, the uploaded inventory is scanned for none,
+        # and the collection completes without error.
         runner = _runner()
-        (self.output / "run").mkdir(parents=True)
-        report = self.output / "run" / "report.json"
-        report.write_text("z" * 40, encoding="utf-8")
-        self.assertIs(False, runner._holds_any(report, [], 8))
+        head = self._changed_head()
+        with (
+            _token(None),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+        ):
+            path = self._collect_into(runner, head, self.output)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(document["inventory"])
+        self.assertEqual(
+            [(self.output / document["inventory"]["file"]).resolve()],
+            sorted(self.output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
 
     def test_a_link_in_the_uploaded_directory_is_refused(self) -> None:
         # Claude on #460: the pinned upload-artifact follows links
         # (followSymbolicLinks: true in its search), so a link would publish a target
         # the scan never read. An uploaded inventory reached through a link, as the
-        # file or as its run directory, is refused, with or without a token.
+        # file or as its run directory, is refused, with or without a token, and no
+        # document is written.
         runner = _runner()
-        outside = Path(self.directory.name) / "outside"
+        head = self._changed_head()
+        real = self.module.collect_diagnostic_inventory
+
+        def linking(kind, outside):
+            """A collector whose inventory, or its run directory, is moved to
+            `outside` and reached through a link in its place."""
+
+            def collect(*args, **kwargs):
+                written = real(*args, **kwargs)
+                link = written if kind == "file" else written.parent
+                outside.mkdir()
+                moved = outside / link.name
+                link.rename(moved)
+                link.symlink_to(moved)
+                return written
+
+            return collect
+
+        for kind in ("file", "directory"):
+            for token in (None, "inventoryprobe"):
+                case = f"{kind}-{'token' if token else 'none'}"
+                # The fixture's producers run under its output directory, one per
+                # case.
+                self.output = output = Path(self.directory.name) / f"output-{case}"
+                outside = Path(self.directory.name) / f"outside-{case}"
+                with self.subTest(link=kind, token=token):
+                    with (
+                        _token(token),
+                        patch(
+                            "tools.quality_evidence._bounded_run",
+                            side_effect=self._fake_run,
+                        ),
+                        patch(
+                            "tools.quality_evidence.collect_diagnostic_inventory",
+                            linking(kind, outside),
+                        ),
+                        self.assertRaisesRegex(runner.RunnerError, "through a link"),
+                    ):
+                        self._collect_into(runner, head, output)
+                    self.assertFalse(
+                        (output / "gnostoa-inventory-readback.json").exists()
+                    )
+        # A link the step's pattern does not match is neither uploaded nor refused,
+        # though its target holds a file of the inventory's name.
+        outside = Path(self.directory.name) / "outside-unmatched"
         outside.mkdir()
         (outside / "diagnostic-inventory.json").write_text("{}", encoding="utf-8")
-        (self.output / "diagnostic-file").mkdir(parents=True)
-        for link, target in (
-            (
-                self.output / "diagnostic-file" / "diagnostic-inventory.json",
-                outside / "diagnostic-inventory.json",
-            ),
-            (self.output / "diagnostic-dir", outside),
+        links: list[Path] = []
+
+        def unmatched(*args, **kwargs):
+            written = real(*args, **kwargs)
+            link = written.parent / "raw-link"
+            link.symlink_to(outside)
+            links.append(link)
+            return written
+
+        self.output = output = Path(self.directory.name) / "output-unmatched"
+        with (
+            _token(None),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", unmatched),
         ):
-            link.symlink_to(target)
-            for secrets in ([], ["inventoryprobe"]):
-                with (
-                    self.subTest(link=link.name, secrets=secrets),
-                    self.assertRaises(runner.RunnerError),
-                ):
-                    runner._assert_uploads_secret_free(self.output, secrets)
-            link.unlink()
-        # A link the step's pattern does not match is never uploaded.
-        (self.output / "diagnostic-file" / "raw-link").symlink_to(outside)
-        self.assertEqual([], runner._uploaded_files(self.output))
+            path = self._collect_into(runner, head, output)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(links[0].is_symlink())
+        self.assertEqual(
+            [(output / document["inventory"]["file"]).resolve()],
+            sorted(output.resolve().glob(runner.INVENTORY_UPLOAD)),
+        )
 
     def test_a_scan_without_the_token_reads_no_file_whole(self) -> None:
-        # Revix on #460: every read asks for one chunk, never the whole file.
+        # Revix on #460: every read of the scan asks for one chunk, never the whole
+        # file. Once the collector has written it, the uploaded inventory is read in
+        # a fixed order: its digest's chunks, the strict parse's one bounded read,
+        # then the scan's chunks. A small inventory takes one chunk, then the end.
         runner = _runner()
-        (self.output / "diagnostic-run").mkdir(parents=True)
-        (self.output / "diagnostic-run" / "diagnostic-inventory.json").write_text(
-            "z" * 40, encoding="utf-8"
-        )
+        head = self._changed_head()
+        real = self.module.collect_diagnostic_inventory
+        written: list[Path] = []
+
+        def collected(*args, **kwargs):
+            inventory = real(*args, **kwargs)
+            written.append(inventory.resolve())
+            return inventory
+
         sizes: list[object] = []
         real_open = Path.open
 
         def recording(path, *args, **kwargs):
             handle = real_open(path, *args, **kwargs)
+            if not written or path.resolve() != written[0]:
+                return handle
             read = handle.read
 
             def sized(*size):
@@ -608,10 +741,23 @@ class InventoryRunnerTests(_InventoryReadbackFixture):
             handle.read = sized
             return handle
 
-        with patch.object(Path, "open", recording):
-            runner._assert_uploads_secret_free(self.output, ["inventoryprobe"], chunk=8)
-        self.assertTrue(sizes)
-        self.assertEqual({(8,)}, set(sizes))
+        with (
+            _token("inventoryprobe"),
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch("tools.quality_evidence.collect_diagnostic_inventory", collected),
+            patch.object(Path, "open", recording),
+        ):
+            self._collect_into(runner, head, self.output)
+        self.assertEqual(
+            [
+                (SCAN_CHUNK,),
+                (SCAN_CHUNK,),
+                (BOUNDED_READ,),
+                (SCAN_CHUNK,),
+                (SCAN_CHUNK,),
+            ],
+            sizes,
+        )
 
     def test_an_upload_the_document_does_not_name_is_refused(self) -> None:
         # What the step's pattern matches must be exactly the inventory the document
@@ -965,6 +1111,294 @@ def _named(job: Mapping[str, Any], name: str) -> dict:
     return step
 
 
+class InventoryBundleTests(_InventoryReadbackFixture):
+    """#389 A0-MP1 slice 3 (r4, 6399931352): the readback job adds the same run's
+    inventory document to the bundle, bound to the inventory job's trusted outputs:
+    its result, and the document's SHA-256 that main's runner computed. Any refusal
+    gives both project readbacks UNAVAILABLE, with its reason; never a prior one."""
+
+    def _document(self) -> tuple[Path, str, str, str]:
+        runner = _runner()
+        head = self._changed_head()
+        with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
+            path = runner.inventory_collect(
+                self.root,
+                self.output,
+                repository=REPOSITORY,
+                pull_number=PULL,
+                requested_head=head,
+                base_tip=OTHER,
+                base=self.base,
+                observed_at=OBSERVED,
+            )
+        tree = self._git("rev-parse", f"{head}^{{tree}}")
+        return path, hashlib.sha256(path.read_bytes()).hexdigest(), head, tree
+
+    @staticmethod
+    def _bound(
+        path: Path, sha256: str, head: str, tree: str, result: str = "success"
+    ) -> list[dict[str, Any]]:
+        """The bundle's readbacks of `path`, as this attempt's job outputs give it
+        (a name of its own, not the fixture's `_readbacks`: Codacy on #461)."""
+        readbacks: list[dict[str, Any]] = _runner().inventory_bundle_readbacks(
+            path,
+            expected_sha256=sha256,
+            result=result,
+            attempt="1",
+            run_attempt="1",
+            repository=REPOSITORY,
+            pull_number=PULL,
+            requested_head=head,
+            tree=lambda: tree,
+            observed_at=OBSERVED,
+        )
+        return readbacks
+
+    def test_a_document_bound_to_its_job_gives_its_two_readbacks(self) -> None:
+        """RED: main's readback adds no inventory readback to the bundle."""
+        path, sha256, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(document["readbacks"], self._bound(path, sha256, head, tree))
+
+    def test_each_refusal_gives_both_project_readbacks_unavailable(self) -> None:
+        """RED (PAO 6399779328 findings 3 and 4): a document whose bytes are not the
+        job's, a job that did not succeed, a missing document, another subject and
+        another tree each refuse."""
+        path, sha256, head, tree = self._document()
+        for name, args, reason in (
+            ("digest", (path, "0" * 64, head, tree), "DIGEST_MISMATCH"),
+            (
+                "failed job",
+                (path, sha256, head, tree, "failure"),
+                "INVENTORY_JOB_FAILURE",
+            ),
+            (
+                "skipped job",
+                (path, sha256, head, tree, "skipped"),
+                "INVENTORY_JOB_SKIPPED",
+            ),
+            (
+                "cancelled job",
+                (path, sha256, head, tree, "cancelled"),
+                "INVENTORY_JOB_CANCELLED",
+            ),
+            (
+                "missing document",
+                (self.output / "absent.json", sha256, head, tree),
+                "INVENTORY_DOCUMENT_MISSING",
+            ),
+            ("another subject", (path, sha256, OTHER, tree), "WRONG_SUBJECT"),
+            ("another tree", (path, sha256, head, "c" * 40), "WRONG_TREE"),
+        ):
+            with self.subTest(name):
+                readbacks = self._bound(*args)
+                self.assertEqual(
+                    [
+                        ("DIFF", "READBACK_UNAVAILABLE"),
+                        ("FULL", "READBACK_UNAVAILABLE"),
+                    ],
+                    [(r["scope"], r["completeness"]) for r in readbacks],
+                )
+                self.assertEqual({reason}, {r["coverage"]["reason"] for r in readbacks})
+
+    def test_a_foreign_profile_refuses(self) -> None:
+        """RED: the readbacks' profile must be the protected profile's digest, computed
+        again from main's checkout; the document's own claim proves nothing."""
+        path, _, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for readback in document["readbacks"]:
+            readback["native"]["profile"] = "sha256:" + "f" * 64
+        forged = self.output / "forged.json"
+        forged.write_text(json.dumps(document), encoding="utf-8")
+        readbacks = self._bound(
+            forged, hashlib.sha256(forged.read_bytes()).hexdigest(), head, tree
+        )
+        self.assertEqual(
+            {"FOREIGN_PROFILE"}, {r["coverage"]["reason"] for r in readbacks}
+        )
+
+    def test_a_wrongly_typed_readback_refuses_the_project_readbacks_alone(self) -> None:
+        """Revix on #461: a readback whose fields have the wrong JSON types, a
+        non-object `native` among them, is refused by `parse_readback`, whose typed
+        rebuild raises its own ValueError. So the binding refuses both project
+        readbacks by that type, and nothing of the path escapes to the bundle."""
+        path, _, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for field, value in (
+            ("native", []),
+            ("native", "BOUND"),
+            ("scope", 1),
+            ("findings", {}),
+            ("coverage", []),
+            ("requested_head", [head]),
+            ("observed_at", None),
+        ):
+            with self.subTest(field=field, value=value):
+                variant = copy.deepcopy(document)
+                for readback in variant["readbacks"]:
+                    readback[field] = value
+                forged = self.output / f"typed-{field}-{type(value).__name__}.json"
+                forged.write_text(json.dumps(variant), encoding="utf-8")
+                readbacks = self._bound(
+                    forged, hashlib.sha256(forged.read_bytes()).hexdigest(), head, tree
+                )
+                self.assertEqual(
+                    {"READBACK_UNAVAILABLE"}, {r["completeness"] for r in readbacks}
+                )
+                self.assertEqual(
+                    {"AnalyzerReadbackError"},
+                    {r["coverage"]["reason"] for r in readbacks},
+                )
+
+    def test_the_bundle_binds_the_document_to_the_tree_github_reads(self) -> None:
+        """Cubic on #461: end to end, `collect_bundle` hands the binding the tree
+        GitHub reads for the head. The document's readbacks are kept when that tree
+        is theirs, and refused when it is another. The reader is this module's own:
+        a test module imported from another is unresolved for the project's
+        inventory, a finding of its own."""
+        runner = _runner()
+        path, sha256, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        root = f"{API}/repos/{REPOSITORY}"
+        for read, expected in ((tree, document["readbacks"]), ("c" * 40, None)):
+            with self.subTest(tree=read):
+                github = _PullRequestReader(head, OTHER, self.base)
+                github.answers.update(
+                    {
+                        f"{root}/commits/{head}/statuses?per_page=100": [],
+                        f"{root}/commits/{head}/check-runs?per_page=100": {
+                            "check_runs": []
+                        },
+                        f"{root}/pulls/{PULL}/comments?per_page=50": [],
+                        f"{root}/commits/{head}": {"commit": {"tree": {"sha": read}}},
+                    }
+                )
+                bundle = runner.collect_bundle(
+                    github,
+                    repository=REPOSITORY,
+                    pull_number=PULL,
+                    requested_head=head,
+                    deepsource=None,
+                    codacy=None,
+                    sonarcloud=None,
+                    observed_at=OBSERVED,
+                    inventory=runner.InventoryInput(path, sha256, "success", "1", "1"),
+                )
+                tail = bundle["readbacks"][-2:]
+                if expected is None:
+                    self.assertEqual(
+                        {"WRONG_TREE"}, {r["coverage"]["reason"] for r in tail}
+                    )
+                else:
+                    self.assertEqual(expected, tail)
+
+    def test_a_document_of_another_attempt_refuses(self) -> None:
+        """RED (Cubic on #461): re-running only the failed jobs reuses an earlier
+        attempt's successful inventory, its outputs and its artifact. Its document
+        is not this attempt's, so it refuses; the same attempt's is kept (PAO
+        6401278396: the producer-1 / consumer-2 refusal beside the positive)."""
+        path, sha256, head, tree = self._document()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        kept = _runner().inventory_bundle_readbacks(
+            path,
+            expected_sha256=sha256,
+            result="success",
+            attempt="2",
+            run_attempt="2",
+            repository=REPOSITORY,
+            pull_number=PULL,
+            requested_head=head,
+            tree=lambda: tree,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(document["readbacks"], kept)
+        for attempt, run_attempt in (
+            ("1", "2"),
+            ("", "1"),
+            (None, "1"),
+            ("1", None),
+            # Equal, but naming no attempt: an output that never resolved.
+            (None, None),
+            ("", ""),
+        ):
+            with self.subTest(attempt=attempt, run_attempt=run_attempt):
+                readbacks = _runner().inventory_bundle_readbacks(
+                    path,
+                    expected_sha256=sha256,
+                    result="success",
+                    attempt=attempt,
+                    run_attempt=run_attempt,
+                    repository=REPOSITORY,
+                    pull_number=PULL,
+                    requested_head=head,
+                    tree=lambda: tree,
+                    observed_at=OBSERVED,
+                )
+                self.assertEqual(
+                    {"INVENTORY_ATTEMPT_STALE"},
+                    {r["coverage"]["reason"] for r in readbacks},
+                )
+
+    def test_a_document_for_another_subject_or_shape_refuses(self) -> None:
+        """#425 kill table, slice 3 round 1 (C04, C08): a document whose bytes are the
+        job's, but whose pull request or repository is another's at the same head, or
+        whose readbacks are not exactly the inventory's DIFF then FULL, refuses. Only
+        the inventory's two readbacks may reach the bundle: a document never adds a
+        readback of another provider."""
+        path, _, head, tree = self._document()
+
+        def pull(document: dict[str, Any]) -> None:
+            document["pull_number"] = PULL + 1
+
+        def repository(document: dict[str, Any]) -> None:
+            document["repository"] = "other/repository"
+
+        def reversed_scopes(document: dict[str, Any]) -> None:
+            document["readbacks"].reverse()
+
+        def diff_twice(document: dict[str, Any]) -> None:
+            document["readbacks"][1] = document["readbacks"][0]
+
+        def another_provider(document: dict[str, Any]) -> None:
+            document["readbacks"][0]["provider"] = "codacy"
+
+        def a_readback_of_another_head(document: dict[str, Any]) -> None:
+            # The document names this subject, one of its readbacks another head
+            # (#425 kill table, slice 3 round 4, C14).
+            readback = document["readbacks"][1]
+            readback["requested_head"] = OTHER
+            if readback.get("observed_head"):
+                readback["observed_head"] = OTHER
+
+        for forge, reason in (
+            (pull, "WRONG_SUBJECT"),
+            (repository, "WRONG_SUBJECT"),
+            (reversed_scopes, "MALFORMED_READBACKS"),
+            (diff_twice, "MALFORMED_READBACKS"),
+            (another_provider, "MALFORMED_READBACKS"),
+            (a_readback_of_another_head, "WRONG_SUBJECT"),
+        ):
+            with self.subTest(forge.__name__):
+                document = json.loads(path.read_text(encoding="utf-8"))
+                forge(document)
+                forged = self.output / f"{forge.__name__}.json"
+                forged.write_text(json.dumps(document), encoding="utf-8")
+                readbacks = self._bound(
+                    forged,
+                    hashlib.sha256(forged.read_bytes()).hexdigest(),
+                    head,
+                    tree,
+                )
+                self.assertEqual(
+                    [
+                        ("gnostoa-inventory", "DIFF", "READBACK_UNAVAILABLE"),
+                        ("gnostoa-inventory", "FULL", "READBACK_UNAVAILABLE"),
+                    ],
+                    [(r["provider"], r["scope"], r["completeness"]) for r in readbacks],
+                )
+                self.assertEqual({reason}, {r["coverage"]["reason"] for r in readbacks})
+
+
 class InventoryJobTests(unittest.TestCase):
     """The shadow producer job (Decision 0118): main's code and main's hash-locked
     tools over the head as data, with no secret, and no effect on the gate."""
@@ -988,7 +1422,7 @@ class InventoryJobTests(unittest.TestCase):
         # inventory by the runner's own pattern, never the whole directory.
         from tools.quality_evidence import DIAGNOSTIC_INVENTORY
 
-        upload = _named(_workflow()["jobs"]["inventory"], "Upload the shadow inventory")
+        upload = _named(_workflow()["jobs"]["inventory"], "Upload the inventory")
         base = "${{ runner.temp }}/gnostoa-inventory"
         self.assertEqual(
             [
@@ -1031,29 +1465,103 @@ class InventoryJobTests(unittest.TestCase):
         # other qualification jobs do (Revix on #460).
         self.assertEqual("ubuntu-24.04", _workflow()["jobs"]["inventory"]["runs-on"])
 
-    def test_the_job_can_never_change_the_run_s_conclusion(self) -> None:
-        # A shadow: its failure is its own, never the readback's (slice 2).
-        self.assertIs(True, _workflow()["jobs"]["inventory"]["continue-on-error"])
+    def test_a_failed_inventory_denies_rather_than_vanishes(self) -> None:
+        """RED (#389 A0-MP1 slice 3; PAO 6399779328 finding 4): the inventory is no
+        longer a shadow. Its failure is not hidden, and the readback still runs after
+        it, so a failed, cancelled or skipped inventory becomes the project items'
+        UNAVAILABLE, never a vanished item. A cancelled run runs nothing more
+        (Revix on #461)."""
+        jobs = _workflow()["jobs"]
+        self.assertNotIn("continue-on-error", jobs["inventory"])
+        self.assertEqual("inventory", jobs["readback"]["needs"])
+        condition = " ".join(jobs["readback"]["if"].split())
+        self.assertTrue(condition.startswith("!cancelled() && "))
+        self.assertNotIn("always()", condition)
 
-    def test_the_job_admits_the_readback_s_events_except_the_admission_call(
-        self,
-    ) -> None:
-        # The admission point waits for its called workflow; the shadow has no
-        # consumer there until slice 3 adds one.
+    def test_the_job_admits_exactly_the_readback_s_events(self) -> None:
+        """RED (slice 3): the inventory runs wherever the readback does, the admission
+        call included, under the same trusted-main condition."""
+        jobs = _workflow()["jobs"]
+        readback = " ".join(jobs["readback"]["if"].split())
         self.assertEqual(
-            "github.ref == 'refs/heads/main'"
-            " && inputs.admission != true"
-            " && (github.event_name == 'workflow_dispatch'"
-            " || github.event_name == 'repository_dispatch'"
-            " || (github.event_name == 'workflow_run'"
-            " && (github.event.workflow_run.conclusion == 'success'"
-            " || github.event.workflow_run.conclusion == 'failure'"
-            " || github.event.workflow_run.conclusion == 'timed_out')"
-            " && github.event.workflow_run.event == 'pull_request'"
-            " && github.event.workflow_run.path"
-            " == '.github/workflows/verification.yml'))",
-            " ".join(_workflow()["jobs"]["inventory"]["if"].split()),
+            readback.removeprefix("!cancelled() && "),
+            " ".join(jobs["inventory"]["if"].split()),
         )
+        self.assertIn("inputs.admission == true", readback)
+
+    def test_the_upload_s_identity_reaches_the_readback(self) -> None:
+        """RED (r4, 6399931352): the readback learns which archive to read, and the
+        document's SHA-256, only from the inventory job's own outputs; each attempt's
+        artifact has its own name, so a re-run neither collides nor reads another."""
+        job = _workflow()["jobs"]["inventory"]
+        self.assertEqual(
+            {
+                "attempt": "${{ github.run_attempt }}",
+                "artifact-id": "${{ steps.upload.outputs.artifact-id }}",
+                "artifact-digest": "${{ steps.upload.outputs.artifact-digest }}",
+                "document-sha256": "${{ steps.inventory.outputs.document-sha256 }}",
+            },
+            job["outputs"],
+        )
+        upload = _named(job, "Upload the inventory")
+        self.assertEqual("upload", upload["id"])
+        self.assertEqual(
+            "${{ steps.subject.outputs.artifact }}-inventory-${{ github.run_attempt }}",
+            upload["with"]["name"],
+        )
+        self.assertIn("document-sha256=", _named(job, "Inventory the head")["run"])
+
+    def test_the_readback_reads_exactly_that_artifact(self) -> None:
+        """RED (r4): the readback downloads the artifact its needed job uploaded, by
+        id, with the pinned downloader, and hands the runner the job's result and the
+        document's expected SHA-256; the runner refuses any mismatch."""
+        job = _workflow()["jobs"]["readback"]
+        [download] = [
+            s
+            for s in job["steps"]
+            if s.get("uses", "").startswith("actions/download-artifact@")
+        ]
+        self.assertEqual(
+            "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
+            download["uses"],
+        )
+        self.assertEqual(
+            "${{ needs.inventory.outputs.artifact-id }}",
+            download["with"]["artifact-ids"],
+        )
+        self.assertNotIn("name", download["with"])
+        step = _named(job, "Read exact-head analyzer evidence")
+        self.assertEqual(
+            "${{ needs.inventory.result }}", step["env"]["INVENTORY_RESULT"]
+        )
+        self.assertEqual(
+            "${{ needs.inventory.outputs.document-sha256 }}",
+            step["env"]["INVENTORY_SHA256"],
+        )
+        for argument in (
+            "--inventory-document",
+            "--inventory-sha256",
+            "--inventory-result",
+        ):
+            self.assertIn(argument, step["run"])
+
+    def test_the_inventory_s_attempt_reaches_the_readback(self) -> None:
+        """RED (Cubic on #461): the inventory job names the attempt it ran in, and
+        the readback hands the runner that and its own attempt, which must agree."""
+        jobs = _workflow()["jobs"]
+        self.assertEqual(
+            "${{ github.run_attempt }}", jobs["inventory"]["outputs"]["attempt"]
+        )
+        step = _named(jobs["readback"], "Read exact-head analyzer evidence")
+        self.assertEqual(
+            "${{ needs.inventory.outputs.attempt }}", step["env"]["INVENTORY_ATTEMPT"]
+        )
+        self.assertEqual("${{ github.run_attempt }}", step["env"]["RUN_ATTEMPT"])
+        for argument in (
+            '--inventory-attempt "${INVENTORY_ATTEMPT}"',
+            '--run-attempt "${RUN_ATTEMPT}"',
+        ):
+            self.assertIn(argument, step["run"])
 
     def test_the_job_binds_main_and_the_subject_as_the_readback_does(self) -> None:
         jobs = _workflow()["jobs"]
@@ -1106,13 +1614,14 @@ class InventoryJobTests(unittest.TestCase):
             'if [ "${status}" -le 1 ] && [ -f "${output}/gnostoa-inventory-readback.json" ]',
             collect["run"],
         )
-        upload = _named(job, "Upload the shadow inventory")
+        upload = _named(job, "Upload the inventory")
         self.assertEqual(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             upload["uses"],
         )
         self.assertEqual(
-            "${{ steps.subject.outputs.artifact }}-inventory", upload["with"]["name"]
+            "${{ steps.subject.outputs.artifact }}-inventory-${{ github.run_attempt }}",
+            upload["with"]["name"],
         )
 
     def test_the_collect_step_holds_no_credential(self) -> None:

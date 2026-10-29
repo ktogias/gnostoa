@@ -1049,6 +1049,13 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_subject_repository_not_in_owner_name_form_is_refused
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_an_unreadable_escape_is_not_a_foreign_association
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_s_qualification_follows_its_identity
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_the_declaration_is_section_c_s
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_a_normal_change_with_deepsource_down_meets_its_project_claims
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_deepsource_still_holds_every_class_but_normal
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_incomplete_composite_never_gives_a_project_claim
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_a_full_read_never_gives_the_diff_item
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_inventory_finding_denies_a_normal_change
+      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_inventory_finding_denies_every_class
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_a_qualified_alternative_meets_m17_through_the_verdict
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_any_obtained_finding_still_denies
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_f1_already_meets_m2_m8_under_the_alternative
@@ -1325,17 +1332,18 @@ guardrails:
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_default_profile_that_cannot_be_resolved_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs
-  - id: inventory-shadow-readback
-    title: The diagnostic inventory runs over a Pull Request head as a no-secret shadow readback that lists every obtained finding once
+  - id: inventory-readback
+    title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: knowledge/decisions/0118-produce-the-diagnostic-inventory-over-a-pull-request-head-as-a-no-secret-shadow-readback.md#decision
+    guidance: knowledge/decisions/0119-admit-normal-changes-through-the-project-s-own-inventory-and-keep-deepsource-for-every-other-class.md#decision
     implementation:
       - tools/analyzer_inventory.py#readbacks
       - tools/analyzer_inventory.py#unavailable
       - ci/analyzer_readback.py#inventory_base
       - ci/analyzer_readback.py#inventory_collect
+      - ci/analyzer_readback.py#inventory_bundle_readbacks
       - .github/workflows/analyzer-readback.yml
     tests:
       - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_every_obtained_finding_is_in_exactly_one_readback
@@ -1372,12 +1380,21 @@ guardrails:
       - tests/test_analyzer_inventory.py::InventoryRunnerTests.test_a_depth_one_fetch_of_head_and_base_is_enough
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_workflow_has_the_readback_and_the_shadow_inventory_job
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_outlasts_the_collector_s_own_budget
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_a_document_bound_to_its_job_gives_its_two_readbacks
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_each_refusal_gives_both_project_readbacks_unavailable
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_a_foreign_profile_refuses
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_a_document_for_another_subject_or_shape_refuses
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_a_document_of_another_attempt_refuses
+      - tests/test_analyzer_inventory.py::InventoryBundleTests.test_the_bundle_binds_the_document_to_the_tree_github_reads
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_upload_names_the_document_and_the_inventory_alone
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_holds_no_readback_slot
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_holds_no_secret_and_reads_only
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_runs_on_a_pinned_image
-      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_can_never_change_the_run_s_conclusion
-      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_admits_the_readback_s_events_except_the_admission_call
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_a_failed_inventory_denies_rather_than_vanishes
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_upload_s_identity_reaches_the_readback
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_readback_reads_exactly_that_artifact
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_inventory_s_attempt_reaches_the_readback
+      - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_admits_exactly_the_readback_s_events
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_job_binds_main_and_the_subject_as_the_readback_does
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_tools_are_main_s_hash_locked_ones
       - tests/test_analyzer_inventory.py::InventoryJobTests.test_the_head_is_fetched_as_data_and_never_checked_out

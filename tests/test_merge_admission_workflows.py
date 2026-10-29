@@ -17,15 +17,17 @@ import re
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import yaml
-from test_claude_actions_workflows import _expression_secrets
-from test_merge_evidence_github import API, HEAD, _replies
-from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
+
+from tests.test_claude_actions_workflows import _expression_secrets
+from tests.test_merge_evidence_github import API, HEAD, _replies
+from tests.test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -467,16 +469,16 @@ class AdmissionWorkflowTests(unittest.TestCase):
         import inspect
 
         jobs = _load(ADMISSION)["jobs"]
-        # The call lasts as long as the longest job it runs may. The shadow inventory
-        # (Decision 0118) never runs in it, so its limit is not the call's (Claude on
-        # #460).
-        called = {
-            name: job
-            for name, job in _load(READBACK)["jobs"].items()
-            if "inputs.admission != true" not in job["if"]
-        }
-        self.assertEqual({"readback"}, set(called))
-        call = max(int(job["timeout-minutes"]) for job in called.values())
+        # The call runs the inventory, then the readback that needs it (#389 A0-MP1
+        # slice 3, Decision 0119; the owner's OWNER-389-S3-MA0-TIMING-SCOPE): its path
+        # is their limits' serial sum, never the longer of the two.
+        called = _load(READBACK)["jobs"]
+        self.assertEqual({"inventory", "readback"}, set(called))
+        self.assertEqual("inventory", called["readback"]["needs"])
+        self.assertNotIn("needs", called["inventory"])
+        call = int(called["inventory"]["timeout-minutes"]) + int(
+            called["readback"]["timeout-minutes"]
+        )
         path = (
             sum(
                 int(jobs[name]["timeout-minutes"])
@@ -855,8 +857,20 @@ class ReadbackCallTests(unittest.TestCase):
         self.assertEqual("${{ inputs.head }}", subject["env"]["DISPATCH_HEAD"])
 
     def test_a_call_is_admitted_from_protected_main_only(self) -> None:
-        condition = str(_load(READBACK)["jobs"]["readback"]["if"])
-        self.assertTrue(condition.strip().startswith(MAIN_ONLY))
+        condition = " ".join(str(_load(READBACK)["jobs"]["readback"]["if"]).split())
+        # It runs after the inventory whatever its result, unless the run is
+        # cancelled (#389 A0-MP1 slice 3; Revix on #461), and only under the
+        # main-only condition. Every other clause is one parenthesized group that
+        # MAIN_ONLY ANDs, so no later `||` admits another ref (CodeAnt on #461).
+        prefix = f"!cancelled() && {MAIN_ONLY} && ("
+        self.assertTrue(condition.startswith(prefix))
+        depth, closed = 0, -1
+        for index in range(len(prefix) - 1, len(condition)):
+            depth += {"(": 1, ")": -1}.get(condition[index], 0)
+            if depth == 0:
+                closed = index
+                break
+        self.assertEqual(len(condition) - 1, closed)
         self.assertIn("inputs.admission", condition)
 
     def test_a_call_receives_exactly_the_analyzer_tokens(self) -> None:
@@ -1116,11 +1130,29 @@ class L1ModeTests(unittest.TestCase):
         self.assertEqual(
             sorted(p["pull_number"] for p in pulls), [p["pull_number"] for p in pulls]
         )
-        # The sweep's projection of the same enumeration is unchanged.
+        # The sweep's projection of the same enumeration reads every page too: with
+        # no hint, `subjects` selects the scheduled batch of the open numbers, here
+        # the whole population in one batch, so it holds the second page's number.
+        heads = {number: f"{number:040x}" for number in (1, 2, 3)}
+        sweep: dict[str, tuple[Any, dict[str, str]]] = {
+            listing: (
+                [self._open(number, head) for number, head in heads.items()],
+                {"link": f'<{listing}&page=2>; rel="next"'},
+            ),
+            f"{listing}&page=2": ([self._open(426, HEAD, base="release")], {}),
+            f"{API}/pulls/426": (self._open(426, HEAD, base="release"), {}),
+        }
+        for number, head in heads.items():
+            sweep[f"{API}/pulls/{number}"] = (self._open(number, head), {})
         self.assertEqual(
-            [*range(1, 101), 426],
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            module._open_pull_numbers(paged_fake_fixture(replies), "ktogias/gnostoa"),
+            (
+                0,
+                [
+                    *({"pull_number": n, "head": head} for n, head in heads.items()),
+                    {"pull_number": 426, "head": HEAD},
+                ],
+            ),
+            self._subjects(sweep),
         )
 
     def test_the_sweep_keeps_a_repeated_number_once(self) -> None:
@@ -1130,17 +1162,41 @@ class L1ModeTests(unittest.TestCase):
         module = adapter_fixture()
         listing = f"{API}/pulls?state=open&per_page=100"
         replies: dict[str, tuple[Any, dict[str, str]]] = {
-            listing: ([self._open(1, HEAD), self._open(1, "c" * 40)], {})
+            listing: ([self._open(1, HEAD), self._open(1, "c" * 40)], {}),
+            f"{API}/pulls/1": (self._open(1, HEAD), {}),
         }
-        self.assertEqual(
-            [1],
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            module._open_pull_numbers(paged_fake_fixture(replies), "ktogias/gnostoa"),
-        )
+        # The sweep, `subjects` with no hint, evaluates the repeated number once, and
+        # the enumeration it selects from already holds it once: observed through the
+        # real `_open_pull_numbers`, which the patch's factory receives as `spec` and
+        # calls through.
+        returned: list[list[int]] = []
+
+        def recording(*, spec: Callable[..., list[int]]) -> Callable[..., list[int]]:
+            def numbers(*args: Any, **kwargs: Any) -> list[int]:
+                result = spec(*args, **kwargs)
+                returned.append(result)
+                return result
+
+            return numbers
+
+        with mock.patch.object(
+            module, "_open_pull_numbers", spec=True, new_callable=recording
+        ):
+            self.assertEqual(
+                (0, [{"pull_number": 1, "head": HEAD}]),
+                self._subjects(replies, module=module),
+            )
+        self.assertEqual([[1]], returned)
+        # And the scheduled batch keeps once a number it is given twice, whatever
+        # the enumeration holds.
+        with mock.patch.object(module, "_open_pull_numbers", return_value=[1, 1]):
+            self.assertEqual(
+                (0, [{"pull_number": 1, "head": HEAD}]),
+                self._subjects(replies, module=module),
+            )
         fake = paged_fake_fixture(replies)
         with self.assertRaises(module.ProviderReadError):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            module._open_pulls(fake, "ktogias/gnostoa")
+            module.open_pulls(fake, "ktogias/gnostoa")
 
     def test_open_heads_refuses_an_incomplete_or_conflicting_population(self) -> None:
         module = adapter_fixture()
@@ -1166,8 +1222,10 @@ class L1ModeTests(unittest.TestCase):
                 self.assertNotEqual(0, code)
                 self.assertFalse(output.exists())
 
-    def _subjects(self, replies: dict[str, Any], *argv: str) -> tuple[int, Any]:
-        module = adapter_fixture()
+    def _subjects(
+        self, replies: dict[str, Any], *argv: str, module: Any = None
+    ) -> tuple[int, Any]:
+        module = adapter_fixture() if module is None else module
         with tempfile.TemporaryDirectory() as raw:
             output = Path(raw) / "subjects.json"
             code = self._run(

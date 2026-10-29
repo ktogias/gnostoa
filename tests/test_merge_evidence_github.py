@@ -21,13 +21,14 @@ from typing import Any
 from unittest.mock import patch
 
 import yaml
-from test_review_reconcile_l1 import (
+
+from tests.test_review_reconcile_l1 import (
     adapter_fixture,
     complete_replies_fixture,
     paged_fake_fixture,
 )
-
 from tools import (
+    analyzer_inventory,
     analyzer_readback,
     assurance_completeness,
     merge_admission,
@@ -345,6 +346,7 @@ def _readback(
     repository: str = "ktogias/gnostoa",
     pull: int = 300,
     completeness: str | None = None,
+    native_mode: str | None = None,
 ) -> dict[str, Any]:
     complete = status == "COMPLETE"
     if completeness is None:
@@ -352,6 +354,17 @@ def _readback(
         # full read and Codacy's are full runs.
         local = (provider, scope) == ("deepsource", "DIFF")
         completeness = "DIFF_LOCAL" if local else "FULL_RUN"
+    if native_mode is None:
+        # Each producer's own native mode (CodeAnt and Cubic on #461): Codacy's and
+        # SonarCloud's pull-request analyses; DeepSource's and the inventory's
+        # diff-local and full reads.
+        native_mode = (
+            "PULL_REQUEST"
+            if provider in ("codacy", "sonarcloud")
+            else "DIFF_LOCAL"
+            if completeness == "DIFF_LOCAL"
+            else "FULL_RUN"
+        )
     record: dict[str, Any] = {"status": status, "pages": 1, "count": len(findings)}
     if not complete:
         record["reason"] = "AUTH_UNAVAILABLE"
@@ -365,7 +378,7 @@ def _readback(
         analysis_id=None,
         scope=scope,
         completeness=completeness if complete else "AUTH_UNAVAILABLE",
-        native_mode="FULL_RUN",
+        native_mode=native_mode,
         observed_at="2026-09-19T16:40:50Z",
         run_state="SUCCESS" if complete else "UNKNOWN",
         coverage_record=record,
@@ -375,7 +388,8 @@ def _readback(
 
 def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
     """The authenticated readback's bundle for the snapshot's pull request; by
-    default its four readbacks are complete and find nothing."""
+    default its six readbacks are complete and find nothing: the four vendors' and,
+    since #389 A0-MP1 slice 3, the project inventory's two."""
 
     bundle: dict[str, Any] = {
         "schema": analyzer_readback.BUNDLE_SCHEMA,
@@ -392,10 +406,19 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
             _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR),
+            *_inventory_readbacks(),
         ],
     }
     bundle.update(changes)
     return bundle
+
+
+def _inventory_readbacks() -> tuple[dict[str, Any], dict[str, Any]]:
+    """The project inventory's two complete readbacks, as #460's adapter marks them:
+    DIFF diff-local, FULL a full run, in completeness and native mode alike, built
+    by the one inventory fixture (#389 A0-MP1 slice 3; CodeAnt on #461)."""
+
+    return (_inventory("DIFF"), _inventory("FULL"))
 
 
 ANALYZER_ITEMS = ("deepsource-diff", "deepsource-full", "codacy")
@@ -2261,9 +2284,11 @@ class CheckReceiptTests(unittest.TestCase):
             {
                 **{("verification-checks", n): checks for n in REQUIRED},
                 ("codeql", "codeql"): checks,
-                ("analyzer-readback", "deepsource-diff"): readback,
-                ("analyzer-readback", "deepsource-full"): readback,
+                ("deepsource-readback", "deepsource-diff"): readback,
+                ("deepsource-readback", "deepsource-full"): readback,
                 ("analyzer-readback", "codacy"): readback,
+                ("project-risk-readback", "project-diff"): readback,
+                ("project-risk-readback", "project-full"): readback,
                 ("sonarcloud", "quality-gate"): checks,
                 ("sonarcloud", "issue-inventory"): readback,
             },
@@ -3084,9 +3109,13 @@ class AnalyzerReceiptTests(unittest.TestCase):
 
     @staticmethod
     def _statuses(bundle: dict[str, Any] | None) -> dict[str, str]:
+        # The readback's three vendor items: Codacy's under `analyzer-readback`,
+        # DeepSource's two under their own requirement (#389 A0-MP1 slice 3).
         statuses = _receipt_statuses(_evidence(analyzer=bundle))
         return {
-            item: s for (r, item), s in statuses.items() if r == "analyzer-readback"
+            item: s
+            for (r, item), s in statuses.items()
+            if r in ("analyzer-readback", "deepsource-readback")
         }
 
     def test_a_bound_complete_bundle_gives_each_item_a_complete_receipt(self) -> None:
@@ -3105,6 +3134,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             _readback("deepsource", "FULL", FINDING),
             _readback("codacy", "DIFF"),
             _readback(*SONAR),
+            *_inventory_readbacks(),
         )
         self.assertEqual(
             dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(bundle)
@@ -3209,7 +3239,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             {
                 item: status
                 for (record, item), status in _receipt_statuses(evidence).items()
-                if record == "analyzer-readback"
+                if record in ("analyzer-readback", "deepsource-readback")
             },
         )
         self.assertEqual(
@@ -3353,10 +3383,15 @@ class AnalyzerReceiptTests(unittest.TestCase):
         declaration = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
-        [requirement] = [
-            r for r in declaration["requirements"] if r["id"] == "analyzer-readback"
-        ]
-        self.assertEqual(list(ANALYZER_ITEMS), list(requirement["coverage"]))
+        # The readback's items, as section C splits them (#389 A0-MP1 slice 3).
+        coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
+        self.assertEqual(["codacy"], coverage["analyzer-readback"])
+        self.assertEqual(
+            ["deepsource-diff", "deepsource-full"], coverage["deepsource-readback"]
+        )
+        self.assertEqual(
+            ["project-diff", "project-full"], coverage["project-risk-readback"]
+        )
 
     def test_the_command_reads_the_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3370,7 +3405,11 @@ class AnalyzerReceiptTests(unittest.TestCase):
             statuses = _receipt_statuses(json.loads(out))
             self.assertEqual(
                 dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
-                {i: s for (r, i), s in statuses.items() if r == "analyzer-readback"},
+                {
+                    i: s
+                    for (r, i), s in statuses.items()
+                    if r in ("analyzer-readback", "deepsource-readback")
+                },
             )
             # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
             for text in ("not json", json.dumps({**_bundle(), "extra": 1}), "null"):
@@ -3452,7 +3491,7 @@ class SonarCloudInventoryTests(unittest.TestCase):
             {
                 item: s
                 for (r, item), s in _receipt_statuses(evidence).items()
-                if r == "analyzer-readback"
+                if r in ("analyzer-readback", "deepsource-readback")
             },
         )
         self.assertEqual(
@@ -3471,6 +3510,7 @@ class SonarCloudInventoryTests(unittest.TestCase):
             _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR, *issues),
+            *_inventory_readbacks(),
         )
         # The gate passed on the exact head, through the protected manifest, beside
         # the inventory (cubic on #424).
@@ -3951,38 +3991,62 @@ class SonarCloudGateTests(unittest.TestCase):
 # source's raw coverage, and every obtained finding still vetoes. The substitute
 # claims are a test-only qualification, never a live one (F3 owns qualification).
 _F2_SUBSTITUTES = (
-    (("analyzer-readback", "deepsource-diff"), ("analyzer-readback", "codacy")),
-    (("analyzer-readback", "deepsource-full"), ("sonarcloud", "issue-inventory")),
+    (("deepsource-readback", "deepsource-diff"), ("analyzer-readback", "codacy")),
+    (("deepsource-readback", "deepsource-full"), ("sonarcloud", "issue-inventory")),
 )
 _F2_CLASSES = ("critical", "mechanical", "normal", "normative")
+
+
+def _f2_group_claims(
+    group: tuple[tuple[str, str], ...], applies: dict[str, list[str]], minimum: int
+) -> list[tuple[tuple[tuple[str, str], ...], dict[str, int]]]:
+    """One group's claims: the group, for the classes all its items' requirements
+    share, and each item's own claim for the classes only its requirement has (a
+    helper of its own, so `_f2_declaration` stays within the project's complexity
+    bound: #461's inventory)."""
+
+    shared = [c for c in _F2_CLASSES if all(c in applies[r] for r, _ in group)]
+    claims = [(group, dict.fromkeys(shared, minimum))]
+    for pair in group:
+        extra = [c for c in applies[pair[0]] if c not in shared]
+        if extra:
+            claims.append(((pair,), dict.fromkeys(extra, 1)))
+    return claims
 
 
 def _f2_declaration(
     groups: tuple[tuple[tuple[str, str], ...], ...] = (), minimum: int = 1
 ) -> dict[str, Any]:
-    """Gnostoa's own 1.1 declaration, its requirements and their domains as they
+    """Gnostoa's own declaration, its requirements and their domains as they
     are, with its claims replaced: each group is one claim with the minimum given,
-    and every other item is its own claim (minimum 1). Taking the domains from the
-    declaration keeps a requirement it gains covered (Amazon Q on #435)."""
+    for the classes every one of its items' requirements applies to, and every
+    other item is its own claim (minimum 1). A grouped item whose requirement
+    applies to more classes keeps its own claim for those, as the parser requires
+    every collected item to support a claim (#389 A0-MP1 slice 3). Taking the
+    domains from the declaration keeps a requirement it gains covered (Amazon Q on
+    #435)."""
 
     document: dict[str, Any] = yaml.safe_load(
         (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
     )
+    applies = {r["id"]: r["applies_to"] for r in document["requirements"]}
     grouped = {pair for group in groups for pair in group}
-    claims = [
-        (((requirement["id"], item),), 1)
+    claims: list[tuple[tuple[tuple[str, str], ...], dict[str, int]]] = [
+        (((requirement["id"], item),), dict.fromkeys(requirement["applies_to"], 1))
         for requirement in document["requirements"]
         for item in requirement["coverage"]
         if (requirement["id"], item) not in grouped
-    ] + [(group, minimum) for group in groups]
+    ]
+    for group in groups:
+        claims.extend(_f2_group_claims(group, applies, minimum))
     document["claims"] = [
         {
             "id": "-".join(item for _, item in group),
             "title": "A test-only claim",
             "evidence": [{"requirement": r, "item": i} for r, i in group],
-            "independent_domains": dict.fromkeys(_F2_CLASSES, count),
+            "independent_domains": classes,
         }
-        for group, count in claims
+        for group, classes in claims
     ]
     return document
 
@@ -4021,6 +4085,275 @@ _F2_DEEPSOURCE_DOWN = (
 )
 
 
+# #389 A0-MP1 slice 3 (6381812211 rows 4, 6 and 7): the inventory's two readbacks
+# give the NORMAL-only project-risk items, and DeepSource's readbacks become their own
+# requirement, which NORMAL no longer applies.
+_PROJECT_ITEMS = (
+    ("project-risk-readback", "project-diff"),
+    ("project-risk-readback", "project-full"),
+)
+
+
+def _section_c_declaration() -> dict[str, Any]:
+    """Gnostoa's own declaration, which carries 6381812211 section C's NORMAL-only
+    split: Codacy stays `analyzer-readback`'s, DeepSource's two items are
+    `deepsource-readback`'s (every class but NORMAL), and the project's inventory
+    gives `project-risk-readback` (NORMAL only)."""
+
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
+    )
+    return document
+
+
+def _inventory(scope: str, *findings: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """One of the project inventory's two readbacks, as #460's adapter builds them:
+    DIFF is diff-local, FULL a full run, in completeness and native mode alike
+    (CodeAnt on #461)."""
+
+    kind = "DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN"
+    return _readback(
+        "gnostoa-inventory",
+        scope,
+        *findings,
+        completeness=kind,
+        native_mode=kind,
+        **changes,
+    )
+
+
+def _inventory_incomplete(scope: str) -> dict[str, Any]:
+    """An inventory readback that is not complete, as the real run gives it
+    (6399343052): the requested head's run, AMBIGUOUS, its coverage INCOMPLETE with
+    the composite's reason."""
+
+    return analyzer_readback.build_readback(
+        provider="gnostoa-inventory",
+        adapter="gnostoa-diagnostic-inventory/v3",
+        repository="ktogias/gnostoa",
+        pull_number=300,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id=None,
+        scope=scope,
+        completeness="AMBIGUOUS",
+        native_mode="DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN",
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="COMPLETE",
+        coverage_record={
+            "status": "INCOMPLETE",
+            "pages": 1,
+            "count": 0,
+            "reason": "source binding UNVERIFIED",
+        },
+        findings=[],
+    )
+
+
+class ProjectRiskActivationTests(unittest.TestCase):
+    """#389 A0-MP1 slice 3, end to end through `evidence_for` and
+    `merge_admission.evaluate`: under section C's declaration the inventory's
+    readbacks give the NORMAL-only project items (6381812211 section D's cases)."""
+
+    def test_the_declaration_is_section_c_s(self) -> None:
+        """RED: the project-risk items are NORMAL's alone, DeepSource's every other
+        class's, and Codacy stays every class's."""
+        document = _section_c_declaration()
+        requirements = {r["id"]: r for r in document["requirements"]}
+        self.assertEqual(["codacy"], requirements["analyzer-readback"]["coverage"])
+        self.assertEqual(
+            (
+                ["mechanical", "normative", "critical"],
+                ["deepsource-diff", "deepsource-full"],
+            ),
+            (
+                requirements["deepsource-readback"]["applies_to"],
+                requirements["deepsource-readback"]["coverage"],
+            ),
+        )
+        self.assertEqual(
+            (["normal"], ["project-diff", "project-full"]),
+            (
+                requirements["project-risk-readback"]["applies_to"],
+                requirements["project-risk-readback"]["coverage"],
+            ),
+        )
+        claims = {c["id"]: c for c in document["claims"]}
+        for claim, requirement, classes in (
+            (
+                "deepsource-diff-findings",
+                "deepsource-readback",
+                {"mechanical", "normative", "critical"},
+            ),
+            (
+                "deepsource-full-findings",
+                "deepsource-readback",
+                {"mechanical", "normative", "critical"},
+            ),
+            ("project-diff-risk-findings", "project-risk-readback", {"normal"}),
+            ("project-full-risk-findings", "project-risk-readback", {"normal"}),
+        ):
+            with self.subTest(claim=claim):
+                self.assertEqual(
+                    requirement, claims[claim]["evidence"][0]["requirement"]
+                )
+                self.assertEqual(classes, set(claims[claim]["independent_domains"]))
+
+    def test_a_normal_change_with_deepsource_down_meets_its_project_claims(
+        self,
+    ) -> None:
+        """RED (candidate-profile-positive): main's map produces no project item, so
+        `producer_routes` refuses section C's declaration. Its claims met, NORMAL is
+        denied only by this fixture's other gaps, M13 and M15 (the name says what it
+        checks: Cubic on #461)."""
+        bundle = _bundle(*_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL"))
+        evidence, failed = _admitted(
+            _section_c_declaration(), bundle, change_class="normal"
+        )
+        statuses = _receipt_statuses(evidence)
+        for pair in _PROJECT_ITEMS:
+            with self.subTest(item=pair):
+                self.assertEqual("COMPLETE", statuses[pair])
+        self.assertEqual({"M13", "M15"}, set(failed))
+
+    def test_deepsource_still_holds_every_class_but_normal(self) -> None:
+        """RED (baseline for the other classes): with DeepSource down, every class but
+        NORMAL still lacks its two DeepSource claims, whatever the inventory says."""
+        bundle = _bundle(*_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL"))
+        for change_class in ("mechanical", "normative", "critical"):
+            with self.subTest(change_class=change_class):
+                _, failed = _admitted(
+                    _section_c_declaration(), bundle, change_class=change_class
+                )
+                self.assertIn("M2-M8", failed)
+
+    def test_an_incomplete_composite_never_gives_a_project_claim(self) -> None:
+        """RED (absent-or-partial): an inventory that is missing, or not complete,
+        leaves NORMAL's project claims unmet."""
+        for name, inventories in (
+            ("missing", ()),
+            ("partial diff", (_inventory_incomplete("DIFF"), _inventory("FULL"))),
+            ("partial full", (_inventory("DIFF"), _inventory_incomplete("FULL"))),
+            # A document the job wrote when its collection failed, passed through as
+            # recorded (Amazon Q on #461): both UNAVAILABLE, so neither item is met.
+            (
+                "unavailable",
+                tuple(
+                    analyzer_inventory.unavailable(
+                        repository="ktogias/gnostoa",
+                        pull_number=300,
+                        requested_head=HEAD,
+                        observed_at="2026-09-19T16:40:50Z",
+                        reason="QualityEvidenceError",
+                    )
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    _bundle(*_F2_DEEPSOURCE_DOWN, *inventories),
+                    change_class="normal",
+                )
+                self.assertIn("M2-M8", failed)
+
+    def test_a_full_read_never_gives_the_diff_item(self) -> None:
+        """RED (full-not-diff-label): a complete read of the other kind does not give
+        the item (Decision 0091, `_ANALYZER_COMPLETENESS`)."""
+        bundle = _bundle(
+            *_F2_DEEPSOURCE_DOWN,
+            _readback("gnostoa-inventory", "DIFF", completeness="FULL_RUN"),
+            _inventory("FULL"),
+        )
+        evidence, failed = _admitted(
+            _section_c_declaration(), bundle, change_class="normal"
+        )
+        self.assertEqual(
+            "INCOMPLETE",
+            _receipt_statuses(evidence)[("project-risk-readback", "project-diff")],
+        )
+        self.assertIn("M2-M8", failed)
+
+    def test_an_inventory_finding_denies_a_normal_change(self) -> None:
+        """RED (all-negative-evidence): under met claims, a finding the inventory
+        obtained is M17's only reason, listed as its item's."""
+        bundle = _bundle(
+            *_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL", FINDING)
+        )
+        evidence, failed = _admitted(
+            _section_c_declaration(), bundle, change_class="normal"
+        )
+        [listed] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("project-full", listed["item"])
+        self.assertNotIn("M2-M8", failed)
+        self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_an_inventory_finding_denies_every_class(self) -> None:
+        """Characterization (PAO 6399779328, finding 2): a requirement that is NORMAL's
+        alone does not make its findings NORMAL's. M17 lists every finding obtained,
+        so once the bundle carries the inventory, a standing project finding denies a
+        critical or normative change whose own claims are all met. This is the
+        cross-class burden the production-admission packet carries, with its
+        pre-collection scope alternative; a finding is never filtered after it is
+        obtained."""
+        complete = (
+            _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
+            _readback("deepsource", "FULL"),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR),
+        )
+        bundle = _bundle(*complete, _inventory("DIFF"), _inventory("FULL", FINDING))
+        for change_class in ("mechanical", "normative", "critical"):
+            with self.subTest(change_class=change_class):
+                evidence, failed = _admitted(
+                    _section_c_declaration(), bundle, change_class=change_class
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual("project-full", listed["item"])
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+
+def _admitted(
+    declaration: dict[str, Any],
+    bundle: dict[str, Any],
+    change_class: str | None = None,
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """The merge decision on one head under `declaration`, with `bundle` as its
+    analyzer readback, the gate green, and the body's class `change_class` if given:
+    the evidence and the failed criteria. Module-level, so each class's tests call
+    it without reaching into another's private member (#461's own inventory)."""
+    with tempfile.TemporaryDirectory() as directory:
+        project = _project(Path(directory))
+        path = project / "policy" / "assurance-evidence.yaml"
+        path.write_text(yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8")
+        # The gate passed on the exact head, so every check item is
+        # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        replies = _replies(
+            **{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})}
+        )
+        if change_class is not None:
+            replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                "- Class: `normative`", f"- Class: `{change_class}`"
+            )
+        snapshot = _snapshot(replies)
+        evidence = merge_evidence_github.evidence_for(
+            snapshot, project_root=project, analyzer_readback=bundle
+        )
+        loaded = assurance_completeness.load_declaration(path, project_root=project)
+    verdict = merge_admission.evaluate(
+        evidence, declaration=loaded, change_policy=_policy()
+    )
+    failed = {
+        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
+    }
+    return evidence, failed
+
+
 class AnalyzerClaimsCoverageTests(unittest.TestCase):
     """#389 F2, end to end through `evidence_for` and `merge_admission.evaluate`:
     a qualified alternative meets M17 only through the verdict, a down vendor's
@@ -4030,34 +4363,11 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
 
     @staticmethod
     def _admit(
-        declaration: dict[str, Any], bundle: dict[str, Any]
+        declaration: dict[str, Any],
+        bundle: dict[str, Any],
+        change_class: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, list[str]]]:
-        with tempfile.TemporaryDirectory() as directory:
-            project = _project(Path(directory))
-            path = project / "policy" / "assurance-evidence.yaml"
-            path.write_text(
-                yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8"
-            )
-            # The gate passed on the exact head, so every check item is
-            # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
-            gate = {
-                **_check_run(60, "SonarCloud Code Analysis", 12526),
-                "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
-            }
-            snapshot = _snapshot(
-                _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
-            )
-            evidence = merge_evidence_github.evidence_for(
-                snapshot, project_root=project, analyzer_readback=bundle
-            )
-            loaded = assurance_completeness.load_declaration(path, project_root=project)
-        verdict = merge_admission.evaluate(
-            evidence, declaration=loaded, change_policy=_policy()
-        )
-        failed = {
-            c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
-        }
-        return evidence, failed
+        return _admitted(declaration, bundle, change_class)
 
     def test_a_qualified_alternative_meets_m17_through_the_verdict(self) -> None:
         """RED: today M17 counts all four readbacks, whatever the claims say."""
@@ -4068,8 +4378,8 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
         self.assertEqual(
             ("UNAVAILABLE", "UNAVAILABLE"),
             (
-                statuses[("analyzer-readback", "deepsource-diff")],
-                statuses[("analyzer-readback", "deepsource-full")],
+                statuses[("deepsource-readback", "deepsource-diff")],
+                statuses[("deepsource-readback", "deepsource-full")],
             ),
         )
         self.assertEqual(
@@ -4152,8 +4462,8 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
                 _f2_declaration(
                     (
                         (
-                            ("analyzer-readback", "deepsource-diff"),
-                            ("analyzer-readback", "deepsource-full"),
+                            ("deepsource-readback", "deepsource-diff"),
+                            ("deepsource-readback", "deepsource-full"),
                         ),
                     )
                 ),
