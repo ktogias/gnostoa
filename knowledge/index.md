@@ -124,6 +124,7 @@ inherited, copied or loaded by adopting projects.
 - [Admit NORMAL changes through the project's own inventory and keep DeepSource for every other class](decisions/0119-admit-normal-changes-through-the-project-s-own-inventory-and-keep-deepsource-for-every-other-class.md)
 - [Derive the diagnostic inventory's source binding from its own run](decisions/0120-derive-the-diagnostic-inventory-s-source-binding-from-its-own-run.md)
 - [Refresh the development lock's msgpack pin for an unbounded memory leak](decisions/0121-refresh-the-development-lock-msgpack-pin.md)
+- [Add the inventory's pinned tool and secrets families, inactive until a separate activation](decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

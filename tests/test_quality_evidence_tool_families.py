@@ -22,6 +22,7 @@ import json
 import os
 import platform
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _DiagnosticInventoryFixture
@@ -69,7 +70,14 @@ _WORKFLOW = (
     "      - run: echo $FOO\n"
 )
 _GITLAB = "job:\n  script:\n    - echo $FOO\n"
-_NEW_FAMILIES = ("shell-lint", "dockerfile-lint", "workflow-lint", "gitlab-script", "secrets", "unsafe-calls")
+_NEW_FAMILIES = (
+    "shell-lint",
+    "dockerfile-lint",
+    "workflow-lint",
+    "gitlab-script",
+    "secrets",
+    "unsafe-calls",
+)
 
 
 class _ToolFamilyFixture(_DiagnosticInventoryFixture):
@@ -94,23 +102,57 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
         self.tool_root = Path(self.directory.name) / "tools"
         self.tool_root.mkdir()
         pins = {}
-        for name, version in (("shellcheck", "0.11.0"), ("hadolint", "2.15.1"), ("actionlint", "1.7.12")):
+        for name, version in (
+            ("shellcheck", "0.11.0"),
+            ("hadolint", "2.15.1"),
+            ("actionlint", "1.7.12"),
+        ):
             binary = self.tool_root / name
             binary.write_bytes(f"#!fake {name}\n".encode())
             binary.chmod(0o755)
             digest = hashlib.sha256(binary.read_bytes()).hexdigest()
             pins[name] = {"version": version, "sha256": {platform.machine(): digest}}
-        self.profile = {
+        self.profile: dict[str, Any] = {
             "schema": "gnostoa-diagnostic-profile/v2",
             "id": "fixture.tool-families",
             "scopes": {"all": {"exclude": []}},
             "tools": pins,
             "families": [
-                {"id": "shell-lint", "producer": "shellcheck", "diff": "all", "full": "all", "active": True},
-                {"id": "dockerfile-lint", "producer": "hadolint", "diff": "all", "full": "all", "active": True},
-                {"id": "workflow-lint", "producer": "actionlint", "diff": "all", "full": "all", "active": True},
-                {"id": "gitlab-script", "producer": "gitlab-shellcheck", "diff": "all", "full": "all", "active": True},
-                {"id": "secrets", "producer": "secrets", "diff": "all", "full": "all", "active": True},
+                {
+                    "id": "shell-lint",
+                    "producer": "shellcheck",
+                    "diff": "all",
+                    "full": "all",
+                    "active": True,
+                },
+                {
+                    "id": "dockerfile-lint",
+                    "producer": "hadolint",
+                    "diff": "all",
+                    "full": "all",
+                    "active": True,
+                },
+                {
+                    "id": "workflow-lint",
+                    "producer": "actionlint",
+                    "diff": "all",
+                    "full": "all",
+                    "active": True,
+                },
+                {
+                    "id": "gitlab-script",
+                    "producer": "gitlab-shellcheck",
+                    "diff": "all",
+                    "full": "all",
+                    "active": True,
+                },
+                {
+                    "id": "secrets",
+                    "producer": "secrets",
+                    "diff": "all",
+                    "full": "all",
+                    "active": True,
+                },
                 {
                     "id": "unsafe-calls",
                     "producer": "ruff",
@@ -137,23 +179,38 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
         name = self._tool(command)
         if name is None:
             return super()._fake_run(
-                command, cwd=cwd, environment=environment, report=report, deadline=deadline, limits=limits
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
             )
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command or "-version" in command:
-            report.write_text(f"{name} {self.profile['tools'][name]['version']}\n", encoding="utf-8")
+            report.write_text(
+                f"{name} {self.profile['tools'][name]['version']}\n", encoding="utf-8"
+            )
             return 0, None, False
         status, body = self.tool_answers[name]
-        report.write_text(body if isinstance(body, str) else json.dumps(body), encoding="utf-8")
+        if name == "shellcheck" and isinstance(body, dict):
+            # As ShellCheck does: each comment names the file it was given, the first one here.
+            given = command[command.index("--") + 1] if "--" in command else command[-1]
+            body = {"comments": [dict(c, file=given) for c in body["comments"]]}
+        report.write_text(
+            body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
+        )
         return status, None, False
 
     def _collect(self, profile=None, **options) -> dict:
         # The pinned tools are found under the protected tool root only; `create=True`, because on protected main
         # there is none yet, so the collection reaches the profile's own contract before anything else.
-        with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run), patch.object(
-            self.module, "TOOL_ROOT", self.tool_root, create=True
+        with (
+            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
+            patch.object(self.module, "TOOL_ROOT", self.tool_root, create=True),
         ):
-            path = self.module._collect_diagnostic_inventory(
+            # The private collector, as the shared fixture captured it from unittest.mock (no attribute access).
+            path = self.collect.func(
                 self.root, self.output, profile=profile or self.profile, **options
             )
         return self._read(path)
@@ -163,11 +220,18 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
 
     def _change(self, path: str, old: str, new: str) -> None:
         source = self.root / path
-        source.write_text(source.read_text(encoding="utf-8").replace(old, new, 1) + "# head\n", encoding="utf-8")
+        source.write_text(
+            source.read_text(encoding="utf-8").replace(old, new, 1) + "# head\n",
+            encoding="utf-8",
+        )
         self._git("commit", "-q", "-am", "head")
 
     def _commands_of(self, name: str) -> list[tuple[list[str], Path, dict[str, str]]]:
-        return [c for c in self.commands if Path(c[0][0]).name == name and "--version" not in c[0]]
+        return [
+            c
+            for c in self.commands
+            if Path(c[0][0]).name == name and not {"--version", "-version"} & set(c[0])
+        ]
 
     def _findings(self, inventory: dict, tool: str) -> list[dict]:
         return [f for f in inventory["findings"] if f["tool"]["id"] == tool]
@@ -201,7 +265,9 @@ class ToolFamilyProfileTests(_ToolFamilyFixture):
             with self.subTest(tool=name):
                 self.assertEqual([], self._commands_of(name))
 
-    def test_a_tool_whose_digest_differs_from_its_pin_is_a_gap_and_never_runs(self) -> None:
+    def test_a_tool_whose_digest_differs_from_its_pin_is_a_gap_and_never_runs(
+        self,
+    ) -> None:
         (self.tool_root / "shellcheck").write_bytes(b"#!altered\n")
         inventory = self._collect(base=self.base)
         self.assertNotEqual("COMPLETE", self._rows(inventory)["shell-lint"]["analysis"])
@@ -210,10 +276,14 @@ class ToolFamilyProfileTests(_ToolFamilyFixture):
 
 
 class ShellFamilyTests(_ToolFamilyFixture):
-    def test_an_extensionless_sh_script_is_selected_and_its_finding_listed(self) -> None:
+    def test_an_extensionless_sh_script_is_selected_and_its_finding_listed(
+        self,
+    ) -> None:
         inventory = self._collect(base=self.base)
         found = self._findings(inventory, "shellcheck")
-        self.assertEqual([("ci/tool", 2)], [(f["path"], f["range"]["start_line"]) for f in found])
+        self.assertEqual(
+            [("ci/tool", 2)], [(f["path"], f["range"]["start_line"]) for f in found]
+        )
         self.assertIn("SC2086", found[0]["rule"])
         self.assertEqual("COMPLETE", self._rows(inventory)["shell-lint"]["analysis"])
 
@@ -230,7 +300,9 @@ class ShellFamilyTests(_ToolFamilyFixture):
         self.assertNotIn("-x", command)
 
     def test_an_inline_directive_is_an_attributable_gap(self) -> None:
-        (self.root / "ci" / "tool").write_text("#!/bin/sh\n# shellcheck disable=SC2086\necho $1\n", encoding="utf-8")
+        (self.root / "ci" / "tool").write_text(
+            "#!/bin/sh\n# shellcheck disable=SC2086\necho $1\n", encoding="utf-8"
+        )
         self._git("commit", "-q", "-am", "directive")
         self.tool_answers["shellcheck"] = (0, {"comments": []})
         inventory = self._collect(base=self.base)
@@ -238,7 +310,9 @@ class ShellFamilyTests(_ToolFamilyFixture):
         self.assertIn("ci/tool:2", inventory["coverage"]["reason"])
 
     def test_a_sourced_file_is_an_attributable_gap(self) -> None:
-        (self.root / "ci" / "tool").write_text("#!/bin/sh\n. ./lib.sh\n", encoding="utf-8")
+        (self.root / "ci" / "tool").write_text(
+            "#!/bin/sh\n. ./lib.sh\n", encoding="utf-8"
+        )
         self._git("commit", "-q", "-am", "source")
         self.tool_answers["shellcheck"] = (0, {"comments": []})
         inventory = self._collect(base=self.base)
@@ -251,21 +325,30 @@ class ShellFamilyTests(_ToolFamilyFixture):
         self.assertNotEqual("COMPLETE", self._rows(inventory)["shell-lint"]["analysis"])
 
     def test_an_unchanged_script_is_in_full_and_not_in_diff(self) -> None:
-        self._change("tools/sample.py", "VALUE", "VALUE")  # a head commit that leaves ci/tool unchanged
+        self._change(
+            "tools/sample.py", "VALUE", "VALUE"
+        )  # a head commit that leaves ci/tool unchanged
         inventory = self._collect(base=self.base)
-        found = self._findings(inventory, "shellcheck")
-        self.assertEqual(["FULL"], sorted({s for f in found for s in f["scopes"]}))
+        found = [
+            f for f in self._findings(inventory, "shellcheck") if f["path"] == "ci/tool"
+        ]
+        self.assertNotEqual([], found)
+        self.assertEqual({False}, {f["native"]["in_diff"] for f in found})
 
 
 class DockerfileFamilyTests(_ToolFamilyFixture):
     def test_a_run_defect_is_listed_and_the_protected_config_governs(self) -> None:
-        (self.root / ".hadolint.yaml").write_text("ignored: [SC2086]\n", encoding="utf-8")
+        (self.root / ".hadolint.yaml").write_text(
+            "ignored: [SC2086]\n", encoding="utf-8"
+        )
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "hostile hadolint config")
         with patch.dict(os.environ, {"HADOLINT_IGNORE": "SC2086"}):
             inventory = self._collect(base=self.base)
         found = self._findings(inventory, "hadolint")
-        self.assertEqual([("Dockerfile", 2)], [(f["path"], f["range"]["start_line"]) for f in found])
+        self.assertEqual(
+            [("Dockerfile", 2)], [(f["path"], f["range"]["start_line"]) for f in found]
+        )
         command, cwd, environment = self._commands_of("hadolint")[0]
         self.assertIn("--disable-ignore-pragma", command)
         config = Path(command[command.index("-c") + 1])
@@ -274,50 +357,82 @@ class DockerfileFamilyTests(_ToolFamilyFixture):
         self.assertFalse((Path(cwd) / ".hadolint.yaml").exists())
 
     def test_a_pragma_is_an_attributable_gap(self) -> None:
-        (self.root / "Dockerfile").write_text("FROM debian:12\n# hadolint ignore=DL3008\nRUN echo $FOO\n", encoding="utf-8")
+        (self.root / "Dockerfile").write_text(
+            "FROM debian:12\n# hadolint ignore=DL3008\nRUN echo $FOO\n",
+            encoding="utf-8",
+        )
         self._git("commit", "-q", "-am", "pragma")
         inventory = self._collect(base=self.base)
-        self.assertEqual("PARTIAL", self._rows(inventory)["dockerfile-lint"]["analysis"])
+        self.assertEqual(
+            "PARTIAL", self._rows(inventory)["dockerfile-lint"]["analysis"]
+        )
         self.assertIn("Dockerfile:2", inventory["coverage"]["reason"])
 
     def test_exit_one_without_a_report_is_a_gap(self) -> None:
         self.tool_answers["hadolint"] = (1, "")
         inventory = self._collect(base=self.base)
-        self.assertNotEqual("COMPLETE", self._rows(inventory)["dockerfile-lint"]["analysis"])
+        self.assertNotEqual(
+            "COMPLETE", self._rows(inventory)["dockerfile-lint"]["analysis"]
+        )
 
 
 class WorkflowFamilyTests(_ToolFamilyFixture):
-    def test_a_run_defect_is_listed_and_the_protected_config_and_shellcheck_govern(self) -> None:
-        (self.root / ".github" / "actionlint.yaml").write_text("paths:\n  '**':\n    ignore: ['.+']\n", encoding="utf-8")
+    def test_a_run_defect_is_listed_and_the_protected_config_and_shellcheck_govern(
+        self,
+    ) -> None:
+        (self.root / ".github" / "actionlint.yaml").write_text(
+            "paths:\n  '**':\n    ignore: ['.+']\n", encoding="utf-8"
+        )
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "hostile actionlint config")
         inventory = self._collect(base=self.base)
         found = self._findings(inventory, "actionlint")
-        self.assertEqual([(".github/workflows/w.yml", 10)], [(f["path"], f["range"]["start_line"]) for f in found])
+        self.assertEqual(
+            [(".github/workflows/w.yml", 10)],
+            [(f["path"], f["range"]["start_line"]) for f in found],
+        )
         self.assertEqual("echo $FOO", _WORKFLOW.split("\n")[9].split("run: ", 1)[1])
         command, _, _ = self._commands_of("actionlint")[0]
         config = Path(command[command.index("-config-file") + 1])
         self.assertFalse(config.resolve().is_relative_to(self.root.resolve()))
-        self.assertEqual(str(self.tool_root / "shellcheck"), command[command.index("-shellcheck") + 1])
+        self.assertEqual(
+            str(self.tool_root / "shellcheck"),
+            command[command.index("-shellcheck") + 1],
+        )
         self.assertIn("-pyflakes=", command)
 
     def test_the_queue_projection_changes_only_the_validated_line(self) -> None:
         text, projected, refused = self.module.project_concurrency_queue(_WORKFLOW)
         self.assertEqual([(5, "max")], projected)
         self.assertEqual([], refused)
-        changed = [(a, b) for a, b in zip(_WORKFLOW.split("\n"), text.split("\n")) if a != b]
+        changed = [
+            (a, b)
+            for a, b in zip(_WORKFLOW.split("\n"), text.split("\n"), strict=True)
+            if a != b
+        ]
         self.assertEqual(1, len(changed))
         self.assertEqual(len(_WORKFLOW.split("\n")), len(text.split("\n")))
         self.assertTrue(changed[0][1].lstrip().startswith("#"))
 
-    def test_the_queue_projection_refuses_undocumented_and_conflicting_forms(self) -> None:
+    def test_the_queue_projection_refuses_undocumented_and_conflicting_forms(
+        self,
+    ) -> None:
         for name, form in {
             "value": _WORKFLOW.replace("queue: max", "queue: maxx"),
-            "cancel": _WORKFLOW.replace("cancel-in-progress: false", "cancel-in-progress: true"),
-            "expression": _WORKFLOW.replace("cancel-in-progress: false", "cancel-in-progress: ${{ github.ref == 'x' }}"),
-            "flow": _WORKFLOW.replace("concurrency:\n  group: g\n  cancel-in-progress: false\n  queue: max\n",
-                                      "concurrency: {group: g, queue: max}\n"),
-            "duplicate": _WORKFLOW.replace("  queue: max\n", "  queue: max\n  queue: single\n"),
+            "cancel": _WORKFLOW.replace(
+                "cancel-in-progress: false", "cancel-in-progress: true"
+            ),
+            "expression": _WORKFLOW.replace(
+                "cancel-in-progress: false",
+                "cancel-in-progress: ${{ github.ref == 'x' }}",
+            ),
+            "flow": _WORKFLOW.replace(
+                "concurrency:\n  group: g\n  cancel-in-progress: false\n  queue: max\n",
+                "concurrency: {group: g, queue: max}\n",
+            ),
+            "duplicate": _WORKFLOW.replace(
+                "  queue: max\n", "  queue: max\n  queue: single\n"
+            ),
         }.items():
             with self.subTest(form=name):
                 text, projected, refused = self.module.project_concurrency_queue(form)
@@ -333,7 +448,10 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
 
     def test_a_step_with_a_non_sh_shell_is_an_attributable_gap(self) -> None:
         path = self.root / ".github" / "workflows" / "w.yml"
-        path.write_text(_WORKFLOW + "      - run: print(1)\n        shell: python\n", encoding="utf-8")
+        path.write_text(
+            _WORKFLOW + "      - run: print(1)\n        shell: python\n",
+            encoding="utf-8",
+        )
         self._git("commit", "-q", "-am", "python step")
         inventory = self._collect(base=self.base)
         self.assertEqual("PARTIAL", self._rows(inventory)["workflow-lint"]["analysis"])
@@ -344,11 +462,17 @@ class GitlabScriptFamilyTests(_ToolFamilyFixture):
     def test_a_script_item_is_analyzed_and_mapped_to_its_yaml_line(self) -> None:
         self.tool_answers["shellcheck"] = (1, {"comments": [dict(_SC_NATIVE, line=2)]})
         inventory = self._collect(base=self.base)
-        found = [f for f in self._findings(inventory, "gitlab-shellcheck") if f["path"] == ".gitlab-ci.yml"]
+        found = [
+            f
+            for f in self._findings(inventory, "gitlab-shellcheck")
+            if f["path"] == ".gitlab-ci.yml"
+        ]
         self.assertEqual([3], [f["range"]["start_line"] for f in found])
 
     def test_an_unsupported_construct_is_an_attributable_gap(self) -> None:
-        (self.root / ".gitlab-ci.yml").write_text("include: other.yml\n" + _GITLAB, encoding="utf-8")
+        (self.root / ".gitlab-ci.yml").write_text(
+            "include: other.yml\n" + _GITLAB, encoding="utf-8"
+        )
         self._git("commit", "-q", "-am", "include")
         inventory = self._collect(base=self.base)
         self.assertEqual("PARTIAL", self._rows(inventory)["gitlab-script"]["analysis"])
@@ -360,25 +484,38 @@ class SecretsFamilyTests(_ToolFamilyFixture):
 
     def test_a_dockerfile_env_secret_is_listed_by_the_secrets_family(self) -> None:
         (self.root / "Dockerfile").write_text(
-            "FROM scratch\nENV DB_PASSWORD=" + "Zq7" * 6 + "\n", encoding="utf-8"  # pragma: allowlist secret -- synthetic fixture value
+            "FROM scratch\nENV DB_PASSWORD=" + "Zq7" * 6 + "\n",
+            encoding="utf-8",  # pragma: allowlist secret -- synthetic fixture value
         )
         self._git("commit", "-q", "-am", "env secret")
         inventory = self._collect(base=self.base)
-        found = [f for f in self._findings(inventory, "secrets") if f["path"] == "Dockerfile"]
+        found = [
+            f for f in self._findings(inventory, "secrets") if f["path"] == "Dockerfile"
+        ]
         self.assertEqual([2], [f["range"]["start_line"] for f in found])
 
     def test_a_workflow_secret_reference_is_not_listed(self) -> None:
         (self.root / ".github" / "workflows" / "w.yml").write_text(
-            _WORKFLOW + "        env:\n          API_TOKEN: ${{ secrets.API_TOKEN }}\n", encoding="utf-8"
+            _WORKFLOW + "        env:\n          API_TOKEN: ${{ secrets.API_TOKEN }}\n",
+            encoding="utf-8",
         )
         self._git("commit", "-q", "-am", "secret reference")
         inventory = self._collect(base=self.base)
-        self.assertEqual([], [f for f in self._findings(inventory, "secrets") if f["path"].startswith(".github/")])
+        self.assertEqual(
+            [],
+            [
+                f
+                for f in self._findings(inventory, "secrets")
+                if f["path"].startswith(".github/")
+            ],
+        )
 
     def test_the_scanner_pins_its_plugin_by_digest(self) -> None:
         from tools import security_scan
 
-        self.assertTrue(hasattr(security_scan, "PLUGIN_PINS"), "the scanner pins no plugin")
+        self.assertTrue(
+            hasattr(security_scan, "PLUGIN_PINS"), "the scanner pins no plugin"
+        )
         pins = security_scan.PLUGIN_PINS
         self.assertEqual(1, len(pins))
         for _name, (relative, digest) in pins.items():
@@ -395,17 +532,55 @@ class RepositoryCleanTests(_ToolFamilyFixture):
 
         repository = Path(__file__).resolve().parent.parent
         completed = subprocess.run(  # nosec B603 -- test-only: a literal argv
-            [sys.executable, "-I", "-m", "ruff", "check", "--isolated", "--no-cache", "--ignore-noqa", "--preview",
-             "--select", "S301,S307,S324,S602,S605,S608", "--output-format", "json", "."],
-            cwd=repository, capture_output=True, text=True, check=False,
+            [
+                sys.executable,
+                "-I",
+                "-m",
+                "ruff",
+                "check",
+                "--isolated",
+                "--no-cache",
+                "--ignore-noqa",
+                "--preview",
+                "--select",
+                "S301,S307,S324,S602,S605,S608",
+                "--output-format",
+                "json",
+                ".",
+            ],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        self.assertEqual([], [(r["filename"], r["code"]) for r in json.loads(completed.stdout or "[]")])
+        self.assertEqual(
+            [],
+            [(r["filename"], r["code"]) for r in json.loads(completed.stdout or "[]")],
+        )
 
-    def test_the_pinned_tools_are_installed_at_the_protected_tool_root(self) -> None:
-        self.assertTrue(hasattr(self.module, "TOOL_ROOT"), "the inventory names no protected tool root")
+    def test_the_protected_profile_pins_the_official_release_executables(self) -> None:
+        # The executables inside the official release assets, whose own digests GitHub publishes (#389 6503632912).
+        official = {
+            "shellcheck": (
+                "0.11.0",
+                "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",
+            ),
+            "hadolint": (
+                "2.15.1",
+                "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",
+            ),
+            "actionlint": (
+                "1.7.12",
+                "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",
+            ),
+        }
+        self.assertTrue(
+            hasattr(self.module, "TOOL_ROOT"),
+            "the inventory names no protected tool root",
+        )
         profile = self.module.load_diagnostic_profile()
         self.assertIn("tools", profile)
-        for name, pin in profile["tools"].items():
+        for name, (version, x86_64) in official.items():
             with self.subTest(tool=name):
-                binary = Path(self.module.TOOL_ROOT) / name
-                self.assertEqual(pin["sha256"][platform.machine()], hashlib.sha256(binary.read_bytes()).hexdigest())
+                self.assertEqual(version, profile["tools"][name]["version"])
+                self.assertEqual(x86_64, profile["tools"][name]["sha256"]["x86_64"])

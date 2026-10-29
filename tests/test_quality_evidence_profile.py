@@ -18,9 +18,10 @@ import stat
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
-from quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
+from tests.quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,8 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # changed Python file only (the owner's N, #389 6405282317), literal secrets
 # everywhere, complexity above 15 on changed functions only. PLR6301 and SIM117 are
 # not selected.
-PROTECTED = {
-    "schema": "gnostoa-diagnostic-profile/v1",
+PROTECTED: dict[str, Any] = {
+    "schema": "gnostoa-diagnostic-profile/v2",
     "id": "gnostoa.project-risk",
     "scopes": {"all": {"exclude": []}, "non-test": {"exclude": ["tests/"]}},
     "families": [
@@ -56,9 +57,74 @@ PROTECTED = {
             "diff": "all",
             "full": None,
         },
+        # The pinned tool families and unsafe-calls, inactive until activation (#389 H-PYSEC-2).
+        *(
+            {
+                "id": family,
+                "producer": producer,
+                "diff": "all",
+                "full": "all",
+                "active": False,
+            }
+            for family, producer in (
+                ("shell-lint", "shellcheck"),
+                ("dockerfile-lint", "hadolint"),
+                ("workflow-lint", "actionlint"),
+                ("gitlab-script", "gitlab-shellcheck"),
+                ("secrets", "secrets"),
+            )
+        ),
+        {
+            "id": "unsafe-calls",
+            "producer": "ruff",
+            "select": ["S301", "S307", "S324", "S602", "S605", "S608"],
+            "diff": "all",
+            "full": "all",
+            "active": False,
+        },
     ],
+    "tools": {
+        "shellcheck": {
+            "version": "0.11.0",
+            "sha256": {
+                "x86_64": "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",  # pragma: allowlist secret -- release executable digest
+                "aarch64": "127f13925eadd52c341bca0ebaf9ab0dbd78c6468f30a8f262a528bf8de47546",  # pragma: allowlist secret -- release executable digest
+            },
+        },
+        "hadolint": {
+            "version": "2.15.1",
+            "sha256": {
+                "x86_64": "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",  # pragma: allowlist secret -- release executable digest
+                "aarch64": "f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d",  # pragma: allowlist secret -- release executable digest
+            },
+        },
+        "actionlint": {
+            "version": "1.7.12",
+            "sha256": {
+                "x86_64": "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",  # pragma: allowlist secret -- release executable digest
+                "aarch64": "ac0323433c2853ec3fb978c611430c5b3dc5d43c58d1a1ec031b00ab572beb60",  # pragma: allowlist secret -- release executable digest
+            },
+        },
+    },
 }
+# The active families: the inactive ones are never planned, run or rowed.
 FAMILIES = {"typing", "protected-access", "literal-secrets", "complexity"}
+
+
+def _original(module: object, name: str) -> Any:
+    """`module`'s own `name`, as unittest.mock hands an original to new_callable under spec=True, so no private
+    attribute is named (the fixtures' own pattern, #389 6480056885)."""
+    found: list[object] = []
+
+    def kept(*, spec: object) -> object:
+        found.append(spec)
+        return spec
+
+    with patch.object(module, name, spec=True, new_callable=kept):
+        pass
+    return found[0]
+
+
 # The owner's accepted residual (#389 6405841272), which only a BOUND record names: for
 # the bounded diagnostic source binding, and no stronger claim.
 ACCEPTED_RESIDUAL = {
@@ -104,7 +170,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
     def _inventory_with(self, profile: dict, **options) -> dict:
         """The private path's inventory under a supplied profile."""
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
-            path = self.module._collect_diagnostic_inventory(
+            path = _original(self.module, "_collect_diagnostic_inventory")(
                 self.root, self.output, profile=profile, **options
             )
         return self._read(path)
@@ -269,7 +335,8 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
     ) -> None:
         # mypy aborts. Nothing changed, so complexity has no target: a complete
         # discovery proves the empty set, unlike a failed one (the PAO's R2).
-        self.mypy_records, self.mypy_exit = {}, {".": 2}
+        self.mypy_records = {}
+        self.mypy_exit = {".": 2}
         inventory = self._protected(base=self.base)
         rows = self._rows(inventory)
         self.assertEqual(FAMILIES, set(rows))
@@ -401,7 +468,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         self._change("tools/sample.py", "total = 0", "total = 1", after="def sixteen")
         (self.root / "tools" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
         self._git("commit", "-q", "-am", "two changed complexity targets")
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
         scans = []
 
         def counting(root, deadline, *arguments, **options):
@@ -417,7 +484,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         # Past the findings budget no later family starts, and the refusal follows;
         # the families it stopped never count as having targeted anything (Claude on
         # #459).
-        profile = self.module._validated_profile(
+        profile = _original(self.module, "_validated_profile")(
             {
                 "schema": "gnostoa-diagnostic-profile/v1",
                 "id": "budget",
@@ -437,7 +504,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         run = Path(self.directory.name) / "run"
         run.mkdir()
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
-            result = self.module._run_producers(
+            result = _original(self.module, "_run_producers")(
                 self.root,
                 run,
                 sorted(p for p in self.files if p.endswith(".py")),
@@ -445,7 +512,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
                 [],
                 time.monotonic() + 30,
                 profile,
-                self.module._Changes(frozenset(), {}),
+                _original(self.module, "_Changes")(frozenset(), {}),
             )
         self.assertEqual(["typing"], [row["family"] for row in result.families])
         self.assertEqual(
@@ -1058,7 +1125,9 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
     def test_a_missing_protected_profile_is_refused_before_anything_runs(self) -> None:
         # An installed wheel ships the collector without policy/, as every policy file
         # is data of the source tree: the collection then fails closed (cubic on #459).
-        absent = self.module._PRODUCER_TREE / "policy" / "absent-profile.yaml"
+        absent = (
+            _original(self.module, "_PRODUCER_TREE") / "policy" / "absent-profile.yaml"
+        )
         with patch.object(self.module, "_PROFILE", absent):
             with self.assertRaises(self.module.QualityEvidenceError):
                 self.module.collect_diagnostic_inventory(self.root, self.output)

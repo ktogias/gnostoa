@@ -13,6 +13,7 @@ import io
 import json
 import math
 import os
+import platform
 import re
 import stat
 import subprocess
@@ -1396,7 +1397,19 @@ DIAGNOSTIC_RULE_MAP: dict[tuple[str, str], str] = {
     ("ruff", "S106"): "SCT-A000",
     ("complexity", "cc"): "PY-R1000",
 }
-DIAGNOSTIC_RUFF_SELECT = ("SLF001", "PLR6301", "SIM117", "S106")
+DIAGNOSTIC_RUFF_SELECT = (
+    "SLF001",
+    "PLR6301",
+    "SIM117",
+    "S106",
+    # The unsafe-calls family (#389 H-PYSEC-2): pickle, eval, weak hashes, shell=True, os.system, SQL strings.
+    "S301",
+    "S307",
+    "S324",
+    "S602",
+    "S605",
+    "S608",
+)
 # The Python grammar every producer analyzes: the declared requires-python floor,
 # as mypy's --python-version, ruff's --target-version and the metric's own parse
 # (Codex on #436).
@@ -1420,9 +1433,20 @@ _PROFILE = _PRODUCER_TREE / DIAGNOSTIC_PROFILE
 # shadow readback's job installs (Decision 0118), never the analyzed tree's (P2).
 _PRODUCER_LOCK = _PRODUCER_TREE / "requirements" / "development.lock"
 DIAGNOSTIC_PROFILE_SCHEMA = "gnostoa-diagnostic-profile/v1"
+# v2 adds the pinned tool families, their `tools` pins and the per-family `active` flag (#389 H-PYSEC-2).
+DIAGNOSTIC_PROFILE_SCHEMA_V2 = "gnostoa-diagnostic-profile/v2"
 # mypy first, so that its own budget check counts every finding so far; the in-process
 # metric last (cubic on #436).
-_PRODUCER_ORDER = ("mypy", "ruff", "complexity")
+_PRODUCER_ORDER = (
+    "mypy",
+    "ruff",
+    "complexity",
+    "shellcheck",
+    "hadolint",
+    "actionlint",
+    "gitlab-shellcheck",
+    "secrets",
+)
 # The producers launched as processes, whose environment is observed.
 _LAUNCHED_PRODUCERS = ("mypy", "ruff")
 # Each identifier's whole text, checked by fullmatch in _check_profile: a schema
@@ -1434,13 +1458,44 @@ _PROFILE_ID_TEXT = r"[a-z][a-z0-9.-]{0,127}"
 _EXCLUDE_TEXT = r"(?:(?!\.{1,2}/)[^/\x00]+/)+"
 _PROFILE_NAME = {"type": "string", "pattern": f"^{_NAME_TEXT}$"}
 _PROFILE_SCOPE = {"anyOf": [_PROFILE_NAME, {"type": "null"}]}
+# The v2 producers (#389 H-PYSEC-2): the pinned-tool families and secrets, and each one's pinned executables.
+_V2_PRODUCERS_NAMES = frozenset(
+    {"shellcheck", "hadolint", "actionlint", "gitlab-shellcheck", "secrets"}
+)
+_TOOL_PRODUCER_TOOLS: dict[str, tuple[str, ...]] = {
+    "shellcheck": ("shellcheck",),
+    "hadolint": ("hadolint",),
+    "actionlint": ("actionlint", "shellcheck"),
+    "gitlab-shellcheck": ("shellcheck",),
+}
+
 _PROFILE_SHAPE: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "required": ["schema", "id", "scopes", "families"],
     "additionalProperties": False,
     "properties": {
-        "schema": {"const": DIAGNOSTIC_PROFILE_SCHEMA},
+        "schema": {"enum": [DIAGNOSTIC_PROFILE_SCHEMA, DIAGNOSTIC_PROFILE_SCHEMA_V2]},
+        "tools": {
+            "type": "object",
+            "propertyNames": _PROFILE_NAME,
+            "additionalProperties": {
+                "type": "object",
+                "required": ["version", "sha256"],
+                "additionalProperties": False,
+                "properties": {
+                    "version": {"type": "string", "minLength": 1},
+                    "sha256": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                        },
+                    },
+                },
+            },
+        },
         "id": {"type": "string", "pattern": f"^{_PROFILE_ID_TEXT}$"},
         "scopes": {
             "type": "object",
@@ -1482,6 +1537,8 @@ _PROFILE_SHAPE: dict[str, Any] = {
                     "items": {"type": "string"},
                 },
                 "reported_above": {"type": "integer", "minimum": 0},
+                # Absent means active; the new families are off on the protected profile (#389 H-PYSEC-2).
+                "active": {"type": "boolean"},
             },
             "allOf": [
                 {
@@ -1496,6 +1553,21 @@ _PROFILE_SHAPE: dict[str, Any] = {
                     "then": {
                         "required": ["reported_above"],
                         "not": {"required": ["select"]},
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "producer": {"enum": sorted(_V2_PRODUCERS_NAMES)}
+                        }
+                    },
+                    "then": {
+                        "not": {
+                            "anyOf": [
+                                {"required": ["select"]},
+                                {"required": ["reported_above"]},
+                            ]
+                        }
                     },
                 },
                 {
@@ -1579,12 +1651,39 @@ def _check_profile(profile: Mapping[str, Any]) -> None:
     """The rules its shape cannot state: every identifier's whole text, then, family by
     family, _check_family's, and _check_selection's for the Ruff codes."""
     _check_identifiers(profile)
+    _check_version(profile)
     seen: set[str] = set()
     producers: set[str] = set()
     rules: dict[str, str] = {}
     for family in profile["families"]:
         _check_family(profile, family, seen, producers)
         _check_selection(family, rules)
+
+
+def _check_version(profile: Mapping[str, Any]) -> None:
+    """v1 has neither the pinned tool families nor their pins nor `active`; under v2 each pinned family's tools are
+    pinned (#389 H-PYSEC-2)."""
+    families = profile["families"]
+    if profile["schema"] == DIAGNOSTIC_PROFILE_SCHEMA:
+        if "tools" in profile or any(
+            "active" in f or f["producer"] in _V2_PRODUCERS_NAMES for f in families
+        ):
+            raise QualityEvidenceError(
+                f"diagnostic profile: a {DIAGNOSTIC_PROFILE_SCHEMA} profile has no tool families, pins or activation"
+            )
+        return
+    pinned = profile.get("tools", {})
+    for family in families:
+        for tool in _TOOL_PRODUCER_TOOLS.get(family["producer"], ()):
+            if tool not in pinned:
+                raise QualityEvidenceError(
+                    f"diagnostic profile: family {family['id']!r} needs tool {tool!r}, which has no pin"
+                )
+
+
+def _active_families(profile: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The families acquisition runs: an inactive one is never planned, run or rowed (#389 H-PYSEC-2)."""
+    return [family for family in profile["families"] if family.get("active", True)]
 
 
 def _check_identifiers(profile: Mapping[str, Any]) -> None:
@@ -2865,6 +2964,1059 @@ def _family_row(
     }
 
 
+# The pinned tool families (#389 H-PYSEC-2; Decision 0122). ShellCheck, Hadolint and actionlint run as their pinned
+# release executables from the protected tool root, never from PATH or the analyzed tree, and each only after its bytes
+# match the protected profile's pin for this machine. They run in a clean environment with the protected
+# configuration, so nothing in the head selects their rules. A directive, a pragma, a sourced file, an unsupported
+# construct or a report its exit status contradicts is an attributable gap of its family, never a clean result; every
+# finding a run reports stays listed.
+TOOL_ROOT = Path("/opt/gnostoa-tools")
+_SHEBANG = re.compile(
+    rb"#!\s*(?:/usr/bin/env\s+(?:-S\s+)?)?(?:\S*/)?([A-Za-z][\w.+-]*)"
+)
+_SHELLS = frozenset({"sh", "bash", "dash", "ksh"})
+_OTHER_SHELLS = frozenset({"zsh", "fish", "csh", "tcsh", "mksh", "yash"})
+_SHELLCHECK_DIRECTIVE = re.compile(r"#\s*shellcheck\s+[a-z][a-z-]*=", re.IGNORECASE)
+_HADOLINT_PRAGMA = re.compile(r"#\s*hadolint\b", re.IGNORECASE)
+_SOURCED = re.compile(r"^\s*(?:\.|source)\s+\S")
+_WORKFLOW_PATH = re.compile(r"\.github/workflows/[^/]+\.ya?ml|ci/github[^/]*\.yml")
+_GITLAB_PATH = re.compile(r"\.gitlab-ci\.yml|ci/gitlab[^/]*\.yml")
+_STEP_SHELLS = frozenset({"bash", "sh"})
+_HADOLINT_CONFIG = "override:\n  error:\n    - DL1001\n"
+_ACTIONLINT_CONFIG = "self-hosted-runner:\n  labels: []\n"
+_SHELLCHECK_FLAGS = (
+    "--norc",
+    "--format=json1",
+    "--severity=style",
+    "--extended-analysis=true",
+)
+
+
+def _first_line(root: Path, path: str) -> bytes:
+    try:
+        with (root / path).open("rb") as stream:
+            return stream.readline(256)
+    except OSError:
+        return b""
+
+
+def _applicable(
+    root: Path, producer: str, tracked: list[str]
+) -> tuple[list[str], dict[str, str]]:
+    """The tracked paths a pinned-tool family applies to, in order, and the ones it names as unsupported. ShellCheck
+    reads a `.sh` file or one whose shebang names sh, bash, dash or ksh, whatever its name; another shell's script
+    is unsupported, a gap. Secrets read every tracked file."""
+    selected: list[str] = []
+    unsupported: dict[str, str] = {}
+    for path in tracked:
+        name = path.rsplit("/", 1)[-1]
+        if producer == "shellcheck":
+            match = _SHEBANG.match(_first_line(root, path))
+            interpreter = match[1].decode("ascii", "replace") if match else None
+            if name.endswith(".sh") or interpreter in _SHELLS:
+                selected.append(path)
+            elif interpreter in _OTHER_SHELLS:
+                unsupported[path] = (
+                    f"shell-lint: an unsupported interpreter {interpreter!r}"
+                )
+        elif producer == "hadolint" and name.startswith("Dockerfile"):
+            selected.append(path)
+        elif producer == "actionlint" and _WORKFLOW_PATH.fullmatch(path):
+            selected.append(path)
+        elif producer == "gitlab-shellcheck" and _GITLAB_PATH.fullmatch(path):
+            selected.append(path)
+        elif producer == "secrets":
+            selected.append(path)
+    return selected, unsupported
+
+
+def _verified_tool(
+    profile: Mapping[str, Any], name: str
+) -> tuple[Path | None, str | None]:
+    """The pinned executable under TOOL_ROOT, or why none may run: no pin, absent, a link, not a regular file, or
+    bytes other than the protected profile's pin for this machine. Its version is read only after this."""
+    pin = profile.get("tools", {}).get(name)
+    if pin is None:
+        return None, f"tool {name}: no pin in the profile"
+    digest = pin["sha256"].get(platform.machine())
+    if digest is None:
+        return None, f"tool {name}: no pin for this machine"
+    path = Path(TOOL_ROOT) / name
+    try:
+        info = path.lstat()
+    except OSError:
+        return None, f"tool {name}: missing"
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        return None, f"tool {name}: not a regular file"
+    if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+        return None, f"tool {name}: its bytes are not its pin"
+    return path, None
+
+
+def _tool_environment(run: Path) -> dict[str, str]:
+    """A clean environment: no SHELLCHECK_OPTS, HADOLINT_* or other caller setting reaches a pinned tool, and its
+    home and configuration directories are empty."""
+    home = run / "tool-home"
+    home.mkdir(exist_ok=True)
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home),
+        "LC_ALL": "C.UTF-8",
+    }
+
+
+def _tool_version(
+    tool: Path,
+    name: str,
+    run: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    pinned: str,
+) -> str | None:
+    """The pinned version when the tool's own version output names it, else None."""
+    report = run / f"diagnostic-{name}-version.txt"
+    flag = "-version" if name == "actionlint" else "--version"
+    status, gap, _invalid = _bounded_run(
+        [str(tool), flag],
+        cwd=run,
+        environment=_tool_environment(run),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    if gap is not None or status != 0:
+        return None
+    try:
+        text = report.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return (
+        pinned if re.search(rf"(?<![\w.]){re.escape(pinned)}(?![\w.])", text) else None
+    )
+
+
+def _tool_gap(status: int | None, gap: str | None, records: list[Any]) -> str | None:
+    """A pinned tool's run gap: an earlier one, a status other than 0 or 1, or a status its report contradicts. Each
+    of the three exits 1 only with a finding and 0 only without one."""
+    if gap is not None:
+        return gap
+    if status not in (0, 1):
+        return f"exited {status}"
+    if status == 1 and not records:
+        return "exited 1 without a finding record"
+    if status == 0 and records:
+        return "exited 0 with a finding record"
+    return None
+
+
+def _text_lines(root: Path, path: str) -> list[str]:
+    try:
+        return (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _marked_lines(
+    root: Path, path: str, pattern: re.Pattern[str], what: str
+) -> list[str]:
+    return [
+        f"{path}:{n}: {what}"
+        for n, line in enumerate(_text_lines(root, path), 1)
+        if pattern.search(line)
+    ]
+
+
+def _run_shellcheck(
+    cwd: Path,
+    run: Path,
+    paths: list[str],
+    tool: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+    *,
+    name: str,
+    tool_id: str = "shellcheck",
+    shell: str | None = None,
+    origin: Mapping[str, tuple[str, Mapping[int, Any]]] | None = None,
+) -> _ProducerResult:
+    """The pinned ShellCheck over `paths`, relative to `cwd`: `--norc`, no `-x`, explicit files. With `origin`, each
+    analyzed file is an analysis copy whose lines map back to their source (the GitLab family)."""
+    result = _ProducerResult()
+    command = [
+        str(tool),
+        *_SHELLCHECK_FLAGS,
+        *([f"--shell={shell}"] if shell else []),
+        "--",
+        *paths,
+    ]
+    report = run / f"diagnostic-{name.replace(':', '-')}.json"
+    status, gap, invalid = _bounded_run(
+        command,
+        cwd=cwd,
+        environment=_tool_environment(run),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    result.runs.append(_run_record(name, tool_id, command, status, report, run, None))
+    result.truncated = result.truncated or invalid
+    try:
+        comments = json.loads(report.read_text(encoding="utf-8"))["comments"]
+        if not isinstance(comments, list):
+            raise ValueError("comments is not a list")
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        comments = []
+        gap = gap or f"unparsable report: {type(exc).__name__}"
+    for comment in comments:
+        try:
+            path, line = comment["file"], comment["line"]
+            column, end_line, end_column = (
+                comment["column"],
+                comment.get("endLine"),
+                comment.get("endColumn"),
+            )
+            if origin is not None:
+                source, lines = origin[path]
+                mapped = lines[line]
+                if isinstance(mapped, list):
+                    mapped = [target for start, target in mapped if start <= column][-1]
+                path, line, end_line = source, mapped, None
+            finding = _diagnostic_finding(
+                tool_id,
+                f"SC{comment['code']}",
+                path,
+                (line, column, end_line, end_column),
+                comment["message"],
+                {"level": comment["level"]},
+            )
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            gap = gap or f"unparsable report: {type(exc).__name__}"
+            continue
+        result.keep(finding, allowance)
+    gap = _tool_gap(status, gap, comments)
+    if gap is not None:
+        result.unanalyzed.update({path: f"{name} {gap}" for path in paths})
+    return result
+
+
+def _run_hadolint(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    tool: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+    *,
+    name: str,
+) -> _ProducerResult:
+    """The pinned Hadolint, file by file, with the protected configuration given explicitly, pragmas disabled, and
+    an empty working directory, so that no `.hadolint.yaml` in the head is found."""
+    result = _ProducerResult()
+    config = run / "hadolint.yaml"
+    config.write_text(_HADOLINT_CONFIG, encoding="utf-8")
+    cwd = run / "hadolint-cwd"
+    cwd.mkdir(exist_ok=True)
+    for index, path in enumerate(paths):
+        command = [
+            str(tool),
+            "-c",
+            str(config),
+            "--disable-ignore-pragma",
+            "-f",
+            "json",
+            str(root / path),
+        ]
+        report = run / f"diagnostic-{name.replace(':', '-')}-{index}.json"
+        status, gap, invalid = _bounded_run(
+            command,
+            cwd=cwd,
+            environment=_tool_environment(run),
+            report=report,
+            deadline=deadline,
+            limits=limits,
+        )
+        result.runs.append(
+            _run_record(name, "hadolint", command, status, report, run, None)
+        )
+        result.truncated = result.truncated or invalid
+        try:
+            records = json.loads(report.read_text(encoding="utf-8"))
+            if not isinstance(records, list):
+                raise ValueError("the report is not a list")
+        except (OSError, ValueError, RecursionError) as exc:
+            records = []
+            gap = gap or f"unparsable report: {type(exc).__name__}"
+        for record in records:
+            try:
+                finding = _diagnostic_finding(
+                    "hadolint",
+                    record["code"],
+                    path,
+                    (record["line"], record["column"], None, None),
+                    record["message"],
+                    {"level": record["level"]},
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                gap = gap or f"unparsable report: {type(exc).__name__}"
+                continue
+            result.keep(finding, allowance)
+        gap = _tool_gap(status, gap, records)
+        if gap is not None:
+            result.unanalyzed[path] = f"{name} {gap}"
+    return result
+
+
+def _run_actionlint(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    tool: Path,
+    shellcheck: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+    *,
+    name: str,
+) -> _ProducerResult:
+    """The pinned actionlint, with the protected configuration file, the pinned ShellCheck and no pyflakes, over
+    analysis copies in which only a validated `concurrency.queue` line is projected (project_concurrency_queue)."""
+    result = _ProducerResult()
+    config = run / "actionlint.yaml"
+    config.write_text(_ACTIONLINT_CONFIG, encoding="utf-8")
+    copies = run / "actionlint-input"
+    for path in paths:
+        text, _projected, _refused = project_concurrency_queue(
+            "\n".join(_text_lines(root, path)) + "\n"
+        )
+        (copies / path).parent.mkdir(parents=True, exist_ok=True)
+        (copies / path).write_text(text, encoding="utf-8")
+    command = [
+        str(tool),
+        "-config-file",
+        str(config),
+        "-shellcheck",
+        str(shellcheck),
+        "-pyflakes=",
+        "-format",
+        "{{json .}}",
+        *paths,
+    ]
+    report = run / f"diagnostic-{name.replace(':', '-')}.json"
+    status, gap, invalid = _bounded_run(
+        command,
+        cwd=copies,
+        environment=_tool_environment(run),
+        report=report,
+        deadline=deadline,
+        limits=limits,
+    )
+    result.runs.append(
+        _run_record(name, "actionlint", command, status, report, run, None)
+    )
+    result.truncated = result.truncated or invalid
+    try:
+        records = json.loads(report.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            raise ValueError("the report is not a list")
+    except (OSError, ValueError, RecursionError) as exc:
+        records = []
+        gap = gap or f"unparsable report: {type(exc).__name__}"
+    for record in records:
+        try:
+            embedded = (
+                re.search(r"\bSC\d+\b", record["message"])
+                if record["kind"] == "shellcheck"
+                else None
+            )
+            finding = _diagnostic_finding(
+                "actionlint",
+                embedded[0] if embedded else record["kind"],
+                record["filepath"],
+                (record["line"], record["column"], None, None),
+                record["message"],
+                {"kind": record["kind"]},
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            gap = gap or f"unparsable report: {type(exc).__name__}"
+            continue
+        result.keep(finding, allowance)
+    gap = _tool_gap(status, gap, records)
+    if gap is not None:
+        result.unanalyzed.update({path: f"{name} {gap}" for path in paths})
+    return result
+
+
+def _job_step_notes(
+    path: str, job_id: str, job: Mapping[str, Any], workflow_shell: str | None
+) -> list[str]:
+    job_shell = ((job.get("defaults") or {}).get("run") or {}).get("shell")
+    notes = []
+    for index, step in enumerate(job.get("steps") or []):
+        if isinstance(step, dict) and "run" in step:
+            shell = step.get("shell") or job_shell or workflow_shell or "bash"
+            if shell.split()[0] not in _STEP_SHELLS:
+                notes.append(
+                    f"{path}: job {job_id} step {index} runs under {shell!r}, never analyzed"
+                )
+    return notes
+
+
+def _step_shell_notes(root: Path, path: str) -> list[str]:
+    """Each workflow step whose effective shell is not bash or sh: actionlint gives it to no analyzer, so it is a
+    gap. The step's, then the job's, then the workflow's `defaults.run.shell` decide; a runner's default is bash."""
+    import yaml
+
+    try:
+        document = yaml.load("\n".join(_text_lines(root, path)), Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        return [f"{path}: the workflow cannot be read for its step shells"]
+    if not isinstance(document, dict):
+        return []
+    workflow_shell = ((document.get("defaults") or {}).get("run") or {}).get("shell")
+    notes = []
+    for job_id, job in (document.get("jobs") or {}).items():
+        if isinstance(job, dict):
+            notes += _job_step_notes(path, job_id, job, workflow_shell)
+    return notes
+
+
+class _GitlabUnsupported(ValueError):
+    """A GitLab CI construct the bounded reader does not resolve: an attributable gap."""
+
+
+_GITLAB_RESERVED = frozenset(
+    {
+        "stages",
+        "workflow",
+        "variables",
+        "default",
+        "include",
+        "image",
+        "services",
+        "before_script",
+        "after_script",
+        "cache",
+        "pages",
+    }
+)
+
+
+_GITLAB_SCALARS = frozenset(
+    {"tag:yaml.org,2002:" + name for name in ("str", "int", "bool", "null", "float")}
+)
+
+
+def _gitlab_folded(node: Any, line: int) -> tuple[str, list[tuple[int, int]]]:
+    """A simple folded item (non-empty, equally indented lines, each break folded to one space), with each column's
+    YAML line; anything else has no exact map."""
+    stop = node.end_mark.line + (1 if node.end_mark.column else 0)
+    raw = node.start_mark.buffer.rstrip("\0").split("\n")[
+        node.start_mark.line + 1 : stop
+    ]
+    while raw and raw[-1] == "":
+        raw.pop()
+    parts = [r.strip() for r in raw]
+    simple = (
+        bool(raw)
+        and all(parts)
+        and len({len(r) - len(r.lstrip(" ")) for r in raw}) == 1
+        and node.value.rstrip("\n") == " ".join(parts)
+        and node.value.count("\n") <= 1
+    )
+    if not simple:
+        raise _GitlabUnsupported(f"a folded item with no exact line map at line {line}")
+    spans, column = [], 1
+    for offset, part in enumerate(parts):
+        spans.append((column, line + 1 + offset))
+        column += len(part) + 1
+    return node.value.rstrip("\n"), spans
+
+
+def _gitlab_scalar(node: Any) -> Any:
+    import yaml
+
+    if node.tag not in _GITLAB_SCALARS:
+        raise _GitlabUnsupported(
+            f"an unsupported tag {node.tag} at line {node.start_mark.line + 1}"
+        )
+    if node.tag != "tag:yaml.org,2002:str":
+        return yaml.SafeLoader("").construct_object(node)
+    line = node.start_mark.line + 1
+    if node.style == "|":
+        return (node.value, line + 1)
+    if node.style == ">":
+        return _gitlab_folded(node, line)
+    if "\n" in node.value or node.start_mark.line != node.end_mark.line:
+        raise _GitlabUnsupported(f"a multi-line flow item at line {line}")
+    return (node.value, line)
+
+
+def _gitlab_construct(node: Any) -> Any:
+    """The document's value, each script string with its YAML line, refusing what the reader does not resolve."""
+    import yaml
+
+    if isinstance(node, yaml.ScalarNode):
+        return _gitlab_scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return [_gitlab_construct(v) for v in node.value]
+    if not isinstance(node, yaml.MappingNode):
+        raise _GitlabUnsupported("an unsupported node")
+    out = {}
+    for key, value in node.value:
+        text = _gitlab_construct(key)
+        text = text[0] if isinstance(text, tuple) else text
+        if text == "<<":
+            raise _GitlabUnsupported(
+                f"a YAML merge key at line {key.start_mark.line + 1}"
+            )
+        out[text] = _gitlab_construct(value)
+    return out
+
+
+def _gitlab_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in over.items():
+        merged[key] = (
+            _gitlab_merge(merged[key], value)
+            if isinstance(value, dict) and isinstance(merged.get(key), dict)
+            else value
+        )
+    return merged
+
+
+def _gitlab_resolve(
+    name: str, jobs: Mapping[str, Any], seen: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    if name in seen:
+        raise _GitlabUnsupported(f"an extends cycle at {name}")
+    if len(seen) > 11 or name not in jobs:
+        raise _GitlabUnsupported(f"extends names {name!r}, not a local job")
+    job = jobs[name]
+    if "inherit" in job:
+        raise _GitlabUnsupported(f"inherit in {name}")
+    parents = job.get("extends")
+    own = {k: v for k, v in job.items() if k != "extends"}
+    if parents is None:
+        return own
+    parents = [parents] if isinstance(parents, tuple) else parents
+    if not isinstance(parents, list) or not all(isinstance(p, tuple) for p in parents):
+        raise _GitlabUnsupported(f"a malformed extends in {name}")
+    merged: dict[str, Any] = {}
+    for parent in parents:
+        merged = _gitlab_merge(merged, _gitlab_resolve(parent[0], jobs, (*seen, name)))
+    return _gitlab_merge(merged, own)
+
+
+def _gitlab_items(value: Any, where: str) -> list[tuple[str, Any]]:
+    if value is None:
+        return []
+    items = [value] if isinstance(value, tuple) else value
+    if not isinstance(items, list):
+        raise _GitlabUnsupported(f"{where} is neither a string nor a list")
+    out: list[tuple[str, Any]] = []
+    for item in items:
+        if isinstance(item, tuple):
+            out.append(item)
+        elif isinstance(item, list) and all(isinstance(i, tuple) for i in item):
+            out.extend(item)
+        else:
+            raise _GitlabUnsupported(f"{where} has a non-string or deeper item")
+    return out
+
+
+def _gitlab_job(
+    name: str, jobs: Mapping[str, Any], default: Mapping[str, Any]
+) -> list[list[tuple[str, Any]]] | None:
+    """A job's shells, `before_script` + `script` as one and `after_script` as the other; None without a script."""
+    job = _gitlab_resolve(name, jobs)
+    if "script" not in job:
+        return None
+    main = _gitlab_items(
+        job.get("before_script", default.get("before_script")), f"{name}.before_script"
+    )
+    main += _gitlab_items(job.get("script"), f"{name}.script")
+    after = _gitlab_items(
+        job.get("after_script", default.get("after_script")), f"{name}.after_script"
+    )
+    return [part for part in (main, after) if part]
+
+
+def _gitlab_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
+    """The bounded GitLab CI reader: per job, its shells, each item with its YAML line (a column table for a simple
+    folded item). Local `extends` (GitLab's merge), `default` and anchors are resolved; include, `!reference`,
+    `inherit`, cycles, merge keys, more than one document and unmappable items raise _GitlabUnsupported."""
+    import yaml
+
+    try:
+        nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+    except yaml.YAMLError as exc:
+        raise _GitlabUnsupported(f"unparsable: {type(exc).__name__}") from exc
+    if len(nodes) != 1:
+        raise _GitlabUnsupported(f"{len(nodes)} documents")
+    root = _gitlab_construct(nodes[0])
+    if not isinstance(root, dict) or "include" in root:
+        raise _GitlabUnsupported(
+            "include" if isinstance(root, dict) else "the document is not a mapping"
+        )
+    default = root.get("default") or {}
+    if not isinstance(default, dict) or "inherit" in default:
+        raise _GitlabUnsupported("an unsupported default")
+    jobs = {
+        k: v
+        for k, v in root.items()
+        if k not in _GITLAB_RESERVED and isinstance(v, dict)
+    }
+    scripts = {}
+    for name in jobs:
+        shells = None if name.startswith(".") else _gitlab_job(name, jobs, default)
+        if shells is not None:
+            scripts[name] = shells
+    return scripts
+
+
+def _gitlab_analysis_file(items: list[tuple[str, Any]]) -> tuple[str, dict[int, Any]]:
+    """An analysis-only POSIX sh file and its map from each analysis line to a YAML line (or a column table)."""
+    body, mapping = ["#!/bin/sh"], {}
+    for text, line in items:
+        if isinstance(line, list):
+            body.append(text)
+            mapping[len(body)] = line
+            continue
+        for offset, part in enumerate(text.splitlines() or [""]):
+            body.append(part)
+            mapping[len(body)] = line + offset
+    return "\n".join(body) + "\n", mapping
+
+
+def _run_gitlab(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    tool: Path,
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+    *,
+    name: str,
+) -> tuple[_ProducerResult, list[str]]:
+    """The GitLab family: each file's jobs read by the bounded reader into analysis files, analyzed by the pinned
+    ShellCheck as POSIX sh, each finding mapped back to its YAML line. An unsupported file is a gap, named."""
+    copies = run / "gitlab-input"
+    copies.mkdir(exist_ok=True)
+    origin: dict[str, tuple[str, Mapping[int, Any]]] = {}
+    notes: list[str] = []
+    for index, path in enumerate(paths):
+        try:
+            jobs = _gitlab_scripts("\n".join(_text_lines(root, path)) + "\n")
+        except _GitlabUnsupported as exc:
+            notes.append(f"{path}: {exc}")
+            continue
+        for job, parts in jobs.items():
+            for part_index, items in enumerate(parts):
+                body, mapping = _gitlab_analysis_file(items)
+                analysis = (
+                    f"{index}-{re.sub(r'[^A-Za-z0-9_.-]', '_', job)}-{part_index}.sh"
+                )
+                (copies / analysis).write_text(body, encoding="utf-8")
+                origin[analysis] = (path, mapping)
+    if not origin:
+        return _ProducerResult(), notes
+    result = _run_shellcheck(
+        copies,
+        run,
+        sorted(origin),
+        tool,
+        limits,
+        deadline,
+        allowance,
+        name=name,
+        tool_id="gitlab-shellcheck",
+        shell="sh",
+        origin=origin,
+    )
+    result.unanalyzed = {origin[a][0]: why for a, why in result.unanalyzed.items()}
+    return result, notes
+
+
+_QUEUE_LINE = re.compile(r"^(\s*)queue:\s*([A-Za-z]+)\s*(?:#.*)?$")
+
+
+def _yaml_values(node: Any, key: str) -> list[tuple[Any, Any]]:
+    import yaml
+
+    return [
+        (k, v)
+        for k, v in node.value
+        if isinstance(k, yaml.ScalarNode) and k.value == key
+    ]
+
+
+def _concurrency_nodes(root: Any) -> list[tuple[str, Any]]:
+    """The `concurrency` values at the workflow root and at `jobs.<job_id>`, structurally."""
+    import yaml
+
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    found = [("workflow", v) for _, v in _yaml_values(root, "concurrency")]
+    for _, jobs in _yaml_values(root, "jobs"):
+        if isinstance(jobs, yaml.MappingNode):
+            for job_key, job in jobs.value:
+                if isinstance(job, yaml.MappingNode):
+                    found += [
+                        (f"job {job_key.value}", v)
+                        for _, v in _yaml_values(job, "concurrency")
+                    ]
+    return found
+
+
+def _queue_cancel_allows(node: Any) -> bool:
+    """Whether `queue: max` may stand beside this mapping's `cancel-in-progress`: only a literal false, or none."""
+    import yaml
+
+    cancel = _yaml_values(node, "cancel-in-progress")
+    if not cancel:
+        return True
+    value = cancel[0][1]
+    return (
+        isinstance(value, yaml.ScalarNode)
+        and value.tag == "tag:yaml.org,2002:bool"
+        and value.value.lower() == "false"
+    )
+
+
+def _queue_decision(where: str, node: Any, lines: list[str]) -> tuple[int, str, bool]:
+    """(line index, value or refusal reason, projected) for a mapping holding `queue`."""
+    import yaml
+
+    queues = _yaml_values(node, "queue")
+    if node.flow_style:
+        return node.start_mark.line, f"{where}: flow-style concurrency", False
+    if len(queues) > 1:
+        return queues[1][0].start_mark.line, f"{where}: duplicate queue", False
+    key, value = queues[0]
+    number = key.start_mark.line
+    plain = (
+        isinstance(value, yaml.ScalarNode)
+        and value.style in (None, "")
+        and value.start_mark.line == number
+    )
+    form = _QUEUE_LINE.match(lines[number]) if plain else None
+    if form is None or form[2] != value.value:
+        return number, f"{where}: queue is not a plain value alone on its line", False
+    if value.value not in ("single", "max"):
+        return number, f"{where}: an undocumented queue value {value.value!r}", False
+    if value.value == "max" and not _queue_cancel_allows(node):
+        return (
+            number,
+            f"{where}: queue: max with cancel-in-progress not literally false",
+            False,
+        )
+    return number, value.value, True
+
+
+def project_concurrency_queue(
+    text: str,
+) -> tuple[str, list[tuple[int, str]], list[tuple[int, str]]]:
+    """The analysis-only projection of GitHub's documented `concurrency.queue` for actionlint 1.7.12, which does not
+    know the key (#389 6503958085, Router 6503869789). Only a `queue` key of a block-style `concurrency` mapping at the
+    workflow root or at `jobs.<job_id>`, with a plain `single` or `max` value alone on its line, is projected: that one
+    line becomes a comment at its indentation, so the line count and every other byte are unchanged. `max` with a
+    `cancel-in-progress` other than a literal false, a flow-style mapping, a duplicate, another value or any other
+    form is refused and left as it is, for actionlint to report. Returns (text, projected, refused), 1-based lines."""
+    import yaml
+
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        return text, [], [(0, f"unparsable: {type(exc).__name__}")]
+    lines = text.split("\n")
+    projected: list[tuple[int, str]] = []
+    refused: list[tuple[int, str]] = []
+    for where, node in _concurrency_nodes(root):
+        if isinstance(node, yaml.MappingNode) and _yaml_values(node, "queue"):
+            index, detail, accepted = _queue_decision(where, node, lines)
+            (projected if accepted else refused).append((index + 1, detail))
+    for line, _value in projected:
+        source = lines[line - 1]
+        lines[line - 1] = (
+            f"{source[: len(source) - len(source.lstrip())]}# gnostoa-projected: {source.strip()}"
+        )
+    return "\n".join(lines), projected, refused
+
+
+def _run_tool_family(
+    root: Path,
+    run: Path,
+    profile: Mapping[str, Any],
+    family: Mapping[str, Any],
+    paths: list[str],
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+) -> tuple[_ProducerResult, list[str]]:
+    """A pinned-tool family over `paths`: each executable verified, then its version, before anything runs; then the
+    run and its attributable notes (directives, pragmas, sources, unsupported step shells or constructs)."""
+    producer, name = family["producer"], f"{family['producer']}:{family['id']}"
+    tools: dict[str, Path] = {}
+    for tool_name in _TOOL_PRODUCER_TOOLS[producer]:
+        tool, why = _verified_tool(profile, tool_name)
+        if why is None and tool is not None:
+            pinned = profile["tools"][tool_name]["version"]
+            if _tool_version(tool, tool_name, run, limits, deadline, pinned) is None:
+                why = f"tool {tool_name}: its version is not its pin {pinned!r}"
+        if why is not None or tool is None:
+            return _ProducerResult(
+                unanalyzed=dict.fromkeys(paths, f"{name}: {why}")
+            ), []
+        tools[tool_name] = tool
+    notes: list[str] = []
+    if producer == "shellcheck":
+        for path in paths:
+            notes += _marked_lines(
+                root,
+                path,
+                _SHELLCHECK_DIRECTIVE,
+                "a ShellCheck directive, never honoured as clean",
+            )
+            notes += _marked_lines(
+                root, path, _SOURCED, "a sourced file, never followed"
+            )
+        return _run_shellcheck(
+            root,
+            run,
+            paths,
+            tools["shellcheck"],
+            limits,
+            deadline,
+            allowance,
+            name=name,
+        ), notes
+    if producer == "hadolint":
+        for path in paths:
+            notes += _marked_lines(
+                root,
+                path,
+                _HADOLINT_PRAGMA,
+                "a Hadolint pragma, never honoured as clean",
+            )
+            notes += _marked_lines(
+                root,
+                path,
+                _SHELLCHECK_DIRECTIVE,
+                "a ShellCheck directive, never honoured as clean",
+            )
+        return _run_hadolint(
+            root, run, paths, tools["hadolint"], limits, deadline, allowance, name=name
+        ), notes
+    if producer == "actionlint":
+        for path in paths:
+            notes += _marked_lines(
+                root,
+                path,
+                _SHELLCHECK_DIRECTIVE,
+                "a ShellCheck directive, never honoured as clean",
+            )
+            notes += _step_shell_notes(root, path)
+        return (
+            _run_actionlint(
+                root,
+                run,
+                paths,
+                tools["actionlint"],
+                tools["shellcheck"],
+                limits,
+                deadline,
+                allowance,
+                name=name,
+            ),
+            notes,
+        )
+    for path in paths:
+        notes += _marked_lines(
+            root,
+            path,
+            _SHELLCHECK_DIRECTIVE,
+            "a ShellCheck directive, never honoured as clean",
+        )
+    result, unsupported = _run_gitlab(
+        root, run, paths, tools["shellcheck"], limits, deadline, allowance, name=name
+    )
+    return result, notes + unsupported
+
+
+def _tracked_all(root: Path, tree: str, owner: Any) -> list[str] | None:
+    """Every tracked path of the frozen tree, in order, for the v2 families; None when it cannot be listed."""
+    from tools import exact_tree
+
+    try:
+        return sorted(exact_tree.tree_paths(root, tree, limits=owner))
+    except (exact_tree.ExactTreeError, OverflowError):
+        return None
+
+
+def _with_notes(row: dict[str, Any], notes: list[str]) -> dict[str, Any]:
+    """A v2 family's row with its attributable gaps: what it read but cannot vouch for makes a COMPLETE row
+    PARTIAL, and each one is named."""
+    if not notes:
+        return row
+    if row["analysis"] == "COMPLETE":
+        row["analysis"] = "PARTIAL"
+    row["reason"] = "; ".join([r for r in (row["reason"],) if r] + notes)
+    return row
+
+
+_PROTECTED_BASELINE = _PRODUCER_TREE / ".secrets.baseline"
+
+
+def _scoped_baseline(run: Path, paths: list[str]) -> Path:
+    """The producer tree's reviewed baseline, restricted to the files this scan reads: a reviewed entry for a file the
+    head does not carry is not stale, while one for a file it carries and changed still is. Its settings are kept
+    whole, so the scanner's exact settings equality still holds (Router #389 6508695016)."""
+    from tools.security_scan import _strict_json_loads
+
+    document = _strict_json_loads(_PROTECTED_BASELINE.read_bytes())
+    scanned = set(paths)
+    document["results"] = {
+        name: rows
+        for name, rows in document.get("results", {}).items()
+        if name in scanned
+    }
+    scoped = run / "secrets-baseline.json"
+    scoped.write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return scoped
+
+
+def _run_secrets(
+    root: Path,
+    run: Path,
+    paths: list[str],
+    limits: DiagnosticLimits,
+    deadline: float,
+    allowance: int,
+) -> tuple[_ProducerResult, list[str]]:
+    """The secrets family: the project's own scanner over the head's files as data, against the protected reviewed
+    baseline, then each protected plugin over the same files. A candidate's path, line and type are listed, never
+    its value; a scanner failure leaves every file unanalyzed, named."""
+    from tools import security_scan
+
+    del limits, deadline
+    result = _ProducerResult()
+    try:
+        scan = security_scan.scan_tracked_tree(
+            root,
+            tracked_paths=[Path(path) for path in paths],
+            baseline_path=_scoped_baseline(run, paths),
+        )
+        planted = security_scan.scan_with_protected_plugins(root, paths)
+    except (security_scan.SecurityScanError, OSError, ValueError) as exc:
+        reason = f"secrets: {type(exc).__name__}: {exc}"
+        return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []
+    result.runs.append(
+        {
+            "invocation": "secrets",
+            "producer": "secrets",
+            "version": None,
+            "argv": [],
+            "exit_status": 0,
+        }
+    )
+    for record in [*scan.unresolved_findings, *planted]:
+        finding = _diagnostic_finding(
+            "secrets",
+            str(record["type"]),
+            str(record["path"]),
+            (int(record["line"]), 1, None, None),
+            f"a secret candidate ({record['type']})",
+            {},
+        )
+        result.keep(finding, allowance)
+    return result, []
+
+
+def _run_v2_family(
+    root: Path,
+    run: Path,
+    profile: Mapping[str, Any],
+    family: Mapping[str, Any],
+    tracked: list[str] | None,
+    limits: DiagnosticLimits,
+    deadline: float,
+    changes: _Changes,
+    result: _ProducerResult,
+) -> None:
+    """A v2 family, planned over its own applicable tracked paths and rowed with its notes. Its unanalyzed paths stay
+    in its own row, since they are not tracked Python files."""
+    if tracked is None:
+        result.families.append(_family_row(family, None, {}, {}, None))
+        return
+    applicable, unsupported = _applicable(root, family["producer"], tracked)
+    targets, _functions, unknown = _family_targets(profile, family, applicable, changes)
+    withheld = _withheld(root, targets, limits)
+    selected = [path for path in targets if path not in withheld]
+    notes = sorted(unsupported.values())
+    outcome = _ProducerResult()
+    if selected and family["producer"] == "secrets":
+        outcome, extra = _run_secrets(
+            root, run, selected, limits, deadline, limits.max_findings - result.count()
+        )
+        notes += extra
+    elif selected:
+        outcome, extra = _run_tool_family(
+            root,
+            run,
+            profile,
+            family,
+            selected,
+            limits,
+            deadline,
+            limits.max_findings - result.count(),
+        )
+        notes += extra
+    local = {**withheld, **outcome.unanalyzed}
+    outcome.unanalyzed = {}
+    result.families.append(
+        _with_notes(_family_row(family, targets, local, {}, unknown), notes)
+    )
+    result.merge(outcome)
+
+
+def _run_all_families(
+    root: Path,
+    run: Path,
+    expected: list[str],
+    limits: DiagnosticLimits,
+    gaps: list[str],
+    deadline: float,
+    profile: Mapping[str, Any],
+    changes: _Changes,
+    tracked: list[str] | None,
+) -> _ProducerResult:
+    """The active Python families through _run_producers, unchanged, then each active v2 family over its own
+    applicable tracked paths (#389 H-PYSEC-2). An inactive family runs nothing."""
+    active = _active_families(profile)
+    python_profile = {
+        **profile,
+        "families": [f for f in active if f["producer"] not in _V2_PRODUCERS_NAMES],
+    }
+    result = _run_producers(
+        root, run, expected, limits, gaps, deadline, python_profile, changes
+    )
+    for family in sorted(active, key=lambda f: _PRODUCER_ORDER.index(f["producer"])):
+        if (
+            family["producer"] in _V2_PRODUCERS_NAMES
+            and result.count() <= limits.max_findings
+        ):
+            _run_v2_family(
+                root, run, profile, family, tracked, limits, deadline, changes, result
+            )
+    return result
+
+
 def _run_family(
     root: Path,
     run: Path,
@@ -3315,7 +4467,7 @@ def _acquisition_changes(
     needs their added lines; with neither, no comparison is read."""
     reached = {
         family["id"]: _diff_only(profile, family, expected)
-        for family in profile["families"]
+        for family in _active_families(profile)
     }
     if not any(reached.values()):
         return _Changes(frozenset(), {})
@@ -3325,7 +4477,7 @@ def _acquisition_changes(
     # path whose own patch is refused withholds only itself (cubic and Claude on #459).
     wanted = {
         path
-        for family in profile["families"]
+        for family in _active_families(profile)
         if family["producer"] == "complexity"
         for path in reached[family["id"]]
     }
@@ -3771,7 +4923,7 @@ def _directory_flags() -> int:
     never at import: the default collection imports without them (Codex and Q)."""
     from tools import exact_tree
 
-    return exact_tree._DIRECTORY_FLAGS
+    return exact_tree.DIRECTORY_FLAGS
 
 
 def _within(deadline: float) -> None:
@@ -3919,8 +5071,16 @@ def _analyze_frozen(
         return expected, _ProducerResult(unanalyzed=unstaged), None, False
     staged, identity = staging
     try:
-        result = _run_producers(
-            staged, run, expected, limits, gaps, deadline, profile, changes
+        result = _run_all_families(
+            staged,
+            run,
+            expected,
+            limits,
+            gaps,
+            deadline,
+            profile,
+            changes,
+            _tracked_all(root, tree, owner),
         )
         bound = _reobserved(root, staged, tree, owner, run)
     except BaseException as primary:
@@ -4016,7 +5176,7 @@ def _family_rows(
     rows = {row["family"]: row for row in result.families}
     return [
         rows.get(family["id"]) or _family_row(family, None, {}, {}, None)
-        for family in profile["families"]
+        for family in _active_families(profile)
     ]
 
 

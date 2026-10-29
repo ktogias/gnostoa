@@ -1075,3 +1075,103 @@ def scan_tracked_tree(
                 "cannot write the sanitized tracked-tree secret report"
             ) from exc
     return result
+
+
+# The protected detect-secrets plugins (#389 H-PYSEC-2; Decision 0122): class -> (producer-relative path, SHA-256 of
+# the approved bytes). The pin lives in this producer code: neither the plugin, a baseline nor an analyzed tree is
+# authority for it. The diagnostic inventory runs them over a head's files as data; the candidate security-fast scan
+# is unchanged.
+PLUGIN_PINS: dict[str, tuple[str, str]] = {
+    "GnostoaAssignmentDetector": (
+        "tools/security_scan_plugin.py",
+        "4d817323f82526cfb59d14ece40fe2693af70e11efda6ad92d660bc5980028fe",  # pragma: allowlist secret -- the reviewed plugin's content digest
+    ),
+}
+_MAX_PLUGIN_BYTES = 1_048_576
+
+
+def _verified_plugin_bytes(relative: str, digest: str) -> bytes:
+    """The plugin's bytes from this producer tree, reached through no symbolic link, a bounded regular file opened
+    without following a link, and equal to their pin; otherwise the scan fails closed."""
+    current = Path(__file__).resolve().parent.parent
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                raise SecurityScanError(
+                    f"protected secret plugin {relative} is reached through a link"
+                )
+        except OSError as exc:
+            raise SecurityScanError(
+                f"protected secret plugin {relative} is unavailable"
+            ) from exc
+    try:
+        descriptor = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise SecurityScanError(
+            f"protected secret plugin {relative} is unavailable"
+        ) from exc
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_PLUGIN_BYTES:
+            raise SecurityScanError(
+                f"protected secret plugin {relative} is not a bounded regular file"
+            )
+        data = stream.read(_MAX_PLUGIN_BYTES + 1)
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise SecurityScanError(
+            f"protected secret plugin {relative} is not its pinned bytes"
+        )
+    return data
+
+
+def _load_protected_plugin(name: str, staging: Path) -> Any:
+    """The pinned plugin's class, imported from a private read-only copy of its verified bytes, never through the
+    import path, so no same-named module elsewhere can stand in for it."""
+    import importlib.util
+
+    relative, digest = PLUGIN_PINS[name]
+    data = _verified_plugin_bytes(relative, digest)
+    target = staging / f"{name}.py"
+    out = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o400,
+    )
+    with os.fdopen(out, "wb") as stream:
+        stream.write(data)
+    spec = importlib.util.spec_from_file_location(
+        f"gnostoa_protected_secret_plugin_{name}", target
+    )
+    if spec is None or spec.loader is None:
+        raise SecurityScanError(f"protected secret plugin {name} cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, name)
+
+
+def _plugin_lines(root: Path, relative: str) -> list[str]:
+    data = (root / relative).read_bytes()
+    return [] if b"\0" in data else data.decode("utf-8", errors="replace").splitlines()
+
+
+def scan_with_protected_plugins(root: Path, paths: list[str]) -> list[dict[str, Any]]:
+    """Every protected plugin over `paths` under `root`, read as data: each candidate's path, line and type, never
+    its value. A plugin that is not its pinned bytes fails the scan closed."""
+    import types
+
+    records: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging:
+        for name in sorted(PLUGIN_PINS):
+            detector = _load_protected_plugin(name, Path(staging))()
+            for relative in paths:
+                lines = _plugin_lines(root, relative)
+                for index, line in enumerate(lines):
+                    context = types.SimpleNamespace(lines=lines, target_index=index)
+                    for found in detector.analyze_line(
+                        relative, line, index + 1, context
+                    ):
+                        records.append(
+                            {"path": relative, "line": index + 1, "type": found.type}
+                        )
+    return records

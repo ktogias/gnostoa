@@ -1332,6 +1332,55 @@ guardrails:
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_default_profile_that_cannot_be_resolved_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs
+  - id: pinned-tool-families
+    title: The inventory's pinned tool and secrets families run only their pinned executables, from the protected tool root, with the protected configuration, name every directive, pragma, source and unsupported input as a gap, and stay inactive until a separate activation
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md#decision
+    implementation:
+      - tools/quality_evidence.py#_check_version
+      - tools/quality_evidence.py#_active_families
+      - tools/quality_evidence.py#_applicable
+      - tools/quality_evidence.py#_verified_tool
+      - tools/quality_evidence.py#_run_tool_family
+      - tools/quality_evidence.py#_run_gitlab
+      - tools/quality_evidence.py#project_concurrency_queue
+      - tools/quality_evidence.py#_run_secrets
+      - tools/quality_evidence.py#_run_v2_family
+      - tools/quality_evidence.py#_run_all_families
+      - tools/security_scan.py#_verified_plugin_bytes
+      - tools/security_scan.py#_load_protected_plugin
+      - tools/security_scan.py#scan_with_protected_plugins
+      - tools/security_scan_plugin.py#GnostoaAssignmentDetector
+      - policy/diagnostic-profile.yaml
+    tests:
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_v2_profile_admits_the_pinned_tool_families
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_protected_profile_declares_every_new_family_inactive
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_an_inactive_family_runs_nothing
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_a_tool_whose_digest_differs_from_its_pin_is_a_gap_and_never_runs
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_an_extensionless_sh_script_is_selected_and_its_finding_listed
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_shellcheck_runs_with_norc_and_a_clean_environment
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_an_inline_directive_is_an_attributable_gap
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_a_sourced_file_is_an_attributable_gap
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_an_exit_status_contradicting_its_report_is_a_gap
+      - tests/test_quality_evidence_tool_families.py::ShellFamilyTests.test_an_unchanged_script_is_in_full_and_not_in_diff
+      - tests/test_quality_evidence_tool_families.py::DockerfileFamilyTests.test_a_run_defect_is_listed_and_the_protected_config_governs
+      - tests/test_quality_evidence_tool_families.py::DockerfileFamilyTests.test_a_pragma_is_an_attributable_gap
+      - tests/test_quality_evidence_tool_families.py::DockerfileFamilyTests.test_exit_one_without_a_report_is_a_gap
+      - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_a_run_defect_is_listed_and_the_protected_config_and_shellcheck_govern
+      - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_the_queue_projection_changes_only_the_validated_line
+      - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_the_queue_projection_refuses_undocumented_and_conflicting_forms
+      - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_a_queue_word_in_a_run_block_or_comment_is_never_projected
+      - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_a_step_with_a_non_sh_shell_is_an_attributable_gap
+      - tests/test_quality_evidence_tool_families.py::GitlabScriptFamilyTests.test_a_script_item_is_analyzed_and_mapped_to_its_yaml_line
+      - tests/test_quality_evidence_tool_families.py::GitlabScriptFamilyTests.test_an_unsupported_construct_is_an_attributable_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_dockerfile_env_secret_is_listed_by_the_secrets_family
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_workflow_secret_reference_is_not_listed
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_scanner_pins_its_plugin_by_digest
+      - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_calls_family_finds_nothing_in_the_repository
+      - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
+
   - id: inventory-readback
     title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)
     applies_to: [kit]

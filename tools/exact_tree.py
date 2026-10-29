@@ -63,6 +63,8 @@ _O_NOFOLLOW = os.O_NOFOLLOW
 _O_DIRECTORY = os.O_DIRECTORY
 _O_NONBLOCK = os.O_NONBLOCK
 _DIRECTORY_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW
+# The same flags, for a caller that opens this owner's directories the same way (#389 H-PYSEC-2).
+DIRECTORY_FLAGS = _DIRECTORY_FLAGS
 _RECORD_SUFFIX = ".exact-tree"
 # The record's one format: its version, the tree, and the published directory's device
 # and inode (Router #389 6319318065, G2 I). Anything else binds nothing.

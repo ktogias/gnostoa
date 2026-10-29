@@ -218,7 +218,10 @@ def production_absent() -> bool:
 
 def git_blob(path: Path) -> str:
     data = path.read_bytes()
-    return hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+    # A Git blob id, not a security use of SHA-1: the same digest, with the flag that says so (#389 H-PYSEC-2).
+    return hashlib.sha1(
+        f"blob {len(data)}\0".encode() + data, usedforsecurity=False
+    ).hexdigest()
 
 
 def receipt_fields() -> dict[str, str]:
