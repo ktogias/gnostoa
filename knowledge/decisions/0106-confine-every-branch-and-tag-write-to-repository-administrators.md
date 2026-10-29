@@ -335,13 +335,15 @@ where it concerns `main`, the branch ruleset's bypass and the agents' identities
   included, still cannot.
 - **The agents' identities.** The agents open Pull Requests as their machine user,
   `gnostoa-agent-user`, and push and merge as their App, not through the owner's
-  token.
+  token. Neither holds the admin role: the App has no admin, and the machine user,
+  a collaborator since, has the Write role.
 - **What describes 2026-10-07 only.** In the Decision: that the branch ruleset
-  governs merging into `main`, that Pull Requests are opened as the owner, and that
-  only the admin role can write a branch. In the description: that no installed
-  app can place code on any ref. In the Consequences: that the rulesets do not
-  constrain agents because they act through the owner's token, and that no writer
-  outside the admin role has a bypass entry.
+  governs merging into `main`, that Pull Requests are opened as the owner, that
+  only the admin role can write a branch, and that an agent acts as the
+  administrator. In the description: that no installed app can place code on any
+  ref. In the Consequences: that the rulesets do not constrain agents because they
+  act through the owner's token, that the owner is the only collaborator, and that
+  no writer outside the admin role has a bypass entry.
 - **What is unchanged.** The tag ruleset `24640985` still admits only the admin
   role, so the agents' App cannot write a tag. On every branch but `main`, no app
   outside the bypass can write. Read back on 2026-10-29
