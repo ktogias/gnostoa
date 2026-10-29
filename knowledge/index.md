@@ -109,6 +109,7 @@ inherited, copied or loaded by adopting projects.
 - [Route the architecture-inheritance entrance gate from source](decisions/0099-route-the-architecture-inheritance-gate-from-source.md)
 - [Separate the agent review pipeline into a provider- and agent-neutral core and adapters](decisions/0100-separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters.md)
 - [Run the regression and smoke suites beside extended, behind the same regression gate](decisions/0103-run-the-regression-and-smoke-suites-beside-extended-behind-the-regression-gate.md)
+- [Confine every branch and tag write to repository administrators](decisions/0106-confine-every-branch-and-tag-write-to-repository-administrators.md)
 - [Run the analyzer readback for every Pull Request head, and again on request](decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md)
 - [Run the test suite in parallel processes through one owner](decisions/0109-run-the-test-suite-in-parallel-processes-through-one-owner.md)
 - [Bind every merge to the owner's approval of the exact head](decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
