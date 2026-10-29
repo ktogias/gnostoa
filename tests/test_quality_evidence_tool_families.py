@@ -187,6 +187,9 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
                 limits=limits,
             )
         self.commands.append((list(command), Path(cwd), dict(environment)))
+        if report.exists():
+            # As the real run does: its report is always a new file (_bounded_run, _new_file).
+            return None, "cannot create its report: FileExistsError", False
         if "--version" in command or "-version" in command:
             report.write_text(
                 f"{name} {self.profile['tools'][name]['version']}\n", encoding="utf-8"
@@ -274,6 +277,23 @@ class ToolFamilyProfileTests(_ToolFamilyFixture):
         self.assertIn("family shell-lint", inventory["coverage"]["reason"])
         self.assertEqual([], self._commands_of("shellcheck"))
 
+    def test_a_family_names_why_its_targets_went_unanalyzed(self) -> None:
+        # Found by the real-tool qualification: a count alone attributes nothing (#389 H-PYSEC-2 q1).
+        (self.tool_root / "shellcheck").write_bytes(b"#!altered\n")
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertIn("tool shellcheck: its bytes are not its pin", row["reason"])
+        self.assertIn("ci/tool", row["reason"])
+
+    def test_every_family_that_runs_shellcheck_verifies_it_for_itself(self) -> None:
+        # Found by the real-tool qualification: one version report per run directory let only the first family
+        # that verified ShellCheck run it (#389 H-PYSEC-2 q1).
+        rows = self._rows(self._collect(base=self.base))
+        for family in ("shell-lint", "workflow-lint", "gitlab-script"):
+            with self.subTest(family=family):
+                self.assertEqual(
+                    "COMPLETE", rows[family]["analysis"], rows[family]["reason"]
+                )
+
 
 class ShellFamilyTests(_ToolFamilyFixture):
     def test_an_extensionless_sh_script_is_selected_and_its_finding_listed(
@@ -334,6 +354,21 @@ class ShellFamilyTests(_ToolFamilyFixture):
         ]
         self.assertNotEqual([], found)
         self.assertEqual({False}, {f["native"]["in_diff"] for f in found})
+
+    def test_another_shell_s_script_is_a_gap_that_names_it(self) -> None:
+        # Found by the real-tool qualification: the note named the interpreter, not the script (#389 H-PYSEC-2 q2).
+        for name in ("ci/zshy", "ci/fishy"):
+            target = self.root / name
+            target.write_text("#!/usr/bin/env zsh\necho hi\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "other shells")
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        for name in ("ci/zshy", "ci/fishy"):
+            with self.subTest(script=name):
+                self.assertIn(
+                    f"{name}: an unsupported interpreter 'zsh'", row["reason"]
+                )
 
 
 class DockerfileFamilyTests(_ToolFamilyFixture):
@@ -563,15 +598,15 @@ class RepositoryCleanTests(_ToolFamilyFixture):
         official = {
             "shellcheck": (
                 "0.11.0",
-                "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",
+                "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",  # pragma: allowlist secret -- an official release executable's SHA-256 pin
             ),
             "hadolint": (
                 "2.15.1",
-                "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",
+                "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",  # pragma: allowlist secret -- an official release executable's SHA-256 pin
             ),
             "actionlint": (
                 "1.7.12",
-                "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",
+                "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",  # pragma: allowlist secret -- an official release executable's SHA-256 pin
             ),
         }
         self.assertTrue(
