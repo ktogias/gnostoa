@@ -1150,16 +1150,19 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     return getattr(module, name)
 
 
+_LINE_END = re.compile(r"\r\n|\r|\n")
+
+
 def _plugin_lines(root: Path, relative: str) -> list[str] | None:
-    """The file's lines, split at newlines only, so each is its line in the file (cubic on #470), or None for a file
-    holding NUL bytes, which no protected plugin reads."""
+    """The file's lines, split at CRLF, CR or LF and nothing else, so each is its line in the file (cubic on #470), or
+    None for a file holding NUL bytes, which no protected plugin reads."""
     data = (root / relative).read_bytes()
     if b"\0" in data:
         return None
-    lines = data.decode("utf-8", errors="replace").split("\n")
+    lines = _LINE_END.split(data.decode("utf-8", errors="replace"))
     if lines[-1] == "":
         lines.pop()
-    return [line.removesuffix("\r") for line in lines]
+    return lines
 
 
 def scan_with_protected_plugins(
@@ -1167,25 +1170,33 @@ def scan_with_protected_plugins(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Every protected plugin over `paths` under `root`, read as data: each candidate's path, line and type, never
     its value, and the paths no plugin could read, for the caller to name as a gap. A plugin that is not its pinned
-    bytes fails the scan closed."""
-    import types
-
+    bytes fails the scan closed. Its hits are stricter than the scanner's: no inline allowlist pragma hides one, as no
+    suppression comment hides a finding from the inventory's Ruff, which ignores them, and the reviewed baseline holds no
+    audit for them yet; their false-positive path is a choice for activation (Decision 0122)."""
     records: list[dict[str, Any]] = []
-    unread: list[str] = []
+    unread: dict[str, None] = {}
     with tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging:
         for name in sorted(PLUGIN_PINS):
             detector = _load_protected_plugin(name, Path(staging))()
             for relative in paths:
                 lines = _plugin_lines(root, relative)
                 if lines is None:
-                    unread += [] if relative in unread else [relative]
+                    # A mapping keeps first-seen order at constant cost (cubic on #470).
+                    unread[relative] = None
                     continue
-                for index, line in enumerate(lines):
-                    context = types.SimpleNamespace(lines=lines, target_index=index)
-                    for found in detector.analyze_line(
-                        relative, line, index + 1, context
-                    ):
-                        records.append(
-                            {"path": relative, "line": index + 1, "type": found.type}
-                        )
-    return records, unread
+                records += _plugin_hits(detector, relative, lines)
+    return records, list(unread)
+
+
+def _plugin_hits(
+    detector: Any, relative: str, lines: list[str]
+) -> list[dict[str, Any]]:
+    """One plugin's candidates in one file: path, line and type, never the value."""
+    import types
+
+    hits: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        context = types.SimpleNamespace(lines=lines, target_index=index)
+        for found in detector.analyze_line(relative, line, index + 1, context):
+            hits.append({"path": relative, "line": index + 1, "type": found.type})
+    return hits

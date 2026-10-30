@@ -110,7 +110,8 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - a GitLab item whose tag cannot read its text;
    - for secrets, a file holding NUL bytes, which the protected plugins never read.
 
-   Each unanalyzed reason is named in the row, with how many targets it covers and the first. Every finding a run
+   Each input a family cannot vouch for is named in its row by its own path (and line, for a marked line). Each
+   unanalyzed target's reason is named once, with how many targets it covers and the first. Every finding a run
    reports stays listed: past `max_findings` no inventory is written at all, and the refusal names the real count.
    A tool runs from a copy of its verified bytes in the run, so a replacement after the check never runs.
 6. **The queue projection** changes, in an analysis copy only, a validated block-style `concurrency.queue: single|max`
@@ -123,9 +124,14 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - **Identity:** the scan refuses any detect-secrets version, plugin or filter set but the protected baseline's.
      Its run record names that version, and its report binds the scanner, the baseline's digest and each plugin
      pin.
-   - **Deadline:** a spent inventory deadline starts no scan; the scan itself is bounded by the scanner's timeout.
+   - **Deadline:** a spent inventory deadline starts no scan. Every target is then unanalyzed with that reason
+     named, so the row is INCOMPLETE, never clean. The scan itself is bounded by the scanner's timeout.
    - **Reasons:** a scanner refusal keeps its own classification, which never copies an exception's text or a
      filename; any other failure is named by its type alone.
+   - **The plugin is stricter than the scanner:** no inline allowlist pragma hides its hits, as no suppression
+     comment hides a finding from the inventory's Ruff, which runs with its option to ignore them. The reviewed baseline also holds no audit
+     for them, since an entry of its type would read as stale to the scanner unless the plugin were one of the
+     baseline's `plugins_used`, and that changes `security-fast`.
 8. **Unsafe-calls** select S301, S307, S324, S602, S605 and S608 on the existing Ruff producer. Its one finding on
    main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest.
 9. **Qualification with the real executables** is `tests/test_quality_evidence_tool_qualification.py`. It runs only
@@ -148,8 +154,8 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
       carries none and a secrets family without it is unanalyzed;
     - the repairs of the findings the new families report on main (Hadolint and actionlint, source
       `qualification`).
-  - **The later decision** to enable production coverage: turning any family `active`, and the coverage choices
-    the owner still holds (source `owner-admission`).
+  - **The later decision** to enable production coverage: turning any family `active`, the coverage choices the
+    owner still holds (source `owner-admission`), and the plugin's false-positive path (above).
 
   This change leaves acquisition out because, while every new family is off, a mandatory release download would
   add a failure to every pull request's inventory and no coverage. Source `route` keeps the effective production

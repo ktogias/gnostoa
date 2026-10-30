@@ -1398,6 +1398,7 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_spent_budget_starts_no_secrets_scan
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_scanner_failure_is_named_by_its_type_alone
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_file_holding_nul_bytes_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_file_with_carriage_return_line_ends_is_read_line_by_line
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_finding_after_a_form_feed_keeps_its_file_line_number
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_secrets_run_names_the_scanner_version_it_was_held_to
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_baseline_held_to_other_scanner_settings_leaves_the_family_unanalyzed
@@ -1411,7 +1412,7 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_diff_only_family_acquires_changed_non_python_files
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_verified_bytes_are_the_bytes_that_run
-      - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_calls_family_finds_nothing_in_the_repository
+      - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_call_rules_find_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_dockerfile_assignment_is_reported_and_a_reference_is_not
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_makefile_assignment_is_reported_and_a_reference_is_not

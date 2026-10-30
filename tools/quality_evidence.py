@@ -2971,6 +2971,9 @@ def _family_row(
 # construct or a report its exit status contradicts is an attributable gap of its family, never a clean result; every
 # finding a run reports stays listed.
 TOOL_ROOT = Path("/opt/gnostoa-tools")
+# A pinned executable is read within this bound, as every read here is (Revix on #470): the largest pin, Hadolint
+# 2.15.1, is about 56 MB.
+_MAX_TOOL_BYTES = 256 * 1024 * 1024
 _SHEBANG = re.compile(
     rb"#!\s*(?:/usr/bin/env\s+(?:-S\s+)?)?(?:\S*/)?([A-Za-z][\w.+-]*)"
 )
@@ -3061,10 +3064,15 @@ def _tool_bytes(path: Path, name: str) -> tuple[bytes, str | None]:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         return b"", f"tool {name}: not a regular file"
+    from tools import exact_tree
+
     with os.fdopen(descriptor, "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             return b"", f"tool {name}: not a regular file"
-        return stream.read(), None
+        data = exact_tree.read_bounded(stream.fileno(), _MAX_TOOL_BYTES)
+    if data is None:
+        return b"", f"tool {name}: not a bounded regular file"
+    return data, None
 
 
 def _verified_tool(
@@ -3196,10 +3204,16 @@ def _report_records(
 
 
 def _text_lines(root: Path, path: str) -> list[str]:
+    """The file's lines as the file counts them: universal newlines, then a split at newlines only, so a form feed
+    or a Unicode separator never moves a line number (Revix on #470)."""
     try:
-        return (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+        text = (root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def _marked_lines(
@@ -3488,9 +3502,30 @@ def _job_step_notes(
                 path,
                 job_id,
                 index,
-                step.get("shell") or job_shell or workflow_shell or "bash",
+                step.get("shell") or job_shell or workflow_shell or _runner_shell(job),
             )
     return notes
+
+
+def _runner_shell(job: Mapping[str, Any]) -> str:
+    """The runner's default shell for a step that names none: pwsh on a Windows runner, bash on any other, and an
+    unknown one when `runs-on` is an expression (Revix on #470). Only bash and sh are analyzed."""
+    runs_on = job.get("runs-on")
+    if isinstance(runs_on, dict):
+        runs_on = runs_on.get("labels")
+    labels = (
+        [runs_on]
+        if isinstance(runs_on, str)
+        else runs_on
+        if isinstance(runs_on, list)
+        else []
+    )
+    texts = [label for label in labels if isinstance(label, str)]
+    if any("${{" in label for label in texts):
+        return "the runner default runs-on does not name"
+    if any(label.lower().startswith("windows") for label in texts):
+        return "pwsh"
+    return "bash"
 
 
 def _step_shell_notes(root: Path, path: str) -> list[str]:
@@ -3501,7 +3536,8 @@ def _step_shell_notes(root: Path, path: str) -> list[str]:
 
     try:
         document = yaml.load("\n".join(_text_lines(root, path)), Loader=yaml.BaseLoader)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError):
+        # A nesting past the reader's depth is a gap, never a crash (Revix on #470).
         return [f"{path}: the workflow cannot be read for its step shells"]
     if document is None:
         return []
@@ -3701,7 +3737,7 @@ def _gitlab_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
 
     try:
         nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, RecursionError) as exc:
         raise _GitlabUnsupported(f"unparsable: {type(exc).__name__}") from exc
     if len(nodes) != 1:
         raise _GitlabUnsupported(f"{len(nodes)} documents")
@@ -3762,6 +3798,9 @@ def _run_gitlab(
             jobs = _gitlab_scripts("\n".join(_text_lines(root, path)) + "\n")
         except _GitlabUnsupported as exc:
             notes.append(f"{path}: {exc}")
+            continue
+        except RecursionError:
+            notes.append(f"{path}: nested past the reader's depth")
             continue
         # The job's index keeps two names that sanitize alike apart (Codex and cubic on #470).
         for job_index, (job, parts) in enumerate(jobs.items()):
@@ -3878,7 +3917,7 @@ def project_concurrency_queue(
 
     try:
         root = yaml.compose(text, Loader=yaml.SafeLoader)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, RecursionError) as exc:
         return text, [], [(0, f"unparsable: {type(exc).__name__}")]
     lines = text.split("\n")
     projected: list[tuple[int, str]] = []
