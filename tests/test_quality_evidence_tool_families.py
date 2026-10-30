@@ -474,7 +474,9 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
         self.assertIn("-pyflakes=", command)
 
     def test_the_queue_projection_changes_only_the_validated_line(self) -> None:
-        text, projected, refused = self.module.project_concurrency_queue(_WORKFLOW)
+        text, projected, refused = _original(self.module, "_project_concurrency_queue")(
+            _WORKFLOW
+        )
         self.assertEqual([(5, "max")], projected)
         self.assertEqual([], refused)
         changed = [
@@ -507,14 +509,16 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
             ),
         }.items():
             with self.subTest(form=name):
-                text, projected, refused = self.module.project_concurrency_queue(form)
+                text, projected, refused = _original(
+                    self.module, "_project_concurrency_queue"
+                )(form)
                 self.assertEqual([], projected)
                 self.assertNotEqual([], refused)
                 self.assertEqual(form, text)
 
     def test_a_queue_word_in_a_run_block_or_comment_is_never_projected(self) -> None:
         form = _WORKFLOW.replace("echo $FOO", "echo 'queue: max'") + "# queue: max\n"
-        text, _, _ = self.module.project_concurrency_queue(form)
+        text, _, _ = _original(self.module, "_project_concurrency_queue")(form)
         self.assertIn("echo 'queue: max'", text)
         self.assertTrue(text.endswith("# queue: max\n"))
 

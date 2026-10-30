@@ -1345,7 +1345,7 @@ guardrails:
       - tools/quality_evidence.py#_verified_tool
       - tools/quality_evidence.py#_run_tool_family
       - tools/quality_evidence.py#_run_gitlab
-      - tools/quality_evidence.py#project_concurrency_queue
+      - tools/quality_evidence.py#_project_concurrency_queue
       - tools/quality_evidence.py#_run_secrets
       - tools/quality_evidence.py#_run_v2_family
       - tools/quality_evidence.py#_unanalyzed_notes

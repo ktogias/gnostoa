@@ -3419,7 +3419,7 @@ def _run_actionlint(
     name: str,
 ) -> tuple[_ProducerResult, list[str]]:
     """The pinned actionlint, with the protected configuration file, the pinned ShellCheck and no pyflakes, over
-    analysis copies in which only a validated `concurrency.queue` line is projected (project_concurrency_queue). A
+    analysis copies in which only a validated `concurrency.queue` line is projected (_project_concurrency_queue). A
     refused form is left for actionlint and named, a gap."""
     result = _ProducerResult()
     config = run / "actionlint.yaml"
@@ -3427,7 +3427,7 @@ def _run_actionlint(
     copies = run / "actionlint-input"
     refusals: list[str] = []
     for path in paths:
-        text, _projected, refused = project_concurrency_queue(
+        text, _projected, refused = _project_concurrency_queue(
             "\n".join(_text_lines(root, path)) + "\n"
         )
         (copies / path).parent.mkdir(parents=True, exist_ok=True)
@@ -3745,7 +3745,7 @@ def _queue_decision(where: str, node: Any, lines: list[str]) -> tuple[int, str, 
     return number, value.value, True
 
 
-def project_concurrency_queue(
+def _project_concurrency_queue(
     text: str,
 ) -> tuple[str, list[tuple[int, str]], list[tuple[int, str]]]:
     """The analysis-only projection of GitHub's documented `concurrency.queue` for actionlint 1.7.12, which does not
