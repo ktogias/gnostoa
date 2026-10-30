@@ -16,6 +16,7 @@ import hashlib
 import os
 import platform
 import shutil
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -326,6 +327,35 @@ class RealToolGapTests(_RealToolFixture):
         self.assertIn(
             ".github/workflows/w.yml:12: a ShellCheck directive, never honoured as clean",
             row["reason"],
+        )
+
+    def test_actionlint_never_follows_a_source_outside_its_inputs(self) -> None:
+        # PAO 6520190154 on #389: actionlint 1.7.12 always passes `-x` to ShellCheck, which then opened a sourced file
+        # outside its inputs (measured with this witness). A FIFO outside the repository records any reader.
+        fifo = Path(self.directory.name) / "outside-witness.sh"
+        os.mkfifo(fifo)
+        opened = threading.Event()
+
+        def write() -> None:
+            try:
+                with open(fifo, "w", encoding="utf-8") as stream:
+                    opened.set()
+                    stream.write("WITNESS=1\n")
+            except OSError:
+                pass  # released by the test itself, after the collection
+
+        threading.Thread(target=write, daemon=True).start()
+        workflow = _BASE_FILES[".github/workflows/w.yml"] + f"      - run: . {fifo}\n"
+        try:
+            row = self._rows(self._with({".github/workflows/w.yml": workflow}))[
+                "workflow-lint"
+            ]
+        finally:
+            was_opened = opened.wait(0.5)
+            os.close(os.open(fifo, os.O_RDONLY | os.O_NONBLOCK))
+        self.assertFalse(was_opened, "a sourced file outside the inputs was read")
+        self.assertIn(
+            ".github/workflows/w.yml:12: a sourced file, never followed", row["reason"]
         )
 
     def test_a_hadolint_pragma_is_a_named_gap_and_its_finding_is_kept(self) -> None:

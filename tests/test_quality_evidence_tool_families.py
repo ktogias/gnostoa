@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import platform
+import shlex
 import time
 import unittest
 from pathlib import Path
@@ -484,8 +485,13 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
         command, _, _ = self._commands_of("actionlint")[0]
         config = Path(command[command.index("-config-file") + 1])
         self.assertFalse(config.resolve().is_relative_to(self.root.resolve()))
-        # The pinned ShellCheck governs: the run's verified copy of its bytes (cubic on #470), never the head's.
-        shellcheck = Path(command[command.index("-shellcheck") + 1])
+        # The pinned ShellCheck governs through a run-local wrapper that drops actionlint's `-x`, so no source is
+        # followed (PAO 6520190154): it execs the run's verified copy of its bytes (cubic on #470), never the head's.
+        wrapper = Path(command[command.index("-shellcheck") + 1]).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('[ "$a" = -x ] || set -- "$@" "$a"', wrapper)
+        shellcheck = Path(shlex.split(wrapper.splitlines()[-1])[1])
         self.assertEqual(
             self.profile["tools"]["shellcheck"]["sha256"][platform.machine()],
             hashlib.sha256(shellcheck.read_bytes()).hexdigest(),
