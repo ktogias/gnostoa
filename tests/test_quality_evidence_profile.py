@@ -90,6 +90,18 @@ PROTECTED: dict[str, Any] = {
                 "x86_64": "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",  # pragma: allowlist secret -- release executable digest
                 "aarch64": "127f13925eadd52c341bca0ebaf9ab0dbd78c6468f30a8f262a528bf8de47546",  # pragma: allowlist secret -- release executable digest
             },
+            "asset": {
+                "x86_64": {
+                    "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz",
+                    "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198",  # pragma: allowlist secret -- release asset digest
+                    "member": "shellcheck-v0.11.0/shellcheck",
+                },
+                "aarch64": {
+                    "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.aarch64.tar.xz",
+                    "sha256": "12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588",  # pragma: allowlist secret -- release asset digest
+                    "member": "shellcheck-v0.11.0/shellcheck",
+                },
+            },
         },
         "hadolint": {
             "version": "2.15.1",
@@ -97,12 +109,34 @@ PROTECTED: dict[str, Any] = {
                 "x86_64": "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",  # pragma: allowlist secret -- release executable digest
                 "aarch64": "f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d",  # pragma: allowlist secret -- release executable digest
             },
+            "asset": {
+                "x86_64": {
+                    "url": "https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64",
+                    "sha256": "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507",  # pragma: allowlist secret -- release asset digest
+                },
+                "aarch64": {
+                    "url": "https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-arm64",
+                    "sha256": "f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d",  # pragma: allowlist secret -- release asset digest
+                },
+            },
         },
         "actionlint": {
             "version": "1.7.12",
             "sha256": {
                 "x86_64": "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",  # pragma: allowlist secret -- release executable digest
                 "aarch64": "ac0323433c2853ec3fb978c611430c5b3dc5d43c58d1a1ec031b00ab572beb60",  # pragma: allowlist secret -- release executable digest
+            },
+            "asset": {
+                "x86_64": {
+                    "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+                    "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",  # pragma: allowlist secret -- release asset digest
+                    "member": "actionlint",
+                },
+                "aarch64": {
+                    "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_arm64.tar.gz",
+                    "sha256": "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6",  # pragma: allowlist secret -- release asset digest
+                    "member": "actionlint",
+                },
             },
         },
     },
