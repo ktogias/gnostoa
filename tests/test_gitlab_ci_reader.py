@@ -3,12 +3,17 @@ run in the collector, through the families' own fixture."""
 
 from __future__ import annotations
 
+import itertools
+from unittest.mock import patch
+
+from tests.quality_evidence_fixtures import _calling_through
 from tests.test_quality_evidence_tool_families import (
     _GITLAB,
     _SC_NATIVE,
     _sourced,
     _ToolFamilyFixture,
 )
+from tools import gitlab_ci_reader
 
 
 class GitlabScriptFamilyTests(_ToolFamilyFixture):
@@ -233,3 +238,85 @@ class GitlabReaderTests(_ToolFamilyFixture):
                     ".gitlab-ci.yml: a NEL, LS or PS line break at line 1",
                     self._rows(inventory)["gitlab-script"]["reason"],
                 )
+
+    def test_an_out_of_range_escape_is_a_named_gap(self) -> None:
+        # cubic on #470: PyYAML's scanner raises ValueError, not a YAMLError, for `\U00110000` (measured).
+        self._commit({".gitlab-ci.yml": 'job:\n  script:\n    - "echo \\U00110000"\n'})
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn(".gitlab-ci.yml: unparsable: ValueError", row["reason"])
+
+    def test_a_job_that_is_not_a_mapping_is_a_named_gap(self) -> None:
+        # cubic on #470: GitLab runs every visible key that is not a global keyword as a job, whose definition is a
+        # mapping; one given any other value was dropped, and the file read as clean. A hidden key is ignored.
+        for text in ('job: "echo $A"\n', "job:\n  - echo $A\n", "job:\n"):
+            with self.subTest(text=text):
+                self._commit({".gitlab-ci.yml": text})
+                row = self._rows(self._collect(base=self.base))["gitlab-script"]
+                self.assertNotEqual("COMPLETE", row["analysis"])
+                self.assertIn(
+                    ".gitlab-ci.yml: job 'job' is not a mapping", row["reason"]
+                )
+        self._commit(
+            {".gitlab-ci.yml": '.hidden: "echo"\njob:\n  script:\n    - echo $A\n'}
+        )
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertEqual("COMPLETE", row["analysis"], row["reason"])
+
+    def test_a_shared_extends_ancestor_is_resolved_once(self) -> None:
+        # Codex on #470: five hidden jobs per level, each extending the five below, were resolved once per
+        # occurrence, exponential work in a file of a few kilobytes. Each job now resolves once per file.
+        levels = [[f".l{level}j{k}" for k in range(5)] for level in range(6)]
+        text = "".join(f"{name}:\n  script:\n    - echo $A\n" for name in levels[0])
+        for below, names in itertools.pairwise(levels):
+            text += "".join(
+                f"{name}:\n  extends: [{', '.join(below)}]\n" for name in names
+            )
+        text += f"job:\n  extends: [{', '.join(levels[-1])}]\n"
+        with patch.object(
+            gitlab_ci_reader,
+            "_gitlab_resolve",
+            spec=True,
+            new_callable=_calling_through,
+        ) as resolve:
+            jobs = gitlab_ci_reader.read_scripts(text)
+        self.assertEqual(["job"], list(jobs))
+        self.assertLessEqual(resolve.call_count, 200)
+
+    def test_extends_keeps_its_merge_cycle_and_eleven_levels(self) -> None:
+        # Controls for the resolution's cache (Codex on #470): they hold before and after it.
+        read, unsupported = (
+            gitlab_ci_reader.read_scripts,
+            gitlab_ci_reader.GitlabUnsupported,
+        )
+
+        def chain(ancestors: int, first: str = "") -> str:
+            text = ".j0:\n  script:\n    - echo $A\n" + first
+            text += "".join(
+                f".j{k}:\n  extends: .j{k - 1}\n" for k in range(1, ancestors)
+            )
+            return text + f"job:\n  extends: .j{ancestors - 1}\n"
+
+        merged = read(".p:\n  script:\n    - echo $A\njob:\n  extends: .p\n")
+        self.assertEqual("echo $A", merged["job"][0][0][0])
+        with self.assertRaisesRegex(unsupported, "an extends cycle"):
+            read(".a:\n  extends: .b\n.b:\n  extends: .a\njob:\n  extends: .a\n")
+        self.assertEqual(["job"], list(read(chain(11))))
+        with self.assertRaises(unsupported):
+            read(chain(12))
+        # A job resolved first at a shallow depth still keeps the bound when it is reached deeper.
+        with self.assertRaises(unsupported):
+            read(chain(12, first="a:\n  extends: .j0\n"))
+
+    def test_a_gitlab_file_that_is_not_utf8_text_is_a_named_gap(self) -> None:
+        # Codex on #470: a replacement decode analyzed a repaired copy and read as clean; the file is read strictly.
+        (self.root / ".gitlab-ci.yml").write_bytes(
+            b"job:\n  script:\n    - echo \xff\n"
+        )
+        self._git("commit", "-q", "-am", "not utf-8")
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn(
+            ".gitlab-ci.yml: not UTF-8 text, never analyzed as a repaired copy",
+            row["reason"],
+        )

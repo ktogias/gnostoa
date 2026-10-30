@@ -1167,6 +1167,41 @@ class RoundTwoContractTests(_ToolFamilyFixture):
             row["reason"],
         )
 
+    def test_an_out_of_range_escape_in_a_workflow_is_a_named_gap(self) -> None:
+        # cubic on #470, as for GitLab: the step reader and the queue projection met PyYAML's ValueError too.
+        step = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        self._commit(
+            {".github/workflows/w.yml": step + '      - run: "echo \\U00110000"\n'}
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        for note in (
+            ".github/workflows/w.yml: the workflow cannot be read for its step shells",
+            ".github/workflows/w.yml: unparsable: ValueError",
+        ):
+            self.assertIn(note, row["reason"])
+
+    def test_a_workflow_that_is_not_utf8_text_is_never_analyzed_as_a_repaired_copy(
+        self,
+    ) -> None:
+        # Codex on #470: actionlint was given `\xef\xbf\xbd` for the file's `\xff`, and the row read COMPLETE.
+        step = b"on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        (self.root / ".github/workflows/w.yml").write_bytes(
+            step + b"      - run: echo \xff\n"
+        )
+        self._git("commit", "-q", "-am", "not utf-8")
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn(
+            "not UTF-8 text, never analyzed as a repaired copy", row["reason"]
+        )
+        ran = [
+            c
+            for c, _cwd, _env in self._commands_of("actionlint")
+            if "-version" not in c
+        ]
+        self.assertFalse([c for c in ran if ".github/workflows/w.yml" in c], ran)
+
     def test_the_recorded_ruff_selection_is_the_active_families_only(self) -> None:
         # Revix on #470: an inactive family's rules never ran, so the record never claims them.
         profile = copy.deepcopy(self.profile)
