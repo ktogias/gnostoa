@@ -120,7 +120,7 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
      than 32 open collections, a job that is not a mapping, unmappable items, a key that is not text, a duplicate
      key, an escape PyYAML cannot read);
    - a YAML file holding a NEL, LS or PS, at which PyYAML breaks a line and the file does not, and one that is not
-     UTF-8 text, which no family analyzes as a repaired copy;
+     readable UTF-8 text, which no YAML family analyzes as an empty or repaired copy;
    - another shell's script;
    - a missing, linked or altered tool, one that is not a regular file (a named pipe is refused, never waited on),
      a wrong version or a failed version call, each by its own cause, or a run with no status;

@@ -3075,7 +3075,8 @@ def _verified_tool(
     copy = target / name
     try:
         target.mkdir(exist_ok=True)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        # O_NOFOLLOW is present: the pinned read above refuses without it (Amazon Q on #470).
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
         with os.fdopen(os.open(copy, flags, 0o500), "wb") as stream:
             stream.write(data)
     except OSError:
@@ -3201,15 +3202,15 @@ def _text_lines(root: Path, path: str) -> list[str]:
 
 
 def _yaml_text(root: Path, path: str) -> str | None:
-    """A YAML family's file as text, its lines as _text_lines counts them; None when it is not UTF-8 text, since no
-    family analyzes a repaired copy (Codex on #470). An unreadable file reads as empty, as _text_lines reads it."""
+    """A YAML family's file as text, from the one snapshot of its bytes it reads, with universal newlines and a final
+    one, as _text_lines counts its lines; None when it is unreadable or not UTF-8 text, since no YAML family analyzes
+    an empty or repaired copy (Codex and cubic on #470)."""
     try:
-        (root / path).read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
+        text = (root / path).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
         return None
-    except OSError:
-        return "\n"
-    return "\n".join(_text_lines(root, path)) + "\n"
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text if text.endswith("\n") else text + "\n"
 
 
 def _marked_lines(
@@ -3488,14 +3489,14 @@ def _actionlint_copies(
     root: Path, paths: list[str], copies: Path, name: str, result: _ProducerResult
 ) -> list[str]:
     """actionlint's analysis copies of `paths` under `copies`, each read strictly and then projected
-    (_project_concurrency_queue); one that is not UTF-8 text is never copied, and is unanalyzed in `result`. Returns
+    (_project_concurrency_queue); one that is not readable UTF-8 text is never copied, and is unanalyzed in `result`. Returns
     each refused form, named."""
     refusals: list[str] = []
     for path in paths:
         source = _yaml_text(root, path)
         if source is None:
             result.unanalyzed[path] = (
-                f"{name}: not UTF-8 text, never analyzed as a repaired copy"
+                f"{name}: not readable UTF-8 text, never analyzed as a repaired copy"
             )
             continue
         text, _projected, refused = _project_concurrency_queue(source)
@@ -3685,7 +3686,7 @@ def _step_shell_notes(
 
     text = _yaml_text(root, path)
     if text is None:
-        return [f"{path}: not UTF-8 text, so its step shells are not read"]
+        return [f"{path}: not readable UTF-8 text, so its step shells are not read"]
     if (line := _yaml_break(text)) is not None:
         return [
             f"{path}: a NEL, LS or PS line break at line {line}, so its step shells are not read"
@@ -3739,7 +3740,9 @@ def _run_gitlab(
     for index, path in enumerate(paths):
         text = _yaml_text(root, path)
         if text is None:
-            notes.append(f"{path}: not UTF-8 text, never analyzed as a repaired copy")
+            notes.append(
+                f"{path}: not readable UTF-8 text, never analyzed as a repaired copy"
+            )
             continue
         if (line := _yaml_break(text)) is not None:
             notes.append(f"{path}: a NEL, LS or PS line break at line {line}")
