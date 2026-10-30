@@ -1084,7 +1084,7 @@ def scan_tracked_tree(
 PLUGIN_PINS: dict[str, tuple[str, str]] = {
     "GnostoaAssignmentDetector": (
         "tools/security_scan_plugin.py",
-        "482fa93182ba50dd1ed9f0b5ae048a111219281e7ebc6edfa275d70fa2ef2bf5",  # pragma: allowlist secret -- the reviewed plugin's content digest
+        "df3752561cb0457a8c7708cfeebc5902b67974d646f0e234eef4e44e316ebbf4",  # pragma: allowlist secret -- the reviewed plugin's content digest
     ),
 }
 _MAX_PLUGIN_BYTES = 1_048_576
@@ -1174,8 +1174,18 @@ _LINE_END = re.compile(r"\r\n|\r|\n")
 
 def _plugin_lines(root: Path, relative: str) -> list[str] | None:
     """The file's lines, split at CRLF, CR or LF and nothing else, so each is its line in the file (cubic on #470), or
-    None for a file holding NUL bytes, which no protected plugin reads."""
-    data = (root / relative).read_bytes()
+    None for a file holding NUL bytes, a link or anything but a regular file, which no protected plugin reads."""
+    # No link is followed, so a linked path is one the plugins could not read (Amazon Q on #470).
+    try:
+        descriptor = os.open(
+            root / relative, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as stream:
+        data = (
+            stream.read() if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b"\0"
+        )
     if b"\0" in data:
         return None
     lines = _LINE_END.split(data.decode("utf-8", errors="replace"))

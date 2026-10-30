@@ -110,10 +110,14 @@ def _single_value(rest: str) -> str | None:
 
 
 def _docker_legacy(parts: list[str]) -> list[tuple[str, str]]:
-    if not _IDENTIFIER.fullmatch(parts[1]):
-        return []
+    """The legacy `ENV NAME value` pair, and every `name=value` pair its value holds (cubic on #470)."""
     value = _single_value(parts[2].rstrip())
-    return [] if value is None else [(parts[1], value)]
+    inner = [
+        (m[1], _first_group(m, 1)) for m in _DOCKER_PAIR.finditer(value or parts[2])
+    ]
+    if value is None or not _IDENTIFIER.fullmatch(parts[1]):
+        return inner
+    return [(parts[1], value), *inner]
 
 
 def _docker_values(line: str) -> list[str]:

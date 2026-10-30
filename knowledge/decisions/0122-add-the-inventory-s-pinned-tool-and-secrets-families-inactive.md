@@ -97,9 +97,14 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
 
    A DIFF-only family reaches by that listing, never by the Python paths alone.
 5. **Attributable gaps.** These make a family's row PARTIAL or INCOMPLETE and are named, never a clean result:
-   - a ShellCheck directive, a Hadolint pragma or a sourced file;
+   - a ShellCheck directive, a Hadolint pragma or a sourced file. A source is what the pinned ShellCheck's own parse
+     reports and never follows (SC1090, SC1091), in any command position, never a line a hand reader matches. For a
+     workflow step, actionlint excludes SC1091, so the pinned ShellCheck reads each analyzed step's script for its
+     sources alone, its expressions masked as actionlint masks them, and that run is recorded. A source ShellCheck
+     does not parse as one (`builtin source`, `command .`, `eval`) is outside this model and is not named;
    - a workflow step whose effective shell is not bash or sh;
-   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, unmappable items);
+   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, unmappable items, a key
+     that is not text, a duplicate key);
    - another shell's script;
    - a missing, linked or altered tool, a wrong version, or a run with no status;
    - a report that is not the pinned tool's: a duplicate key, a non-finite number, or a field its version does not
@@ -122,7 +127,9 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
 7. **Secrets** run the project's scanner over the head's files as data, against the protected reviewed baseline
    restricted to the scanned files, then the protected plugin `tools/security_scan_plugin.py`. The scanner pins the
    plugin by digest (`PLUGIN_PINS`), reads its bytes through no link, and imports only a private read-only copy. The
-   candidate `security-fast` scan and `.secrets.baseline` are unchanged.
+   plugins read a scanned file through no link either: a linked path is one they could not read, named as such. A
+   Dockerfile's legacy `ENV NAME value` is read whole, and for every `name=value` pair it holds. The candidate
+   `security-fast` scan and `.secrets.baseline` are unchanged.
    - **Identity:** the scan refuses any detect-secrets version, plugin or filter set but the protected baseline's.
      Its run record names that version, and its report binds the scanner, the baseline's digest and each plugin
      pin.
@@ -136,7 +143,9 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
      `plugins_used`. That would change `security-fast`. So the plugin has no false-positive path yet: choosing one
      is part of activation.
 8. **Unsafe-calls** select S301, S307, S324, S602, S605 and S608 on the existing Ruff producer. Its one finding on
-   main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest.
+   main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest. The
+   inventory's recorded `ruff_select` is the active families' rules only, so while the family is inactive the
+   record equals protected main's.
 9. **Qualification with the real executables** is `tests/test_quality_evidence_tool_qualification.py`. It runs only
    when `GNOSTOA_QUALIFICATION_TOOL_ROOT` names a directory whose executables are the protected pins. Otherwise it
    skips, and the skip says why.

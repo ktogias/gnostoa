@@ -2964,15 +2964,12 @@ def _family_row(
     }
 
 
-# The pinned tool families (#389 H-PYSEC-2; Decision 0122). ShellCheck, Hadolint and actionlint run as their pinned
-# release executables from the protected tool root, never from PATH or the analyzed tree, and each only after its bytes
-# match the protected profile's pin for this machine. They run in a clean environment with the protected
-# configuration, so nothing in the head selects their rules. A directive, a pragma, a sourced file, an unsupported
-# construct or a report its exit status contradicts is an attributable gap of its family, never a clean result; every
-# finding a run reports stays listed.
+# The pinned tool families (#389 H-PYSEC-2; Decision 0122): ShellCheck, Hadolint and actionlint run only as their
+# pinned executables from the protected tool root, never PATH or the tree, once their bytes are the profile's pin, in a
+# clean environment with the protected configuration. A directive, pragma, source, unsupported construct or
+# contradicted status is a named gap of its family, never clean; every finding stays listed.
 TOOL_ROOT = Path("/opt/gnostoa-tools")
-# A pinned executable is read within this bound, as every read here is (Revix on #470): the largest pin, Hadolint
-# 2.15.1, is about 56 MB.
+# Every read is bounded; the largest pin, Hadolint 2.15.1, is about 56 MB.
 _MAX_TOOL_BYTES = 256 * 1024 * 1024
 _SHEBANG = re.compile(
     rb"#!\s*(?:/usr/bin/env\s+(?:-S\s+)?)?(?:\S*/)?([A-Za-z][\w.+-]*)"
@@ -2981,7 +2978,7 @@ _SHELLS = frozenset({"sh", "bash", "dash", "ksh"})
 _OTHER_SHELLS = frozenset({"zsh", "fish", "csh", "tcsh", "mksh", "yash"})
 _SHELLCHECK_DIRECTIVE = re.compile(r"#\s*shellcheck\s+[a-z][a-z-]*=", re.IGNORECASE)
 _HADOLINT_PRAGMA = re.compile(r"#\s*hadolint\b", re.IGNORECASE)
-_SOURCED = re.compile(r"^\s*(?:\.|source)\s+\S")
+_SOURCED_NOTE = "a sourced file, never followed"
 _WORKFLOW_PATH = re.compile(r"\.github/workflows/[^/]+\.ya?ml|ci/github[^/]*\.yml")
 _GITLAB_PATH = re.compile(r"\.gitlab-ci\.yml|ci/gitlab[^/]*\.yml")
 _STEP_SHELLS = frozenset({"bash", "sh"})
@@ -3009,7 +3006,7 @@ _OTHER_SHELL_SUFFIXES = frozenset({".zsh", ".fish", ".csh", ".tcsh", ".mksh", ".
 
 def _shell_applicability(root: Path, path: str) -> tuple[bool, str | None]:
     """Whether ShellCheck reads `path`, and why not when it is another shell's script: a sh, bash, dash or ksh
-    suffix, else a shebang naming one of them (cubic on #470)."""
+    suffix, else a shebang naming one of them."""
     suffix = PurePosixPath(path).suffix
     if suffix in _SHELL_SUFFIXES:
         return True, None
@@ -3035,9 +3032,8 @@ _PATH_SELECTORS: dict[str, Callable[[str], bool]] = {
 def _applicable(
     root: Path, producer: str, tracked: list[str]
 ) -> tuple[list[str], dict[str, str]]:
-    """The tracked paths a pinned-tool family applies to, in order, and the ones it names as unsupported. ShellCheck
-    reads a sh, bash, dash or ksh script by its suffix or shebang; another shell's script is unsupported, a gap.
-    Secrets read every tracked file."""
+    """The tracked paths a pinned-tool family applies to, in order, and those it names unsupported (another shell's
+    script); secrets read every tracked file."""
     selected: list[str] = []
     unsupported: dict[str, str] = {}
     for path in tracked:
@@ -3056,9 +3052,8 @@ def _verified_tool(
     profile: Mapping[str, Any], name: str, target: Path
 ) -> tuple[Path | None, str | None]:
     """The pinned executable under TOOL_ROOT, copied into `target` once the pinned-file owner has read its bytes as
-    the protected profile's pin for this machine, or why none may run: no pin, absent, a link, not a bounded regular
-    file, or other bytes. The copy is what runs, so a replacement after the check never does (cubic on #470); its
-    version is read only after this."""
+    the profile's pin for this machine, or why none may run (no pin, absent, a link, not a bounded regular file, other
+    bytes). The copy is what runs, so a later replacement never does; its version is read after."""
     pin = profile.get("tools", {}).get(name)
     if pin is None:
         return None, f"tool {name}: no pin in the profile"
@@ -3106,8 +3101,8 @@ def _tool_version(
     *,
     family: str,
 ) -> str | None:
-    """The pinned version when the tool's own version output names it, else None. Each family verifies its
-    tools for itself, into a report of its own, since a report is always a new file (_bounded_run)."""
+    """The pinned version when the tool's own version output names it, else None, read into the family's own
+    report (a report is always a new file)."""
     report = run / f"diagnostic-{family}-{name}-version.txt"
     flag = "-version" if name == "actionlint" else "--version"
     status, gap, _invalid = _bounded_run(
@@ -3130,8 +3125,8 @@ def _tool_version(
 
 
 def _tool_gap(status: int | None, gap: str | None, records: list[Any]) -> str | None:
-    """A pinned tool's run gap: an earlier one, a run with no status (Amazon Q on #470), a status other than 0 or 1,
-    or a status its report contradicts. Each of the three exits 1 only with a finding and 0 only without one."""
+    """A pinned tool's run gap: an earlier one, no status, a status other than 0 or 1, or one its report contradicts
+    (each tool exits 1 only with a finding, 0 only without)."""
     if gap is not None:
         return gap
     if status is None:
@@ -3167,7 +3162,7 @@ _ACTIONLINT_FIELDS = frozenset(
 def _report_records(
     report: Path, fields: frozenset[str], key: str | None = None
 ) -> list[Any]:
-    """A pinned tool's report, read strictly (Revix and cubic on #470): no duplicate key and no non-finite number,
+    """A pinned tool's report, read strictly: no duplicate key and no non-finite number,
     the pinned version's shape, and records carrying only its fields. Raises ValueError otherwise."""
     try:
         document = _strict_json_loads(report.read_text(encoding="utf-8"))
@@ -3185,9 +3180,9 @@ def _report_records(
 
 
 def _text_lines(root: Path, path: str) -> list[str]:
-    """The file's lines as the file counts them: universal newlines, then a split at newlines only, so a form feed
-    or a Unicode separator never moves a line number (Revix on #470). A YAML reader counts its own: PyYAML also
-    breaks at NEL, LS and PS, and then refuses the file or the reader refuses the scalar, a named gap (cubic)."""
+    """The file's lines as the file counts them: universal newlines, then a split at newlines only, so no form feed
+    or Unicode separator moves a line number. PyYAML also breaks at NEL, LS and PS; it or the reader then refuses
+    the file or scalar, a named gap."""
     try:
         text = (root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -3221,9 +3216,10 @@ def _run_shellcheck(
     tool_id: str = "shellcheck",
     shell: str | None = None,
     origin: Mapping[str, tuple[str, Mapping[int, Any]]] | None = None,
+    sources: list[tuple[str, int]],
 ) -> _ProducerResult:
     """The pinned ShellCheck over `paths`, relative to `cwd`: `--norc`, no `-x`, explicit files. With `origin`, each
-    analyzed file is an analysis copy whose lines map back to their source (the GitLab family)."""
+    is an analysis copy whose lines map to their source. Each source it reports (SC1090, SC1091) goes to `sources`."""
     result = _ProducerResult()
     command = [
         str(tool),
@@ -3262,6 +3258,8 @@ def _run_shellcheck(
                 if isinstance(mapped, list):
                     mapped = [target for start, target in mapped if start <= column][-1]
                 path, line, end_line = source, mapped, None
+            if comment["code"] in (1090, 1091):
+                sources.append((path, line))
             finding = _diagnostic_finding(
                 tool_id,
                 f"SC{comment['code']}",
@@ -3276,8 +3274,61 @@ def _run_shellcheck(
         result.keep(finding, allowance)
     gap = _tool_gap(status, gap, comments)
     if gap is not None:
-        result.unanalyzed.update({path: f"{name} {gap}" for path in paths})
+        result.unanalyzed.update({target: f"{name} {gap}" for target in paths})
     return result
+
+
+def _sourced_notes(sources: list[tuple[str, int]]) -> list[str]:
+    return [f"{path}:{line}: {_SOURCED_NOTE}" for path, line in sources]
+
+
+def _masked(text: str) -> str:
+    """A step's script with each `${{ }}` expression as that many underscores, as actionlint gives it to ShellCheck."""
+    out, start = [], 0
+    while (left := text.find("${{", start)) >= 0 and (
+        right := text.find("}}", left)
+    ) >= 0:
+        out += [text[start:left], "_" * (right + 2 - left)]
+        start = right + 2
+    return "".join(out) + text[start:]
+
+
+def _step_sources(
+    run: Path,
+    tool: Path,
+    scripts: list[tuple[str, str]],
+    result: _ProducerResult,
+    limits: DiagnosticLimits,
+    deadline: float,
+    name: str,
+) -> list[str]:
+    """Each source in an analyzed workflow step, by the pinned ShellCheck's parse, as actionlint excludes SC1091.
+    Findings stay actionlint's; the run is recorded."""
+    if not scripts:
+        return []
+    folder = run / "step-sources"
+    folder.mkdir()
+    where = {f"{index}.sh": step for index, (step, _text) in enumerate(scripts)}
+    for index, (_step, text) in enumerate(scripts):
+        (folder / f"{index}.sh").write_text(_masked(text), encoding="utf-8")
+    sources: list[tuple[str, int]] = []
+    read = _run_shellcheck(
+        folder,
+        run,
+        sorted(where),
+        tool,
+        limits,
+        deadline,
+        0,
+        name=f"{name}:sources",
+        shell="bash",
+        sources=sources,
+    )
+    result.runs += read.runs
+    result.truncated = result.truncated or read.truncated
+    return [f"{where[p]}, its line {line}: {_SOURCED_NOTE}" for p, line in sources] + [
+        f"{where[p]}: {why}" for p, why in sorted(read.unanalyzed.items())
+    ]
 
 
 def _run_hadolint(
@@ -3360,7 +3411,7 @@ def _run_actionlint(
 ) -> tuple[_ProducerResult, list[str]]:
     """The pinned actionlint, with the protected configuration file, the pinned ShellCheck and no pyflakes, over
     analysis copies in which only a validated `concurrency.queue` line is projected (project_concurrency_queue). A
-    refused form is left for actionlint and named, a gap (cubic on #470)."""
+    refused form is left for actionlint and named, a gap."""
     result = _ProducerResult()
     config = run / "actionlint.yaml"
     config.write_text(_ACTIONLINT_CONFIG, encoding="utf-8")
@@ -3440,8 +3491,7 @@ def _run_shell(container: Mapping[str, Any]) -> Any:
 
 
 def _structure_notes(path: str, where: str, container: Mapping[str, Any]) -> list[str]:
-    """Each of `defaults` and `defaults.run` present but not a mapping: its step shells cannot be read (Codex, Revix
-    and cubic on #470)."""
+    """Each of `defaults` and `defaults.run` present but not a mapping: its step shells cannot be read."""
     defaults = container.get("defaults")
     if defaults is not None and not isinstance(defaults, dict):
         return [
@@ -3472,7 +3522,11 @@ def _step_note(path: str, job_id: str, index: int, shell: Any) -> list[str]:
 
 
 def _job_step_notes(
-    path: str, job_id: str, job: Mapping[str, Any], workflow_shell: Any
+    path: str,
+    job_id: str,
+    job: Mapping[str, Any],
+    workflow_shell: Any,
+    scripts: list[tuple[str, str]],
 ) -> list[str]:
     notes = _structure_notes(path, f"job {job_id} ", job)
     steps = job.get("steps")
@@ -3484,23 +3538,23 @@ def _job_step_notes(
     job_shell = _run_shell(job)
     for index, step in enumerate(steps or []):
         if isinstance(step, dict) and "run" in step:
-            notes += _step_note(
-                path,
-                job_id,
-                index,
-                step.get("shell") or job_shell or workflow_shell or _runner_shell(job),
+            shell = (
+                step.get("shell") or job_shell or workflow_shell or _runner_shell(job)
             )
+            note = _step_note(path, job_id, index, shell)
+            notes += note
+            if not note and isinstance(step["run"], str):
+                scripts.append((f"{path}: job {job_id} step {index}", step["run"]))
     return notes
 
 
-# The runner's default shell when `runs-on` names no platform (Revix on #470).
+# The runner's default shell when `runs-on` names no platform.
 _UNKNOWN_SHELL = object()
 
 
 def _runner_shell(job: Mapping[str, Any]) -> object:
-    """The runner's default shell for a step that names none: pwsh on a Windows runner, bash on a Linux or macOS
-    one, and unknown otherwise: an expression, a group or a bare self-hosted label can be any (Revix and cubic on
-    #470). Only bash and sh are analyzed."""
+    """The runner's default shell for a step that names none: pwsh on Windows, bash on Linux or macOS, else unknown
+    (an expression, a group or a self-hosted label can be any)."""
     runs_on = job.get("runs-on")
     if isinstance(runs_on, dict):
         runs_on = runs_on.get("labels")
@@ -3516,16 +3570,18 @@ def _runner_shell(job: Mapping[str, Any]) -> object:
     return _UNKNOWN_SHELL
 
 
-def _step_shell_notes(root: Path, path: str) -> list[str]:
-    """Each workflow step whose effective shell is not bash or sh: actionlint gives it to no analyzer, so it is a
-    gap. The step's, then the job's, then the workflow's `defaults.run.shell` decide; a runner's default is bash. A
-    structure that is not the documented mapping is a gap too, and actionlint still reads the file."""
+def _step_shell_notes(
+    root: Path, path: str, scripts: list[tuple[str, str]]
+) -> list[str]:
+    """Each workflow step whose shell is not bash or sh, a gap, as actionlint gives it to no analyzer: the step's,
+    job's, then workflow's `defaults.run.shell` decide, then the runner's. Another structure is a gap too. Each
+    analyzed step's script goes to `scripts`."""
     import yaml
 
     try:
         document = yaml.load("\n".join(_text_lines(root, path)), Loader=yaml.BaseLoader)
     except (yaml.YAMLError, RecursionError):
-        # A nesting past the reader's depth is a gap, never a crash (Revix on #470).
+        # A nesting past the reader's depth is a gap, never a crash.
         return [f"{path}: the workflow cannot be read for its step shells"]
     if document is None:
         return []
@@ -3542,7 +3598,7 @@ def _step_shell_notes(root: Path, path: str) -> list[str]:
         ]
     for job_id, job in (jobs or {}).items():
         if isinstance(job, dict):
-            notes += _job_step_notes(path, job_id, job, _run_shell(document))
+            notes += _job_step_notes(path, job_id, job, _run_shell(document), scripts)
         else:
             notes.append(
                 f"{path}: job {job_id} is not a mapping, so its step shells are not read"
@@ -3612,7 +3668,7 @@ def _gitlab_scalar(node: Any) -> Any:
         try:
             return yaml.SafeLoader("").construct_object(node)
         except (ValueError, yaml.YAMLError) as exc:
-            # A tag whose text it cannot read, as `!!int x` (Revix on #470).
+            # A tag whose text it cannot read, as `!!int x`.
             raise _GitlabUnsupported(
                 f"a {node.tag} item that cannot be read at line {node.start_mark.line + 1}"
             ) from exc
@@ -3633,7 +3689,7 @@ def _gitlab_construct(node: Any) -> Any:
     if isinstance(node, yaml.ScalarNode):
         return _gitlab_scalar(node)
     if node.tag not in ("tag:yaml.org,2002:seq", "tag:yaml.org,2002:map"):
-        # A tagged collection, as `!reference [.job, script]`, is unsupported as a tagged scalar is (Revix on #470).
+        # A tagged collection, as `!reference [.job, script]`, is unsupported as a tagged scalar is.
         raise _GitlabUnsupported(
             f"an unsupported tag {node.tag} at line {node.start_mark.line + 1}"
         )
@@ -3645,10 +3701,14 @@ def _gitlab_construct(node: Any) -> Any:
     for key, value in node.value:
         text = _gitlab_construct(key)
         text = text[0] if isinstance(text, tuple) else text
+        line = key.start_mark.line + 1
         if text == "<<":
-            raise _GitlabUnsupported(
-                f"a YAML merge key at line {key.start_mark.line + 1}"
+            raise _GitlabUnsupported(f"a YAML merge key at line {line}")
+        if not isinstance(text, str) or text in out:
+            what = (
+                "a duplicate key" if isinstance(text, str) else "a key that is not text"
             )
+            raise _GitlabUnsupported(f"{what} at line {line}")
         out[text] = _gitlab_construct(value)
     return out
 
@@ -3723,7 +3783,7 @@ def _gitlab_job(
 
 def _gitlab_defaults(root: Mapping[str, Any]) -> dict[str, Any]:
     """`default`, with a top-level before_script or after_script read as a default's, since the runner runs them as
-    one (Codex on #470); both at once, or an `inherit`, is unsupported."""
+    one; both at once, or an `inherit`, is unsupported."""
     default = root.get("default") or {}
     if not isinstance(default, dict) or "inherit" in default:
         raise _GitlabUnsupported("an unsupported default")
@@ -3773,7 +3833,7 @@ def _gitlab_analysis_file(items: list[tuple[str, Any]]) -> tuple[str, dict[int, 
             body.append(text)
             mapping[len(body)] = line
             continue
-        # Only a newline ends an analysis line, so the shell reads the item as it is (Codex on #470).
+        # Only a newline ends an analysis line, so the shell reads the item as it is.
         parts = text.split("\n")
         if len(parts) > 1 and parts[-1] == "":
             parts.pop()
@@ -3781,17 +3841,6 @@ def _gitlab_analysis_file(items: list[tuple[str, Any]]) -> tuple[str, dict[int, 
             body.append(part)
             mapping[len(body)] = line + offset
     return "\n".join(body) + "\n", mapping
-
-
-def _gitlab_sourced(path: str, items: list[tuple[str, Any]]) -> list[str]:
-    """Each line of a job's items that sources a file, which ShellCheck never follows here either (Claude on #470)."""
-    notes = []
-    for text, line in items:
-        first = line if isinstance(line, int) else line[0][1]
-        for offset, part in enumerate(text.split("\n")):
-            if _SOURCED.match(part):
-                notes.append(f"{path}:{first + offset}: a sourced file, never followed")
-    return notes
 
 
 def _run_gitlab(
@@ -3805,8 +3854,8 @@ def _run_gitlab(
     *,
     name: str,
 ) -> tuple[_ProducerResult, list[str]]:
-    """The GitLab family: each file's jobs read by the bounded reader into analysis files, analyzed by the pinned
-    ShellCheck as POSIX sh, each finding mapped back to its YAML line. An unsupported file is a gap, named."""
+    """The GitLab family: each file's jobs, by the bounded reader, as analysis files for the pinned ShellCheck as
+    POSIX sh, each finding mapped to its YAML line; an unsupported file is a named gap."""
     copies = run / "gitlab-input"
     copies.mkdir(exist_ok=True)
     origin: dict[str, tuple[str, Mapping[int, Any]]] = {}
@@ -3820,16 +3869,16 @@ def _run_gitlab(
         except RecursionError:
             notes.append(f"{path}: nested past the reader's depth")
             continue
-        # The job's index keeps two names that sanitize alike apart (Codex and cubic on #470).
+        # The job's index keeps two names that sanitize alike apart.
         for job_index, (job, parts) in enumerate(jobs.items()):
             for part_index, items in enumerate(parts):
-                notes += _gitlab_sourced(path, items)
                 body, mapping = _gitlab_analysis_file(items)
                 analysis = f"{index}-{job_index}-{re.sub(r'[^A-Za-z0-9_.-]', '_', job)}-{part_index}.sh"
                 (copies / analysis).write_text(body, encoding="utf-8")
                 origin[analysis] = (path, mapping)
     if not origin:
         return _ProducerResult(), notes
+    sources: list[tuple[str, int]] = []
     result = _run_shellcheck(
         copies,
         run,
@@ -3842,9 +3891,10 @@ def _run_gitlab(
         tool_id="gitlab-shellcheck",
         shell="sh",
         origin=origin,
+        sources=sources,
     )
     result.unanalyzed = {origin[a][0]: why for a, why in result.unanalyzed.items()}
-    return result, notes
+    return result, notes + _sourced_notes(sources)
 
 
 _QUEUE_LINE = re.compile(r"^(\s*)queue:\s*([A-Za-z]+)\s*(?:#.*)?$")
@@ -3956,17 +4006,15 @@ def project_concurrency_queue(
 _DIRECTIVE_NOTE = "a ShellCheck directive, never honoured as clean"
 
 
-def _tool_notes(root: Path, producer: str, paths: list[str]) -> list[str]:
-    """Each attributable gap a pinned tool's inputs carry, read before it runs: directives, sources, pragmas and
-    step shells."""
+def _tool_notes(
+    root: Path, producer: str, paths: list[str], scripts: list[tuple[str, str]]
+) -> list[str]:
+    """Each attributable gap a pinned tool's inputs carry, read before it runs: directives, pragmas and step shells;
+    each analyzed step's script is added to `scripts`."""
     notes: list[str] = []
     for path in paths:
         notes += _marked_lines(root, path, _SHELLCHECK_DIRECTIVE, _DIRECTIVE_NOTE)
-        if producer == "shellcheck":
-            notes += _marked_lines(
-                root, path, _SOURCED, "a sourced file, never followed"
-            )
-        elif producer == "hadolint":
+        if producer == "hadolint":
             notes += _marked_lines(
                 root,
                 path,
@@ -3974,7 +4022,7 @@ def _tool_notes(root: Path, producer: str, paths: list[str]) -> list[str]:
                 "a Hadolint pragma, never honoured as clean",
             )
         elif producer == "actionlint":
-            notes += _step_shell_notes(root, path)
+            notes += _step_shell_notes(root, path, scripts)
     return notes
 
 
@@ -4015,17 +4063,20 @@ def _run_tool_family(
     allowance: int,
 ) -> tuple[_ProducerResult, list[str]]:
     """A pinned-tool family over `paths`: each executable verified, then its version, before anything runs; then the
-    run and its attributable notes (directives, pragmas, sources, unsupported step shells or constructs)."""
+    run and its attributable notes."""
     producer, name = family["producer"], f"{family['producer']}:{family['id']}"
     tools, why = _verified_tools(profile, family, run, limits, deadline)
     if why is not None:
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, f"{name}: {why}")), []
-    notes = _tool_notes(root, producer, paths)
+    scripts: list[tuple[str, str]] = []
+    notes = _tool_notes(root, producer, paths, scripts)
     common = (limits, deadline, allowance)
     if producer == "shellcheck":
-        return _run_shellcheck(
-            root, run, paths, tools["shellcheck"], *common, name=name
-        ), notes
+        sources: list[tuple[str, int]] = []
+        result = _run_shellcheck(
+            root, run, paths, tools["shellcheck"], *common, name=name, sources=sources
+        )
+        return result, notes + _sourced_notes(sources)
     if producer == "hadolint":
         return _run_hadolint(
             root, run, paths, tools["hadolint"], *common, name=name
@@ -4040,7 +4091,10 @@ def _run_tool_family(
             *common,
             name=name,
         )
-        return result, notes + refused
+        steps = _step_sources(
+            run, tools["shellcheck"], scripts, result, limits, deadline, name
+        )
+        return result, notes + refused + steps
     result, unsupported = _run_gitlab(
         root, run, paths, tools["shellcheck"], *common, name=name
     )
@@ -4070,7 +4124,7 @@ def _scoped_baseline(run: Path, paths: list[str]) -> Path:
     document = _strict_json_loads(_PROTECTED_BASELINE.read_bytes())
     results = document.get("results") if isinstance(document, dict) else None
     if not isinstance(results, dict):
-        # A malformed protected baseline is refused, never read as one with nothing reviewed (Amazon Q on #470).
+        # A malformed protected baseline is refused, never read as one with nothing reviewed.
         raise SecurityScanError("the reviewed baseline has no results mapping")
     scanned = set(paths)
     document["results"] = {
@@ -4109,22 +4163,15 @@ def _secrets_identity(run: Path, version: str) -> Path:
 
 
 def _run_secrets(
-    root: Path,
-    run: Path,
-    paths: list[str],
-    limits: DiagnosticLimits,
-    deadline: float,
-    allowance: int,
+    root: Path, run: Path, paths: list[str], deadline: float, allowance: int
 ) -> tuple[_ProducerResult, list[str]]:
-    """The secrets family: the project's own scanner over the head's files as data, against the protected reviewed
-    baseline, then each protected plugin over the same files. A candidate's path, line and type are listed, never
-    its value; a scanner failure leaves every file unanalyzed, named."""
+    """The secrets family: the project's scanner over the head's files as data, against the protected reviewed
+    baseline, then each protected plugin. A candidate's path, line and type are listed, never its value; a scanner
+    failure leaves every file unanalyzed, named."""
     from tools import security_scan
 
-    del limits
     if time.monotonic() >= deadline:
-        # A spent budget starts nothing, as _bounded_run (Amazon Q and cubic on #470); the scan itself is bounded
-        # by the scanner's own timeout.
+        # A spent budget starts nothing; the scan itself is bounded by the scanner's own timeout.
         reason = "secrets: not started: the inventory deadline had passed"
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []
     result = _ProducerResult()
@@ -4139,8 +4186,7 @@ def _run_secrets(
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
         version = str(json.loads(baseline.read_text(encoding="utf-8"))["version"])
     except Exception as exc:
-        # The scanner's own refusals are its classifications, never an exception's text or a filename
-        # (tools/security_scan.py); any other failure is named by its type alone (Amazon Q, Revix and cubic on #470).
+        # Only the scanner's own refusals keep their text (never a filename); any other failure is named by type.
         detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
         reason = f"secrets: {type(exc).__name__}{detail}"
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []
@@ -4169,8 +4215,8 @@ def _run_secrets(
 
 
 def _unanalyzed_notes(unanalyzed: Mapping[str, str]) -> list[str]:
-    """Each reason a v2 family's targets went unanalyzed, with how many and the first of them: its row is the only
-    place they are recorded, since they are not tracked Python files, and a count alone attributes nothing."""
+    """Each reason a v2 family's targets went unanalyzed, with how many and the first: its row is their only record
+    (they are not tracked Python files), and a count alone attributes nothing."""
     by_reason: dict[str, list[str]] = {}
     for target, reason in sorted(unanalyzed.items()):
         by_reason.setdefault(reason, []).append(target)
@@ -4191,14 +4237,13 @@ def _run_v2_family(
     changes: _Changes,
     result: _ProducerResult,
 ) -> None:
-    """A v2 family, planned over its own applicable tracked paths and rowed with its notes. Its unanalyzed paths stay
-    in its own row, since they are not tracked Python files."""
+    """A v2 family, planned over its own applicable tracked paths and rowed with its notes and unanalyzed paths."""
     if tracked is None:
         result.families.append(_family_row(family, None, {}, {}, None))
         return
     applicable, unsupported = _applicable(root, family["producer"], tracked)
     targets, _functions, unknown = _family_targets(profile, family, applicable, changes)
-    # Only what the family's scopes select can downgrade its row (Codex on #470).
+    # Only what the family's scopes select can downgrade its row.
     selected_unsupported = _family_targets(
         profile, family, sorted(unsupported), changes
     )[0]
@@ -4209,7 +4254,7 @@ def _run_v2_family(
     outcome = _ProducerResult()
     if selected and family["producer"] == "secrets":
         outcome, extra = _run_secrets(
-            root, run, selected, limits, deadline, limits.max_findings - result.count()
+            root, run, selected, deadline, limits.max_findings - result.count()
         )
         notes += extra
     elif selected:
@@ -4714,7 +4759,7 @@ def _acquisition_changes(
     """The changes the DIFF scopes acquire by, read before any producer runs. Only a
     family whose DIFF scope reaches past its FULL one needs them, and only complexity
     needs their added lines; with neither, no comparison is read. A v2 family reaches by
-    the tracked paths, not only the Python ones (Codex on #470)."""
+    the tracked paths, not only the Python ones."""
     reached = {
         family["id"]: _diff_only(
             profile,
@@ -5463,7 +5508,7 @@ def _inventory_configuration(
         ],
         "ruff_select": [
             code
-            for family in profile["families"]
+            for family in _active_families(profile)
             if family["producer"] == "ruff"
             for code in family["select"]
         ],

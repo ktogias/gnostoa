@@ -353,7 +353,8 @@ class ShellFamilyTests(_ToolFamilyFixture):
             "#!/bin/sh\n. ./lib.sh\n", encoding="utf-8"
         )
         self._git("commit", "-q", "-am", "source")
-        self.tool_answers["shellcheck"] = (0, {"comments": []})
+        # As the real ShellCheck answers this script: SC1091, exit 1 (qualification).
+        self.tool_answers["shellcheck"] = (1, {"comments": [_sourced(2)]})
         inventory = self._collect(base=self.base)
         self.assertEqual("PARTIAL", self._rows(inventory)["shell-lint"]["analysis"])
         self.assertIn("ci/tool:2", inventory["coverage"]["reason"])
@@ -592,7 +593,6 @@ class SecretsFamilyTests(_ToolFamilyFixture):
                 self.root,
                 run,
                 ["Dockerfile"],
-                self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                 time.monotonic() - 1,
                 100,
             )

@@ -1364,7 +1364,9 @@ guardrails:
       - tools/quality_evidence.py#_secrets_identity
       - tools/quality_evidence.py#_gitlab_defaults
       - tools/quality_evidence.py#_runner_shell
-      - tools/quality_evidence.py#_gitlab_sourced
+      - tools/quality_evidence.py#_sourced_notes
+      - tools/quality_evidence.py#_masked
+      - tools/quality_evidence.py#_step_sources
       - tools/security_scan.py#verified_pinned_bytes
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
@@ -1431,17 +1433,24 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_tagged_gitlab_sequence_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unknown_runner_shell_is_named_as_unknown
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_sourced_file_in_a_gitlab_script_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_source_shellcheck_reports_anywhere_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_source_in_a_workflow_step_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_recorded_ruff_selection_is_the_active_families_only
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_key_that_is_not_text_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_duplicate_gitlab_key_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_verified_bytes_are_the_bytes_that_run
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_call_rules_find_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_dockerfile_assignment_is_reported_and_a_reference_is_not
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_legacy_env_value_keeps_its_equals_signs
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_legacy_env_value_is_read_for_its_pairs_too
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_makefile_assignment_is_reported_and_a_reference_is_not
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_yaml_mapping_is_reported_and_a_reference_or_placeholder_is_not
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_literal_dollar_is_part_of_a_value_and_only_a_reference_is_not
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hash_without_whitespace_before_it_is_part_of_a_yaml_value
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_value_starting_with_a_slash_is_a_path_only_when_it_is_one
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_an_encrypted_private_key_body_is_reported
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_the_plugin_scan_never_follows_a_link
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hostile_line_is_read_in_linear_time
 
   - id: inventory-readback
