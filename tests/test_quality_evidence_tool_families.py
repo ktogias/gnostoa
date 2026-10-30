@@ -94,6 +94,19 @@ _NEW_FAMILIES = (
 )
 
 
+def _shellcheck_answer(command, status, body):
+    """ShellCheck's answer to `command`: each comment names the file it was given, the first one here, and an
+    `--include` keeps its own codes alone, exiting 0 when none is left (measured on the pinned 0.11.0, #389 round 12)."""
+    given = command[command.index("--") + 1] if "--" in command else command[-1]
+    codes = [a[10:].split(",") for a in command if a.startswith("--include=")]
+    comments = [
+        dict(c, file=given)
+        for c in body["comments"]
+        if not codes or f"SC{c['code']}" in codes[0]
+    ]
+    return (0 if codes and not comments else status), {"comments": comments}
+
+
 class _ToolFamilyFixture(_DiagnosticInventoryFixture):
     """The shared fixture plus one file per new family, fake pinned tools and a v2 profile with every new family
     active, as a qualification run uses it."""
@@ -216,18 +229,7 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             return 0, None, False
         status, body = self.tool_answers[name]
         if name == "shellcheck" and isinstance(body, dict):
-            # As ShellCheck does: each comment names the file it was given, the first one here, and an `--include`
-            # keeps its own codes alone, exiting 0 when none is left (measured on the pinned 0.11.0, #389 round 12).
-            given = command[command.index("--") + 1] if "--" in command else command[-1]
-            codes = [a[10:].split(",") for a in command if a.startswith("--include=")]
-            body = {
-                "comments": [
-                    dict(c, file=given)
-                    for c in body["comments"]
-                    if not codes or f"SC{c['code']}" in codes[0]
-                ]
-            }
-            status = 0 if codes and not body["comments"] else status
+            status, body = _shellcheck_answer(command, status, body)
         report.write_text(
             body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
         )
@@ -1232,8 +1234,8 @@ class RoundTwoContractTests(_ToolFamilyFixture):
                 return None, "the inventory deadline passed", False
             return fake(command, **options)
 
-        self._fake_run = failing
-        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        with patch.object(self, "_fake_run", new=failing):
+            row = self._rows(self._collect(base=self.base))["shell-lint"]
         self.assertIn(
             "tool shellcheck: its version call failed: the inventory deadline passed",
             row["reason"],
