@@ -3484,6 +3484,32 @@ def _run_hadolint(
     return result
 
 
+def _actionlint_copies(
+    root: Path, paths: list[str], copies: Path, name: str, result: _ProducerResult
+) -> list[str]:
+    """actionlint's analysis copies of `paths` under `copies`, each read strictly and then projected
+    (_project_concurrency_queue); one that is not UTF-8 text is never copied, and is unanalyzed in `result`. Returns
+    each refused form, named."""
+    refusals: list[str] = []
+    for path in paths:
+        source = _yaml_text(root, path)
+        if source is None:
+            result.unanalyzed[path] = (
+                f"{name}: not UTF-8 text, never analyzed as a repaired copy"
+            )
+            continue
+        text, _projected, refused = _project_concurrency_queue(source)
+        (copies / path).parent.mkdir(parents=True, exist_ok=True)
+        (copies / path).write_text(text, encoding="utf-8")
+        refusals += [
+            f"{path}:{line}: {detail}, left for actionlint"
+            if line
+            else f"{path}: {detail}"
+            for line, detail in refused
+        ]
+    return refusals
+
+
 def _run_actionlint(
     root: Path,
     run: Path,
@@ -3503,23 +3529,7 @@ def _run_actionlint(
     config = run / "actionlint.yaml"
     config.write_text(_ACTIONLINT_CONFIG, encoding="utf-8")
     copies = run / "actionlint-input"
-    refusals: list[str] = []
-    for path in paths:
-        source = _yaml_text(root, path)
-        if source is None:
-            result.unanalyzed[path] = (
-                f"{name}: not UTF-8 text, never analyzed as a repaired copy"
-            )
-            continue
-        text, _projected, refused = _project_concurrency_queue(source)
-        (copies / path).parent.mkdir(parents=True, exist_ok=True)
-        (copies / path).write_text(text, encoding="utf-8")
-        refusals += [
-            f"{path}:{line}: {detail}, left for actionlint"
-            if line
-            else f"{path}: {detail}"
-            for line, detail in refused
-        ]
+    refusals = _actionlint_copies(root, paths, copies, name, result)
     command = [
         str(tool),
         "-config-file",

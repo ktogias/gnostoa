@@ -1371,6 +1371,7 @@ guardrails:
       - tools/quality_evidence.py#_yaml_break
       - tools/quality_evidence.py#_version_gap
       - tools/quality_evidence.py#_yaml_text
+      - tools/quality_evidence.py#_actionlint_copies
       - tools/security_scan.py#verified_pinned_bytes
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
@@ -1384,6 +1385,7 @@ guardrails:
       - tools/gitlab_ci_reader.py#_gitlab_defaults
       - tools/gitlab_ci_reader.py#_gitlab_construct
       - tools/gitlab_ci_reader.py#_gitlab_resolve
+      - tools/gitlab_ci_reader.py#_gitlab_jobs
       - policy/diagnostic-profile.yaml
     tests:
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_v2_profile_admits_the_pinned_tool_families

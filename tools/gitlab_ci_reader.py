@@ -231,6 +231,18 @@ def _gitlab_defaults(root: Mapping[str, Any]) -> dict[str, Any]:
     return default
 
 
+def _gitlab_jobs(root: Mapping[str, Any]) -> dict[str, Any]:
+    """Each job and hidden template. GitLab runs every visible key that is not a global keyword as a job, whose
+    definition is a mapping (cubic on #470); a hidden key is never run."""
+    jobs: dict[str, Any] = {}
+    for name, value in root.items():
+        if isinstance(value, dict) and name not in _GITLAB_RESERVED:
+            jobs[name] = value
+        elif not (name in _GITLAB_RESERVED or name.startswith(".")):
+            raise GitlabUnsupported(f"job {name!r} is not a mapping")
+    return jobs
+
+
 def read_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
     """The bounded GitLab CI reader: per job, its shells, each item with its YAML line (a column table for a simple
     folded item). Local `extends` (GitLab's merge, each job resolved once) and `default` are resolved. These raise
@@ -264,14 +276,7 @@ def read_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
             "include" if isinstance(root, dict) else "the document is not a mapping"
         )
     default = _gitlab_defaults(root)
-    jobs: dict[str, Any] = {}
-    for name, value in root.items():
-        if isinstance(value, dict) and name not in _GITLAB_RESERVED:
-            jobs[name] = value
-        elif not (name in _GITLAB_RESERVED or name.startswith(".")):
-            # GitLab runs every visible key that is not a global keyword as a job, whose definition is a mapping
-            # (cubic on #470); a hidden key is never run.
-            raise GitlabUnsupported(f"job {name!r} is not a mapping")
+    jobs = _gitlab_jobs(root)
     resolved: dict[str, tuple[dict[str, Any], int]] = {}
     scripts = {}
     for name in jobs:
