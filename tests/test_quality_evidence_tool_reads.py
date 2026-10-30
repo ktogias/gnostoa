@@ -1,12 +1,15 @@
-"""The pinned-tool families' own reads of the candidate's files (#389 H-PYSEC-2; Decision 0122): never through a link,
-never waiting on a named pipe. Kept apart from tests/test_quality_evidence_tool_families.py, which is at M13's per-file
-patch cap."""
+"""Contracts of the pinned-tool and secrets families (#389 H-PYSEC-2; Decision 0122) that
+tests/test_quality_evidence_tool_families.py, at M13's per-file patch cap, has no room for: their own reads of the
+candidate's files never go through a link or wait on a named pipe, and no acquired finding is dropped."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import threading
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.test_quality_evidence_profile import _original
 from tests.test_quality_evidence_tool_families import _ToolFamilyFixture
@@ -37,3 +40,41 @@ class CandidateReadTests(_ToolFamilyFixture):
             if blocked:
                 os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
             self.assertFalse(blocked, "the shebang read waited on a named pipe")
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("detect_secrets") is not None,
+    "detect-secrets is available only in the exact development verification environment",
+)
+class SecretsNegativeTests(_ToolFamilyFixture):
+    def test_a_plugin_failure_keeps_the_scanners_own_findings(self) -> None:
+        # PAO's F1 (#325 6520982658): a protected plugin failing after the scan discarded the scanner's acquired
+        # findings with it. A keyword assignment in Python, which only the scanner's own detectors read; its keyword is
+        # built from parts, so no tracked line holds a secret-like literal.
+        from tools import security_scan
+
+        (self.root / "config.py").write_text(
+            "pass" + "word = '" + "Zq7" * 6 + "'\n", encoding="utf-8"
+        )
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "keyword")
+
+        def found(inventory: dict) -> list[int]:
+            return [
+                f["range"]["start_line"]
+                for f in self._findings(inventory, "secrets")
+                if f["path"] == "config.py"
+            ]
+
+        self.assertEqual([1], found(self._collect(base=self.base)))
+        failure = security_scan.SecurityScanError(
+            "protected secret plugin x cannot be loaded"
+        )
+        with patch.object(
+            security_scan, "scan_with_protected_plugins", side_effect=failure
+        ):
+            inventory = self._collect(base=self.base)
+        self.assertEqual([1], found(inventory))
+        row = self._rows(inventory)["secrets"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn("protected secret plugin x cannot be loaded", row["reason"])
