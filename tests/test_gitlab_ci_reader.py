@@ -335,3 +335,12 @@ class GitlabReaderTests(_ToolFamilyFixture):
             self.assertEqual("a: b\n", snapshot)
         with self.subTest("unreadable"):
             self.assertIsNone(yaml_text(self.root, "missing.yml"))
+
+    def test_an_unreadable_gitlab_number_is_a_named_gap(self) -> None:
+        # Codex on #470: PyYAML's numeric constructors raise IndexError for these, as they raise ValueError and the
+        # boolean's KeyError (measured); each is the reader's named gap.
+        for value in ('!!int ""', "!!int +", "!!int _", '!!float ""'):
+            with self.subTest(value=value):
+                self._commit({".gitlab-ci.yml": f"job:\n  script: {value}\n"})
+                row = self._rows(self._collect(base=self.base))["gitlab-script"]
+                self.assertIn("item that cannot be read at line 2", row["reason"])
