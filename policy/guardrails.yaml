@@ -1431,7 +1431,6 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_gitlab_pages_job_is_analyzed
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_top_level_before_script_is_analyzed_with_each_job
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unsupported_script_outside_the_family_s_scope_is_no_gap
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_path_that_is_no_regular_file_never_waits
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_masked_expression_keeps_its_lines
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_linked_tool_root_never_runs
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_item_is_analyzed_as_it_reads
@@ -1443,9 +1442,7 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_recorded_ruff_selection_is_the_active_families_only
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_key_that_is_not_text_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_duplicate_gitlab_key_is_a_named_gap
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_read_fails_closed_without_its_open_flags
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_read_that_fails_after_its_open_is_a_scan_error
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_tool_whose_run_copy_cannot_be_written_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_verified_bytes_are_the_bytes_that_run
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_call_rules_find_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
@@ -1462,6 +1459,12 @@ guardrails:
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_the_plugin_scan_reads_only_regular_files_and_never_waits
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_one_line_records_one_hit_of_a_type
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hostile_line_is_read_in_linear_time
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_pinned_path_that_is_no_regular_file_never_waits
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_pinned_read_fails_closed_without_its_open_flags
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_pinned_read_that_fails_after_its_open_is_a_scan_error
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_pinned_read_whose_close_fails_is_a_scan_error
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_plugin_whose_module_cannot_be_made_is_a_scan_error
+      - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error
 
   - id: inventory-readback
     title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)

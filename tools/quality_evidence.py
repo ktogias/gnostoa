@@ -3068,13 +3068,14 @@ def _verified_tool(
         )
     except security_scan.SecurityScanError as exc:
         return None, str(exc)
-    target.mkdir(exist_ok=True)
     copy = target / name
-    descriptor = os.open(
-        copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o500
-    )
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(data)
+    try:
+        target.mkdir(exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(copy, flags, 0o500), "wb") as stream:
+            stream.write(data)
+    except OSError:
+        return None, f"tool {name}: its run copy cannot be written"
     return copy, None
 
 

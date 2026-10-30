@@ -1134,7 +1134,11 @@ def verified_pinned_bytes(
         # Any failure after the open is the read's own refusal too (Claude on #470).
         raise SecurityScanError(f"{label} is unavailable") from exc
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            # Even the close failing is the read's own refusal (Claude on #470).
+            raise SecurityScanError(f"{label} is unavailable") from exc
     if len(data) > max_bytes:
         raise SecurityScanError(f"{label} is not a bounded regular file")
     if hashlib.sha256(data).hexdigest() != digest:
@@ -1163,10 +1167,9 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     target = staging / f"{name}.py"
     try:
         # The staging copy is part of the load, so its failure is the plugin's named refusal (Claude on #470).
+        # O_NOFOLLOW is present: the verified read above refuses without it (Amazon Q on #470).
         out = os.open(
-            target,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o400,
+            target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400
         )
         with os.fdopen(out, "wb") as stream:
             stream.write(data)
@@ -1174,13 +1177,14 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
         raise SecurityScanError(
             f"protected secret plugin {name} cannot be loaded"
         ) from exc
-    spec = importlib.util.spec_from_file_location(
-        f"gnostoa_protected_secret_plugin_{name}", target
-    )
-    if spec is None or spec.loader is None:
-        raise SecurityScanError(f"protected secret plugin {name} cannot be loaded")
-    module = importlib.util.module_from_spec(spec)
     try:
+        # Making the spec and the module is part of the load too (Claude on #470).
+        spec = importlib.util.spec_from_file_location(
+            f"gnostoa_protected_secret_plugin_{name}", target
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(name)
+        module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         plugin = getattr(module, name)
         from detect_secrets.plugins.base import BasePlugin
