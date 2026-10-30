@@ -1093,10 +1093,18 @@ _MAX_PLUGIN_BYTES = 1_048_576
 def verified_pinned_bytes(
     root: Path, relative: str, digest: str, max_bytes: int, *, label: str
 ) -> bytes:
-    """The bytes of `relative` under `root`, reached through no symbolic link, a regular file of at most `max_bytes`
-    opened without following a link, and equal to their pin; otherwise SecurityScanError names why, `label` first.
-    The one owner of a pinned file's bytes: the protected plugin's and the inventory's pinned tools' (#389
-    H-PYSEC-2, Router 6512084508)."""
+    """The bytes of `relative` under `root`: each component checked to be no symbolic link, the file opened without
+    following one or waiting on a pipe, a regular file of at most `max_bytes`, and equal to their pin; otherwise
+    SecurityScanError names why, `label` first. The checks and the open are separate calls, so the digest of the bytes
+    read is what decides (Claude on #470). The one owner of a pinned file's bytes: the protected plugin's and the
+    inventory's pinned tools' (#389 H-PYSEC-2, Router 6512084508)."""
+    nofollow, nonblock = (
+        getattr(os, "O_NOFOLLOW", None),
+        getattr(os, "O_NONBLOCK", None),
+    )
+    if nofollow is None or nonblock is None:
+        # Without them the guarantees above cannot hold, so the read refuses, as the snapshot does (Claude on #470).
+        raise SecurityScanError(f"{label} is unavailable")
     current = root
     try:
         # The root is no link either, so none can redirect the read (cubic on #470).
@@ -1113,18 +1121,20 @@ def verified_pinned_bytes(
             raise SecurityScanError(f"{label} is unavailable") from exc
     try:
         # Non-blocking, so a named pipe is refused below rather than waited on (Amazon Q and cubic on #470).
-        flags = (
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        )
-        descriptor = os.open(current, flags)
+        descriptor = os.open(current, os.O_RDONLY | nofollow | nonblock)
     except OSError as exc:
         raise SecurityScanError(f"{label} is unavailable") from exc
-    info = os.fstat(descriptor)
-    if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise SecurityScanError(f"{label} is not a bounded regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(max_bytes + 1)
+    except OSError as exc:
+        # Any failure after the open is the read's own refusal too (Claude on #470).
+        raise SecurityScanError(f"{label} is unavailable") from exc
+    finally:
         os.close(descriptor)
-        raise SecurityScanError(f"{label} is not a bounded regular file")
-    with os.fdopen(descriptor, "rb") as stream:
-        data = stream.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise SecurityScanError(f"{label} is not a bounded regular file")
     if hashlib.sha256(data).hexdigest() != digest:
@@ -1151,13 +1161,19 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     relative, digest = PLUGIN_PINS[name]
     data = _verified_plugin_bytes(relative, digest)
     target = staging / f"{name}.py"
-    out = os.open(
-        target,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o400,
-    )
-    with os.fdopen(out, "wb") as stream:
-        stream.write(data)
+    try:
+        # The staging copy is part of the load, so its failure is the plugin's named refusal (Claude on #470).
+        out = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o400,
+        )
+        with os.fdopen(out, "wb") as stream:
+            stream.write(data)
+    except OSError as exc:
+        raise SecurityScanError(
+            f"protected secret plugin {name} cannot be loaded"
+        ) from exc
     spec = importlib.util.spec_from_file_location(
         f"gnostoa_protected_secret_plugin_{name}", target
     )

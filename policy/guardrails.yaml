@@ -1443,6 +1443,9 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_recorded_ruff_selection_is_the_active_families_only
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_key_that_is_not_text_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_duplicate_gitlab_key_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_read_fails_closed_without_its_open_flags
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_read_that_fails_after_its_open_is_a_scan_error
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_verified_bytes_are_the_bytes_that_run
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_call_rules_find_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
