@@ -22,7 +22,6 @@ import importlib.util
 import json
 import os
 import platform
-import threading
 import time
 import unittest
 from pathlib import Path
@@ -1028,45 +1027,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
         self.assertNotIn("tests/tool.zsh", row["reason"] or "")
 
-    @unittest.skipUnless(
-        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
-        "the named-pipe regression requires POSIX non-blocking opens",
-    )
-    def test_a_pinned_path_that_is_no_regular_file_never_waits(self) -> None:
-        # Amazon Q and cubic on #470: a pinned path that is a named pipe or a directory is refused, and its open
-        # never waits for a writer.
-        from tools import security_scan
-
-        os.mkfifo(self.tool_root / "pipe")
-        (self.tool_root / "dir").mkdir()
-        for name in ("pipe", "dir"):
-            with self.subTest(name=name):
-                blocked, raised = self._pinned_read(security_scan, name)
-                self.assertFalse(blocked, f"the read of {name} waited for a writer")
-                self.assertEqual([f"tool {name} is not a bounded regular file"], raised)
-
-    def _pinned_read(self, security_scan: Any, name: str) -> tuple[bool, list[str]]:
-        """Whether reading the pinned path `name` waited for a writer, and what it raised."""
-        outcome: list[str] = []
-
-        def read() -> None:
-            try:
-                security_scan.verified_pinned_bytes(
-                    self.tool_root, name, "0" * 64, 100, label=f"tool {name}"
-                )
-            except Exception as exc:  # the test names whatever the read raises
-                outcome.append(str(exc))
-
-        worker = threading.Thread(target=read, daemon=True)
-        worker.start()
-        worker.join(10)
-        blocked = worker.is_alive()
-        if blocked:
-            # Release a read that waits for a writer, so the worker ends.
-            os.close(os.open(self.tool_root / name, os.O_WRONLY | os.O_NONBLOCK))
-            worker.join(10)
-        return blocked, outcome
-
     def test_a_masked_expression_keeps_its_lines(self) -> None:
         # cubic on #470: an expression that spans lines keeps them, so a later source is named at its own line.
         masked = _original(self.module, "_masked")("a ${{ x\n y }} b\nsource ./c.sh\n")
@@ -1187,51 +1147,23 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertNotEqual("COMPLETE", row["analysis"])
         self.assertIn("a duplicate key", row["reason"])
 
-    def test_a_pinned_read_fails_closed_without_its_open_flags(self) -> None:
-        # Claude on #470: without O_NOFOLLOW or O_NONBLOCK the read refuses, as the snapshot does, never degrades.
-        from tools import security_scan
-
-        (self.tool_root / "file").write_bytes(b"x")
-        for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
-            with self.subTest(flag=flag), patch.object(security_scan.os, flag, None):
-                with self.assertRaises(security_scan.SecurityScanError) as raised:
-                    security_scan.verified_pinned_bytes(
-                        self.tool_root, "file", "0" * 64, 100, label="tool file"
-                    )
-                self.assertEqual("tool file is unavailable", str(raised.exception))
-
-    def test_a_pinned_read_that_fails_after_its_open_is_a_scan_error(self) -> None:
-        # Claude on #470: a failure after the open is SecurityScanError too, and the descriptor is closed.
-        from tools import security_scan
-
-        (self.tool_root / "file").write_bytes(b"x")
-        before = len(os.listdir("/proc/self/fd"))
-        with patch.object(security_scan.os, "fstat", side_effect=OSError(5, "EIO")):
-            with self.assertRaises(security_scan.SecurityScanError) as raised:
-                security_scan.verified_pinned_bytes(
-                    self.tool_root, "file", "0" * 64, 100, label="tool file"
-                )
-        self.assertEqual("tool file is unavailable", str(raised.exception))
-        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
-
-    def test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error(
-        self,
-    ) -> None:
-        # Claude on #470: the staging write is inside the plugin's refusal, so the scan fails with SecurityScanError.
-        from tools import security_scan
-
-        (self.root / "notes.txt").write_text("x\n", encoding="utf-8")
+    def test_a_tool_whose_run_copy_cannot_be_written_is_a_named_gap(self) -> None:
+        # Amazon Q on #470: a failure writing the verified copy is the family's named gap; the inventory is still
+        # published with every other family's findings.
         real_open = os.open
 
-        def no_staging(path, flags, *args, **kwargs):
-            if flags & os.O_CREAT and "gnostoa-secret-plugins-" in str(path):
+        def no_copy(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT and "tools-shell-lint" in str(path):
                 raise OSError(28, "ENOSPC")
             return real_open(path, flags, *args, **kwargs)
 
-        with patch.object(security_scan.os, "open", side_effect=no_staging):
-            with self.assertRaises(security_scan.SecurityScanError) as raised:
-                security_scan.scan_with_protected_plugins(self.root, ["notes.txt"])
-        self.assertIn("cannot be loaded", str(raised.exception))
+        with patch("tools.quality_evidence.os.open", side_effect=no_copy):
+            row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("tool shellcheck: its run copy cannot be written", row["reason"])
+        # Nothing ran from that family's copy; the other families' own copies still ran.
+        ran = [command[0] for command, _cwd, _env in self._commands_of("shellcheck")]
+        self.assertEqual([], [path for path in ran if "tools-shell-lint" in path])
 
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.

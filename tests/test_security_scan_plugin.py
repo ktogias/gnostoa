@@ -6,6 +6,7 @@ development verification environment carries."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import tempfile
@@ -13,6 +14,8 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 _AVAILABLE = importlib.util.find_spec("detect_secrets") is not None
 _VALUE = "q7".join(["Zr", "Lm", "Vx", "Wp"])
@@ -252,3 +255,136 @@ class SecretValuesTests(unittest.TestCase):
                 started = time.monotonic()
                 list(self.values(filename, line, None))
                 self.assertLess(time.monotonic() - started, 2.0)
+
+
+class PinnedFileTests(unittest.TestCase):
+    """The pinned-file reader and the plugin loader of tools/security_scan.py fail closed, as SecurityScanError, on
+    every path (Amazon Q, cubic and Claude on #470). They need no detect-secrets: each failure comes before the
+    plugin is imported."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name) / "tree"
+        self.tool_root = Path(directory.name) / "tools"
+        self.root.mkdir()
+        self.tool_root.mkdir()
+
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "the named-pipe regression requires POSIX non-blocking opens",
+    )
+    def test_a_pinned_path_that_is_no_regular_file_never_waits(self) -> None:
+        # Amazon Q and cubic on #470: a pinned path that is a named pipe or a directory is refused, and its open
+        # never waits for a writer.
+        from tools import security_scan
+
+        os.mkfifo(self.tool_root / "pipe")
+        (self.tool_root / "dir").mkdir()
+        for name in ("pipe", "dir"):
+            with self.subTest(name=name):
+                blocked, raised = self._pinned_read(security_scan, name)
+                self.assertFalse(blocked, f"the read of {name} waited for a writer")
+                self.assertEqual([f"tool {name} is not a bounded regular file"], raised)
+
+    def _pinned_read(self, security_scan: Any, name: str) -> tuple[bool, list[str]]:
+        """Whether reading the pinned path `name` waited for a writer, and what it raised."""
+        outcome: list[str] = []
+
+        def read() -> None:
+            try:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root, name, "0" * 64, 100, label=f"tool {name}"
+                )
+            except Exception as exc:  # the test names whatever the read raises
+                outcome.append(str(exc))
+
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        worker.join(10)
+        blocked = worker.is_alive()
+        if blocked:
+            # Release a read that waits for a writer, so the worker ends.
+            os.close(os.open(self.tool_root / name, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(10)
+        return blocked, outcome
+
+    def test_a_pinned_read_fails_closed_without_its_open_flags(self) -> None:
+        # Claude on #470: without O_NOFOLLOW or O_NONBLOCK the read refuses, as the snapshot does, never degrades.
+        from tools import security_scan
+
+        (self.tool_root / "file").write_bytes(b"x")
+        for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
+            with self.subTest(flag=flag), patch.object(security_scan.os, flag, None):
+                with self.assertRaises(security_scan.SecurityScanError) as raised:
+                    security_scan.verified_pinned_bytes(
+                        self.tool_root, "file", "0" * 64, 100, label="tool file"
+                    )
+                self.assertEqual("tool file is unavailable", str(raised.exception))
+
+    def test_a_pinned_read_that_fails_after_its_open_is_a_scan_error(self) -> None:
+        # Claude on #470: a failure after the open is SecurityScanError too, and the descriptor is closed.
+        from tools import security_scan
+
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("needs /proc/self/fd to count descriptors")
+        (self.tool_root / "file").write_bytes(b"x")
+        before = len(os.listdir("/proc/self/fd"))
+        with patch.object(security_scan.os, "fstat", side_effect=OSError(5, "EIO")):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root, "file", "0" * 64, 100, label="tool file"
+                )
+        self.assertEqual("tool file is unavailable", str(raised.exception))
+        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+
+    def test_a_pinned_read_whose_close_fails_is_a_scan_error(self) -> None:
+        # Claude on #470: even the descriptor's close failing is the read's own refusal, never a raw OSError.
+        from tools import security_scan
+
+        (self.tool_root / "file").write_bytes(b"x")
+        real_close = os.close
+
+        def failing_close(descriptor):
+            real_close(descriptor)
+            raise OSError(4, "EINTR")
+
+        with patch.object(security_scan.os, "close", side_effect=failing_close):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root,
+                    "file",
+                    hashlib.sha256(b"x").hexdigest(),
+                    100,
+                    label="tool file",
+                )
+        self.assertEqual("tool file is unavailable", str(raised.exception))
+
+    def test_a_plugin_whose_module_cannot_be_made_is_a_scan_error(self) -> None:
+        # Claude on #470: making the module from its spec is inside the plugin's refusal too.
+        from tools import security_scan
+
+        (self.root / "notes.txt").write_text("x\n", encoding="utf-8")
+        with patch("importlib.util.module_from_spec", side_effect=ImportError("x")):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.scan_with_protected_plugins(self.root, ["notes.txt"])
+        self.assertIn("cannot be loaded", str(raised.exception))
+
+    def test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error(
+        self,
+    ) -> None:
+        # Claude on #470: the staging write is inside the plugin's refusal, so the scan fails with SecurityScanError.
+        from tools import security_scan
+
+        (self.root / "notes.txt").write_text("x\n", encoding="utf-8")
+        real_open = os.open
+
+        def no_staging(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT and "gnostoa-secret-plugins-" in str(path):
+                raise OSError(28, "ENOSPC")
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch.object(security_scan.os, "open", side_effect=no_staging):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.scan_with_protected_plugins(self.root, ["notes.txt"])
+        self.assertIn("cannot be loaded", str(raised.exception))
