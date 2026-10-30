@@ -3583,7 +3583,8 @@ def _run_actionlint(
         result.keep(finding, allowance)
     gap = _tool_gap(status, gap, records)
     if gap is not None:
-        result.unanalyzed.update({path: f"{name} {gap}" for path in paths})
+        # Only what it was given: a file never copied keeps its own reason (Claude on #470).
+        result.unanalyzed.update({path: f"{name} {gap}" for path in analyzed})
     return result, refusals
 
 
