@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -1090,6 +1090,30 @@ PLUGIN_PINS: dict[str, tuple[str, str]] = {
 _MAX_PLUGIN_BYTES = 1_048_576
 
 
+def _read_descriptor(descriptor: int, max_bytes: int, label: str) -> bytes:
+    """At most `max_bytes` + 1 bytes of the regular file open at `descriptor`, which this closes; any failure is the
+    read's own refusal, the first one kept over a failing close (Revix and Amazon Q on #470)."""
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise SecurityScanError(f"{label} is not a bounded regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(max_bytes + 1)
+    except BaseException as exc:
+        # The read's own failure is the one kept; the close is then best effort (Revix and Amazon Q on #470).
+        with suppress(OSError):
+            os.close(descriptor)
+        if isinstance(exc, OSError):
+            raise SecurityScanError(f"{label} is unavailable") from exc
+        raise
+    try:
+        os.close(descriptor)
+    except OSError as exc:
+        # A failing close alone is the read's own refusal too (Claude on #470).
+        raise SecurityScanError(f"{label} is unavailable") from exc
+    return data
+
+
 def verified_pinned_bytes(
     root: Path, relative: str, digest: str, max_bytes: int, *, label: str
 ) -> bytes:
@@ -1124,21 +1148,7 @@ def verified_pinned_bytes(
         descriptor = os.open(current, os.O_RDONLY | nofollow | nonblock)
     except OSError as exc:
         raise SecurityScanError(f"{label} is unavailable") from exc
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
-            raise SecurityScanError(f"{label} is not a bounded regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            data = stream.read(max_bytes + 1)
-    except OSError as exc:
-        # Any failure after the open is the read's own refusal too (Claude on #470).
-        raise SecurityScanError(f"{label} is unavailable") from exc
-    finally:
-        try:
-            os.close(descriptor)
-        except OSError as exc:
-            # Even the close failing is the read's own refusal (Claude on #470).
-            raise SecurityScanError(f"{label} is unavailable") from exc
+    data = _read_descriptor(descriptor, max_bytes, label)
     if len(data) > max_bytes:
         raise SecurityScanError(f"{label} is not a bounded regular file")
     if hashlib.sha256(data).hexdigest() != digest:

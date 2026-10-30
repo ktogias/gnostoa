@@ -4252,9 +4252,10 @@ def _run_v2_family(
     applicable, unsupported = _applicable(root, family["producer"], tracked)
     targets, _functions, unknown = _family_targets(profile, family, applicable, changes)
     # Only what the family's scopes select can downgrade its row.
-    selected_unsupported = _family_targets(
+    selected_unsupported, _, unknown_unsupported = _family_targets(
         profile, family, sorted(unsupported), changes
-    )[0]
+    )
+    unknown = unknown or unknown_unsupported
     unsupported = {path: unsupported[path] for path in selected_unsupported}
     withheld = _withheld(root, targets, limits)
     selected = [path for path in targets if path not in withheld]
