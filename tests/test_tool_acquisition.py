@@ -35,7 +35,14 @@ def _sha(data: bytes) -> str:
 def _tar(members: list[tuple[str, bytes | None, str]], mode: str = "w:xz") -> bytes:
     """An archive of the given members: (name, bytes, kind) with kind file, symlink or dir."""
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode=mode) as archive:  # type: ignore[call-overload]
+    # One literal mode per call, as typeshed types tarfile.open, so no type suppression is needed.
+    assert mode in ("w:xz", "w:gz"), mode
+    opened = (
+        tarfile.open(fileobj=buffer, mode="w:gz")
+        if mode == "w:gz"
+        else tarfile.open(fileobj=buffer, mode="w:xz")
+    )
+    with opened as archive:
         for name, data, kind in members:
             info = tarfile.TarInfo(name)
             if kind == "file":
