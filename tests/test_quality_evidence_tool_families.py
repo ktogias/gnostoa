@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import platform
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -610,13 +611,16 @@ class SecretsFamilyTests(_ToolFamilyFixture):
     def test_a_reviewed_baseline_without_results_is_a_named_refusal(self) -> None:
         # Amazon Q on #470: a malformed protected baseline is refused and named, never read as empty or a crash.
         reviewed = json.loads(_REVIEWED_BASELINE.read_text(encoding="utf-8"))
-        for change in ("absent", "null"):
+        for change in ("absent", "null", "a list"):
             with self.subTest(results=change):
-                document = copy.deepcopy(reviewed)
+                document: Any = copy.deepcopy(reviewed)
                 if change == "absent":
                     del document["results"]
-                else:
+                elif change == "null":
                     document["results"] = None
+                else:
+                    # Amazon Q on #470: a document that is no mapping at all is the same refusal.
+                    document = [document]
                 other = Path(self.directory.name) / f"results-{change}.baseline"
                 other.write_text(json.dumps(document), encoding="utf-8")
                 with patch.object(self.module, "_PROTECTED_BASELINE", other):
@@ -625,6 +629,31 @@ class SecretsFamilyTests(_ToolFamilyFixture):
                 self.assertIn(
                     "the reviewed baseline has no results mapping", row["reason"]
                 )
+
+    def test_a_plugin_name_that_is_no_plugin_class_is_a_named_refusal(self) -> None:
+        # Amazon Q on #470: the pinned module's name must be a detect-secrets plugin class before it is made.
+        original = importlib.util.spec_from_file_location
+
+        def no_class(name, location):
+            spec = original(name, location)
+            assert spec is not None
+            assert spec.loader is not None
+            load = spec.loader.exec_module
+
+            def exec_module(module):
+                load(module)
+                module.GnostoaAssignmentDetector = lambda: None
+
+            spec.loader.exec_module = exec_module
+            return spec
+
+        with patch("importlib.util.spec_from_file_location", side_effect=no_class):
+            row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn(
+            "protected secret plugin GnostoaAssignmentDetector cannot be loaded",
+            row["reason"],
+        )
 
     def test_a_plugin_that_fails_at_import_is_a_named_refusal(self) -> None:
         # Amazon Q on #470: any import-time failure of the protected plugin fails the scan closed, named.
@@ -998,6 +1027,46 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self._commit({"tests/tool.zsh": "echo $1\n"})
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
         self.assertNotIn("tests/tool.zsh", row["reason"] or "")
+
+    def test_a_pinned_path_that_is_no_regular_file_never_waits(self) -> None:
+        # Amazon Q and cubic on #470: a pinned path that is a named pipe or a directory is refused, and its open
+        # never waits for a writer.
+        from tools import security_scan
+
+        os.mkfifo(self.tool_root / "pipe")
+        (self.tool_root / "dir").mkdir()
+        for name in ("pipe", "dir"):
+            with self.subTest(name=name):
+                blocked, raised = self._pinned_read(security_scan, name)
+                self.assertFalse(blocked, f"the read of {name} waited for a writer")
+                self.assertEqual([f"tool {name} is not a bounded regular file"], raised)
+
+    def _pinned_read(self, security_scan: Any, name: str) -> tuple[bool, list[str]]:
+        """Whether reading the pinned path `name` waited for a writer, and what it raised."""
+        outcome: list[str] = []
+
+        def read() -> None:
+            try:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root, name, "0" * 64, 100, label=f"tool {name}"
+                )
+            except Exception as exc:  # the test names whatever the read raises
+                outcome.append(str(exc))
+
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        worker.join(10)
+        blocked = worker.is_alive()
+        if blocked:
+            # Release a read that waits for a writer, so the worker ends.
+            os.close(os.open(self.tool_root / name, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(10)
+        return blocked, outcome
+
+    def test_a_masked_expression_keeps_its_lines(self) -> None:
+        # cubic on #470: an expression that spans lines keeps them, so a later source is named at its own line.
+        masked = _original(self.module, "_masked")("a ${{ x\n y }} b\nsource ./c.sh\n")
+        self.assertEqual("a _____\n_____ b\nsource ./c.sh\n", masked)
 
     def test_a_linked_tool_root_never_runs(self) -> None:
         # cubic on #470: no link may stand in for the protected tool root either.

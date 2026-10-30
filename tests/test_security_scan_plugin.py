@@ -7,7 +7,9 @@ development verification environment carries."""
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -72,6 +74,12 @@ class SecretValuesTests(unittest.TestCase):
                 ("Dockerfile", f"ENV JAVA_OPTS -Dx=1 -Ddb.password={_VALUE}", [_VALUE]),
                 ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}=", [f"{_VALUE}="]),
                 ("Dockerfile", "ENV JAVA_OPTS -Dpassword=${DB_PASSWORD}", []),
+                # Both forms are read: the line's one candidate then has two values (deduplicated by its hit).
+                (
+                    "Dockerfile",
+                    f'ENV DB_PASSWORD "api_key={_VALUE}"',
+                    [f"api_key={_VALUE}", _VALUE],
+                ),
             ]
         )
 
@@ -144,19 +152,84 @@ class SecretValuesTests(unittest.TestCase):
         self.assertEqual([], list(self.values("key.txt", _HEADER, "short")))
         self.assertEqual([], list(self.values("key.txt", _HEADER, None)))
 
-    def test_the_plugin_scan_never_follows_a_link(self) -> None:
-        # Amazon Q on #470: the public scan reads no file through a link; a linked path is one it could not read.
+    def _refused(self, build) -> None:
+        """The plugin scan over the one path `build` makes under a new root refuses it, in time, as the scanner's
+        own snapshot refuses it."""
         from tools import security_scan
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            relative = build(root)
+            outcome: list[object] = []
+
+            def scan() -> None:
+                try:
+                    outcome.append(
+                        security_scan.scan_with_protected_plugins(root, [relative])
+                    )
+                except Exception as exc:  # the test names whatever the scan raises
+                    outcome.append(exc)
+
+            worker = threading.Thread(target=scan, daemon=True)
+            worker.start()
+            worker.join(10)
+            blocked = worker.is_alive()
+            if blocked:
+                # Release a read that waits for a writer, so the worker ends.
+                os.close(os.open(root / relative, os.O_WRONLY | os.O_NONBLOCK))
+                worker.join(10)
+        self.assertFalse(blocked, f"the scan of {relative} waited for a writer")
+        self.assertEqual(1, len(outcome))
+        self.assertIsInstance(outcome[0], security_scan.SecurityScanError)
+
+    def test_the_plugin_scan_never_follows_a_link(self) -> None:
+        # Amazon Q and cubic on #470: no link is followed, at the file or at any parent; the scan refuses it.
+        def link(root: Path) -> str:
             (root / "target.yml").write_text(f"api_key: {_VALUE}\n", encoding="utf-8")
             (root / "link.yml").symlink_to(root / "target.yml")
-            records, unread = security_scan.scan_with_protected_plugins(
-                root, ["link.yml"]
+            return "link.yml"
+
+        def parent(root: Path) -> str:
+            (root / "real").mkdir()
+            (root / "real" / "file.yml").write_text(
+                f"api_key: {_VALUE}\n", encoding="utf-8"
             )
-        self.assertEqual([], records)
-        self.assertEqual(["link.yml"], unread)
+            (root / "parent").symlink_to(root / "real")
+            return "parent/file.yml"
+
+        for build in (link, parent):
+            with self.subTest(build=build.__name__):
+                self._refused(build)
+
+    def test_the_plugin_scan_reads_only_regular_files_and_never_waits(self) -> None:
+        # Amazon Q and cubic on #470: a named pipe or a directory is no file the plugins read; neither blocks nor
+        # escapes as an exception of its own.
+        def pipe(root: Path) -> str:
+            os.mkfifo(root / "pipe.yml")
+            return "pipe.yml"
+
+        def directory(root: Path) -> str:
+            (root / "dir.yml").mkdir()
+            return "dir.yml"
+
+        for build in (pipe, directory):
+            with self.subTest(build=build.__name__):
+                self._refused(build)
+
+    def test_one_line_records_one_hit_of_a_type(self) -> None:
+        # Amazon Q and cubic on #470: a legacy value and a secret-named pair it holds are one candidate of the line.
+        from tools import security_scan
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Dockerfile").write_text(
+                f'ENV DB_PASSWORD "api_key={_VALUE}"\n', encoding="utf-8"
+            )
+            records, unread = security_scan.scan_with_protected_plugins(
+                root, ["Dockerfile"]
+            )
+        self.assertEqual([], unread)
+        self.assertEqual([1], [record["line"] for record in records])
 
     def test_a_hostile_line_is_read_in_linear_time(self) -> None:
         # Sonar S8786 and Revix on #470: no pattern may backtrack on a long run. Each line is 200,000 characters, a
