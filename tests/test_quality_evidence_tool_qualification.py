@@ -303,11 +303,13 @@ class RealToolGapTests(_RealToolFixture):
                 self._rows(inventory)["workflow-lint"]["reason"],
             )
         count = len(inventory["findings"])
+        # Built before the block, so only the collection can raise (Sonar S5778).
+        limits = self.module.DiagnosticLimits(max_findings=count - 1)
         with self.assertRaisesRegex(
             self.module.QualityEvidenceError,
             f"budget: {count} findings exceed max_findings {count - 1};",
         ):
-            self._collect(limits=self.module.DiagnosticLimits(max_findings=count - 1))
+            self._collect(limits=limits)
 
     def test_a_decoded_step_directive_is_a_named_gap(self) -> None:
         # Codex on #470: the real ShellCheck honours the `#` that a double-quoted `run` decodes from `\x23`, so
