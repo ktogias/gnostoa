@@ -1084,7 +1084,7 @@ def scan_tracked_tree(
 PLUGIN_PINS: dict[str, tuple[str, str]] = {
     "GnostoaAssignmentDetector": (
         "tools/security_scan_plugin.py",
-        "19e194b0969afa92c3020eb765776789326a7cf6557fcf30d95fbd80551bd798",  # pragma: allowlist secret -- the reviewed plugin's content digest
+        "482fa93182ba50dd1ed9f0b5ae048a111219281e7ebc6edfa275d70fa2ef2bf5",  # pragma: allowlist secret -- the reviewed plugin's content digest
     ),
 }
 _MAX_PLUGIN_BYTES = 1_048_576
@@ -1098,6 +1098,12 @@ def verified_pinned_bytes(
     The one owner of a pinned file's bytes: the protected plugin's and the inventory's pinned tools' (#389
     H-PYSEC-2, Router 6512084508)."""
     current = root
+    try:
+        # The root is no link either, so none can redirect the read (cubic on #470).
+        if stat.S_ISLNK(os.lstat(root).st_mode):
+            raise SecurityScanError(f"{label} is reached through a link")
+    except OSError as exc:
+        raise SecurityScanError(f"{label} is unavailable") from exc
     for part in Path(relative).parts:
         current = current / part
         try:
@@ -1153,8 +1159,14 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     if spec is None or spec.loader is None:
         raise SecurityScanError(f"protected secret plugin {name} cannot be loaded")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, name)
+    try:
+        spec.loader.exec_module(module)
+        return getattr(module, name)
+    except Exception as exc:
+        # Whatever fails while the pinned bytes load, the scan fails closed and names it (Amazon Q on #470).
+        raise SecurityScanError(
+            f"protected secret plugin {name} cannot be loaded"
+        ) from exc
 
 
 _LINE_END = re.compile(r"\r\n|\r|\n")

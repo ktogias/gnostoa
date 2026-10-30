@@ -109,10 +109,7 @@ def _single_value(rest: str) -> str | None:
     return rest if rest and not any(c.isspace() for c in rest) else None
 
 
-def _docker_legacy(line: str) -> list[tuple[str, str]]:
-    parts = line.split(None, 2)
-    if len(parts) != 3 or parts[0].upper() != "ENV" or "=" in line:
-        return []
+def _docker_legacy(parts: list[str]) -> list[tuple[str, str]]:
     if not _IDENTIFIER.fullmatch(parts[1]):
         return []
     value = _single_value(parts[2].rstrip())
@@ -122,8 +119,13 @@ def _docker_legacy(line: str) -> list[tuple[str, str]]:
 def _docker_values(line: str) -> list[str]:
     if not _DOCKER_LINE.match(line):
         return []
-    pairs = [(m[1], _first_group(m, 1)) for m in _DOCKER_PAIR.finditer(line)]
-    pairs = pairs or _docker_legacy(line)
+    # The first token decides the form, as Docker reads it: `ENV NAME value` whatever its value holds, `=` included
+    # (Codex on #470), else `NAME=value` pairs.
+    parts = line.split(None, 2)
+    if len(parts) == 3 and parts[0].upper() == "ENV" and "=" not in parts[1]:
+        pairs = _docker_legacy(parts)
+    else:
+        pairs = [(m[1], _first_group(m, 1)) for m in _DOCKER_PAIR.finditer(line)]
     return [
         value for name, value in pairs if _NAME.search(name) and _secret_value(value)
     ]

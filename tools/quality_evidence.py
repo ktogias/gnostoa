@@ -3456,6 +3456,10 @@ def _structure_notes(path: str, where: str, container: Mapping[str, Any]) -> lis
 
 
 def _step_note(path: str, job_id: str, index: int, shell: Any) -> list[str]:
+    if shell is _UNKNOWN_SHELL:
+        return [
+            f"{path}: job {job_id} step {index} uses the runner's default shell, which runs-on does not name, never analyzed"
+        ]
     if not isinstance(shell, str) or not shell.split():
         return [
             f"{path}: job {job_id} step {index} names an empty shell, or one that is not text, never analyzed"
@@ -3489,7 +3493,11 @@ def _job_step_notes(
     return notes
 
 
-def _runner_shell(job: Mapping[str, Any]) -> str:
+# The runner's default shell when `runs-on` names no platform (Revix on #470).
+_UNKNOWN_SHELL = object()
+
+
+def _runner_shell(job: Mapping[str, Any]) -> object:
     """The runner's default shell for a step that names none: pwsh on a Windows runner, bash on a Linux or macOS
     one, and unknown otherwise: an expression, a group or a bare self-hosted label can be any (Revix and cubic on
     #470). Only bash and sh are analyzed."""
@@ -3505,7 +3513,7 @@ def _runner_shell(job: Mapping[str, Any]) -> str:
             return "pwsh"
         if any(label.startswith(("ubuntu", "macos", "linux")) for label in texts):
             return "bash"
-    return "the runner default runs-on does not name"
+    return _UNKNOWN_SHELL
 
 
 def _step_shell_notes(root: Path, path: str) -> list[str]:
@@ -3624,6 +3632,11 @@ def _gitlab_construct(node: Any) -> Any:
 
     if isinstance(node, yaml.ScalarNode):
         return _gitlab_scalar(node)
+    if node.tag not in ("tag:yaml.org,2002:seq", "tag:yaml.org,2002:map"):
+        # A tagged collection, as `!reference [.job, script]`, is unsupported as a tagged scalar is (Revix on #470).
+        raise _GitlabUnsupported(
+            f"an unsupported tag {node.tag} at line {node.start_mark.line + 1}"
+        )
     if isinstance(node, yaml.SequenceNode):
         return [_gitlab_construct(v) for v in node.value]
     if not isinstance(node, yaml.MappingNode):
@@ -3760,10 +3773,25 @@ def _gitlab_analysis_file(items: list[tuple[str, Any]]) -> tuple[str, dict[int, 
             body.append(text)
             mapping[len(body)] = line
             continue
-        for offset, part in enumerate(text.splitlines() or [""]):
+        # Only a newline ends an analysis line, so the shell reads the item as it is (Codex on #470).
+        parts = text.split("\n")
+        if len(parts) > 1 and parts[-1] == "":
+            parts.pop()
+        for offset, part in enumerate(parts):
             body.append(part)
             mapping[len(body)] = line + offset
     return "\n".join(body) + "\n", mapping
+
+
+def _gitlab_sourced(path: str, items: list[tuple[str, Any]]) -> list[str]:
+    """Each line of a job's items that sources a file, which ShellCheck never follows here either (Claude on #470)."""
+    notes = []
+    for text, line in items:
+        first = line if isinstance(line, int) else line[0][1]
+        for offset, part in enumerate(text.split("\n")):
+            if _SOURCED.match(part):
+                notes.append(f"{path}:{first + offset}: a sourced file, never followed")
+    return notes
 
 
 def _run_gitlab(
@@ -3795,6 +3823,7 @@ def _run_gitlab(
         # The job's index keeps two names that sanitize alike apart (Codex and cubic on #470).
         for job_index, (job, parts) in enumerate(jobs.items()):
             for part_index, items in enumerate(parts):
+                notes += _gitlab_sourced(path, items)
                 body, mapping = _gitlab_analysis_file(items)
                 analysis = f"{index}-{job_index}-{re.sub(r'[^A-Za-z0-9_.-]', '_', job)}-{part_index}.sh"
                 (copies / analysis).write_text(body, encoding="utf-8")
@@ -4039,11 +4068,13 @@ def _scoped_baseline(run: Path, paths: list[str]) -> Path:
     from tools.security_scan import _strict_json_loads
 
     document = _strict_json_loads(_PROTECTED_BASELINE.read_bytes())
+    results = document.get("results") if isinstance(document, dict) else None
+    if not isinstance(results, dict):
+        # A malformed protected baseline is refused, never read as one with nothing reviewed (Amazon Q on #470).
+        raise SecurityScanError("the reviewed baseline has no results mapping")
     scanned = set(paths)
     document["results"] = {
-        name: rows
-        for name, rows in document.get("results", {}).items()
-        if name in scanned
+        name: rows for name, rows in results.items() if name in scanned
     }
     scoped = run / "secrets-baseline.json"
     scoped.write_text(
@@ -4107,7 +4138,7 @@ def _run_secrets(
         planted, unread = security_scan.scan_with_protected_plugins(root, paths)
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
         version = str(json.loads(baseline.read_text(encoding="utf-8"))["version"])
-    except (security_scan.SecurityScanError, OSError, ValueError, KeyError) as exc:
+    except Exception as exc:
         # The scanner's own refusals are its classifications, never an exception's text or a filename
         # (tools/security_scan.py); any other failure is named by its type alone (Amazon Q, Revix and cubic on #470).
         detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""

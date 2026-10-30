@@ -109,6 +109,8 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
      `concurrency.queue` form the projection refuses;
    - a GitLab item whose tag cannot read its text;
    - for secrets, a file holding NUL bytes, which the protected plugins never read.
+   - for secrets, a protected baseline with no results mapping, or a plugin that fails while its pinned bytes
+     load: the scan is refused and named.
 
    Each input a family cannot vouch for is named in its row by its own path (and line, for a marked line). Each
    unanalyzed target's reason is named once, with how many targets it covers and the first. Every finding a run
