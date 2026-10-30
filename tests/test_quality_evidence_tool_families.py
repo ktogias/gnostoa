@@ -1187,6 +1187,52 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertNotEqual("COMPLETE", row["analysis"])
         self.assertIn("a duplicate key", row["reason"])
 
+    def test_a_pinned_read_fails_closed_without_its_open_flags(self) -> None:
+        # Claude on #470: without O_NOFOLLOW or O_NONBLOCK the read refuses, as the snapshot does, never degrades.
+        from tools import security_scan
+
+        (self.tool_root / "file").write_bytes(b"x")
+        for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
+            with self.subTest(flag=flag), patch.object(security_scan.os, flag, None):
+                with self.assertRaises(security_scan.SecurityScanError) as raised:
+                    security_scan.verified_pinned_bytes(
+                        self.tool_root, "file", "0" * 64, 100, label="tool file"
+                    )
+                self.assertEqual("tool file is unavailable", str(raised.exception))
+
+    def test_a_pinned_read_that_fails_after_its_open_is_a_scan_error(self) -> None:
+        # Claude on #470: a failure after the open is SecurityScanError too, and the descriptor is closed.
+        from tools import security_scan
+
+        (self.tool_root / "file").write_bytes(b"x")
+        before = len(os.listdir("/proc/self/fd"))
+        with patch.object(security_scan.os, "fstat", side_effect=OSError(5, "EIO")):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root, "file", "0" * 64, 100, label="tool file"
+                )
+        self.assertEqual("tool file is unavailable", str(raised.exception))
+        self.assertEqual(before, len(os.listdir("/proc/self/fd")))
+
+    def test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error(
+        self,
+    ) -> None:
+        # Claude on #470: the staging write is inside the plugin's refusal, so the scan fails with SecurityScanError.
+        from tools import security_scan
+
+        (self.root / "notes.txt").write_text("x\n", encoding="utf-8")
+        real_open = os.open
+
+        def no_staging(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT and "gnostoa-secret-plugins-" in str(path):
+                raise OSError(28, "ENOSPC")
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch.object(security_scan.os, "open", side_effect=no_staging):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.scan_with_protected_plugins(self.root, ["notes.txt"])
+        self.assertIn("cannot be loaded", str(raised.exception))
+
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.
         pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
