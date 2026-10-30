@@ -235,6 +235,41 @@ class RealToolGapTests(_RealToolFixture):
         self.assertIn("ci/directive.sh:2", row["reason"])
         self.assertIn("ci/sourcing.sh:2", row["reason"])
 
+    def test_a_source_in_any_command_position_is_a_named_gap(self) -> None:
+        # cubic on #470: the real ShellCheck names a source wherever the shell runs one, and never one in a string.
+        script = (
+            "#!/bin/sh\necho ok; . ./a.sh\ntrue && . ./b.sh\nif true; then . ./c.sh; fi\n( . ./d.sh )\n"
+            'x=$(. ./e.sh)\nf() { . ./g.sh; }\necho ". ./not.sh"\n'
+        )
+        row = self._rows(self._with({"ci/positions.sh": script}))["shell-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        reason = row["reason"]
+        for line in range(2, 8):
+            self.assertIn(
+                f"ci/positions.sh:{line}: a sourced file, never followed", reason
+            )
+        self.assertNotIn("ci/positions.sh:8:", reason)
+
+    def test_a_source_in_a_gitlab_job_or_a_workflow_step_is_a_named_gap(self) -> None:
+        # Claude and cubic on #470; actionlint never reports SC1091, so a step's sources are read for themselves.
+        workflow = _BASE_FILES[".github/workflows/w.yml"] + (
+            '      - run: echo "${{ github.sha }}"; source ./b.sh\n'
+        )
+        gitlab = "job:\n  script:\n    - echo ok; source ./ci/common.sh\n"
+        rows = self._rows(
+            self._with({".github/workflows/w.yml": workflow, ".gitlab-ci.yml": gitlab})
+        )
+        for family in ("gitlab-script", "workflow-lint"):
+            self.assertEqual("PARTIAL", rows[family]["analysis"], family)
+        self.assertIn(
+            ".gitlab-ci.yml:3: a sourced file, never followed",
+            rows["gitlab-script"]["reason"],
+        )
+        self.assertIn(
+            "its line 1: a sourced file, never followed",
+            rows["workflow-lint"]["reason"],
+        )
+
     def test_a_hadolint_pragma_is_a_named_gap_and_its_finding_is_kept(self) -> None:
         inventory = self._with(
             {

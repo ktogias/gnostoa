@@ -42,6 +42,14 @@ _SC_NATIVE = {
     "message": "Double quote to prevent globbing and word splitting.",
     "fix": None,
 }
+
+
+def _sourced(line: int) -> dict:
+    """ShellCheck's own record of a source it does not follow."""
+    message = "Not following: ./lib.sh was not specified as input (see shellcheck -x)."
+    return dict(_SC_NATIVE, line=line, endLine=line, code=1091, message=message)
+
+
 _HL_NATIVE = {
     "code": "SC2086",
     "column": 1,
@@ -624,7 +632,8 @@ class SecretsFamilyTests(_ToolFamilyFixture):
 
         def failing_spec(name, location):
             spec = original(name, location)
-            assert spec is not None and spec.loader is not None
+            assert spec is not None
+            assert spec.loader is not None
             spec.loader.exec_module = lambda module: (_ for _ in ()).throw(
                 ImportError("x")
             )
@@ -1039,16 +1048,71 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         )
 
     def test_a_sourced_file_in_a_gitlab_script_is_a_named_gap(self) -> None:
-        # Claude on #470: the GitLab family reads shell too, so a sourced file is never followed there either.
+        # Claude and cubic on #470: the GitLab family reads shell too, so a source ShellCheck reports, after a `;`
+        # as at a line's start, is never followed there either. The answer is the real tool's (qualification).
         self._commit(
             {
-                ".gitlab-ci.yml": "job:\n  script:\n    - source ./ci/common.sh\n    - . ./ci/more.sh\n"
+                ".gitlab-ci.yml": "job:\n  script:\n    - echo ok; source ./ci/common.sh\n    - . ./ci/more.sh\n"
             }
         )
+        self.tool_answers["shellcheck"] = (1, {"comments": [_sourced(2), _sourced(3)]})
         row = self._rows(self._collect(base=self.base))["gitlab-script"]
         self.assertEqual("PARTIAL", row["analysis"])
         self.assertIn(".gitlab-ci.yml:3: a sourced file, never followed", row["reason"])
         self.assertIn(".gitlab-ci.yml:4: a sourced file, never followed", row["reason"])
+
+    def test_a_source_shellcheck_reports_anywhere_is_a_named_gap(self) -> None:
+        # cubic on #470: a source after `;` is one too; ShellCheck's own parse finds it, as the qualification shows.
+        self._commit({"ci/tool": "#!/bin/sh\necho ok; . ./lib.sh\n"})
+        self.tool_answers["shellcheck"] = (1, {"comments": [_sourced(2)]})
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn("ci/tool:2: a sourced file, never followed", row["reason"])
+
+    def test_a_source_in_a_workflow_step_is_a_named_gap(self) -> None:
+        # actionlint never reports SC1091, so the pinned ShellCheck reads each analyzed step for its sources.
+        self._commit(
+            {
+                ".github/workflows/w.yml": "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok; source ./b.sh\n"
+            }
+        )
+        self.tool_answers["shellcheck"] = (1, {"comments": [_sourced(1)]})
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".github/workflows/w.yml: job a step 0, its line 1: a sourced file, never followed",
+            row["reason"],
+        )
+
+    def test_the_recorded_ruff_selection_is_the_active_families_only(self) -> None:
+        # Revix on #470: an inactive family's rules never ran, so the record never claims them.
+        profile = copy.deepcopy(self.profile)
+        for family in profile["families"]:
+            family["active"] = family["id"] != "unsafe-calls"
+        record = self._collect(profile, base=self.base)["configuration"]["ruff_select"]
+        self.assertNotIn("S602", record)
+
+    def test_a_gitlab_key_that_is_not_text_is_a_named_gap(self) -> None:
+        # Revix and Codex on #470: `1:` or `yes:` decodes to a number or a boolean, never a job name to read.
+        for key in ("1", "yes"):
+            with self.subTest(key=key):
+                self._commit(
+                    {".gitlab-ci.yml": f"{key}:\n  script:\n    - echo $FOO\n"}
+                )
+                row = self._rows(self._collect(base=self.base))["gitlab-script"]
+                self.assertNotEqual("COMPLETE", row["analysis"])
+                self.assertIn("a key that is not text", row["reason"])
+
+    def test_a_duplicate_gitlab_key_is_a_named_gap(self) -> None:
+        # Revix on #470: a second `script:` would replace the first, whose commands would never be read.
+        self._commit(
+            {
+                ".gitlab-ci.yml": "job:\n  script:\n    - echo $A\n  script:\n    - echo ok\n"
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("a duplicate key", row["reason"])
 
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.

@@ -7,8 +7,10 @@ development verification environment carries."""
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 _AVAILABLE = importlib.util.find_spec("detect_secrets") is not None
 _VALUE = "q7".join(["Zr", "Lm", "Vx", "Wp"])
@@ -55,6 +57,21 @@ class SecretValuesTests(unittest.TestCase):
                 ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}=", [f"{_VALUE}="]),
                 ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}==", [f"{_VALUE}=="]),
                 ("Dockerfile", f"ENV DB_PASSWORD=x API_TOKEN={_VALUE}", [_VALUE]),
+            ]
+        )
+
+    def test_a_legacy_env_value_is_read_for_its_pairs_too(self) -> None:
+        # cubic on #470: a secret-named pair inside a legacy value is still read, as before the legacy form was read.
+        self._check(
+            [
+                (
+                    "Dockerfile",
+                    f'ENV JAVA_OPTS "-Dspring.datasource.password={_VALUE}"',
+                    [_VALUE],
+                ),
+                ("Dockerfile", f"ENV JAVA_OPTS -Dx=1 -Ddb.password={_VALUE}", [_VALUE]),
+                ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}=", [f"{_VALUE}="]),
+                ("Dockerfile", "ENV JAVA_OPTS -Dpassword=${DB_PASSWORD}", []),
             ]
         )
 
@@ -126,6 +143,20 @@ class SecretValuesTests(unittest.TestCase):
         self.assertEqual([_BODY], list(self.values("key.txt", _HEADER, _BODY)))
         self.assertEqual([], list(self.values("key.txt", _HEADER, "short")))
         self.assertEqual([], list(self.values("key.txt", _HEADER, None)))
+
+    def test_the_plugin_scan_never_follows_a_link(self) -> None:
+        # Amazon Q on #470: the public scan reads no file through a link; a linked path is one it could not read.
+        from tools import security_scan
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target.yml").write_text(f"api_key: {_VALUE}\n", encoding="utf-8")
+            (root / "link.yml").symlink_to(root / "target.yml")
+            records, unread = security_scan.scan_with_protected_plugins(
+                root, ["link.yml"]
+            )
+        self.assertEqual([], records)
+        self.assertEqual(["link.yml"], unread)
 
     def test_a_hostile_line_is_read_in_linear_time(self) -> None:
         # Sonar S8786 and Revix on #470: no pattern may backtrack on a long run. Each line is 200,000 characters, a
