@@ -1028,6 +1028,10 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
         self.assertNotIn("tests/tool.zsh", row["reason"] or "")
 
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "the named-pipe regression requires POSIX non-blocking opens",
+    )
     def test_a_pinned_path_that_is_no_regular_file_never_waits(self) -> None:
         # Amazon Q and cubic on #470: a pinned path that is a named pipe or a directory is refused, and its open
         # never waits for a writer.

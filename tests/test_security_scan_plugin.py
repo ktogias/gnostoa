@@ -201,6 +201,10 @@ class SecretValuesTests(unittest.TestCase):
             with self.subTest(build=build.__name__):
                 self._refused(build)
 
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "the named-pipe regression requires POSIX non-blocking opens",
+    )
     def test_the_plugin_scan_reads_only_regular_files_and_never_waits(self) -> None:
         # Amazon Q and cubic on #470: a named pipe or a directory is no file the plugins read; neither blocks nor
         # escapes as an exception of its own.
