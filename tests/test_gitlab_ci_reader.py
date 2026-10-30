@@ -138,3 +138,98 @@ class GitlabReaderTests(_ToolFamilyFixture):
         row = self._rows(self._collect(base=self.base))["gitlab-script"]
         self.assertNotEqual("COMPLETE", row["analysis"])
         self.assertIn("a duplicate key", row["reason"])
+
+    def test_a_gitlab_anchor_or_alias_is_refused_before_composition(self) -> None:
+        # Codex and Revix on #470, Router 6513998438: anchors and aliases are refused by task_envelope's bounded
+        # preflight before composition, a named gap, so an alias chain never expands.
+        chain = ["variables:", "  a0: &a0 [x, x]"]
+        chain += [f"  a{n}: &a{n} [*a{n - 1}, *a{n - 1}]" for n in range(1, 19)]
+        cases = {
+            "an alias chain": (
+                "\n".join(chain) + "\njob:\n  script:\n    - echo $A\n",
+                "a YAML anchor at line 2",
+            ),
+            "an alias": ("job:\n  script:\n    - *a\n", "a YAML alias at line 3"),
+            "a nesting past the bound": (
+                "variables:\n  v: "
+                + "[" * 33
+                + "]" * 33
+                + "\njob:\n  script:\n    - echo $A\n",
+                "a nesting deeper than 32 levels at line 2",
+            ),
+        }
+        for case, (text, reason) in cases.items():
+            with self.subTest(case=case):
+                self._commit({".gitlab-ci.yml": text})
+                row = self._rows(self._collect(base=self.base))["gitlab-script"]
+                self.assertNotEqual("COMPLETE", row["analysis"])
+                self.assertIn(reason, row["reason"])
+
+    def test_a_long_gitlab_job_name_is_analyzed_at_its_lines(self) -> None:
+        # Codex on #470: an analysis file is named by numbers only, so no job name can exceed a file name's bound, and
+        # each finding still maps back to its job's YAML line.
+        self._commit({".gitlab-ci.yml": "j" * 255 + ":\n  script:\n    - echo $A\n"})
+        inventory = self._collect(base=self.base)
+        self.assertEqual(
+            [(".gitlab-ci.yml", 3)],
+            [
+                (f["path"], f["range"]["start_line"])
+                for f in self._findings(inventory, "gitlab-shellcheck")
+            ],
+        )
+
+    def test_an_unreadable_gitlab_boolean_is_a_named_gap(self) -> None:
+        # Codex on #470: PyYAML's boolean constructor raises KeyError for a value it does not know.
+        self._commit({".gitlab-ci.yml": "job:\n  script: !!bool invalid\n"})
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn(
+            "a tag:yaml.org,2002:bool item that cannot be read at line 2", row["reason"]
+        )
+
+    def test_a_gitlab_item_that_is_not_utf8_text_is_a_named_gap(self) -> None:
+        # Codex on #470: an escaped lone surrogate decodes, but no analysis copy can hold it.
+        self._commit({".gitlab-ci.yml": 'job:\n  script:\n    - "echo \\uD800"\n'})
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("an item that is not UTF-8 text at line 3", row["reason"])
+
+    def test_a_decoded_gitlab_directive_is_a_named_gap(self) -> None:
+        # Codex on #470: `"\x23 shellcheck ..."` hides from the file's lines, but ShellCheck reads the decoded `#`.
+        self._commit(
+            {
+                ".gitlab-ci.yml": 'job:\n  script:\n    - "\\x23 shellcheck disable=all"\n    - echo $V\n'
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".gitlab-ci.yml:3: a ShellCheck directive, never honoured as clean",
+            row["reason"],
+        )
+
+    def test_a_line_break_the_file_does_not_count_is_refused_before_reading(
+        self,
+    ) -> None:
+        # Codex on #470: between a key and its mapping, PyYAML's NEL, LS or PS break is valid YAML, so every later
+        # YAML line is one past the file's (measured: line 5 for the file's 4); the file is refused first.
+        for mark in ("\x85", "\u2028", "\u2029"):
+            with self.subTest(mark=repr(mark)):
+                self._commit(
+                    {
+                        ".gitlab-ci.yml": f"variables:{mark}  A: b\njob:\n  script:\n    - echo $A\n"
+                    }
+                )
+                inventory = self._collect(base=self.base)
+                self.assertEqual(
+                    [],
+                    [
+                        f
+                        for f in self._findings(inventory, "gitlab-shellcheck")
+                        if f["path"] == ".gitlab-ci.yml"
+                    ],
+                )
+                self.assertIn(
+                    ".gitlab-ci.yml: a NEL, LS or PS line break at line 1",
+                    self._rows(inventory)["gitlab-script"]["reason"],
+                )

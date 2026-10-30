@@ -216,9 +216,17 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             return 0, None, False
         status, body = self.tool_answers[name]
         if name == "shellcheck" and isinstance(body, dict):
-            # As ShellCheck does: each comment names the file it was given, the first one here.
+            # As ShellCheck does: each comment names the file it was given, the first one here, and an `--include`
+            # keeps its own codes alone (measured on the pinned 0.11.0, #389 round 12).
             given = command[command.index("--") + 1] if "--" in command else command[-1]
-            body = {"comments": [dict(c, file=given) for c in body["comments"]]}
+            codes = [a[10:].split(",") for a in command if a.startswith("--include=")]
+            body = {
+                "comments": [
+                    dict(c, file=given)
+                    for c in body["comments"]
+                    if not codes or f"SC{c['code']}" in codes[0]
+                ]
+            }
         report.write_text(
             body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
         )
@@ -444,6 +452,15 @@ class DockerfileFamilyTests(_ToolFamilyFixture):
             "COMPLETE", self._rows(inventory)["dockerfile-lint"]["analysis"]
         )
 
+    def test_a_named_dockerfile_is_selected_by_its_suffix(self) -> None:
+        # Revix on #470: `app.Dockerfile` is a Dockerfile by its suffix, as `app.dockerfile` is.
+        self._commit({"docker/app.Dockerfile": "FROM debian:12\n"})
+        self._collect(base=self.base)
+        given = [c[-1] for c, _cwd, _env in self._commands_of("hadolint")]
+        self.assertTrue(
+            [g for g in given if g.endswith("docker/app.Dockerfile")], given
+        )
+
 
 class WorkflowFamilyTests(_ToolFamilyFixture):
     def test_a_run_defect_is_listed_and_the_protected_config_and_shellcheck_govern(
@@ -532,6 +549,21 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
         inventory = self._collect(base=self.base)
         self.assertEqual("PARTIAL", self._rows(inventory)["workflow-lint"]["analysis"])
         self.assertIn(".github/workflows/w.yml", inventory["coverage"]["reason"])
+
+    def test_a_line_break_the_file_does_not_count_is_refused_before_any_line_is_read(
+        self,
+    ) -> None:
+        # Codex on #470: PyYAML breaks at NEL, LS and PS and the file's lines do not, so no node mark indexes them
+        # (measured: an IndexError at the end of the file, and a refusal at the wrong line before other lines).
+        project = _original(self.module, "_project_concurrency_queue")
+        for mark in ("\x85", "\u2028", "\u2029"):
+            queue = f"concurrency:{mark}  group: g{mark}  queue: max\n"
+            for text, line in (("on: push\n" + queue, 2), (queue + "on: push\n", 1)):
+                with self.subTest(mark=repr(mark), line=line):
+                    self.assertEqual(
+                        (text, [], [(line, "a NEL, LS or PS line break")]),
+                        project(text),
+                    )
 
 
 @unittest.skipUnless(
@@ -779,6 +811,21 @@ class SecretsFamilyTests(_ToolFamilyFixture):
             document,
         )
 
+    def test_the_identity_record_is_a_new_file_never_one_through_a_link(self) -> None:
+        # Revix on #470 (create-only-output-writes): the record is created, never written through a link.
+        outside = Path(self.directory.name) / "outside.json"
+        outside.write_text("kept", encoding="utf-8")
+        scoped = _original(self.module, "_scoped_baseline")
+
+        def planting(run, paths):
+            (run / "diagnostic-secrets-identity.json").symlink_to(outside)
+            return scoped(run, paths)
+
+        with patch.object(self.module, "_scoped_baseline", side_effect=planting):
+            row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertEqual("kept", outside.read_text(encoding="utf-8"))
+        self.assertIn("secrets: FileExistsError", row["reason"])
+
 
 class RoundTwoContractTests(_ToolFamilyFixture):
     """The contract #470's review rounds found missing (#389 H-PYSEC-2). Its own class, since the secrets
@@ -1012,7 +1059,108 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         row = self._rows(self._collect(base=self.base))["workflow-lint"]
         self.assertEqual("PARTIAL", row["analysis"])
         self.assertIn(
-            ".github/workflows/w.yml: job a step 0, its line 1: a sourced file, never followed",
+            ".github/workflows/w.yml:6: a sourced file, never followed",
+            row["reason"],
+        )
+
+    def test_a_step_source_is_a_finding_at_its_workflow_line_and_counted(self) -> None:
+        # Router 6513998438 on #470: the step pass acquires SC1091 alone, the one source code actionlint excludes, and
+        # each is a finding of the family at its workflow line, counted against max_findings, never dropped.
+        self._commit(
+            {
+                ".github/workflows/w.yml": "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo ok\n          source ./b.sh\n"
+            }
+        )
+        self.tool_answers["shellcheck"] = (
+            1,
+            {"comments": [dict(_SC_NATIVE, line=1, endLine=1), _sourced(2)]},
+        )
+        # actionlint acquires SC1090 itself (measured on the pinned 1.7.12), at the step's line: its own gap too.
+        nonconstant = "shellcheck reported issue in this script: SC1090:warning:1:1: ShellCheck can't follow non-constant source."
+        self.tool_answers["actionlint"] = (
+            1,
+            [_AL_NATIVE, dict(_AL_NATIVE, message=nonconstant, line=6)],
+        )
+        inventory = self._collect(base=self.base)
+        steps = [
+            c
+            for c, cwd, _env in self._commands_of("shellcheck")
+            if cwd.name == "step-sources"
+        ]
+        self.assertEqual(1, len(steps))
+        self.assertIn("--include=SC1091", steps[0])
+        # actionlint's own answer stays alone at its line 10; the step pass adds its SC1091 and never its SC2086.
+        self.assertEqual(
+            [
+                (".github/workflows/w.yml", 6, "SC1090"),
+                (".github/workflows/w.yml", 8, "SC1091"),
+                (".github/workflows/w.yml", 10, "SC2086"),
+            ],
+            sorted(
+                (f["path"], f["range"]["start_line"], f["rule"])
+                for f in self._findings(inventory, "actionlint")
+            ),
+        )
+        for line in (6, 8):
+            self.assertIn(
+                f".github/workflows/w.yml:{line}: a sourced file, never followed",
+                self._rows(inventory)["workflow-lint"]["reason"],
+            )
+        count = len(inventory["findings"])
+        with self.assertRaisesRegex(
+            self.module.QualityEvidenceError,
+            f"budget: {count} findings exceed max_findings {count - 1};",
+        ):
+            self._collect(
+                base=self.base,
+                limits=self.module.DiagnosticLimits(max_findings=count - 1),
+            )
+
+    def test_a_decoded_step_directive_is_a_named_gap(self) -> None:
+        # Codex on #470: a double-quoted `run` decodes `\x23` to the `#` ShellCheck reads as a directive.
+        self._commit(
+            {
+                ".github/workflows/w.yml": 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "\\x23 shellcheck disable=all\\necho $V"\n'
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".github/workflows/w.yml:6: a ShellCheck directive, never honoured as clean",
+            row["reason"],
+        )
+
+    def test_a_step_script_that_is_not_utf8_text_is_a_named_gap(self) -> None:
+        # Codex on #470, as for GitLab: an escaped lone surrogate decodes, but no analysis copy can hold it.
+        self._commit(
+            {
+                ".github/workflows/w.yml": 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "echo \\uD800"\n'
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".github/workflows/w.yml:6: a script that is not UTF-8 text, so its sources are not read",
+            row["reason"],
+        )
+
+    def test_a_workflow_line_break_the_file_does_not_count_is_refused_before_reading(
+        self,
+    ) -> None:
+        # Codex on #470, as for GitLab: after it, the step reader's YAML lines would be one past the file's.
+        self._commit(
+            {
+                ".github/workflows/w.yml": "on: push\njobs:\x85  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".github/workflows/w.yml: a NEL, LS or PS line break at line 2, so its step shells are not read",
+            row["reason"],
+        )
+        self.assertIn(
+            ".github/workflows/w.yml:2: a NEL, LS or PS line break, left for actionlint",
             row["reason"],
         )
 
@@ -1073,6 +1221,23 @@ class RoundTwoContractTests(_ToolFamilyFixture):
             self._collect(base=self.base)
         ran = {digest for name, digest in self.executed if name == "shellcheck"}
         self.assertEqual({pinned}, ran)
+
+    def test_a_failed_version_call_is_named_by_its_own_cause(self) -> None:
+        # Revix on #470: a version call that fails or times out is not a version that differs from the pin.
+        fake = self._fake_run
+
+        def failing(command, **options):
+            if "--version" in command:
+                return None, "the inventory deadline passed", False
+            return fake(command, **options)
+
+        self._fake_run = failing
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertIn(
+            "tool shellcheck: its version call failed: the inventory deadline passed",
+            row["reason"],
+        )
+        self.assertNotIn("its version is not its pin", row["reason"])
 
 
 class RepositoryCleanTests(_ToolFamilyFixture):

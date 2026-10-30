@@ -55,6 +55,10 @@ class SecretValuesTests(unittest.TestCase):
             ]
         )
 
+    def test_a_named_dockerfile_is_read_as_a_dockerfile(self) -> None:
+        # Revix on #470: `.Dockerfile` as `.dockerfile`, as the dockerfile-lint family selects it.
+        self._check([("docker/app.Dockerfile", f"ENV DB_PASSWORD={_VALUE}", [_VALUE])])
+
     def test_a_legacy_env_value_keeps_its_equals_signs(self) -> None:
         # Codex on #470: the form follows the first token; `ENV NAME value=` is the legacy form whatever its value.
         self._check(

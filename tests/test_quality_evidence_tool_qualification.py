@@ -128,7 +128,10 @@ class _RealToolFixture(_DiagnosticFixture):
         self._git("commit", "-q", "-m", message)
 
     def _collect(
-        self, tool_root: Path | None = None, profile: dict[str, Any] | None = None
+        self,
+        tool_root: Path | None = None,
+        profile: dict[str, Any] | None = None,
+        **options: Any,
     ) -> dict[str, Any]:
         with patch.object(self.module, "TOOL_ROOT", tool_root or self.qualified_root):
             path = self.collect.func(
@@ -137,6 +140,7 @@ class _RealToolFixture(_DiagnosticFixture):
                 base=self.base,
                 expected_revision=self.head,
                 profile=profile or self.profile,
+                **options,
             )
         return self._read(path)
 
@@ -266,8 +270,60 @@ class RealToolGapTests(_RealToolFixture):
             rows["gitlab-script"]["reason"],
         )
         self.assertIn(
-            "its line 1: a sourced file, never followed",
+            ".github/workflows/w.yml:12: a sourced file, never followed",
             rows["workflow-lint"]["reason"],
+        )
+
+    def test_a_step_source_is_acquired_alone_at_its_line_and_counted(self) -> None:
+        # Router 6513998438 on #470: the step pass acquires SC1091 alone, the source code actionlint excludes; an
+        # SC1090 is actionlint's own, once. A source is a finding at its workflow line and a named gap, a non-source
+        # diagnostic stays actionlint's alone, a clean step adds nothing, and past max_findings the refusal counts
+        # every finding.
+        workflow = _BASE_FILES[".github/workflows/w.yml"] + (
+            "      - run: |\n          echo ok\n          source ./b.sh\n"
+            '      - run: echo "$BAR"\n'
+            '      - run: . "$BAR"\n'
+        )
+        inventory = self._with({".github/workflows/w.yml": workflow})
+        self.assertEqual(
+            [
+                (".github/workflows/w.yml", 10, "SC2086"),
+                (".github/workflows/w.yml", 14, "SC1091"),
+                (".github/workflows/w.yml", 16, "SC1090"),
+            ],
+            sorted(
+                (f["path"], f["range"]["start_line"], f["rule"])
+                for f in inventory["findings"]
+                if f["tool"]["id"] == "actionlint"
+            ),
+        )
+        for line in (14, 16):
+            self.assertIn(
+                f".github/workflows/w.yml:{line}: a sourced file, never followed",
+                self._rows(inventory)["workflow-lint"]["reason"],
+            )
+        count = len(inventory["findings"])
+        with self.assertRaisesRegex(
+            self.module.QualityEvidenceError,
+            f"budget: {count} findings exceed max_findings {count - 1};",
+        ):
+            self._collect(limits=self.module.DiagnosticLimits(max_findings=count - 1))
+
+    def test_a_decoded_step_directive_is_a_named_gap(self) -> None:
+        # Codex on #470: the real ShellCheck honours the `#` that a double-quoted `run` decodes from `\x23`, so
+        # the step's finding is gone and only the gap names why.
+        workflow = _BASE_FILES[".github/workflows/w.yml"] + (
+            '      - run: "\\x23 shellcheck disable=all\\necho $BAR"\n'
+        )
+        inventory = self._with({".github/workflows/w.yml": workflow})
+        self.assertNotIn(
+            (".github/workflows/w.yml", 12), self._at(inventory, "actionlint")
+        )
+        row = self._rows(inventory)["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(
+            ".github/workflows/w.yml:12: a ShellCheck directive, never honoured as clean",
+            row["reason"],
         )
 
     def test_a_hadolint_pragma_is_a_named_gap_and_its_finding_is_kept(self) -> None:
