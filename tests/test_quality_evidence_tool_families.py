@@ -609,6 +609,21 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         self.assertIn("NUL", row["reason"])
         self.assertIn("blob.yml", row["reason"])
 
+    def test_a_file_with_carriage_return_line_ends_is_read_line_by_line(self) -> None:
+        # cubic on #470: a lone CR ends a line too, or every line after the first is never read.
+        (self.root / "Dockerfile").write_bytes(
+            b"FROM scratch\rENV DB_PASSWORD="
+            + b"Zq7" * 6
+            + b"\r"  # pragma: allowlist secret -- synthetic fixture value
+        )
+        self._git("commit", "-q", "-am", "carriage returns")
+        found = [
+            f
+            for f in self._findings(self._collect(base=self.base), "secrets")
+            if f["path"] == "Dockerfile"
+        ]
+        self.assertEqual([2], [f["range"]["start_line"] for f in found])
+
     def test_a_finding_after_a_form_feed_keeps_its_file_line_number(self) -> None:
         # cubic on #470: lines are the file's, split at newlines only.
         (self.root / "Dockerfile").write_text(
@@ -805,6 +820,51 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         self.assertNotIn("ci/lib.zsh", command)
         self.assertIn("ci/lib.zsh", self._rows(inventory)["shell-lint"]["reason"])
 
+    def test_a_marked_line_keeps_its_file_line_number_after_a_form_feed(self) -> None:
+        # Revix on #470: lines split at newlines only, so a note names the file's own line.
+        self._commit(
+            {"ci/tool": "#!/bin/sh\n# a\x0cb\n# shellcheck disable=SC2086\necho $1\n"}
+        )
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertIn("ci/tool:3: a ShellCheck directive", row["reason"])
+
+    def test_a_deeply_nested_workflow_or_gitlab_file_is_a_named_gap(self) -> None:
+        # Revix on #470: a nesting past the YAML reader's depth is a gap, never a crash.
+        depth = 3000
+        nested = "[" * depth + "]" * depth
+        self._commit(
+            {
+                ".github/workflows/w.yml": f"on: push\njobs: {nested}\n",
+                ".gitlab-ci.yml": f"job:\n  script: {nested}\n",
+            }
+        )
+        rows = self._rows(self._collect(base=self.base))
+        self.assertIn("w.yml", rows["workflow-lint"]["reason"])
+        self.assertNotEqual("COMPLETE", rows["gitlab-script"]["analysis"])
+        self.assertIn(".gitlab-ci.yml", rows["gitlab-script"]["reason"])
+
+    def test_a_windows_job_s_default_shell_is_a_named_gap(self) -> None:
+        # Revix on #470: a Windows runner's default shell is pwsh, which actionlint gives to no analyzer.
+        self._commit(
+            {
+                ".github/workflows/w.yml": (
+                    "on: push\njobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: echo $FOO\n"
+                )
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn("'pwsh'", row["reason"])
+
+    def test_an_executable_past_its_byte_bound_never_runs(self) -> None:
+        # Revix on #470: the executable is read within a bound, as every read in tools/ is.
+        with patch.object(self.module, "_MAX_TOOL_BYTES", 4, create=True):
+            inventory = self._collect(base=self.base)
+        row = self._rows(inventory)["shell-lint"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("tool shellcheck: not a bounded regular file", row["reason"])
+        self.assertEqual([], self._commands_of("shellcheck"))
+
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.
         pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
@@ -828,9 +888,11 @@ class RepositoryCleanTests(_ToolFamilyFixture):
         importlib.util.find_spec("ruff") is not None,
         "Ruff is available only in the exact development verification environment",
     )
-    def test_the_unsafe_calls_family_finds_nothing_in_the_repository(self) -> None:
-        # Ruff runs through the inventory's own bounded runner, and must finish with status 0 and an empty report:
-        # a Ruff that never ran is a failure, never a clean result (cubic on #470).
+    def test_the_unsafe_call_rules_find_nothing_in_the_repository(self) -> None:
+        # The repository is clean under the family's rules. Ruff runs through the inventory's own bounded runner, and
+        # must finish with status 0 and an empty report, so a Ruff that never ran is a failure (cubic on #470). The
+        # family's wiring is RealToolPositiveTests' and the profile tests'. A collection here would read the frozen
+        # HEAD, which is the parent in exact-parent preparation, not this candidate.
         import sys
 
         repository = Path(__file__).resolve().parent.parent
