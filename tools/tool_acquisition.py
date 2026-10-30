@@ -7,7 +7,8 @@ families are off. On the active path, for each tool the active families' produce
 - the release asset is fetched from its pinned GitHub URL, following only GitHub's one redirect to its release-asset
   host, under a transfer bound and a deadline;
 - the asset's bytes must equal its pin before any member is read;
-- an archive yields exactly one regular member of the pinned name, under a decompression bound;
+- an archive yields exactly one regular, non-sparse member of the pinned name, under a decompression bound and a
+  read bound;
 - the executable's bytes must equal the profile's executable pin before they are installed, read-only, through an
   exclusive create that never follows or replaces anything already at the target, and are then read back through the
   pinned-bytes owner.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import lzma
 import os
@@ -116,7 +118,13 @@ def fetch(
         raw, _ = github_rest.exchange(
             opener, urllib.request.Request(url), limit, policy
         )
-    except (github_rest.GitHubError, OSError) as exc:
+    # Every transport failure below the client's own is a named refusal too (Cubic on #471).
+    except (
+        github_rest.GitHubError,
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+    ) as exc:
         raise AcquisitionError(f"{url}: {exc}") from exc
     return raw
 
@@ -156,16 +164,21 @@ def member_bytes(raw: bytes, name: str, max_bytes: int) -> bytes:
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
             members = [member for member in archive.getmembers() if member.name == name]
-            if len(members) != 1 or not members[0].isreg():
+            # A sparse member is "regular" to tarfile, and reading it expands its holes past what was decompressed
+            # (Cubic on #471): it is refused, and the read is bounded whatever the member claims.
+            if len(members) != 1 or not members[0].isreg() or members[0].issparse():
                 raise AcquisitionError(
-                    f"member {name} is not exactly one regular file in the archive"
+                    f"member {name} is not exactly one regular, non-sparse file in the archive"
                 )
             stream = archive.extractfile(members[0])
             if stream is None:
                 raise AcquisitionError(f"member {name} cannot be read")
-            return stream.read()
+            member = stream.read(max_bytes + 1)
     except tarfile.TarError as exc:
         raise AcquisitionError(f"the archive is not a readable tar: {exc}") from exc
+    if len(member) > max_bytes:
+        raise AcquisitionError(f"member {name} is past {max_bytes} bytes")
+    return member
 
 
 def _install(root: Path, name: str, data: bytes, digest: str) -> None:
@@ -203,19 +216,11 @@ def _install(root: Path, name: str, data: bytes, digest: str) -> None:
         raise AcquisitionError(f"{target} did not install as pinned: {exc}") from exc
 
 
-def acquire(
-    profile: Mapping[str, Any],
-    root: Path,
-    *,
-    machine: str | None = None,
-    fetcher: Callable[[str], bytes] = fetch,
-) -> list[str]:
-    """Install the active families' pinned tools under `root` and return their names; nothing, and no request, while
-    every tool family is inactive. Every pin is checked for this machine before any fetch."""
-    names = quality_evidence.tool_names(profile)
-    if not names:
-        return []
-    machine = machine or platform.machine()
+def _plan(
+    profile: Mapping[str, Any], names: list[str], machine: str
+) -> list[tuple[str, str, Mapping[str, Any]]]:
+    """Each tool's executable and asset pins for this machine. A pin missing for any tool refuses the whole
+    acquisition before any fetch: it is the protected profile's defect, not one tool's runtime failure."""
     plan: list[tuple[str, str, Mapping[str, Any]]] = []
     for name in names:
         pin = profile["tools"].get(name, {})
@@ -224,21 +229,47 @@ def acquire(
         if digest is None or asset is None:
             raise AcquisitionError(f"tool {name}: no pin for machine {machine}")
         plan.append((name, digest, asset))
+    return plan
+
+
+def _acquire_one(
+    root: Path,
+    name: str,
+    digest: str,
+    asset: Mapping[str, Any],
+    fetcher: Callable[[str], bytes],
+) -> None:
+    raw = fetcher(asset["url"])
+    if hashlib.sha256(raw).hexdigest() != asset["sha256"]:
+        raise AcquisitionError("the asset's bytes are not its pin")
+    executable = (
+        member_bytes(raw, asset["member"], quality_evidence.MAX_TOOL_BYTES)
+        if "member" in asset
+        else raw
+    )
+    if hashlib.sha256(executable).hexdigest() != digest:
+        raise AcquisitionError("the executable's bytes are not its pin")
+    _install(root, name, executable, digest)
+
+
+def acquire(
+    profile: Mapping[str, Any],
+    root: Path,
+    *,
+    machine: str | None = None,
+    fetcher: Callable[[str], bytes] = fetch,
+) -> list[str]:
+    """Install the active families' pinned tools under `root` and return their names; nothing, and no request, while
+    every tool family is inactive. Every pin is checked for this machine before any fetch; after that, one tool's
+    refusal does not stop the others, and every refusal is named."""
+    names = quality_evidence.tool_names(profile)
+    if not names:
+        return []
     installed: list[str] = []
     refused: list[str] = []
-    for name, digest, asset in plan:
+    for name, digest, asset in _plan(profile, names, machine or platform.machine()):
         try:
-            raw = fetcher(asset["url"])
-            if hashlib.sha256(raw).hexdigest() != asset["sha256"]:
-                raise AcquisitionError("the asset's bytes are not its pin")
-            executable = (
-                member_bytes(raw, asset["member"], quality_evidence.MAX_TOOL_BYTES)
-                if "member" in asset
-                else raw
-            )
-            if hashlib.sha256(executable).hexdigest() != digest:
-                raise AcquisitionError("the executable's bytes are not its pin")
-            _install(root, name, executable, digest)
+            _acquire_one(root, name, digest, asset, fetcher)
             installed.append(name)
         except AcquisitionError as exc:
             refused.append(f"tool {name}: {exc}")
@@ -251,16 +282,15 @@ def acquire(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Acquire the active tool families' pinned executables."
-    )
-    parser.add_argument("--root", type=Path, default=quality_evidence.TOOL_ROOT)
-    parser.add_argument("--profile", type=Path, default=None)
-    args = parser.parse_args(argv)
-    profile = quality_evidence.load_diagnostic_profile(args.profile)
+    """Acquire into the collector's own `TOOL_ROOT` from the protected profile: no path is taken from the command
+    line (SonarCloud S8707 on #471), and a profile that cannot be used is refused like any other acquisition."""
+    argparse.ArgumentParser(
+        description="Acquire the active tool families' pinned executables into the inventory's TOOL_ROOT."
+    ).parse_args(argv)
     try:
-        installed = acquire(profile, args.root)
-    except AcquisitionError as exc:
+        profile = quality_evidence.load_diagnostic_profile()
+        installed = acquire(profile, Path(quality_evidence.TOOL_ROOT))
+    except (AcquisitionError, quality_evidence.QualityEvidenceError) as exc:
         print(f"tool acquisition refused: {exc}", file=sys.stderr)
         return 1
     print(

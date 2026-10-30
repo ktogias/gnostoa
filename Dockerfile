@@ -137,18 +137,19 @@ CMD ["--help"]
 
 FROM development-build AS development
 USER root
+# After the development lock, Decision 0122's remainder (#389 H-PYSEC-2): the profile's pinned
+# tools for its active tool families, into the inventory's TOOL_ROOT. With every tool family
+# inactive this selects nothing and fetches nothing, so an ordinary development build needs no
+# release download.
 RUN python -m pip install \
       --no-cache-dir \
       --only-binary=:all: \
       --require-hashes \
       --report .evidence/development-install-report.json \
       -r requirements/development.lock \
-    && chmod 0444 .evidence/development-install-report.json
-# Decision 0122's remainder (#389 H-PYSEC-2): the profile's pinned tools for its active tool
-# families, into the inventory's TOOL_ROOT. With every tool family inactive this selects
-# nothing and fetches nothing, so an ordinary development build needs no release download.
-RUN install --directory --mode=0755 /opt/gnostoa-tools \
-    && python -m tools.tool_acquisition --root /opt/gnostoa-tools
+    && chmod 0444 .evidence/development-install-report.json \
+    && install --directory --mode=0755 /opt/gnostoa-tools \
+    && python -m tools.tool_acquisition
 USER kit
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

@@ -280,7 +280,7 @@ jobs:
         run: |
           set -eu
           sudo install --directory --owner="$(id -u)" --group="$(id -g)" --mode=0755 /opt/gnostoa-tools
-          PYTHONPATH=. python -m tools.tool_acquisition --root /opt/gnostoa-tools
+          PYTHONPATH=. python -m tools.tool_acquisition
       - name: Resolve the comparison base
         id: base
         env:
