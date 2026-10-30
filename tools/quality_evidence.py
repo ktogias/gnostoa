@@ -3006,6 +3006,9 @@ def _first_line(root: Path, path: str) -> bytes:
             root / path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
         )
         with os.fdopen(descriptor, "rb") as stream:
+            # The descriptor is checked again, so a path swapped after the check yields nothing (Claude on #470).
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return b""
             return stream.readline(256)
     except OSError:
         return b""
@@ -3023,6 +3026,9 @@ def _shell_applicability(root: Path, path: str) -> tuple[bool, str | None]:
         return True, None
     if suffix in _OTHER_SHELL_SUFFIXES:
         return False, f"{path}: an unsupported shell suffix {suffix!r}"
+    if _symlinked(root, path):
+        # Its shebang is never read through the link, so whether ShellCheck applies is unknown: named (cubic on #470).
+        return False, f"{path}: a symlink, so its shebang is never read"
     match = _SHEBANG.match(_first_line(root, path))
     interpreter = match[1].decode("ascii", "replace") if match else None
     if interpreter in _SHELLS:

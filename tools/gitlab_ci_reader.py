@@ -67,9 +67,10 @@ def _gitlab_scalar(node: Any) -> Any:
     if node.tag != "tag:yaml.org,2002:str":
         try:
             return yaml.SafeLoader("").construct_object(node)
-        except Exception as exc:
+        except (ValueError, LookupError, yaml.YAMLError) as exc:
             # A tag whose text it cannot read: PyYAML's scalar constructors raise ValueError (`!!int x`), KeyError
-            # (`!!bool invalid`) or IndexError (`!!int ""`), measured (Codex on #470); any failure is this gap.
+            # (`!!bool invalid`) or IndexError (`!!int ""`), measured (Codex on #470). Any other failure is the
+            # loader's own defect, and surfaces (cubic on #470).
             raise GitlabUnsupported(
                 f"a {node.tag} item that cannot be read at line {node.start_mark.line + 1}"
             ) from exc
