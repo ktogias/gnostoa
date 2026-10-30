@@ -57,6 +57,13 @@ RUN groupadd --gid 10001 kit \
 
 WORKDIR ${KNOWLEDGE_KIT_ROOT}
 
+# `candidate` is the filtered context `ci/build-runtime` names (`--build-context
+# candidate=…`); a named context takes precedence over this stage of the same name,
+# which only declares the name (Hadolint DL3022). `base` copies nothing, so a build
+# without that context finds neither `source/` nor its manifest and fails before any
+# Python runs. (Not an empty scratch stage: the runtime is not flattened.)
+FROM base AS candidate
+
 # The published runtime takes its Gnostoa source from `ci/build-runtime`, which
 # materialises exactly the Git-tracked candidate paths into a throwaway context.
 # Copying the ordinary build context here instead would let host-local files
@@ -68,14 +75,16 @@ COPY --from=candidate --chown=kit:kit source/ .
 RUN --mount=from=candidate,type=bind,source=meta/.gnostoa-source-files,target=/tmp/candidate-manifest \
     set -eux; \
     test -n "${MANIFEST_SHA256}"; \
-    echo "${MANIFEST_SHA256}  /tmp/candidate-manifest" | sha256sum -c -; \
+    printf '%s  %s\n' "${MANIFEST_SHA256}" /tmp/candidate-manifest > /tmp/candidate-manifest.sha256; \
+    sha256sum -c - < /tmp/candidate-manifest.sha256; \
     find . -mindepth 1 \( -type f -o -type l \) -printf '%P\0' \
-      | LC_ALL=C sort -z > /tmp/candidate-payload; \
+      > /tmp/candidate-payload.unsorted; \
+    LC_ALL=C sort -z /tmp/candidate-payload.unsorted > /tmp/candidate-payload; \
     cmp -s /tmp/candidate-payload /tmp/candidate-manifest \
       || { echo "source payload does not match the candidate manifest" >&2; exit 6; }; \
     install --owner=kit --group=kit --mode=0444 \
       /tmp/candidate-manifest .gnostoa-source-files; \
-    rm -f /tmp/candidate-payload
+    rm -f /tmp/candidate-payload /tmp/candidate-payload.unsorted /tmp/candidate-manifest.sha256
 RUN install --directory --owner=kit --group=kit --mode=0555 .evidence \
     && python -m pip install \
       --no-cache-dir \
@@ -135,6 +144,11 @@ RUN python -m pip install \
       --report .evidence/development-install-report.json \
       -r requirements/development.lock \
     && chmod 0444 .evidence/development-install-report.json
+# Decision 0122's remainder (#389 H-PYSEC-2): the profile's pinned tools for its active tool
+# families, into the inventory's TOOL_ROOT. With every tool family inactive this selects
+# nothing and fetches nothing, so an ordinary development build needs no release download.
+RUN install --directory --mode=0755 /opt/gnostoa-tools \
+    && python -m tools.tool_acquisition --root /opt/gnostoa-tools
 USER kit
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

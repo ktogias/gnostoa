@@ -271,6 +271,16 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/development.lock
+      # Decision 0122's remainder (#389 H-PYSEC-2): main's profile names the pinned tools its
+      # active tool families run, for the collector's TOOL_ROOT. With every tool family inactive
+      # the entry selects nothing and makes no request. A refused acquisition installs nothing
+      # for that tool, so its families are INCOMPLETE in the inventory: it never stops the job.
+      - name: Acquire the active families' pinned tools
+        continue-on-error: true
+        run: |
+          set -eu
+          sudo install --directory --owner="$(id -u)" --group="$(id -g)" --mode=0755 /opt/gnostoa-tools
+          PYTHONPATH=. python -m tools.tool_acquisition --root /opt/gnostoa-tools
       - name: Resolve the comparison base
         id: base
         env:
