@@ -2995,8 +2995,17 @@ _SHELLCHECK_FLAGS = (
 
 
 def _first_line(root: Path, path: str) -> bytes:
+    """The file's first line, at most 256 bytes. Empty for a path _withheld would withhold (a link, a file that is not
+    regular) or one it cannot read: staging materialises a tracked link, so this read, before any withholding, never
+    follows one or waits on a named pipe (Revix on #470). The open is non-blocking and no-follow, as the complexity
+    producer's is, so a swap after the check cannot hold it."""
+    if _symlinked(root, path) or not _regular_file(root, path):
+        return b""
     try:
-        with (root / path).open("rb") as stream:
+        descriptor = os.open(
+            root / path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+        )
+        with os.fdopen(descriptor, "rb") as stream:
             return stream.readline(256)
     except OSError:
         return b""
