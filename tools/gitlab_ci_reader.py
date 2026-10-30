@@ -67,12 +67,19 @@ def _gitlab_scalar(node: Any) -> Any:
     if node.tag != "tag:yaml.org,2002:str":
         try:
             return yaml.SafeLoader("").construct_object(node)
-        except (ValueError, yaml.YAMLError) as exc:
-            # A tag whose text it cannot read, as `!!int x`.
+        except (ValueError, KeyError, yaml.YAMLError) as exc:
+            # A tag whose text it cannot read, as `!!int x` or `!!bool invalid` (KeyError, Codex on #470).
             raise GitlabUnsupported(
                 f"a {node.tag} item that cannot be read at line {node.start_mark.line + 1}"
             ) from exc
     line = node.start_mark.line + 1
+    try:
+        node.value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # An escaped lone surrogate decodes, but no analysis copy can hold it (Codex on #470).
+        raise GitlabUnsupported(
+            f"an item that is not UTF-8 text at line {line}"
+        ) from exc
     if node.style == "|":
         return (node.value, line + 1)
     if node.style == ">":
@@ -196,11 +203,22 @@ def _gitlab_defaults(root: Mapping[str, Any]) -> dict[str, Any]:
 
 def read_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
     """The bounded GitLab CI reader: per job, its shells, each item with its YAML line (a column table for a simple
-    folded item). Local `extends` (GitLab's merge), `default` and anchors are resolved; include, `!reference`,
-    `inherit`, cycles, merge keys, more than one document and unmappable items raise GitlabUnsupported."""
+    folded item). Local `extends` (GitLab's merge) and `default` are resolved; anchors, aliases and nesting past 32
+    levels (task_envelope's preflight, before composition, Router 6513998438), include, `!reference`, `inherit`,
+    cycles, merge keys, more than one document and unmappable items raise GitlabUnsupported. Its caller refuses a
+    NEL, LS or PS first, at which PyYAML breaks a line and the file does not."""
     import yaml
 
+    from tools.task_envelope import yaml_preflight
+
     try:
+        if found := yaml_preflight(text, 32):
+            what = (
+                "a nesting deeper than 32 levels"
+                if found[0] == "depth"
+                else f"a YAML {found[0]}"
+            )
+            raise GitlabUnsupported(f"{what} at line {found[1]}")
         nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
     except (yaml.YAMLError, RecursionError) as exc:
         raise GitlabUnsupported(f"unparsable: {type(exc).__name__}") from exc
