@@ -290,17 +290,17 @@ class RealToolIdentityTests(_RealToolFixture):
         root = self._copied_root(("shellcheck",))
         with (root / "shellcheck").open("ab") as handle:
             handle.write(b"\0")
-        self.assertIn("its bytes are not its pin", self._shell_row(root)["reason"])
+        self.assertIn("is not its pinned bytes", self._shell_row(root)["reason"])
 
     def test_a_linked_executable_never_runs(self) -> None:
         root = Path(self.directory.name) / "linked-tools"
         root.mkdir()
         (root / "shellcheck").symlink_to(self.qualified_root / "shellcheck")
-        self.assertIn("not a regular file", self._shell_row(root)["reason"])
+        self.assertIn("is reached through a link", self._shell_row(root)["reason"])
 
     def test_a_missing_executable_never_runs(self) -> None:
         root = self._copied_root(("hadolint",))
-        self.assertIn("shellcheck: missing", self._shell_row(root)["reason"])
+        self.assertIn("tool shellcheck is unavailable", self._shell_row(root)["reason"])
 
     def test_the_right_digest_of_the_wrong_tool_fails_its_version(self) -> None:
         root = self._copied_root(("actionlint",))

@@ -292,7 +292,7 @@ class ToolFamilyProfileTests(_ToolFamilyFixture):
         # Found by the real-tool qualification: a count alone attributes nothing (#389 H-PYSEC-2 q1).
         (self.tool_root / "shellcheck").write_bytes(b"#!altered\n")
         row = self._rows(self._collect(base=self.base))["shell-lint"]
-        self.assertIn("tool shellcheck: its bytes are not its pin", row["reason"])
+        self.assertIn("tool shellcheck is not its pinned bytes", row["reason"])
         self.assertIn("ci/tool", row["reason"])
 
     def test_every_family_that_runs_shellcheck_verifies_it_for_itself(self) -> None:
@@ -699,6 +699,11 @@ class SecretsFamilyTests(_ToolFamilyFixture):
             document,
         )
 
+
+class RoundTwoContractTests(_ToolFamilyFixture):
+    """The contract #470's review rounds found missing (#389 H-PYSEC-2). Its own class, since the secrets
+    tests skip without detect-secrets and these must run wherever the suite does."""
+
     def _commit(self, files: dict[str, str]) -> None:
         for name, body in files.items():
             target = self.root / name
@@ -862,8 +867,75 @@ class SecretsFamilyTests(_ToolFamilyFixture):
             inventory = self._collect(base=self.base)
         row = self._rows(inventory)["shell-lint"]
         self.assertNotEqual("COMPLETE", row["analysis"])
-        self.assertIn("tool shellcheck: not a bounded regular file", row["reason"])
+        self.assertIn("tool shellcheck is not a bounded regular file", row["reason"])
         self.assertEqual([], self._commands_of("shellcheck"))
+
+    def test_a_yaml_line_break_the_file_does_not_count_is_a_named_gap(self) -> None:
+        # A control (cubic on #470): PyYAML also breaks lines at NEL, LS and PS, which the file does not count. In a
+        # comment or a block scalar PyYAML refuses the file, and the reader refuses any scalar spanning its lines, so
+        # no YAML-derived line is reported shifted: the file is a named gap.
+        for text in (
+            "# a\u2028b\njob:\n  script:\n    - echo $FOO\n",
+            'variables:\n  A: "x\u2028y"\njob:\n  script:\n    - echo $FOO\n',
+            "job:\n  script:\n    - |\n      echo a\u2028echo $FOO\n",
+        ):
+            with self.subTest(text=text[:20]):
+                self._commit({".gitlab-ci.yml": text})
+                row = self._rows(self._collect(base=self.base))["gitlab-script"]
+                self.assertNotEqual("COMPLETE", row["analysis"])
+                self.assertIn(".gitlab-ci.yml", row["reason"])
+
+    def test_a_runner_that_names_no_platform_has_an_unknown_default_shell(self) -> None:
+        # cubic on #470: a runner group or a bare self-hosted label can select Windows.
+        for runs_on in ("self-hosted", "{group: g}", "[self-hosted, gpu]"):
+            with self.subTest(runs_on=runs_on):
+                self._commit(
+                    {
+                        ".github/workflows/w.yml": (
+                            f"on: push\njobs:\n  a:\n    runs-on: {runs_on}\n    steps:\n      - run: echo $FOO\n"
+                        )
+                    }
+                )
+                row = self._rows(self._collect(base=self.base))["workflow-lint"]
+                self.assertEqual("PARTIAL", row["analysis"])
+                self.assertIn("runs-on does not name", row["reason"])
+
+    def _gitlab_analyzed(self) -> list[str]:
+        command = next(
+            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
+        )
+        return command[command.index("--") + 1 :]
+
+    def test_the_gitlab_pages_job_is_analyzed(self) -> None:
+        # Codex on #470: `pages` is a job, not a reserved key.
+        self._commit({".gitlab-ci.yml": "pages:\n  script:\n    - echo $FOO\n"})
+        self._collect(base=self.base)
+        self.assertEqual(1, len(self._gitlab_analyzed()))
+
+    def test_a_top_level_before_script_is_analyzed_with_each_job(self) -> None:
+        # Codex on #470: the runner runs a top-level before_script, so the reader reads it.
+        self._commit(
+            {
+                ".gitlab-ci.yml": "before_script:\n  - echo $UNQUOTED\njob:\n  script:\n    - echo ok\n"
+            }
+        )
+        self._collect(base=self.base)
+        (analyzed,) = self._gitlab_analyzed()
+        (body,) = [
+            p.read_text(encoding="utf-8")
+            for p in self.output.glob(f"diagnostic-*/gitlab-input/{analyzed}")
+        ]
+        self.assertIn("echo $UNQUOTED", body)
+
+    def test_an_unsupported_script_outside_the_family_s_scope_is_no_gap(self) -> None:
+        # Codex on #470: only what the family's scopes select can downgrade its row.
+        profile = copy.deepcopy(self.profile)
+        profile["scopes"]["no-tests"] = {"exclude": ["tests/"]}
+        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell.update(diff="no-tests", full="no-tests")
+        self._commit({"tests/tool.zsh": "echo $1\n"})
+        row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
+        self.assertNotIn("tests/tool.zsh", row["reason"] or "")
 
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.
