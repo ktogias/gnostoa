@@ -282,7 +282,8 @@ class GitlabReaderTests(_ToolFamilyFixture):
             new_callable=_calling_through,
         ) as resolve:
             jobs = gitlab_ci_reader.read_scripts(text)
-        self.assertEqual(["job"], list(jobs))
+        # Claude on #470: and the merge is the uncached one: the last parent wins at each level, so `.l0j4`'s item.
+        self.assertEqual({"job": [[("echo $A", 15)]]}, jobs)
         self.assertLessEqual(resolve.call_count, 200)
 
     def test_extends_keeps_its_merge_cycle_and_eleven_levels(self) -> None:

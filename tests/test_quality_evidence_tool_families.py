@@ -1183,12 +1183,15 @@ class RoundTwoContractTests(_ToolFamilyFixture):
     def test_a_workflow_that_is_not_utf8_text_is_never_analyzed_as_a_repaired_copy(
         self,
     ) -> None:
-        # Codex on #470: actionlint was given `\xef\xbf\xbd` for the file's `\xff`, and the row read COMPLETE.
+        # Codex on #470: actionlint was given `\xef\xbf\xbd` for the file's `\xff`, and the row read COMPLETE. Claude:
+        # a failed run over the other file never renames this one's reason.
         step = b"on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
-        (self.root / ".github/workflows/w.yml").write_bytes(
-            step + b"      - run: echo \xff\n"
-        )
-        self._git("commit", "-q", "-am", "not utf-8")
+        flows = self.root / ".github/workflows"
+        (flows / "w.yml").write_bytes(step + b"      - run: echo \xff\n")
+        (flows / "v.yml").write_bytes(step + b"      - run: echo ok\n")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "not utf-8")
+        self.tool_answers["actionlint"] = (2, [])
         row = self._rows(self._collect(base=self.base))["workflow-lint"]
         self.assertEqual("INCOMPLETE", row["analysis"])
         self.assertIn(
