@@ -161,36 +161,53 @@ def _offline_registry() -> Registry[Any]:
     return Registry()
 
 
-def _assert_bounded_source(text: str, path: Path) -> None:
-    """Bound depth and refuse unsupported YAML features, before composition.
+def yaml_preflight(text: str, max_depth: int) -> tuple[str, int] | None:
+    """The first anchor, alias or nesting deeper than `max_depth` in `text`, as
+    ("anchor" | "alias" | "depth", its 1-based line), or None, before any composition.
 
     `yaml.compose` recurses per level and exhausts the interpreter stack at
-    roughly five hundred levels; `yaml.scan` is a token state machine and stays
-    bounded, so both the depth and the anchors and aliases are measured here
-    rather than discovered by crashing or by expanding.
+    roughly five hundred levels, and a very small alias graph expands
+    exponentially once it is constructed; `yaml.scan` is a token state machine
+    and stays bounded, so both are measured here rather than discovered by
+    crashing or by expanding. A scan error is raised as `yaml.YAMLError`. The
+    task envelope's preflight, and the inventory's GitLab reader's (#389
+    H-PYSEC-2, Router 6513998438).
     """
 
     depth = 0
+    for token in yaml.scan(text, Loader=yaml.SafeLoader):
+        if isinstance(token, (AnchorToken, AliasToken)):
+            feature = "anchor" if isinstance(token, AnchorToken) else "alias"
+            return feature, token.start_mark.line + 1
+        if isinstance(token, _DEPTH_OPENING):
+            depth += 1
+            if depth > max_depth:
+                return "depth", token.start_mark.line + 1
+        elif isinstance(token, _DEPTH_CLOSING):
+            depth -= 1
+    return None
+
+
+def _assert_bounded_source(text: str, path: Path) -> None:
+    """Bound depth and refuse unsupported YAML features, before composition, by
+    `yaml_preflight`."""
+
     try:
-        for token in yaml.scan(text, Loader=yaml.SafeLoader):
-            if isinstance(token, (AnchorToken, AliasToken)):
-                feature = "anchor" if isinstance(token, AnchorToken) else "alias"
-                raise KnowledgeFormatError(
-                    f"Task envelopes do not support YAML anchors, aliases or "
-                    f"merge keys: {feature} at line {token.start_mark.line + 1}"
-                )
-            if isinstance(token, _DEPTH_OPENING):
-                depth += 1
-                if depth > MAX_ENVELOPE_DEPTH:
-                    raise KnowledgeFormatError(
-                        f"Task envelope nests deeper than the "
-                        f"{MAX_ENVELOPE_DEPTH}-level bound at line "
-                        f"{token.start_mark.line + 1}"
-                    )
-            elif isinstance(token, _DEPTH_CLOSING):
-                depth -= 1
+        found = yaml_preflight(text, MAX_ENVELOPE_DEPTH)
     except yaml.YAMLError as exc:
         raise KnowledgeFormatError(f"Cannot scan YAML {path}: {exc}") from exc
+    if found is None:
+        return
+    feature, line = found
+    if feature == "depth":
+        raise KnowledgeFormatError(
+            f"Task envelope nests deeper than the "
+            f"{MAX_ENVELOPE_DEPTH}-level bound at line {line}"
+        )
+    raise KnowledgeFormatError(
+        f"Task envelopes do not support YAML anchors, aliases or "
+        f"merge keys: {feature} at line {line}"
+    )
 
 
 def _assert_json_compatible(envelope: dict[str, Any], path: Path) -> None:
