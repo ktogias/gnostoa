@@ -3246,18 +3246,8 @@ def _run_shellcheck(
         gap = gap or f"unparsable report: {type(exc).__name__}"
     for comment in comments:
         try:
-            path, line = comment["file"], comment["line"]
-            column, end_line, end_column = (
-                comment["column"],
-                comment.get("endLine"),
-                comment.get("endColumn"),
-            )
-            if origin is not None:
-                source, lines = origin[path]
-                mapped = lines[line]
-                if isinstance(mapped, list):
-                    mapped = [target for start, target in mapped if start <= column][-1]
-                path, line, end_line = source, mapped, None
+            path, line, end_line = _shellcheck_place(comment, origin)
+            column, end_column = comment["column"], comment.get("endColumn")
             if comment["code"] in (1090, 1091):
                 sources.append((path, line))
             finding = _diagnostic_finding(
@@ -3278,17 +3268,34 @@ def _run_shellcheck(
     return result
 
 
+def _shellcheck_place(
+    comment: Mapping[str, Any],
+    origin: Mapping[str, tuple[str, Mapping[int, Any]]] | None,
+) -> tuple[str, int, int | None]:
+    """A comment's file, line and end line; through `origin`, its source's file and line."""
+    path, line, end_line = comment["file"], comment["line"], comment.get("endLine")
+    if origin is not None:
+        source, lines = origin[path]
+        mapped = lines[line]
+        if isinstance(mapped, list):
+            mapped = [target for start, target in mapped if start <= comment["column"]][
+                -1
+            ]
+        path, line, end_line = source, mapped, None
+    return path, line, end_line
+
+
 def _sourced_notes(sources: list[tuple[str, int]]) -> list[str]:
     return [f"{path}:{line}: {_SOURCED_NOTE}" for path, line in sources]
 
 
 def _masked(text: str) -> str:
-    """A step's script with each `${{ }}` expression as that many underscores, as actionlint gives it to ShellCheck."""
+    """A step's script, each `${{ }}` expression as underscores with its newlines kept, as actionlint masks it."""
     out, start = [], 0
     while (left := text.find("${{", start)) >= 0 and (
         right := text.find("}}", left)
     ) >= 0:
-        out += [text[start:left], "_" * (right + 2 - left)]
+        out += [text[start:left], re.sub(r"[^\n]", "_", text[left : right + 2])]
         start = right + 2
     return "".join(out) + text[start:]
 
@@ -4186,7 +4193,7 @@ def _run_secrets(
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
         version = str(json.loads(baseline.read_text(encoding="utf-8"))["version"])
     except Exception as exc:
-        # Only the scanner's own refusals keep their text (never a filename); any other failure is named by type.
+        # Only the scanner's refusals keep their text (a candidate by repository path, never a host path); else type.
         detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
         reason = f"secrets: {type(exc).__name__}{detail}"
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []

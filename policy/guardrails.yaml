@@ -1366,11 +1366,13 @@ guardrails:
       - tools/quality_evidence.py#_runner_shell
       - tools/quality_evidence.py#_sourced_notes
       - tools/quality_evidence.py#_masked
+      - tools/quality_evidence.py#_shellcheck_place
       - tools/quality_evidence.py#_step_sources
       - tools/security_scan.py#verified_pinned_bytes
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
       - tools/security_scan.py#scan_with_protected_plugins
+      - tools/security_scan.py#_plugin_hits
       - tools/security_scan_plugin.py#GnostoaAssignmentDetector
       - policy/diagnostic-profile.yaml
     tests:
@@ -1403,6 +1405,7 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_spent_budget_starts_no_secrets_scan
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_scanner_failure_is_named_by_its_type_alone
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_reviewed_baseline_without_results_is_a_named_refusal
+      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_plugin_name_that_is_no_plugin_class_is_a_named_refusal
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_plugin_that_fails_at_import_is_a_named_refusal
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_any_other_scanner_failure_is_named_by_its_type
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_file_holding_nul_bytes_is_a_named_gap
@@ -1428,6 +1431,8 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_gitlab_pages_job_is_analyzed
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_top_level_before_script_is_analyzed_with_each_job
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unsupported_script_outside_the_family_s_scope_is_no_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_pinned_path_that_is_no_regular_file_never_waits
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_masked_expression_keeps_its_lines
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_linked_tool_root_never_runs
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_item_is_analyzed_as_it_reads
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_tagged_gitlab_sequence_is_a_named_gap
@@ -1451,6 +1456,8 @@ guardrails:
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_value_starting_with_a_slash_is_a_path_only_when_it_is_one
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_an_encrypted_private_key_body_is_reported
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_the_plugin_scan_never_follows_a_link
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_the_plugin_scan_reads_only_regular_files_and_never_waits
+      - tests/test_security_scan_plugin.py::SecretValuesTests.test_one_line_records_one_hit_of_a_type
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_hostile_line_is_read_in_linear_time
 
   - id: inventory-readback

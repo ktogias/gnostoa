@@ -106,7 +106,8 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, unmappable items, a key
      that is not text, a duplicate key);
    - another shell's script;
-   - a missing, linked or altered tool, a wrong version, or a run with no status;
+   - a missing, linked or altered tool, one that is not a regular file (a named pipe is refused, never waited on),
+     a wrong version, or a run with no status;
    - a report that is not the pinned tool's: a duplicate key, a non-finite number, or a field its version does not
      write;
    - a report its exit status contradicts;
@@ -126,17 +127,20 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    report.
 7. **Secrets** run the project's scanner over the head's files as data, against the protected reviewed baseline
    restricted to the scanned files, then the protected plugin `tools/security_scan_plugin.py`. The scanner pins the
-   plugin by digest (`PLUGIN_PINS`), reads its bytes through no link, and imports only a private read-only copy. The
-   plugins read a scanned file through no link either: a linked path is one they could not read, named as such. A
-   Dockerfile's legacy `ENV NAME value` is read whole, and for every `name=value` pair it holds. The candidate
+   plugin by digest (`PLUGIN_PINS`), reads its bytes through no link, and imports only a private read-only copy, which
+   must name a detect-secrets plugin class. The plugins read the scanned files from the scanner's own private snapshot
+   of them (`_immutable_candidate_snapshot`). So a link at any component, a file that is not regular, or one past the
+   snapshot's bounds fails the plugin scan closed, as it fails the scanner's. Each candidate type is recorded once per
+   line. A Dockerfile's legacy `ENV NAME value` is read whole, and for every `name=value` pair it holds. The candidate
    `security-fast` scan and `.secrets.baseline` are unchanged.
    - **Identity:** the scan refuses any detect-secrets version, plugin or filter set but the protected baseline's.
      Its run record names that version, and its report binds the scanner, the baseline's digest and each plugin
      pin.
    - **Deadline:** a spent inventory deadline starts no scan. Every target is then unanalyzed with that reason
      named, so the row is INCOMPLETE, never clean. The scan itself is bounded by the scanner's timeout.
-   - **Reasons:** a scanner refusal keeps its own classification, which never copies an exception's text or a
-     filename; any other failure is named by its type alone.
+   - **Reasons:** a scanner refusal keeps its own classification. That never copies an exception's text or a host
+     path; it names a candidate by its repository path, as the family's own gaps do. Any other failure is named by
+     its type alone.
    - **The plugin is stricter than the scanner.** No inline allowlist pragma hides its hits; no suppression
      comment hides a finding from the inventory's Ruff either. The reviewed baseline holds no audit for its hits.
      An entry of its type would read as stale to the scanner, unless the plugin were one of the baseline's

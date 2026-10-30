@@ -1112,13 +1112,18 @@ def verified_pinned_bytes(
         except OSError as exc:
             raise SecurityScanError(f"{label} is unavailable") from exc
     try:
-        descriptor = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        # Non-blocking, so a named pipe is refused below rather than waited on (Amazon Q and cubic on #470).
+        flags = (
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        descriptor = os.open(current, flags)
     except OSError as exc:
         raise SecurityScanError(f"{label} is unavailable") from exc
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+        os.close(descriptor)
+        raise SecurityScanError(f"{label} is not a bounded regular file")
     with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
-            raise SecurityScanError(f"{label} is not a bounded regular file")
         data = stream.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise SecurityScanError(f"{label} is not a bounded regular file")
@@ -1161,7 +1166,13 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-        return getattr(module, name)
+        plugin = getattr(module, name)
+        from detect_secrets.plugins.base import BasePlugin
+
+        # Only a detect-secrets plugin class is made and run (Amazon Q on #470).
+        if not (isinstance(plugin, type) and issubclass(plugin, BasePlugin)):
+            raise TypeError(name)
+        return plugin
     except Exception as exc:
         # Whatever fails while the pinned bytes load, the scan fails closed and names it (Amazon Q on #470).
         raise SecurityScanError(
@@ -1172,20 +1183,10 @@ def _load_protected_plugin(name: str, staging: Path) -> Any:
 _LINE_END = re.compile(r"\r\n|\r|\n")
 
 
-def _plugin_lines(root: Path, relative: str) -> list[str] | None:
-    """The file's lines, split at CRLF, CR or LF and nothing else, so each is its line in the file (cubic on #470), or
-    None for a file holding NUL bytes, a link or anything but a regular file, which no protected plugin reads."""
-    # No link is followed, so a linked path is one the plugins could not read (Amazon Q on #470).
-    try:
-        descriptor = os.open(
-            root / relative, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        )
-    except OSError:
-        return None
-    with os.fdopen(descriptor, "rb") as stream:
-        data = (
-            stream.read() if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b"\0"
-        )
+def _plugin_lines(snapshot: Path, relative: str) -> list[str] | None:
+    """The file's lines in the scan's private snapshot, split at CRLF, CR or LF and nothing else, so each is its line
+    in the file (cubic on #470), or None for a file holding NUL bytes, which no protected plugin reads."""
+    data = (snapshot / relative).read_bytes()
     if b"\0" in data:
         return None
     lines = _LINE_END.split(data.decode("utf-8", errors="replace"))
@@ -1201,14 +1202,20 @@ def scan_with_protected_plugins(
     its value, and the paths no plugin could read, for the caller to name as a gap. A plugin that is not its pinned
     bytes fails the scan closed. Its hits are stricter than the scanner's: no inline allowlist pragma hides one, as no
     suppression comment hides a finding from the inventory's Ruff, which ignores them, and the reviewed baseline holds no
-    audit for them yet; their false-positive path is a choice for activation (Decision 0122)."""
+    audit for them yet; their false-positive path is a choice for activation (Decision 0122). The files are read from
+    the scanner's own private snapshot of them, so a link at any component, a file that is not regular or one past the
+    snapshot's bounds fails the scan closed, as it fails the scanner's (Amazon Q, cubic and Claude on #470)."""
     records: list[dict[str, Any]] = []
     unread: dict[str, None] = {}
-    with tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging:
+    candidates = _validated_candidate_paths(root, [Path(path) for path in paths])
+    with (
+        _immutable_candidate_snapshot(root, candidates) as snapshot,
+        tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging,
+    ):
         for name in sorted(PLUGIN_PINS):
             detector = _load_protected_plugin(name, Path(staging))()
             for relative in paths:
-                lines = _plugin_lines(root, relative)
+                lines = _plugin_lines(snapshot, relative)
                 if lines is None:
                     # A mapping keeps first-seen order at constant cost (cubic on #470).
                     unread[relative] = None
@@ -1220,12 +1227,14 @@ def scan_with_protected_plugins(
 def _plugin_hits(
     detector: Any, relative: str, lines: list[str]
 ) -> list[dict[str, Any]]:
-    """One plugin's candidates in one file: path, line and type, never the value."""
+    """One plugin's candidates in one file: path, line and type, never the value, each type once a line (Amazon Q and
+    cubic on #470)."""
     import types
 
     hits: list[dict[str, Any]] = []
     for index, line in enumerate(lines):
         context = types.SimpleNamespace(lines=lines, target_index=index)
-        for found in detector.analyze_line(relative, line, index + 1, context):
-            hits.append({"path": relative, "line": index + 1, "type": found.type})
+        found = detector.analyze_line(relative, line, index + 1, context)
+        for kind in sorted({candidate.type for candidate in found}):
+            hits.append({"path": relative, "line": index + 1, "type": kind})
     return hits
