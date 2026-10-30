@@ -19,6 +19,9 @@ sources:
   - id: owner-admission
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6508582845
     title: "The owner's admission of H-PYSEC-2 for implementation and qualification, initially unactivated"
+  - id: owner-extension
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6517917720
+    title: "The owner's admission of the bounded GitLab reader extraction and the shared YAML preflight"
   - id: scope
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6508335114
     title: "The Router's H-PYSEC-2 scope"
@@ -88,6 +91,10 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - ShellCheck: `--norc`, no `-x`, explicit files;
    - Hadolint: an explicit protected `-c`, `--disable-ignore-pragma`, an empty working directory;
    - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes.
+
+   The GitLab family's bounded reader is `tools/gitlab_ci_reader.py` (source `owner-extension`): it turns a file's
+   YAML into each job's script items with their lines, or names why it cannot. The collector keeps the family's run,
+   its tool execution and its findings mapping.
 4. **Applicability** comes from the frozen tree's one listing:
    - for ShellCheck, a `.sh`, `.bash`, `.dash` or `.ksh` file, or a sh/bash/dash/ksh shebang;
    - `Dockerfile*`;

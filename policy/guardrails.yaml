@@ -1362,7 +1362,6 @@ guardrails:
       - tools/quality_evidence.py#_step_shell_notes
       - tools/quality_evidence.py#_job_step_notes
       - tools/quality_evidence.py#_secrets_identity
-      - tools/quality_evidence.py#_gitlab_defaults
       - tools/quality_evidence.py#_runner_shell
       - tools/quality_evidence.py#_sourced_notes
       - tools/quality_evidence.py#_masked
@@ -1375,6 +1374,11 @@ guardrails:
       - tools/security_scan.py#_plugin_hits
       - tools/security_scan.py#_read_descriptor
       - tools/security_scan_plugin.py#GnostoaAssignmentDetector
+      - tools/gitlab_ci_reader.py#GitlabUnsupported
+      - tools/gitlab_ci_reader.py#read_scripts
+      - tools/gitlab_ci_reader.py#analysis_file
+      - tools/gitlab_ci_reader.py#_gitlab_defaults
+      - tools/gitlab_ci_reader.py#_gitlab_construct
       - policy/diagnostic-profile.yaml
     tests:
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_v2_profile_admits_the_pinned_tool_families
@@ -1398,8 +1402,6 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_the_queue_projection_refuses_undocumented_and_conflicting_forms
       - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_a_queue_word_in_a_run_block_or_comment_is_never_projected
       - tests/test_quality_evidence_tool_families.py::WorkflowFamilyTests.test_a_step_with_a_non_sh_shell_is_an_attributable_gap
-      - tests/test_quality_evidence_tool_families.py::GitlabScriptFamilyTests.test_a_script_item_is_analyzed_and_mapped_to_its_yaml_line
-      - tests/test_quality_evidence_tool_families.py::GitlabScriptFamilyTests.test_an_unsupported_construct_is_an_attributable_gap
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_dockerfile_env_secret_is_listed_by_the_secrets_family
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_workflow_secret_reference_is_not_listed
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_scanner_pins_its_plugin_by_digest
@@ -1419,30 +1421,21 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_report_with_a_duplicate_key_is_a_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_refused_queue_form_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_malformed_workflow_structure_is_a_named_gap_and_still_linted
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_distinct_gitlab_jobs_are_each_analyzed
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_diff_only_family_acquires_changed_non_python_files
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_marked_line_keeps_its_file_line_number_after_a_form_feed
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_deeply_nested_workflow_or_gitlab_file_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_windows_job_s_default_shell_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_executable_past_its_byte_bound_never_runs
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_yaml_line_break_the_file_does_not_count_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_runner_that_names_no_platform_has_an_unknown_default_shell
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_gitlab_pages_job_is_analyzed
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_top_level_before_script_is_analyzed_with_each_job
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unsupported_script_outside_the_family_s_scope_is_no_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_masked_expression_keeps_its_lines
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_linked_tool_root_never_runs
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_item_is_analyzed_as_it_reads
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_tagged_gitlab_sequence_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unknown_runner_shell_is_named_as_unknown
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_sourced_file_in_a_gitlab_script_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_source_shellcheck_reports_anywhere_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_source_in_a_workflow_step_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_recorded_ruff_selection_is_the_active_families_only
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_key_that_is_not_text_is_a_named_gap
-      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_duplicate_gitlab_key_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unknown_comparison_keeps_an_unsupported_scripts_scope_unknown
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_tool_whose_run_copy_cannot_be_written_is_a_named_gap
       - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_verified_bytes_are_the_bytes_that_run
@@ -1468,6 +1461,17 @@ guardrails:
       - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_pinned_read_whose_close_fails_is_a_scan_error
       - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_plugin_whose_module_cannot_be_made_is_a_scan_error
       - tests/test_security_scan_plugin.py::PinnedFileTests.test_a_plugin_whose_staging_copy_cannot_be_written_is_a_scan_error
+      - tests/test_gitlab_ci_reader.py::GitlabScriptFamilyTests.test_a_script_item_is_analyzed_and_mapped_to_its_yaml_line
+      - tests/test_gitlab_ci_reader.py::GitlabScriptFamilyTests.test_an_unsupported_construct_is_an_attributable_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_distinct_gitlab_jobs_are_each_analyzed
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_deeply_nested_workflow_or_gitlab_file_is_a_named_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_the_gitlab_pages_job_is_analyzed
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_gitlab_item_is_analyzed_as_it_reads
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_tagged_gitlab_sequence_is_a_named_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_sourced_file_in_a_gitlab_script_is_a_named_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_gitlab_key_that_is_not_text_is_a_named_gap
+      - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_duplicate_gitlab_key_is_a_named_gap
 
   - id: inventory-readback
     title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)

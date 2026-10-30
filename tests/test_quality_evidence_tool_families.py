@@ -258,6 +258,20 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
     def _findings(self, inventory: dict, tool: str) -> list[dict]:
         return [f for f in inventory["findings"] if f["tool"]["id"] == tool]
 
+    def _commit(self, files: dict[str, str]) -> None:
+        for name, body in files.items():
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "round two")
+
+    def _gitlab_analyzed(self) -> list[str]:
+        command = next(
+            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
+        )
+        return command[command.index("--") + 1 :]
+
 
 class ToolFamilyProfileTests(_ToolFamilyFixture):
     # RED: main's profile shape is v1, with producers mypy/ruff/complexity and no `tools` or `active`.
@@ -516,27 +530,6 @@ class WorkflowFamilyTests(_ToolFamilyFixture):
         self.assertIn(".github/workflows/w.yml", inventory["coverage"]["reason"])
 
 
-class GitlabScriptFamilyTests(_ToolFamilyFixture):
-    def test_a_script_item_is_analyzed_and_mapped_to_its_yaml_line(self) -> None:
-        self.tool_answers["shellcheck"] = (1, {"comments": [dict(_SC_NATIVE, line=2)]})
-        inventory = self._collect(base=self.base)
-        found = [
-            f
-            for f in self._findings(inventory, "gitlab-shellcheck")
-            if f["path"] == ".gitlab-ci.yml"
-        ]
-        self.assertEqual([3], [f["range"]["start_line"] for f in found])
-
-    def test_an_unsupported_construct_is_an_attributable_gap(self) -> None:
-        (self.root / ".gitlab-ci.yml").write_text(
-            "include: other.yml\n" + _GITLAB, encoding="utf-8"
-        )
-        self._git("commit", "-q", "-am", "include")
-        inventory = self._collect(base=self.base)
-        self.assertEqual("PARTIAL", self._rows(inventory)["gitlab-script"]["analysis"])
-        self.assertIn(".gitlab-ci.yml", inventory["coverage"]["reason"])
-
-
 @unittest.skipUnless(
     importlib.util.find_spec("detect_secrets") is not None,
     "detect-secrets is available only in the exact development verification environment",
@@ -787,14 +780,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
     """The contract #470's review rounds found missing (#389 H-PYSEC-2). Its own class, since the secrets
     tests skip without detect-secrets and these must run wherever the suite does."""
 
-    def _commit(self, files: dict[str, str]) -> None:
-        for name, body in files.items():
-            target = self.root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(body, encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "round two")
-
     def test_a_run_with_no_status_and_no_gap_is_never_clean(self) -> None:
         # Amazon Q on #470.
         self.tool_answers["shellcheck"] = (None, {"comments": []})
@@ -852,29 +837,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
                 self.assertIn(needle, row["reason"])
         self.assertTrue(self._commands_of("actionlint"))
 
-    def test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap(self) -> None:
-        # Revix on #470.
-        self._commit({".gitlab-ci.yml": "job:\n  script:\n    - !!int x\n"})
-        row = self._rows(self._collect(base=self.base))["gitlab-script"]
-        self.assertNotEqual("COMPLETE", row["analysis"])
-        self.assertIn(".gitlab-ci.yml", row["reason"])
-
-    def test_distinct_gitlab_jobs_are_each_analyzed(self) -> None:
-        # Codex and cubic on #470: `build app` and `build_app` once shared one analysis file.
-        self._commit(
-            {
-                ".gitlab-ci.yml": (
-                    "build app:\n  script:\n    - echo $A\nbuild_app:\n  script:\n    - echo ok\n"
-                )
-            }
-        )
-        self._collect(base=self.base)
-        command = next(
-            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
-        )
-        analyzed = command[command.index("--") + 1 :]
-        self.assertEqual(2, len(set(analyzed)), analyzed)
-
     def test_a_diff_only_family_acquires_changed_non_python_files(self) -> None:
         # Codex on #470: the comparison was read only when a Python path reached past FULL.
         profile = copy.deepcopy(self.profile)
@@ -915,21 +877,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         )
         row = self._rows(self._collect(base=self.base))["shell-lint"]
         self.assertIn("ci/tool:3: a ShellCheck directive", row["reason"])
-
-    def test_a_deeply_nested_workflow_or_gitlab_file_is_a_named_gap(self) -> None:
-        # Revix on #470: a nesting past the YAML reader's depth is a gap, never a crash.
-        depth = 3000
-        nested = "[" * depth + "]" * depth
-        self._commit(
-            {
-                ".github/workflows/w.yml": f"on: push\njobs: {nested}\n",
-                ".gitlab-ci.yml": f"job:\n  script: {nested}\n",
-            }
-        )
-        rows = self._rows(self._collect(base=self.base))
-        self.assertIn("w.yml", rows["workflow-lint"]["reason"])
-        self.assertNotEqual("COMPLETE", rows["gitlab-script"]["analysis"])
-        self.assertIn(".gitlab-ci.yml", rows["gitlab-script"]["reason"])
 
     def test_a_windows_job_s_default_shell_is_a_named_gap(self) -> None:
         # Revix on #470: a Windows runner's default shell is pwsh, which actionlint gives to no analyzer.
@@ -983,18 +930,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
                 self.assertEqual("PARTIAL", row["analysis"])
                 self.assertIn("runs-on does not name", row["reason"])
 
-    def _gitlab_analyzed(self) -> list[str]:
-        command = next(
-            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
-        )
-        return command[command.index("--") + 1 :]
-
-    def test_the_gitlab_pages_job_is_analyzed(self) -> None:
-        # Codex on #470: `pages` is a job, not a reserved key.
-        self._commit({".gitlab-ci.yml": "pages:\n  script:\n    - echo $FOO\n"})
-        self._collect(base=self.base)
-        self.assertEqual(1, len(self._gitlab_analyzed()))
-
     def test_a_top_level_before_script_is_analyzed_with_each_job(self) -> None:
         # Codex on #470: the runner runs a top-level before_script, so the reader reads it, for every job (cubic).
         self._commit(
@@ -1041,32 +976,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertIn("tool shellcheck is reached through a link", row["reason"])
         self.assertEqual([], self._commands_of("shellcheck"))
 
-    def test_a_gitlab_item_is_analyzed_as_it_reads(self) -> None:
-        # Codex on #470: only a newline ends an analysis line, so a decoded vertical tab stays in its command.
-        self._commit(
-            {".gitlab-ci.yml": 'job:\n  script:\n    - "echo foo\\vbar $VALUE"\n'}
-        )
-        self._collect(base=self.base)
-        (analyzed,) = self._gitlab_analyzed()
-        (body,) = [
-            p.read_text(encoding="utf-8")
-            for p in self.output.glob(f"diagnostic-*/gitlab-input/{analyzed}")
-        ]
-        self.assertEqual(
-            ["#!/bin/sh", "echo foo\x0bbar $VALUE"], body.rstrip("\n").split("\n")
-        )
-
-    def test_a_tagged_gitlab_sequence_is_a_named_gap(self) -> None:
-        # Revix on #470: `!reference` is unsupported, in a sequence as in a scalar.
-        self._commit(
-            {
-                ".gitlab-ci.yml": ".setup:\n  script:\n    - echo $A\njob:\n  script:\n    - !reference [.setup, script]\n"
-            }
-        )
-        row = self._rows(self._collect(base=self.base))["gitlab-script"]
-        self.assertNotEqual("COMPLETE", row["analysis"])
-        self.assertIn("!reference", row["reason"])
-
     def test_an_unknown_runner_shell_is_named_as_unknown(self) -> None:
         # Revix on #470: the gap says the runner's default shell is unknown, not that it runs under a sentence.
         self._commit(
@@ -1079,20 +988,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
             "job a step 0 uses the runner's default shell, which runs-on does not name",
             row["reason"],
         )
-
-    def test_a_sourced_file_in_a_gitlab_script_is_a_named_gap(self) -> None:
-        # Claude and cubic on #470: the GitLab family reads shell too, so a source ShellCheck reports, after a `;`
-        # as at a line's start, is never followed there either. The answer is the real tool's (qualification).
-        self._commit(
-            {
-                ".gitlab-ci.yml": "job:\n  script:\n    - echo ok; source ./ci/common.sh\n    - . ./ci/more.sh\n"
-            }
-        )
-        self.tool_answers["shellcheck"] = (1, {"comments": [_sourced(2), _sourced(3)]})
-        row = self._rows(self._collect(base=self.base))["gitlab-script"]
-        self.assertEqual("PARTIAL", row["analysis"])
-        self.assertIn(".gitlab-ci.yml:3: a sourced file, never followed", row["reason"])
-        self.assertIn(".gitlab-ci.yml:4: a sourced file, never followed", row["reason"])
 
     def test_a_source_shellcheck_reports_anywhere_is_a_named_gap(self) -> None:
         # cubic on #470: a source after `;` is one too; ShellCheck's own parse finds it, as the qualification shows.
@@ -1124,28 +1019,6 @@ class RoundTwoContractTests(_ToolFamilyFixture):
             family["active"] = family["id"] != "unsafe-calls"
         record = self._collect(profile, base=self.base)["configuration"]["ruff_select"]
         self.assertNotIn("S602", record)
-
-    def test_a_gitlab_key_that_is_not_text_is_a_named_gap(self) -> None:
-        # Revix and Codex on #470: `1:` or `yes:` decodes to a number or a boolean, never a job name to read.
-        for key in ("1", "yes"):
-            with self.subTest(key=key):
-                self._commit(
-                    {".gitlab-ci.yml": f"{key}:\n  script:\n    - echo $FOO\n"}
-                )
-                row = self._rows(self._collect(base=self.base))["gitlab-script"]
-                self.assertNotEqual("COMPLETE", row["analysis"])
-                self.assertIn("a key that is not text", row["reason"])
-
-    def test_a_duplicate_gitlab_key_is_a_named_gap(self) -> None:
-        # Revix on #470: a second `script:` would replace the first, whose commands would never be read.
-        self._commit(
-            {
-                ".gitlab-ci.yml": "job:\n  script:\n    - echo $A\n  script:\n    - echo ok\n"
-            }
-        )
-        row = self._rows(self._collect(base=self.base))["gitlab-script"]
-        self.assertNotEqual("COMPLETE", row["analysis"])
-        self.assertIn("a duplicate key", row["reason"])
 
     def test_an_unknown_comparison_keeps_an_unsupported_scripts_scope_unknown(
         self,
