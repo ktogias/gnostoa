@@ -93,34 +93,41 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes.
 
    The GitLab family's bounded reader is `tools/gitlab_ci_reader.py` (source `owner-extension`): it turns a file's
-   YAML into each job's script items with their lines, or names why it cannot. The collector keeps the family's run,
-   its tool execution and its findings mapping.
+   YAML into each job's script items with their lines, or names why it cannot. An anchor, an alias or a nesting past
+   32 levels is refused before composition, by the task envelope's own bounded preflight (`yaml_preflight`). The
+   collector keeps the family's run, its tool execution and its findings mapping.
 4. **Applicability** comes from the frozen tree's one listing:
    - for ShellCheck, a `.sh`, `.bash`, `.dash` or `.ksh` file, or a sh/bash/dash/ksh shebang;
-   - `Dockerfile*`;
+   - `Dockerfile*`, and `*.Dockerfile` in any case;
    - GitHub workflows and `ci/github*.yml`;
    - the GitLab CI files;
    - every tracked file for secrets.
 
    A DIFF-only family reaches by that listing, never by the Python paths alone.
 5. **Attributable gaps.** These make a family's row PARTIAL or INCOMPLETE and are named, never a clean result:
-   - a ShellCheck directive, a Hadolint pragma or a sourced file. A source is what the pinned ShellCheck's own parse
-     reports and never follows (SC1090, SC1091), in any command position, never a line a hand reader matches. For a
-     workflow step, actionlint excludes SC1091, so the pinned ShellCheck reads each analyzed step's script for its
-     sources alone, its expressions masked as actionlint masks them, and that run is recorded. A source ShellCheck
-     does not parse as one (`builtin source`, `command .`, `eval`) is outside this model and is not named;
+   - a ShellCheck directive, in the file's lines or in a script as YAML decodes it (`"\x23 shellcheck ..."`), a
+     Hadolint pragma or a sourced file. A source is what the pinned ShellCheck's own parse reports and never follows
+     (SC1090, SC1091), in any command position, never a line a hand reader matches. For a workflow step, actionlint
+     reports SC1090 itself and excludes SC1091 (measured on 1.7.12). So the pinned ShellCheck selects SC1091 alone
+     before acquisition (`--include=SC1091`) over each analyzed step's script, its expressions masked as actionlint
+     masks them, and that run is recorded. Each one is a finding of the family at its workflow line (a block
+     literal's own line, any other scalar's first line, where actionlint places its own), within the family's
+     allowance. A source ShellCheck does not parse as one (`builtin source`, `command .`, `eval`) is outside this
+     model and is not named;
    - a workflow step whose effective shell is not bash or sh;
-   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, unmappable items, a key
-     that is not text, a duplicate key);
+   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, anchors, aliases, a
+     nesting past 32 levels, unmappable items, a key that is not text, a duplicate key);
+   - a YAML file holding a NEL, LS or PS, at which PyYAML breaks a line and the file does not;
    - another shell's script;
    - a missing, linked or altered tool, one that is not a regular file (a named pipe is refused, never waited on),
-     a wrong version, or a run with no status;
+     a wrong version or a failed version call, each by its own cause, or a run with no status;
    - a report that is not the pinned tool's: a duplicate key, a non-finite number, or a field its version does not
      write;
    - a report its exit status contradicts;
    - a workflow whose structure is not the documented mapping, or a step whose shell is empty or not text, and a
      `concurrency.queue` form the projection refuses;
-   - a GitLab item whose tag cannot read its text;
+   - a GitLab item whose tag cannot read its text, and a script, a GitLab item's or a step's, that is not UTF-8
+     text;
    - for secrets, a file holding NUL bytes, which the protected plugins never read.
    - for secrets, a protected baseline with no results mapping, or a plugin that fails while its pinned bytes
      load: the scan is refused and named.

@@ -67,7 +67,7 @@ _LABEL = "Gnostoa Assignment Secret"
 
 def _kind(filename: str) -> str | None:
     base = filename.replace("\\", "/").rsplit("/", 1)[-1]
-    if base.startswith("Dockerfile") or base.endswith(".dockerfile"):
+    if base.startswith("Dockerfile") or base.lower().endswith(".dockerfile"):
         return "docker"
     if base in ("Makefile", "GNUmakefile", "makefile") or base.endswith(".mk"):
         return "make"

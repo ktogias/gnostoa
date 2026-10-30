@@ -3023,7 +3023,10 @@ def _shell_applicability(root: Path, path: str) -> tuple[bool, str | None]:
 
 
 _PATH_SELECTORS: dict[str, Callable[[str], bool]] = {
-    "hadolint": lambda path: path.rsplit("/", 1)[-1].startswith("Dockerfile"),
+    "hadolint": lambda path: (
+        (base := path.rsplit("/", 1)[-1]).startswith("Dockerfile")
+        or base.lower().endswith(".dockerfile")
+    ),
     "actionlint": lambda path: _WORKFLOW_PATH.fullmatch(path) is not None,
     "gitlab-shellcheck": lambda path: _GITLAB_PATH.fullmatch(path) is not None,
     "secrets": lambda path: True,
@@ -3033,8 +3036,8 @@ _PATH_SELECTORS: dict[str, Callable[[str], bool]] = {
 def _applicable(
     root: Path, producer: str, tracked: list[str]
 ) -> tuple[list[str], dict[str, str]]:
-    """The tracked paths a pinned-tool family applies to, in order, and those it names unsupported (another shell's
-    script); secrets read every tracked file."""
+    """The tracked paths a pinned-tool family applies to, in order, and those it names unsupported: ShellCheck reads
+    a sh, bash, dash or ksh script by suffix or shebang, another shell's is unsupported; secrets read every file."""
     selected: list[str] = []
     unsupported: dict[str, str] = {}
     for path in tracked:
@@ -3093,7 +3096,7 @@ def _tool_environment(run: Path) -> dict[str, str]:
     }
 
 
-def _tool_version(
+def _version_gap(
     tool: Path,
     name: str,
     run: Path,
@@ -3103,8 +3106,8 @@ def _tool_version(
     *,
     family: str,
 ) -> str | None:
-    """The pinned version when the tool's own version output names it, else None, read into the family's own
-    report (a report is always a new file)."""
+    """None when the tool's own version output, read into the family's own report (a report is always a new file),
+    names the pin; else why not: a failed call by its own cause (Revix on #470), then the output."""
     report = run / f"diagnostic-{family}-{name}-version.txt"
     flag = "-version" if name == "actionlint" else "--version"
     status, gap, _invalid = _bounded_run(
@@ -3116,14 +3119,16 @@ def _tool_version(
         limits=limits,
     )
     if gap is not None or status != 0:
-        return None
+        return (
+            f"its version call failed: {gap if gap is not None else f'status {status}'}"
+        )
     try:
         text = report.read_text(encoding="utf-8")
     except (OSError, ValueError):
+        return "its version output cannot be read"
+    if re.search(rf"(?<![\w.]){re.escape(pinned)}(?![\w.])", text):
         return None
-    return (
-        pinned if re.search(rf"(?<![\w.]){re.escape(pinned)}(?![\w.])", text) else None
-    )
+    return f"its version is not its pin {pinned!r}"
 
 
 def _tool_gap(status: int | None, gap: str | None, records: list[Any]) -> str | None:
@@ -3183,8 +3188,8 @@ def _report_records(
 
 def _text_lines(root: Path, path: str) -> list[str]:
     """The file's lines as the file counts them: universal newlines, then a split at newlines only, so no form feed
-    or Unicode separator moves a line number. PyYAML also breaks at NEL, LS and PS; it or the reader then refuses
-    the file or scalar, a named gap."""
+    or Unicode separator moves a line number. PyYAML also breaks at NEL, LS and PS, so each YAML reader refuses such
+    a file first (_yaml_break), a named gap."""
     try:
         text = (root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -3216,20 +3221,15 @@ def _run_shellcheck(
     *,
     name: str,
     tool_id: str = "shellcheck",
-    shell: str | None = None,
+    flags: tuple[str, ...] = (),
     origin: Mapping[str, tuple[str, Mapping[int, Any]]] | None = None,
     sources: list[tuple[str, int]],
 ) -> _ProducerResult:
-    """The pinned ShellCheck over `paths`, relative to `cwd`: `--norc`, no `-x`, explicit files. With `origin`, each
-    is an analysis copy whose lines map to their source. Each source it reports (SC1090, SC1091) goes to `sources`."""
+    """The pinned ShellCheck over `paths`, relative to `cwd`: `--norc`, no `-x`, explicit files, then `flags` (a
+    shell, an `--include`). With `origin`, each is an analysis copy whose lines map to their source. Each source it
+    reports, never followed (SC1090, SC1091), goes to `sources`."""
     result = _ProducerResult()
-    command = [
-        str(tool),
-        *_SHELLCHECK_FLAGS,
-        *([f"--shell={shell}"] if shell else []),
-        "--",
-        *paths,
-    ]
+    command = [str(tool), *_SHELLCHECK_FLAGS, *flags, "--", *paths]
     report = run / f"diagnostic-{name.replace(':', '-')}.json"
     status, gap, invalid = _bounded_run(
         command,
@@ -3291,6 +3291,45 @@ def _sourced_notes(sources: list[tuple[str, int]]) -> list[str]:
     return [f"{path}:{line}: {_SOURCED_NOTE}" for path, line in sources]
 
 
+def _decoded_directives(path: str, script: str, lines: Mapping[int, Any]) -> list[str]:
+    """Each ShellCheck directive in a script as YAML decodes it, which the file's own lines need not show
+    (`"\\x23 shellcheck ..."`, Codex on #470), at its YAML line (a folded item's first)."""
+    return [
+        f"{path}:{lines[n] if isinstance(lines[n], int) else lines[n][0][1]}: {_DIRECTIVE_NOTE}"
+        for n, line in enumerate(script.split("\n"), 1)
+        if n in lines and _SHELLCHECK_DIRECTIVE.search(line)
+    ]
+
+
+def _yaml_break(text: str) -> int | None:
+    """The file line of the first NEL, LS or PS, at which PyYAML breaks a line and the file does not, so no YAML
+    mark after it is a file line (Codex on #470); else None."""
+    found = re.search("[\x85\u2028\u2029]", text)
+    return None if found is None else text.count("\n", 0, found.start()) + 1
+
+
+class _Located(str):
+    """A workflow scalar, as the step reader loads it: its n-th script line is the file's line first + step * (n - 1),
+    a block literal's lines its own, any other scalar's the line it starts on, where actionlint places a step's
+    findings."""
+
+    first = 0
+    step = 0
+
+
+def _located_loader() -> Any:
+    import yaml
+
+    class Loader(yaml.BaseLoader):
+        def construct_scalar(self, node: Any) -> Any:
+            value = _Located(super().construct_scalar(node))
+            literal = node.style == "|"
+            value.first, value.step = node.start_mark.line + 1 + literal, int(literal)
+            return value
+
+    return Loader
+
+
 def _masked(text: str) -> str:
     """A step's script, each `${{ }}` expression as underscores with its newlines kept, as actionlint masks it."""
     out, start = [], 0
@@ -3305,39 +3344,66 @@ def _masked(text: str) -> str:
 def _step_sources(
     run: Path,
     tool: Path,
-    scripts: list[tuple[str, str]],
+    scripts: list[tuple[str, str, _Located]],
     result: _ProducerResult,
     limits: DiagnosticLimits,
     deadline: float,
+    allowance: int,
     name: str,
 ) -> list[str]:
-    """Each source in an analyzed workflow step, by the pinned ShellCheck's parse, as actionlint excludes SC1091.
-    Findings stay actionlint's; the run is recorded."""
-    if not scripts:
-        return []
+    """The sources and decoded directives of each analyzed workflow step. Of the source codes, actionlint reports
+    SC1090 itself, at its line, and excludes SC1091 (measured on 1.7.12), so the pinned ShellCheck acquires SC1091
+    alone (`--include`, before acquisition) over each step's script, its expressions masked as actionlint masks them:
+    each one a finding of the family at its workflow line, in the family's allowance and merged into `result`, never
+    dropped (Router 6513998438). Each source is a named gap."""
+    notes = _sourced_notes(
+        [
+            (f["path"], f["range"]["start_line"])
+            for f in result.findings
+            if f["rule"] == "SC1090"
+        ]
+    )
     folder = run / "step-sources"
     folder.mkdir()
-    where = {f"{index}.sh": step for index, (step, _text) in enumerate(scripts)}
-    for index, (_step, text) in enumerate(scripts):
-        (folder / f"{index}.sh").write_text(_masked(text), encoding="utf-8")
+    where: dict[str, str] = {}
+    origin: dict[str, tuple[str, Mapping[int, Any]]] = {}
+    for index, (path, step, text) in enumerate(scripts):
+        body = _masked(text)
+        try:
+            body.encode("utf-8")
+        except UnicodeEncodeError:
+            # An escaped lone surrogate decodes, but no analysis copy can hold it (Codex on #470).
+            notes.append(
+                f"{path}:{text.first}: a script that is not UTF-8 text, so its sources are not read"
+            )
+            continue
+        lines = {
+            n: text.first + text.step * (n - 1) for n in range(1, body.count("\n") + 2)
+        }
+        (folder / f"{index}.sh").write_text(body, encoding="utf-8")
+        where[f"{index}.sh"], origin[f"{index}.sh"] = step, (path, lines)
+        notes += _decoded_directives(path, body, lines)
+    if not origin:
+        return notes
     sources: list[tuple[str, int]] = []
     read = _run_shellcheck(
         folder,
         run,
-        sorted(where),
+        sorted(origin),
         tool,
         limits,
         deadline,
-        0,
+        allowance - result.count(),
         name=f"{name}:sources",
-        shell="bash",
+        tool_id="actionlint",
+        flags=("--shell=bash", "--include=SC1091"),
+        origin=origin,
         sources=sources,
     )
-    result.runs += read.runs
-    result.truncated = result.truncated or read.truncated
-    return [f"{where[p]}, its line {line}: {_SOURCED_NOTE}" for p, line in sources] + [
-        f"{where[p]}: {why}" for p, why in sorted(read.unanalyzed.items())
-    ]
+    notes += [f"{where[p]}: {why}" for p, why in sorted(read.unanalyzed.items())]
+    read.unanalyzed = {}
+    result.merge(read)
+    return notes + _sourced_notes(sources)
 
 
 def _run_hadolint(
@@ -3535,7 +3601,7 @@ def _job_step_notes(
     job_id: str,
     job: Mapping[str, Any],
     workflow_shell: Any,
-    scripts: list[tuple[str, str]],
+    scripts: list[tuple[str, str, _Located]],
 ) -> list[str]:
     notes = _structure_notes(path, f"job {job_id} ", job)
     steps = job.get("steps")
@@ -3552,8 +3618,10 @@ def _job_step_notes(
             )
             note = _step_note(path, job_id, index, shell)
             notes += note
-            if not note and isinstance(step["run"], str):
-                scripts.append((f"{path}: job {job_id} step {index}", step["run"]))
+            if not note and isinstance(step["run"], _Located):
+                scripts.append(
+                    (path, f"{path}: job {job_id} step {index}", step["run"])
+                )
     return notes
 
 
@@ -3580,15 +3648,20 @@ def _runner_shell(job: Mapping[str, Any]) -> object:
 
 
 def _step_shell_notes(
-    root: Path, path: str, scripts: list[tuple[str, str]]
+    root: Path, path: str, scripts: list[tuple[str, str, _Located]]
 ) -> list[str]:
     """Each workflow step whose shell is not bash or sh, a gap, as actionlint gives it to no analyzer: the step's,
     job's, then workflow's `defaults.run.shell` decide, then the runner's. Another structure is a gap too. Each
     analyzed step's script goes to `scripts`."""
     import yaml
 
+    text = "\n".join(_text_lines(root, path))
+    if (line := _yaml_break(text)) is not None:
+        return [
+            f"{path}: a NEL, LS or PS line break at line {line}, so its step shells are not read"
+        ]
     try:
-        document = yaml.load("\n".join(_text_lines(root, path)), Loader=yaml.BaseLoader)
+        document = yaml.load(text, Loader=_located_loader())
     except (yaml.YAMLError, RecursionError):
         # A nesting past the reader's depth is a gap, never a crash.
         return [f"{path}: the workflow cannot be read for its step shells"]
@@ -3633,21 +3706,27 @@ def _run_gitlab(
     origin: dict[str, tuple[str, Mapping[int, Any]]] = {}
     notes: list[str] = []
     for index, path in enumerate(paths):
+        text = "\n".join(_text_lines(root, path)) + "\n"
+        if (line := _yaml_break(text)) is not None:
+            notes.append(f"{path}: a NEL, LS or PS line break at line {line}")
+            continue
         try:
-            jobs = read_scripts("\n".join(_text_lines(root, path)) + "\n")
+            jobs = read_scripts(text)
         except GitlabUnsupported as exc:
             notes.append(f"{path}: {exc}")
             continue
         except RecursionError:
             notes.append(f"{path}: nested past the reader's depth")
             continue
-        # The job's index keeps two names that sanitize alike apart.
-        for job_index, (job, parts) in enumerate(jobs.items()):
+        # Numbers alone name an analysis copy, so no job name can pass a file name's bound (Codex on #470); `origin`
+        # maps each one back to its file and lines.
+        for job_index, parts in enumerate(jobs.values()):
             for part_index, items in enumerate(parts):
                 body, mapping = analysis_file(items)
-                analysis = f"{index}-{job_index}-{re.sub(r'[^A-Za-z0-9_.-]', '_', job)}-{part_index}.sh"
+                analysis = f"{index}-{job_index}-{part_index}.sh"
                 (copies / analysis).write_text(body, encoding="utf-8")
                 origin[analysis] = (path, mapping)
+                notes += _decoded_directives(path, body, mapping)
     if not origin:
         return _ProducerResult(), notes
     sources: list[tuple[str, int]] = []
@@ -3661,7 +3740,7 @@ def _run_gitlab(
         allowance,
         name=name,
         tool_id="gitlab-shellcheck",
-        shell="sh",
+        flags=("--shell=sh",),
         origin=origin,
         sources=sources,
     )
@@ -3756,6 +3835,9 @@ def _project_concurrency_queue(
     form is refused and left as it is, for actionlint to report. Returns (text, projected, refused), 1-based lines."""
     import yaml
 
+    if (line := _yaml_break(text)) is not None:
+        # PyYAML breaks at NEL, LS and PS and the file's lines do not, so no node mark would index them (Codex on #470).
+        return text, [], [(line, "a NEL, LS or PS line break")]
     try:
         root = yaml.compose(text, Loader=yaml.SafeLoader)
     except (yaml.YAMLError, RecursionError) as exc:
@@ -3779,7 +3861,10 @@ _DIRECTIVE_NOTE = "a ShellCheck directive, never honoured as clean"
 
 
 def _tool_notes(
-    root: Path, producer: str, paths: list[str], scripts: list[tuple[str, str]]
+    root: Path,
+    producer: str,
+    paths: list[str],
+    scripts: list[tuple[str, str, _Located]],
 ) -> list[str]:
     """Each attributable gap a pinned tool's inputs carry, read before it runs: directives, pragmas and step shells;
     each analyzed step's script is added to `scripts`."""
@@ -3813,11 +3898,10 @@ def _verified_tools(
         tool, why = _verified_tool(profile, tool_name, target)
         if tool is not None:
             pinned = profile["tools"][tool_name]["version"]
-            version = _tool_version(
+            gap = _version_gap(
                 tool, tool_name, run, limits, deadline, pinned, family=family["id"]
             )
-            if version is None:
-                why = f"tool {tool_name}: its version is not its pin {pinned!r}"
+            why = None if gap is None else f"tool {tool_name}: {gap}"
         if why is not None or tool is None:
             return {}, why
         tools[tool_name] = tool
@@ -3835,12 +3919,12 @@ def _run_tool_family(
     allowance: int,
 ) -> tuple[_ProducerResult, list[str]]:
     """A pinned-tool family over `paths`: each executable verified, then its version, before anything runs; then the
-    run and its attributable notes."""
+    run and its attributable notes (directives, pragmas, sources, unsupported step shells or constructs)."""
     producer, name = family["producer"], f"{family['producer']}:{family['id']}"
     tools, why = _verified_tools(profile, family, run, limits, deadline)
     if why is not None:
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, f"{name}: {why}")), []
-    scripts: list[tuple[str, str]] = []
+    scripts: list[tuple[str, str, _Located]] = []
     notes = _tool_notes(root, producer, paths, scripts)
     common = (limits, deadline, allowance)
     if producer == "shellcheck":
@@ -3863,9 +3947,7 @@ def _run_tool_family(
             *common,
             name=name,
         )
-        steps = _step_sources(
-            run, tools["shellcheck"], scripts, result, limits, deadline, name
-        )
+        steps = _step_sources(run, tools["shellcheck"], scripts, result, *common, name)
         return result, notes + refused + steps
     result, unsupported = _run_gitlab(
         root, run, paths, tools["shellcheck"], *common, name=name
@@ -3880,7 +3962,9 @@ def _with_notes(row: dict[str, Any], notes: list[str]) -> dict[str, Any]:
         return row
     if row["analysis"] == "COMPLETE":
         row["analysis"] = "PARTIAL"
-    row["reason"] = "; ".join([r for r in (row["reason"],) if r] + notes)
+    row["reason"] = "; ".join(
+        [r for r in (row["reason"],) if r] + list(dict.fromkeys(notes))
+    )
     return row
 
 
@@ -3915,22 +3999,20 @@ def _secrets_identity(run: Path, version: str) -> Path:
     from tools import security_scan
 
     identity = run / "diagnostic-secrets-identity.json"
-    identity.write_text(
-        canonical_json(
-            {
-                "scanner": "detect-secrets",
-                "version": version,
-                "baseline_sha256": hashlib.sha256(
-                    _PROTECTED_BASELINE.read_bytes()
-                ).hexdigest(),
-                "plugins": {
-                    name: pin
-                    for name, (_path, pin) in security_scan.PLUGIN_PINS.items()
-                },
-            }
-        ),
-        encoding="utf-8",
+    record = canonical_json(
+        {
+            "scanner": "detect-secrets",
+            "version": version,
+            "baseline_sha256": hashlib.sha256(
+                _PROTECTED_BASELINE.read_bytes()
+            ).hexdigest(),
+            "plugins": {
+                name: pin for name, (_path, pin) in security_scan.PLUGIN_PINS.items()
+            },
+        }
     )
+    with _new_file(identity) as stream:
+        stream.write(record.encode("utf-8"))
     return identity
 
 
@@ -3957,16 +4039,13 @@ def _run_secrets(
         planted, unread = security_scan.scan_with_protected_plugins(root, paths)
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
         version = str(_strict_json_loads(baseline.read_bytes())["version"])
+        identity = _secrets_identity(run, version)
     except Exception as exc:
         # Only the scanner's refusals keep their text (a candidate by repository path, never a host path); else type.
         detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
         reason = f"secrets: {type(exc).__name__}{detail}"
         return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []
-    result.runs.append(
-        _run_record(
-            "secrets", "secrets", [], 0, _secrets_identity(run, version), run, version
-        )
-    )
+    result.runs.append(_run_record("secrets", "secrets", [], 0, identity, run, version))
     for record in [*scan.unresolved_findings, *planted]:
         finding = _diagnostic_finding(
             "secrets",
@@ -4009,7 +4088,8 @@ def _run_v2_family(
     changes: _Changes,
     result: _ProducerResult,
 ) -> None:
-    """A v2 family, planned over its own applicable tracked paths and rowed with its notes and unanalyzed paths."""
+    """A v2 family, planned over its own applicable tracked paths and rowed with its notes and its unanalyzed paths,
+    which stay in its own row since they are not tracked Python files."""
     if tracked is None:
         result.families.append(_family_row(family, None, {}, {}, None))
         return

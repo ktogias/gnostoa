@@ -1084,7 +1084,7 @@ def scan_tracked_tree(
 PLUGIN_PINS: dict[str, tuple[str, str]] = {
     "GnostoaAssignmentDetector": (
         "tools/security_scan_plugin.py",
-        "df3752561cb0457a8c7708cfeebc5902b67974d646f0e234eef4e44e316ebbf4",  # pragma: allowlist secret -- the reviewed plugin's content digest
+        "514d7c9215b4686b5883b6a8ad8cd0c0f092e47beb062590244840b12d117dbd",  # pragma: allowlist secret -- the reviewed plugin's content digest
     ),
 }
 _MAX_PLUGIN_BYTES = 1_048_576

@@ -217,7 +217,7 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
         status, body = self.tool_answers[name]
         if name == "shellcheck" and isinstance(body, dict):
             # As ShellCheck does: each comment names the file it was given, the first one here, and an `--include`
-            # keeps its own codes alone (measured on the pinned 0.11.0, #389 round 12).
+            # keeps its own codes alone, exiting 0 when none is left (measured on the pinned 0.11.0, #389 round 12).
             given = command[command.index("--") + 1] if "--" in command else command[-1]
             codes = [a[10:].split(",") for a in command if a.startswith("--include=")]
             body = {
@@ -227,6 +227,7 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
                     if not codes or f"SC{c['code']}" in codes[0]
                 ]
             }
+            status = 0 if codes and not body["comments"] else status
         report.write_text(
             body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
         )
@@ -952,9 +953,9 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertEqual([], self._commands_of("shellcheck"))
 
     def test_a_yaml_line_break_the_file_does_not_count_is_a_named_gap(self) -> None:
-        # A control (cubic on #470): PyYAML also breaks lines at NEL, LS and PS, which the file does not count. In a
-        # comment or a block scalar PyYAML refuses the file, and the reader refuses any scalar spanning its lines, so
-        # no YAML-derived line is reported shifted: the file is a named gap.
+        # A control (cubic on #470): PyYAML also breaks lines at NEL, LS and PS, which the file does not count, so the
+        # collector refuses such a file before the reader (_yaml_break), and no YAML-derived line is reported shifted:
+        # the file is a named gap.
         for text in (
             "# a\u2028b\njob:\n  script:\n    - echo $FOO\n",
             'variables:\n  A: "x\u2028y"\njob:\n  script:\n    - echo $FOO\n',
@@ -1210,14 +1211,14 @@ class RoundTwoContractTests(_ToolFamilyFixture):
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.
         pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
-        verify = _original(self.module, "_tool_version")
+        verify = _original(self.module, "_version_gap")
 
         def then_replace(*args, **kwargs):
-            version = verify(*args, **kwargs)
+            gap = verify(*args, **kwargs)
             (self.tool_root / "shellcheck").write_bytes(b"#!replaced\n")
-            return version
+            return gap
 
-        with patch.object(self.module, "_tool_version", side_effect=then_replace):
+        with patch.object(self.module, "_version_gap", side_effect=then_replace):
             self._collect(base=self.base)
         ran = {digest for name, digest in self.executed if name == "shellcheck"}
         self.assertEqual({pinned}, ran)
