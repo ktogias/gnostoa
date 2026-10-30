@@ -271,8 +271,10 @@ class PinnedFileTests(unittest.TestCase):
         self.tool_root.mkdir()
 
     @unittest.skipUnless(
-        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
-        "the named-pipe regression requires POSIX non-blocking opens",
+        hasattr(os, "mkfifo")
+        and hasattr(os, "O_NONBLOCK")
+        and hasattr(os, "O_NOFOLLOW"),
+        "the named-pipe regression requires POSIX non-blocking, no-follow opens",
     )
     def test_a_pinned_path_that_is_no_regular_file_never_waits(self) -> None:
         # Amazon Q and cubic on #470: a pinned path that is a named pipe or a directory is refused, and its open
@@ -315,7 +317,10 @@ class PinnedFileTests(unittest.TestCase):
 
         (self.tool_root / "file").write_bytes(b"x")
         for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
-            with self.subTest(flag=flag), patch.object(security_scan.os, flag, None):
+            with (
+                self.subTest(flag=flag),
+                patch.object(security_scan.os, flag, None, create=True),
+            ):
                 with self.assertRaises(security_scan.SecurityScanError) as raised:
                     security_scan.verified_pinned_bytes(
                         self.tool_root, "file", "0" * 64, 100, label="tool file"
@@ -338,11 +343,11 @@ class PinnedFileTests(unittest.TestCase):
         self.assertEqual("tool file is unavailable", str(raised.exception))
         self.assertEqual(before, len(os.listdir("/proc/self/fd")))
 
-    def test_a_pinned_read_whose_close_fails_is_a_scan_error(self) -> None:
-        # Claude on #470: even the descriptor's close failing is the read's own refusal, never a raw OSError.
+    def test_a_failing_close_never_masks_the_reads_own_refusal(self) -> None:
+        # Revix and Amazon Q on #470: the primary refusal is kept when the close fails too.
         from tools import security_scan
 
-        (self.tool_root / "file").write_bytes(b"x")
+        (self.tool_root / "dir").mkdir()
         real_close = os.close
 
         def failing_close(descriptor):
@@ -352,11 +357,28 @@ class PinnedFileTests(unittest.TestCase):
         with patch.object(security_scan.os, "close", side_effect=failing_close):
             with self.assertRaises(security_scan.SecurityScanError) as raised:
                 security_scan.verified_pinned_bytes(
-                    self.tool_root,
-                    "file",
-                    hashlib.sha256(b"x").hexdigest(),
-                    100,
-                    label="tool file",
+                    self.tool_root, "dir", "0" * 64, 100, label="tool dir"
+                )
+        self.assertEqual(
+            "tool dir is not a bounded regular file", str(raised.exception)
+        )
+
+    def test_a_pinned_read_whose_close_fails_is_a_scan_error(self) -> None:
+        # Claude on #470: even the descriptor's close failing is the read's own refusal, never a raw OSError.
+        from tools import security_scan
+
+        (self.tool_root / "file").write_bytes(b"x")
+        digest = hashlib.sha256(b"x").hexdigest()
+        real_close = os.close
+
+        def failing_close(descriptor):
+            real_close(descriptor)
+            raise OSError(4, "EINTR")
+
+        with patch.object(security_scan.os, "close", side_effect=failing_close):
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan.verified_pinned_bytes(
+                    self.tool_root, "file", digest, 100, label="tool file"
                 )
         self.assertEqual("tool file is unavailable", str(raised.exception))
 

@@ -1147,6 +1147,23 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertNotEqual("COMPLETE", row["analysis"])
         self.assertIn("a duplicate key", row["reason"])
 
+    def test_an_unknown_comparison_keeps_an_unsupported_scripts_scope_unknown(
+        self,
+    ) -> None:
+        # Codex on #470: a DIFF-only shell family whose only script is another shell's is never COMPLETE while the
+        # changed files are unknown.
+        (self.root / "ci" / "tool").write_text(
+            "#!/bin/zsh\necho hi\n", encoding="utf-8"
+        )
+        self._git("commit", "-q", "-am", "zsh")
+        profile = copy.deepcopy(self.profile)
+        for family in profile["families"]:
+            if family["id"] == "shell-lint":
+                family["full"] = None
+        row = self._rows(self._collect(profile))["shell-lint"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("its DIFF targets are unknown", row["reason"])
+
     def test_a_tool_whose_run_copy_cannot_be_written_is_a_named_gap(self) -> None:
         # Amazon Q on #470: a failure writing the verified copy is the family's named gap; the inventory is still
         # published with every other family's findings.
