@@ -217,8 +217,14 @@ def production_absent() -> bool:
 
 
 def git_blob(path: Path) -> str:
-    data = path.read_bytes()
-    return hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+    # Git's blob id, from its owner in this checkout, which records why SHA-1 is that identity and not a security
+    # use. A direct run (`python tests/test_review_assurance.py --verify-receipt`) puts only tests/ on sys.path, where
+    # an installed copy of `tools` would answer instead, so this checkout's root goes first (cubic on #470).
+    if sys.path[:1] != [str(ROOT)]:
+        sys.path.insert(0, str(ROOT))
+    from tools.agent_review_base import blob_id
+
+    return blob_id(path.read_bytes())
 
 
 def receipt_fields() -> dict[str, str]:

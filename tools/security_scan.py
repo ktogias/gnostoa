@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -1075,3 +1075,196 @@ def scan_tracked_tree(
                 "cannot write the sanitized tracked-tree secret report"
             ) from exc
     return result
+
+
+# The protected detect-secrets plugins (#389 H-PYSEC-2; Decision 0122): class -> (producer-relative path, SHA-256 of
+# the approved bytes). The pin lives in this producer code: neither the plugin, a baseline nor an analyzed tree is
+# authority for it. The diagnostic inventory runs them over a head's files as data; the candidate security-fast scan
+# is unchanged.
+PLUGIN_PINS: dict[str, tuple[str, str]] = {
+    "GnostoaAssignmentDetector": (
+        "tools/security_scan_plugin.py",
+        "514d7c9215b4686b5883b6a8ad8cd0c0f092e47beb062590244840b12d117dbd",  # pragma: allowlist secret -- the reviewed plugin's content digest
+    ),
+}
+_MAX_PLUGIN_BYTES = 1_048_576
+
+
+def _read_descriptor(descriptor: int, max_bytes: int, label: str) -> bytes:
+    """At most `max_bytes` + 1 bytes of the regular file open at `descriptor`, which this closes; any failure is the
+    read's own refusal, the first one kept over a failing close (Revix and Amazon Q on #470)."""
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise SecurityScanError(f"{label} is not a bounded regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(max_bytes + 1)
+    except BaseException as exc:
+        # The read's own failure is the one kept; the close is then best effort (Revix and Amazon Q on #470).
+        with suppress(OSError):
+            os.close(descriptor)
+        if isinstance(exc, OSError):
+            raise SecurityScanError(f"{label} is unavailable") from exc
+        raise
+    try:
+        os.close(descriptor)
+    except OSError as exc:
+        # A failing close alone is the read's own refusal too (Claude on #470).
+        raise SecurityScanError(f"{label} is unavailable") from exc
+    return data
+
+
+def verified_pinned_bytes(
+    root: Path, relative: str, digest: str, max_bytes: int, *, label: str
+) -> bytes:
+    """The bytes of `relative` under `root`: each component checked to be no symbolic link, the file opened without
+    following one or waiting on a pipe, a regular file of at most `max_bytes`, and equal to their pin; otherwise
+    SecurityScanError names why, `label` first. The checks and the open are separate calls, so the digest of the bytes
+    read is what decides (Claude on #470). The one owner of a pinned file's bytes: the protected plugin's and the
+    inventory's pinned tools' (#389 H-PYSEC-2, Router 6512084508)."""
+    nofollow, nonblock = (
+        getattr(os, "O_NOFOLLOW", None),
+        getattr(os, "O_NONBLOCK", None),
+    )
+    if nofollow is None or nonblock is None:
+        # Without them the guarantees above cannot hold, so the read refuses, as the snapshot does (Claude on #470).
+        raise SecurityScanError(f"{label} is unavailable")
+    current = root
+    try:
+        # The root is no link either, so none can redirect the read (cubic on #470).
+        if stat.S_ISLNK(os.lstat(root).st_mode):
+            raise SecurityScanError(f"{label} is reached through a link")
+    except OSError as exc:
+        raise SecurityScanError(f"{label} is unavailable") from exc
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                raise SecurityScanError(f"{label} is reached through a link")
+        except OSError as exc:
+            raise SecurityScanError(f"{label} is unavailable") from exc
+    try:
+        # Non-blocking, so a named pipe is refused below rather than waited on (Amazon Q and cubic on #470).
+        descriptor = os.open(current, os.O_RDONLY | nofollow | nonblock)
+    except OSError as exc:
+        raise SecurityScanError(f"{label} is unavailable") from exc
+    data = _read_descriptor(descriptor, max_bytes, label)
+    if len(data) > max_bytes:
+        raise SecurityScanError(f"{label} is not a bounded regular file")
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise SecurityScanError(f"{label} is not its pinned bytes")
+    return data
+
+
+def _verified_plugin_bytes(relative: str, digest: str) -> bytes:
+    """The plugin's bytes from this producer tree, through the pinned-file owner; otherwise the scan fails closed."""
+    return verified_pinned_bytes(
+        Path(__file__).resolve().parent.parent,
+        relative,
+        digest,
+        _MAX_PLUGIN_BYTES,
+        label=f"protected secret plugin {relative}",
+    )
+
+
+def _load_protected_plugin(name: str, staging: Path) -> Any:
+    """The pinned plugin's class, imported from a private read-only copy of its verified bytes, never through the
+    import path, so no same-named module elsewhere can stand in for it."""
+    import importlib.util
+
+    relative, digest = PLUGIN_PINS[name]
+    data = _verified_plugin_bytes(relative, digest)
+    target = staging / f"{name}.py"
+    try:
+        # The staging copy is part of the load, so its failure is the plugin's named refusal (Claude on #470).
+        # O_NOFOLLOW is present: the verified read above refuses without it (Amazon Q on #470).
+        out = os.open(
+            target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400
+        )
+        with os.fdopen(out, "wb") as stream:
+            stream.write(data)
+    except OSError as exc:
+        raise SecurityScanError(
+            f"protected secret plugin {name} cannot be loaded"
+        ) from exc
+    try:
+        # Making the spec and the module is part of the load too (Claude on #470).
+        spec = importlib.util.spec_from_file_location(
+            f"gnostoa_protected_secret_plugin_{name}", target
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(name)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        plugin = getattr(module, name)
+        from detect_secrets.plugins.base import BasePlugin
+
+        # Only a detect-secrets plugin class is made and run (Amazon Q on #470).
+        if not (isinstance(plugin, type) and issubclass(plugin, BasePlugin)):
+            raise TypeError(name)
+        return plugin
+    except Exception as exc:
+        # Whatever fails while the pinned bytes load, the scan fails closed and names it (Amazon Q on #470).
+        raise SecurityScanError(
+            f"protected secret plugin {name} cannot be loaded"
+        ) from exc
+
+
+_LINE_END = re.compile(r"\r\n|\r|\n")
+
+
+def _plugin_lines(snapshot: Path, relative: str) -> list[str] | None:
+    """The file's lines in the scan's private snapshot, split at CRLF, CR or LF and nothing else, so each is its line
+    in the file (cubic on #470), or None for a file holding NUL bytes, which no protected plugin reads."""
+    data = (snapshot / relative).read_bytes()
+    if b"\0" in data:
+        return None
+    lines = _LINE_END.split(data.decode("utf-8", errors="replace"))
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def scan_with_protected_plugins(
+    root: Path, paths: list[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Every protected plugin over `paths` under `root`, read as data: each candidate's path, line and type, never
+    its value, and the paths no plugin could read, for the caller to name as a gap. A plugin that is not its pinned
+    bytes fails the scan closed. Its hits are stricter than the scanner's: no inline allowlist pragma hides one, as no
+    suppression comment hides a finding from the inventory's Ruff, which ignores them, and the reviewed baseline holds no
+    audit for them yet; their false-positive path is a choice for activation (Decision 0122). The files are read from
+    the scanner's own private snapshot of them, so a link at any component, a file that is not regular or one past the
+    snapshot's bounds fails the scan closed, as it fails the scanner's (Amazon Q, cubic and Claude on #470)."""
+    records: list[dict[str, Any]] = []
+    unread: dict[str, None] = {}
+    candidates = _validated_candidate_paths(root, [Path(path) for path in paths])
+    with (
+        _immutable_candidate_snapshot(root, candidates) as snapshot,
+        tempfile.TemporaryDirectory(prefix="gnostoa-secret-plugins-") as staging,
+    ):
+        for name in sorted(PLUGIN_PINS):
+            detector = _load_protected_plugin(name, Path(staging))()
+            for relative in paths:
+                lines = _plugin_lines(snapshot, relative)
+                if lines is None:
+                    # A mapping keeps first-seen order at constant cost (cubic on #470).
+                    unread[relative] = None
+                    continue
+                records += _plugin_hits(detector, relative, lines)
+    return records, list(unread)
+
+
+def _plugin_hits(
+    detector: Any, relative: str, lines: list[str]
+) -> list[dict[str, Any]]:
+    """One plugin's candidates in one file: path, line and type, never the value, each type once a line (Amazon Q and
+    cubic on #470)."""
+    import types
+
+    hits: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        context = types.SimpleNamespace(lines=lines, target_index=index)
+        found = detector.analyze_line(relative, line, index + 1, context)
+        for kind in sorted({candidate.type for candidate in found}):
+            hits.append({"path": relative, "line": index + 1, "type": kind})
+    return hits

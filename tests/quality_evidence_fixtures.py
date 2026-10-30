@@ -375,7 +375,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         ]
         self.mypy_exit: dict[str, int] = {}
         self.mypy_text: str | None = None
-        self.ruff_exit = 1
+        # None answers with Ruff's own status (_ruff_gap).
+        self.ruff_exit: int | None = 1
         self.ruff_as_ruff = False
         self.ruff_text: str | None = None
         # Each producer's `--version` answer, 1.0.0 unless a test sets one; None

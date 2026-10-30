@@ -9,7 +9,13 @@
 # contract's values (Router 6381924685 on #389), qualification hypotheses, not accepted
 # losses, except protected access's FULL scope: the owner's N (#389 6405282317) accepts
 # its loss. PLR6301 and SIM117 are not selected.
-schema: gnostoa-diagnostic-profile/v1
+#
+# v2 (#389 H-PYSEC-2; Decision 0122; owner admission 6508582845) adds the pinned tool families and
+# the unsafe-calls family, each `active: false`: none is planned, run or rowed in production until
+# a separate activation decision, so every effective obligation is unchanged. Their executables are
+# the official release ones, pinned per machine by the SHA-256 of the executable itself; the
+# inventory runs one only from its protected tool root and only after its bytes match.
+schema: gnostoa-diagnostic-profile/v2
 id: gnostoa.project-risk
 scopes:
   all:
@@ -39,3 +45,56 @@ families:
     reported_above: 15
     diff: all
     full: null
+  # The pinned tool families and the narrow unsafe-calls family: inactive until activation.
+  - id: shell-lint
+    producer: shellcheck
+    diff: all
+    full: all
+    active: false
+  - id: dockerfile-lint
+    producer: hadolint
+    diff: all
+    full: all
+    active: false
+  - id: workflow-lint
+    producer: actionlint
+    diff: all
+    full: all
+    active: false
+  - id: gitlab-script
+    producer: gitlab-shellcheck
+    diff: all
+    full: all
+    active: false
+  - id: secrets
+    producer: secrets
+    diff: all
+    full: all
+    active: false
+  - id: unsafe-calls
+    producer: ruff
+    select: [S301, S307, S324, S602, S605, S608]
+    diff: all
+    full: all
+    active: false
+tools:
+  # ShellCheck v0.11.0 (GPL-3.0): the `shellcheck` executable inside the official
+  # linux.{x86_64,aarch64}.tar.xz assets.
+  shellcheck:
+    version: "0.11.0"
+    sha256:
+      x86_64: 4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b  # pragma: allowlist secret -- release executable digest
+      aarch64: 127f13925eadd52c341bca0ebaf9ab0dbd78c6468f30a8f262a528bf8de47546  # pragma: allowlist secret -- release executable digest
+  # Hadolint v2.15.1 (GPL-3.0): the official linux-{x86_64,arm64} executables.
+  hadolint:
+    version: "2.15.1"
+    sha256:
+      x86_64: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507  # pragma: allowlist secret -- release executable digest
+      aarch64: f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d  # pragma: allowlist secret -- release executable digest
+  # actionlint v1.7.12 (MIT): the `actionlint` executable inside the official
+  # linux_{amd64,arm64}.tar.gz assets.
+  actionlint:
+    version: "1.7.12"
+    sha256:
+      x86_64: c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4  # pragma: allowlist secret -- release executable digest
+      aarch64: ac0323433c2853ec3fb978c611430c5b3dc5d43c58d1a1ec031b00ab572beb60  # pragma: allowlist secret -- release executable digest
