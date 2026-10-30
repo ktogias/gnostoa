@@ -344,3 +344,18 @@ class GitlabReaderTests(_ToolFamilyFixture):
                 self._commit({".gitlab-ci.yml": f"job:\n  script: {value}\n"})
                 row = self._rows(self._collect(base=self.base))["gitlab-script"]
                 self.assertIn("item that cannot be read at line 2", row["reason"])
+
+    def test_an_unexpected_loader_failure_is_never_read_as_a_gap(self) -> None:
+        # cubic on #470: only the constructor failures measured for text a tag cannot read are a named gap; any other
+        # failure is the loader's own defect, and surfaces.
+        import yaml
+
+        with (
+            patch.object(
+                yaml.constructor.SafeConstructor,
+                "construct_object",
+                side_effect=TypeError("a defect"),
+            ),
+            self.assertRaises(TypeError),
+        ):
+            gitlab_ci_reader.read_scripts("job:\n  script: !!int 1\n")

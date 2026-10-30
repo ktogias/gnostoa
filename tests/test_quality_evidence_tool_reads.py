@@ -41,6 +41,34 @@ class CandidateReadTests(_ToolFamilyFixture):
                 os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
             self.assertFalse(blocked, "the shebang read waited on a named pipe")
 
+    def test_a_path_swapped_to_a_pipe_after_its_check_is_never_read(self) -> None:
+        # Claude on #470: the link test above stops at the link check, never at the open. Here the regular-file check
+        # passes, as before a swap, and the path is a named pipe holding a shebang: the descriptor is checked again,
+        # as the complexity producer's is, so nothing is read.
+        first_line = _original(self.module, "_first_line")
+        fifo = self.root / "swapped"
+        os.mkfifo(fifo)
+        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        writer = os.open(fifo, os.O_WRONLY)
+        try:
+            os.write(writer, b"#!/bin/sh\n")
+            with patch.object(self.module, "_regular_file", return_value=True):
+                line = first_line(self.root, "swapped")
+        finally:
+            os.close(writer)
+            os.close(reader)
+        self.assertEqual(b"", line)
+
+    def test_a_tracked_link_without_a_shell_suffix_is_a_named_gap(self) -> None:
+        # cubic on #470: the shebang read no longer follows a link, so a link to a shell script dropped out of
+        # ShellCheck silently and its row could read COMPLETE. Its shebang is never read: it is named instead.
+        (self.root / "ci" / "run").symlink_to("tool")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "a link")
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("ci/run: a symlink, so its shebang is never read", row["reason"])
+
 
 @unittest.skipUnless(
     importlib.util.find_spec("detect_secrets") is not None,
