@@ -3200,6 +3200,18 @@ def _text_lines(root: Path, path: str) -> list[str]:
     return lines
 
 
+def _yaml_text(root: Path, path: str) -> str | None:
+    """A YAML family's file as text, its lines as _text_lines counts them; None when it is not UTF-8 text, since no
+    family analyzes a repaired copy (Codex on #470). An unreadable file reads as empty, as _text_lines reads it."""
+    try:
+        (root / path).read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    except OSError:
+        return "\n"
+    return "\n".join(_text_lines(root, path)) + "\n"
+
+
 def _marked_lines(
     root: Path, path: str, pattern: re.Pattern[str], what: str
 ) -> list[str]:
@@ -3493,9 +3505,13 @@ def _run_actionlint(
     copies = run / "actionlint-input"
     refusals: list[str] = []
     for path in paths:
-        text, _projected, refused = _project_concurrency_queue(
-            "\n".join(_text_lines(root, path)) + "\n"
-        )
+        source = _yaml_text(root, path)
+        if source is None:
+            result.unanalyzed[path] = (
+                f"{name}: not UTF-8 text, never analyzed as a repaired copy"
+            )
+            continue
+        text, _projected, refused = _project_concurrency_queue(source)
         (copies / path).parent.mkdir(parents=True, exist_ok=True)
         (copies / path).write_text(text, encoding="utf-8")
         refusals += [
@@ -3513,8 +3529,10 @@ def _run_actionlint(
         "-pyflakes=",
         "-format",
         "{{json .}}",
-        *paths,
+        *(analyzed := [path for path in paths if path not in result.unanalyzed]),
     ]
+    if not analyzed:
+        return result, refusals
     report = run / f"diagnostic-{name.replace(':', '-')}.json"
     status, gap, invalid = _bounded_run(
         command,
@@ -3655,14 +3673,17 @@ def _step_shell_notes(
     analyzed step's script goes to `scripts`."""
     import yaml
 
-    text = "\n".join(_text_lines(root, path))
+    text = _yaml_text(root, path)
+    if text is None:
+        return [f"{path}: not UTF-8 text, so its step shells are not read"]
     if (line := _yaml_break(text)) is not None:
         return [
             f"{path}: a NEL, LS or PS line break at line {line}, so its step shells are not read"
         ]
     try:
         document = yaml.load(text, Loader=_located_loader())
-    except (yaml.YAMLError, RecursionError):
+    except (yaml.YAMLError, ValueError, RecursionError):
+        # PyYAML's scanner raises ValueError for an escape past U+10FFFF (cubic on #470).
         # A nesting past the reader's depth is a gap, never a crash.
         return [f"{path}: the workflow cannot be read for its step shells"]
     if document is None:
@@ -3706,7 +3727,10 @@ def _run_gitlab(
     origin: dict[str, tuple[str, Mapping[int, Any]]] = {}
     notes: list[str] = []
     for index, path in enumerate(paths):
-        text = "\n".join(_text_lines(root, path)) + "\n"
+        text = _yaml_text(root, path)
+        if text is None:
+            notes.append(f"{path}: not UTF-8 text, never analyzed as a repaired copy")
+            continue
         if (line := _yaml_break(text)) is not None:
             notes.append(f"{path}: a NEL, LS or PS line break at line {line}")
             continue
@@ -3840,7 +3864,8 @@ def _project_concurrency_queue(
         return text, [], [(line, "a NEL, LS or PS line break")]
     try:
         root = yaml.compose(text, Loader=yaml.SafeLoader)
-    except (yaml.YAMLError, RecursionError) as exc:
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
+        # PyYAML's scanner raises ValueError for an escape past U+10FFFF (cubic on #470).
         return text, [], [(0, f"unparsable: {type(exc).__name__}")]
     lines = text.split("\n")
     projected: list[tuple[int, str]] = []

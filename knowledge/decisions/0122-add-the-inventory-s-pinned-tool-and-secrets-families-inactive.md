@@ -93,9 +93,10 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes.
 
    The GitLab family's bounded reader is `tools/gitlab_ci_reader.py` (source `owner-extension`): it turns a file's
-   YAML into each job's script items with their lines, or names why it cannot. An anchor, an alias or a nesting past
-   32 levels is refused before composition, by the task envelope's own bounded preflight (`yaml_preflight`). The
-   collector keeps the family's run, its tool execution and its findings mapping.
+   YAML into each job's script items with their lines, or names why it cannot. An anchor, an alias or more than 32
+   open collections (an indentless sequence opens none) is refused before composition, by the task envelope's own
+   bounded preflight (`yaml_preflight`), and each job's `extends` resolves once per file. The collector keeps the
+   family's run, its tool execution and its findings mapping.
 4. **Applicability** comes from the frozen tree's one listing:
    - for ShellCheck, a `.sh`, `.bash`, `.dash` or `.ksh` file, or a sh/bash/dash/ksh shebang;
    - `Dockerfile*`, and `*.Dockerfile` in any case;
@@ -115,9 +116,11 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
      allowance. A source ShellCheck does not parse as one (`builtin source`, `command .`, `eval`) is outside this
      model and is not named;
    - a workflow step whose effective shell is not bash or sh;
-   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, anchors, aliases, a
-     nesting past 32 levels, unmappable items, a key that is not text, a duplicate key);
-   - a YAML file holding a NEL, LS or PS, at which PyYAML breaks a line and the file does not;
+   - an unsupported GitLab construct (include, `!reference`, `inherit`, cycles, merge keys, anchors, aliases, more
+     than 32 open collections, a job that is not a mapping, unmappable items, a key that is not text, a duplicate
+     key, an escape PyYAML cannot read);
+   - a YAML file holding a NEL, LS or PS, at which PyYAML breaks a line and the file does not, and one that is not
+     UTF-8 text, which no family analyzes as a repaired copy;
    - another shell's script;
    - a missing, linked or altered tool, one that is not a regular file (a named pipe is refused, never waited on),
      a wrong version or a failed version call, each by its own cause, or a run with no status;

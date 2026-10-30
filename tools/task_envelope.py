@@ -162,14 +162,17 @@ def _offline_registry() -> Registry[Any]:
 
 
 def yaml_preflight(text: str, max_depth: int) -> tuple[str, int] | None:
-    """The first anchor, alias or nesting deeper than `max_depth` in `text`, as
+    """The first anchor, alias or open collection past `max_depth` in `text`, as
     ("anchor" | "alias" | "depth", its 1-based line), or None, before any composition.
+    The depth counts block and flow collection starts; an indentless sequence opens
+    none, so a composed nesting can reach about twice the bound (cubic on #470).
 
     `yaml.compose` recurses per level and exhausts the interpreter stack at
     roughly five hundred levels, and a very small alias graph expands
     exponentially once it is constructed; `yaml.scan` is a token state machine
     and stays bounded, so both are measured here rather than discovered by
-    crashing or by expanding. A scan error is raised as `yaml.YAMLError`. The
+    crashing or by expanding. A scan error is raised as PyYAML raises it: a
+    `yaml.YAMLError`, or a `ValueError` for an escape past U+10FFFF (measured). The
     task envelope's preflight, and the inventory's GitLab reader's (#389
     H-PYSEC-2, Router 6513998438).
     """
