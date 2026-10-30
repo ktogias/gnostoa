@@ -3052,46 +3052,27 @@ def _applicable(
     return selected, unsupported
 
 
-def _tool_bytes(path: Path, name: str) -> tuple[bytes, str | None]:
-    """The bytes of a regular file reached through no link, read through one descriptor, or why not."""
-    try:
-        info = path.lstat()
-    except OSError:
-        return b"", f"tool {name}: missing"
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        return b"", f"tool {name}: not a regular file"
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        return b"", f"tool {name}: not a regular file"
-    from tools import exact_tree
-
-    with os.fdopen(descriptor, "rb") as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            return b"", f"tool {name}: not a regular file"
-        data = exact_tree.read_bounded(stream.fileno(), _MAX_TOOL_BYTES)
-    if data is None:
-        return b"", f"tool {name}: not a bounded regular file"
-    return data, None
-
-
 def _verified_tool(
     profile: Mapping[str, Any], name: str, target: Path
 ) -> tuple[Path | None, str | None]:
-    """The pinned executable under TOOL_ROOT, copied into `target` once its bytes are the protected profile's pin
-    for this machine, or why none may run: no pin, absent, a link, not a regular file, or other bytes. The copy is
-    what runs, so a replacement after the check never does (cubic on #470); its version is read only after this."""
+    """The pinned executable under TOOL_ROOT, copied into `target` once the pinned-file owner has read its bytes as
+    the protected profile's pin for this machine, or why none may run: no pin, absent, a link, not a bounded regular
+    file, or other bytes. The copy is what runs, so a replacement after the check never does (cubic on #470); its
+    version is read only after this."""
     pin = profile.get("tools", {}).get(name)
     if pin is None:
         return None, f"tool {name}: no pin in the profile"
     digest = pin["sha256"].get(platform.machine())
     if digest is None:
         return None, f"tool {name}: no pin for this machine"
-    data, why = _tool_bytes(Path(TOOL_ROOT) / name, name)
-    if why is not None:
-        return None, why
-    if hashlib.sha256(data).hexdigest() != digest:
-        return None, f"tool {name}: its bytes are not its pin"
+    from tools import security_scan
+
+    try:
+        data = security_scan.verified_pinned_bytes(
+            Path(TOOL_ROOT), name, digest, _MAX_TOOL_BYTES, label=f"tool {name}"
+        )
+    except security_scan.SecurityScanError as exc:
+        return None, str(exc)
     target.mkdir(exist_ok=True)
     copy = target / name
     descriptor = os.open(
@@ -3205,7 +3186,8 @@ def _report_records(
 
 def _text_lines(root: Path, path: str) -> list[str]:
     """The file's lines as the file counts them: universal newlines, then a split at newlines only, so a form feed
-    or a Unicode separator never moves a line number (Revix on #470)."""
+    or a Unicode separator never moves a line number (Revix on #470). A YAML reader counts its own: PyYAML also
+    breaks at NEL, LS and PS, and then refuses the file or the reader refuses the scalar, a named gap (cubic)."""
     try:
         text = (root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -3508,24 +3490,22 @@ def _job_step_notes(
 
 
 def _runner_shell(job: Mapping[str, Any]) -> str:
-    """The runner's default shell for a step that names none: pwsh on a Windows runner, bash on any other, and an
-    unknown one when `runs-on` is an expression (Revix on #470). Only bash and sh are analyzed."""
+    """The runner's default shell for a step that names none: pwsh on a Windows runner, bash on a Linux or macOS
+    one, and unknown otherwise: an expression, a group or a bare self-hosted label can be any (Revix and cubic on
+    #470). Only bash and sh are analyzed."""
     runs_on = job.get("runs-on")
     if isinstance(runs_on, dict):
         runs_on = runs_on.get("labels")
-    labels = (
-        [runs_on]
-        if isinstance(runs_on, str)
-        else runs_on
-        if isinstance(runs_on, list)
-        else []
-    )
-    texts = [label for label in labels if isinstance(label, str)]
-    if any("${{" in label for label in texts):
-        return "the runner default runs-on does not name"
-    if any(label.lower().startswith("windows") for label in texts):
-        return "pwsh"
-    return "bash"
+    if isinstance(runs_on, str):
+        runs_on = [runs_on]
+    labels = runs_on if isinstance(runs_on, list) else []
+    texts = [label.lower() for label in labels if isinstance(label, str)]
+    if not any("${{" in label for label in texts):
+        if any(label.startswith("windows") for label in texts):
+            return "pwsh"
+        if any(label.startswith(("ubuntu", "macos", "linux")) for label in texts):
+            return "bash"
+    return "the runner default runs-on does not name"
 
 
 def _step_shell_notes(root: Path, path: str) -> list[str]:
@@ -3578,7 +3558,6 @@ _GITLAB_RESERVED = frozenset(
         "before_script",
         "after_script",
         "cache",
-        "pages",
     }
 )
 
@@ -3729,6 +3708,19 @@ def _gitlab_job(
     return [part for part in (main, after) if part]
 
 
+def _gitlab_defaults(root: Mapping[str, Any]) -> dict[str, Any]:
+    """`default`, with a top-level before_script or after_script read as a default's, since the runner runs them as
+    one (Codex on #470); both at once, or an `inherit`, is unsupported."""
+    default = root.get("default") or {}
+    if not isinstance(default, dict) or "inherit" in default:
+        raise _GitlabUnsupported("an unsupported default")
+    for key in ("before_script", "after_script"):
+        if key in root and key in default:
+            raise _GitlabUnsupported(f"both a top-level and a default {key}")
+        default = {**default, key: root[key]} if key in root else default
+    return default
+
+
 def _gitlab_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
     """The bounded GitLab CI reader: per job, its shells, each item with its YAML line (a column table for a simple
     folded item). Local `extends` (GitLab's merge), `default` and anchors are resolved; include, `!reference`,
@@ -3746,9 +3738,7 @@ def _gitlab_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
         raise _GitlabUnsupported(
             "include" if isinstance(root, dict) else "the document is not a mapping"
         )
-    default = root.get("default") or {}
-    if not isinstance(default, dict) or "inherit" in default:
-        raise _GitlabUnsupported("an unsupported default")
+    default = _gitlab_defaults(root)
     jobs = {
         k: v
         for k, v in root.items()
@@ -4177,6 +4167,11 @@ def _run_v2_family(
         return
     applicable, unsupported = _applicable(root, family["producer"], tracked)
     targets, _functions, unknown = _family_targets(profile, family, applicable, changes)
+    # Only what the family's scopes select can downgrade its row (Codex on #470).
+    selected_unsupported = _family_targets(
+        profile, family, sorted(unsupported), changes
+    )[0]
+    unsupported = {path: unsupported[path] for path in selected_unsupported}
     withheld = _withheld(root, targets, limits)
     selected = [path for path in targets if path not in withheld]
     notes = sorted(unsupported.values())

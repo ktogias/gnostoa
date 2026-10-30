@@ -1287,10 +1287,6 @@ def _read_bounded(descriptor: int, limit: int) -> bytes | None:
     return bytes(data)
 
 
-# The same bounded read, for a caller that reads an opened file within a cap (#389 H-PYSEC-2, Revix on #470).
-read_bounded = _read_bounded
-
-
 def _bind(destination: Path, record: _Record) -> None:
     """Record, beside the destination, the tree it was written for and the directory
     published for it. The record is published create-only: one another process wrote

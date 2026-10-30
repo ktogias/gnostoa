@@ -1090,39 +1090,46 @@ PLUGIN_PINS: dict[str, tuple[str, str]] = {
 _MAX_PLUGIN_BYTES = 1_048_576
 
 
-def _verified_plugin_bytes(relative: str, digest: str) -> bytes:
-    """The plugin's bytes from this producer tree, reached through no symbolic link, a bounded regular file opened
-    without following a link, and equal to their pin; otherwise the scan fails closed."""
-    current = Path(__file__).resolve().parent.parent
+def verified_pinned_bytes(
+    root: Path, relative: str, digest: str, max_bytes: int, *, label: str
+) -> bytes:
+    """The bytes of `relative` under `root`, reached through no symbolic link, a regular file of at most `max_bytes`
+    opened without following a link, and equal to their pin; otherwise SecurityScanError names why, `label` first.
+    The one owner of a pinned file's bytes: the protected plugin's and the inventory's pinned tools' (#389
+    H-PYSEC-2, Router 6512084508)."""
+    current = root
     for part in Path(relative).parts:
         current = current / part
         try:
             if stat.S_ISLNK(os.lstat(current).st_mode):
-                raise SecurityScanError(
-                    f"protected secret plugin {relative} is reached through a link"
-                )
+                raise SecurityScanError(f"{label} is reached through a link")
         except OSError as exc:
-            raise SecurityScanError(
-                f"protected secret plugin {relative} is unavailable"
-            ) from exc
+            raise SecurityScanError(f"{label} is unavailable") from exc
     try:
         descriptor = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError as exc:
-        raise SecurityScanError(
-            f"protected secret plugin {relative} is unavailable"
-        ) from exc
+        raise SecurityScanError(f"{label} is unavailable") from exc
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_PLUGIN_BYTES:
-            raise SecurityScanError(
-                f"protected secret plugin {relative} is not a bounded regular file"
-            )
-        data = stream.read(_MAX_PLUGIN_BYTES + 1)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise SecurityScanError(f"{label} is not a bounded regular file")
+        data = stream.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise SecurityScanError(f"{label} is not a bounded regular file")
     if hashlib.sha256(data).hexdigest() != digest:
-        raise SecurityScanError(
-            f"protected secret plugin {relative} is not its pinned bytes"
-        )
+        raise SecurityScanError(f"{label} is not its pinned bytes")
     return data
+
+
+def _verified_plugin_bytes(relative: str, digest: str) -> bytes:
+    """The plugin's bytes from this producer tree, through the pinned-file owner; otherwise the scan fails closed."""
+    return verified_pinned_bytes(
+        Path(__file__).resolve().parent.parent,
+        relative,
+        digest,
+        _MAX_PLUGIN_BYTES,
+        label=f"protected secret plugin {relative}",
+    )
 
 
 def _load_protected_plugin(name: str, staging: Path) -> Any:

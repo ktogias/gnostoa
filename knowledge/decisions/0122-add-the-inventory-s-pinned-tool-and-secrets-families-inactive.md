@@ -128,10 +128,11 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
      named, so the row is INCOMPLETE, never clean. The scan itself is bounded by the scanner's timeout.
    - **Reasons:** a scanner refusal keeps its own classification, which never copies an exception's text or a
      filename; any other failure is named by its type alone.
-   - **The plugin is stricter than the scanner:** no inline allowlist pragma hides its hits, as no suppression
-     comment hides a finding from the inventory's Ruff, which runs with its option to ignore them. The reviewed baseline also holds no audit
-     for them, since an entry of its type would read as stale to the scanner unless the plugin were one of the
-     baseline's `plugins_used`, and that changes `security-fast`.
+   - **The plugin is stricter than the scanner.** No inline allowlist pragma hides its hits; no suppression
+     comment hides a finding from the inventory's Ruff either. The reviewed baseline holds no audit for its hits.
+     An entry of its type would read as stale to the scanner, unless the plugin were one of the baseline's
+     `plugins_used`. That would change `security-fast`. So the plugin has no false-positive path yet: choosing one
+     is part of activation.
 8. **Unsafe-calls** select S301, S307, S324, S602, S605 and S608 on the existing Ruff producer. Its one finding on
    main, a Git blob id hashed with SHA-1, is repaired with `usedforsecurity=False`, which keeps the same digest.
 9. **Qualification with the real executables** is `tests/test_quality_evidence_tool_qualification.py`. It runs only
@@ -155,7 +156,7 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
     - the repairs of the findings the new families report on main (Hadolint and actionlint, source
       `qualification`).
   - **The later decision** to enable production coverage: turning any family `active`, the coverage choices the
-    owner still holds (source `owner-admission`), and the plugin's false-positive path (above).
+    owner still holds (source `owner-admission`), and the plugin's false-positive path (decision item 7).
 
   This change leaves acquisition out because, while every new family is off, a mandatory release download would
   add a failure to every pull request's inventory and no coverage. Source `route` keeps the effective production

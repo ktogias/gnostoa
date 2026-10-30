@@ -1352,7 +1352,6 @@ guardrails:
       - tools/quality_evidence.py#_run_all_families
       - tools/quality_evidence.py#_shell_applicability
       - tools/quality_evidence.py#_verified_tools
-      - tools/quality_evidence.py#_tool_bytes
       - tools/quality_evidence.py#_tool_notes
       - tools/quality_evidence.py#_tool_gap
       - tools/quality_evidence.py#_report_records
@@ -1363,6 +1362,9 @@ guardrails:
       - tools/quality_evidence.py#_step_shell_notes
       - tools/quality_evidence.py#_job_step_notes
       - tools/quality_evidence.py#_secrets_identity
+      - tools/quality_evidence.py#_gitlab_defaults
+      - tools/quality_evidence.py#_runner_shell
+      - tools/security_scan.py#verified_pinned_bytes
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
       - tools/security_scan.py#scan_with_protected_plugins
@@ -1403,15 +1405,24 @@ guardrails:
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_secrets_run_names_the_scanner_version_it_was_held_to
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_baseline_held_to_other_scanner_settings_leaves_the_family_unanalyzed
       - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_secrets_run_binds_its_scanner_and_plugin_identity
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_run_with_no_status_and_no_gap_is_never_clean
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_report_with_a_duplicate_key_is_a_gap
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_refused_queue_form_is_a_named_gap
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_malformed_workflow_structure_is_a_named_gap_and_still_linted
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_distinct_gitlab_jobs_are_each_analyzed
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_diff_only_family_acquires_changed_non_python_files
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named
-      - tests/test_quality_evidence_tool_families.py::SecretsFamilyTests.test_the_verified_bytes_are_the_bytes_that_run
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_run_with_no_status_and_no_gap_is_never_clean
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_report_with_a_duplicate_key_is_a_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_refused_queue_form_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_malformed_workflow_structure_is_a_named_gap_and_still_linted
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_gitlab_scalar_that_cannot_be_constructed_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_distinct_gitlab_jobs_are_each_analyzed
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_diff_only_family_acquires_changed_non_python_files
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_bash_or_ksh_file_is_selected_by_its_suffix_and_another_shell_s_is_named
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_marked_line_keeps_its_file_line_number_after_a_form_feed
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_deeply_nested_workflow_or_gitlab_file_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_windows_job_s_default_shell_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_executable_past_its_byte_bound_never_runs
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_yaml_line_break_the_file_does_not_count_is_a_named_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_runner_that_names_no_platform_has_an_unknown_default_shell
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_gitlab_pages_job_is_analyzed
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_a_top_level_before_script_is_analyzed_with_each_job
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_an_unsupported_script_outside_the_family_s_scope_is_no_gap
+      - tests/test_quality_evidence_tool_families.py::RoundTwoContractTests.test_the_verified_bytes_are_the_bytes_that_run
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_unsafe_call_rules_find_nothing_in_the_repository
       - tests/test_quality_evidence_tool_families.py::RepositoryCleanTests.test_the_protected_profile_pins_the_official_release_executables
       - tests/test_security_scan_plugin.py::SecretValuesTests.test_a_dockerfile_assignment_is_reported_and_a_reference_is_not
