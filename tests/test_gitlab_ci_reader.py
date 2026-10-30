@@ -4,9 +4,11 @@ run in the collector, through the families' own fixture."""
 from __future__ import annotations
 
 import itertools
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _calling_through
+from tests.test_quality_evidence_profile import _original
 from tests.test_quality_evidence_tool_families import (
     _GITLAB,
     _SC_NATIVE,
@@ -317,6 +319,18 @@ class GitlabReaderTests(_ToolFamilyFixture):
         row = self._rows(self._collect(base=self.base))["gitlab-script"]
         self.assertNotEqual("COMPLETE", row["analysis"])
         self.assertIn(
-            ".gitlab-ci.yml: not UTF-8 text, never analyzed as a repaired copy",
+            ".gitlab-ci.yml: not readable UTF-8 text, never analyzed as a repaired copy",
             row["reason"],
         )
+
+    def test_a_yaml_family_reads_one_strict_snapshot_of_its_file(self) -> None:
+        # cubic on #470: _yaml_text checked one read and analyzed a second, replacement-decoded one, and read an
+        # unreadable file as an empty document. It decodes the one snapshot it reads, and an unreadable file is None.
+        yaml_text = _original(self.module, "_yaml_text")
+        (self.root / "w.yml").write_bytes(b"a: \xff\n")
+        with self.subTest("one snapshot"):
+            with patch.object(Path, "read_bytes", return_value=b"a: b\r\n"):
+                snapshot = yaml_text(self.root, "w.yml")
+            self.assertEqual("a: b\n", snapshot)
+        with self.subTest("unreadable"):
+            self.assertIsNone(yaml_text(self.root, "missing.yml"))

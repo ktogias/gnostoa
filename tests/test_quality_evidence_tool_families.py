@@ -1192,7 +1192,7 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         row = self._rows(self._collect(base=self.base))["workflow-lint"]
         self.assertEqual("INCOMPLETE", row["analysis"])
         self.assertIn(
-            "not UTF-8 text, never analyzed as a repaired copy", row["reason"]
+            "not readable UTF-8 text, never analyzed as a repaired copy", row["reason"]
         )
         ran = [
             c
