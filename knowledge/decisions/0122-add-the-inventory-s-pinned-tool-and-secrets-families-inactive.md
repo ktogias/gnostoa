@@ -90,7 +90,9 @@ unsafe-calls Ruff family and a protected secrets plugin for the forms detect-sec
    protected configuration:
    - ShellCheck: `--norc`, no `-x`, explicit files;
    - Hadolint: an explicit protected `-c`, `--disable-ignore-pragma`, an empty working directory;
-   - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes.
+   - actionlint: a protected `-config-file`, the pinned ShellCheck, no pyflakes. actionlint 1.7.12 always passes
+     `-x`, under which ShellCheck follows a source outside its inputs (measured with a source-file witness), so its
+     ShellCheck is a run-local wrapper that execs the verified copy with every other argument and never `-x`.
 
    The GitLab family's bounded reader is `tools/gitlab_ci_reader.py` (source `owner-extension`): it turns a file's
    YAML into each job's script items with their lines, or names why it cannot. An anchor, an alias or more than 32

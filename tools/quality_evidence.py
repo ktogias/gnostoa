@@ -15,6 +15,7 @@ import math
 import os
 import platform
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -3485,6 +3486,22 @@ def _run_hadolint(
     return result
 
 
+def _no_follow_shellcheck(shellcheck: Path) -> Path:
+    """actionlint's ShellCheck: a run-local wrapper, a new file, that execs the run's verified copy with every argument
+    actionlint 1.7.12 passes but its `-x`, so no source outside the inputs is followed (PAO 6520190154; measured with
+    a source-file witness, which the bare copy opened)."""
+    wrapper = shellcheck.with_name(f"{shellcheck.name}-no-follow")
+    script = (
+        "#!/bin/sh\n"
+        'for a do shift; [ "$a" = -x ] || set -- "$@" "$a"; done\n'
+        f'exec {shlex.quote(str(shellcheck))} "$@"\n'
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    with os.fdopen(os.open(wrapper, flags, 0o500), "w", encoding="utf-8") as stream:
+        stream.write(script)
+    return wrapper
+
+
 def _actionlint_copies(
     root: Path, paths: list[str], copies: Path, name: str, result: _ProducerResult
 ) -> list[str]:
@@ -3536,7 +3553,7 @@ def _run_actionlint(
         "-config-file",
         str(config),
         "-shellcheck",
-        str(shellcheck),
+        str(_no_follow_shellcheck(shellcheck)),
         "-pyflakes=",
         "-format",
         "{{json .}}",
