@@ -1373,6 +1373,7 @@ guardrails:
       - tools/quality_evidence.py#_yaml_text
       - tools/quality_evidence.py#_actionlint_copies
       - tools/quality_evidence.py#_no_follow_shellcheck
+      - tools/quality_evidence.py#_keep_secrets
       - tools/security_scan.py#verified_pinned_bytes
       - tools/security_scan.py#_verified_plugin_bytes
       - tools/security_scan.py#_load_protected_plugin
@@ -1505,6 +1506,7 @@ guardrails:
       - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_a_yaml_family_reads_one_strict_snapshot_of_its_file
       - tests/test_gitlab_ci_reader.py::GitlabReaderTests.test_an_unreadable_gitlab_number_is_a_named_gap
       - tests/test_quality_evidence_tool_reads.py::CandidateReadTests.test_a_shebang_is_never_read_through_a_link_or_from_a_pipe
+      - tests/test_quality_evidence_tool_reads.py::SecretsNegativeTests.test_a_plugin_failure_keeps_the_scanners_own_findings
 
   - id: inventory-readback
     title: The diagnostic inventory runs over a Pull Request head with no secret, lists every obtained finding once, and reaches the bundle only bound to this run attempt's inventory job (Decision 0119)

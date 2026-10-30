@@ -4081,6 +4081,31 @@ def _secrets_identity(run: Path, version: str) -> Path:
     return identity
 
 
+def _secrets_reason(exc: Exception) -> str:
+    """Why the secrets family read nothing: only the scanner's own refusals keep their text (a candidate by repository
+    path, never a host path); any other failure is named by its type."""
+    from tools import security_scan
+
+    detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
+    return f"secrets: {type(exc).__name__}{detail}"
+
+
+def _keep_secrets(
+    result: _ProducerResult, records: list[dict[str, Any]], allowance: int
+) -> None:
+    """Each candidate the scanner or a plugin reported, as a finding: its path, line and type, never its value."""
+    for record in records:
+        finding = _diagnostic_finding(
+            "secrets",
+            str(record["type"]),
+            str(record["path"]),
+            (int(record["line"]), 1, None, None),
+            f"a secret candidate ({record['type']})",
+            {},
+        )
+        result.keep(finding, allowance)
+
+
 def _run_secrets(
     root: Path, run: Path, paths: list[str], deadline: float, allowance: int
 ) -> tuple[_ProducerResult, list[str]]:
@@ -4101,26 +4126,22 @@ def _run_secrets(
             tracked_paths=[Path(path) for path in paths],
             baseline_path=baseline,
         )
-        planted, unread = security_scan.scan_with_protected_plugins(root, paths)
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
         version = str(_strict_json_loads(baseline.read_bytes())["version"])
         identity = _secrets_identity(run, version)
     except Exception as exc:
-        # Only the scanner's refusals keep their text (a candidate by repository path, never a host path); else type.
-        detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
-        reason = f"secrets: {type(exc).__name__}{detail}"
-        return _ProducerResult(unanalyzed=dict.fromkeys(paths, reason)), []
+        return _ProducerResult(
+            unanalyzed=dict.fromkeys(paths, _secrets_reason(exc))
+        ), []
     result.runs.append(_run_record("secrets", "secrets", [], 0, identity, run, version))
-    for record in [*scan.unresolved_findings, *planted]:
-        finding = _diagnostic_finding(
-            "secrets",
-            str(record["type"]),
-            str(record["path"]),
-            (int(record["line"]), 1, None, None),
-            f"a secret candidate ({record['type']})",
-            {},
-        )
-        result.keep(finding, allowance)
+    _keep_secrets(result, scan.unresolved_findings, allowance)
+    try:
+        planted, unread = security_scan.scan_with_protected_plugins(root, paths)
+    except Exception as exc:
+        # The scanner's own findings stay: an acquired negative is never dropped with the plugins (PAO's F1, #325).
+        result.unanalyzed = dict.fromkeys(paths, _secrets_reason(exc))
+        return result, []
+    _keep_secrets(result, planted, allowance)
     if not unread:
         return result, []
     plural = "" if len(unread) == 1 else "s"
