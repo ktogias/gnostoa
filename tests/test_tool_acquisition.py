@@ -590,6 +590,8 @@ class ConsumerTests(unittest.TestCase):
         )
         # A refused acquisition leaves its families INCOMPLETE in the inventory; it never stops the inventory itself.
         self.assertIs(True, step.get("continue-on-error"))
+        # Nothing else on the step, so no condition, shell or environment can skip or reroute it (Sourcery on #471).
+        self.assertEqual({"name", "continue-on-error", "run"}, set(step))
         self.assertNotIn("curl", step["run"])
         self.assertNotIn("wget", step["run"])
 
