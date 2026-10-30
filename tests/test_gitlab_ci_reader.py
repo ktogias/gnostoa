@@ -302,11 +302,11 @@ class GitlabReaderTests(_ToolFamilyFixture):
         with self.assertRaisesRegex(unsupported, "an extends cycle"):
             read(".a:\n  extends: .b\n.b:\n  extends: .a\njob:\n  extends: .a\n")
         self.assertEqual(["job"], list(read(chain(11))))
-        with self.assertRaises(unsupported):
-            read(chain(12))
-        # A job resolved first at a shallow depth still keeps the bound when it is reached deeper.
-        with self.assertRaises(unsupported):
-            read(chain(12, first="a:\n  extends: .j0\n"))
+        # Each text is built before its block, so only the read can raise (Sonar S5778). A job resolved first at a
+        # shallow depth still keeps the bound when it is reached deeper.
+        for text in (chain(12), chain(12, first="a:\n  extends: .j0\n")):
+            with self.subTest(text=text[-40:]), self.assertRaises(unsupported):
+                read(text)
 
     def test_a_gitlab_file_that_is_not_utf8_text_is_a_named_gap(self) -> None:
         # Codex on #470: a replacement decode analyzed a repaired copy and read as clean; the file is read strictly.
