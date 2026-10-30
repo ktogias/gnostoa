@@ -212,8 +212,13 @@ def _install(root: Path, name: str, data: bytes, digest: str) -> None:
             root, name, digest, quality_evidence.MAX_TOOL_BYTES, label=f"tool {name}"
         )
     except (OSError, security_scan.SecurityScanError) as exc:
-        target.unlink(missing_ok=True)
-        raise AcquisitionError(f"{target} did not install as pinned: {exc}") from exc
+        refusal = f"{target} did not install as pinned: {exc}"
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as removal:
+            # The refusal stays the reported error, and a failed removal is named with it (Revix on #471).
+            refusal += f"; its removal failed: {removal}"
+        raise AcquisitionError(refusal) from exc
 
 
 def _plan(

@@ -342,6 +342,30 @@ class ArchiveTests(unittest.TestCase):
 class InstallBoundaryTests(unittest.TestCase):
     """The Router's 6530414059: provisioning the initially absent root is its own boundary, not the collector's run copy."""
 
+    def test_a_failed_removal_keeps_the_refusal_named(self) -> None:
+        """Revix on #471: a removal that fails after a mismatch never replaces the refusal with an escaping error."""
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable, "file")])
+        profile = _profile(
+            ("shell-lint",), _pins("shellcheck", asset, executable, "d/shellcheck")
+        )
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        mismatch = security_scan.SecurityScanError("not as pinned")
+        with (
+            mock.patch.object(
+                security_scan, "verified_pinned_bytes", side_effect=mismatch
+            ),
+            mock.patch.object(Path, "unlink", side_effect=PermissionError("denied")),
+            self.assertRaisesRegex(
+                tool_acquisition.AcquisitionError,
+                r"^tool shellcheck: .* did not install as pinned: not as pinned; "
+                r"its removal failed: denied$",
+            ),
+        ):
+            tool_acquisition.acquire(
+                profile, root, machine="x86_64", fetcher=lambda url: asset
+            )
+
     def test_the_root_must_be_a_directory_and_never_a_link(self) -> None:
         executable = b"#!/bin/sh\necho shellcheck\n"
         asset = _tar([("d/shellcheck", executable, "file")])
@@ -530,6 +554,8 @@ class EntryTests(unittest.TestCase):
         acquire = mock.Mock(return_value=[])
         with mock.patch.object(tool_acquisition, "acquire", acquire):
             self.assertEqual(0, tool_acquisition.main([]))
+        # Exactly one acquisition, never a second download or install attempt (Cubic on #471).
+        acquire.assert_called_once()
         profile, root = acquire.call_args.args
         self.assertEqual(quality_evidence.load_diagnostic_profile(), profile)
         self.assertEqual(Path(quality_evidence.TOOL_ROOT), root)
