@@ -132,26 +132,53 @@ def _gitlab_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
 
 
 def _gitlab_resolve(
-    name: str, jobs: Mapping[str, Any], seen: tuple[str, ...] = ()
+    name: str,
+    jobs: Mapping[str, Any],
+    resolved: dict[str, tuple[dict[str, Any], int]],
+    seen: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """`name` with its local `extends` merged in, at most eleven levels deep. Each job resolves once per file, into
+    `resolved` with how many levels lie below it, so a shared ancestor is never resolved again (Codex on #470), and
+    one reached deeper than it was first still keeps the bound."""
     if name in seen:
         raise GitlabUnsupported(f"an extends cycle at {name}")
-    if len(seen) > 11 or name not in jobs:
+    if name not in jobs:
         raise GitlabUnsupported(f"extends names {name!r}, not a local job")
+    if name not in resolved:
+        if len(seen) > 11:
+            raise GitlabUnsupported(f"extends past eleven levels at {name}")
+        resolved[name] = _gitlab_extended(name, jobs, resolved, seen)
+    job, below = resolved[name]
+    if len(seen) + below > 11:
+        raise GitlabUnsupported(f"extends past eleven levels at {name}")
+    return job
+
+
+def _gitlab_extended(
+    name: str,
+    jobs: Mapping[str, Any],
+    resolved: dict[str, tuple[dict[str, Any], int]],
+    seen: tuple[str, ...],
+) -> tuple[dict[str, Any], int]:
+    """`name`'s own definition merged over its parents', in order, and how many levels lie below it."""
     job = jobs[name]
     if "inherit" in job:
         raise GitlabUnsupported(f"inherit in {name}")
     parents = job.get("extends")
     own = {k: v for k, v in job.items() if k != "extends"}
     if parents is None:
-        return own
+        return own, 0
     parents = [parents] if isinstance(parents, tuple) else parents
     if not isinstance(parents, list) or not all(isinstance(p, tuple) for p in parents):
         raise GitlabUnsupported(f"a malformed extends in {name}")
     merged: dict[str, Any] = {}
+    below = 0
     for parent in parents:
-        merged = _gitlab_merge(merged, _gitlab_resolve(parent[0], jobs, (*seen, name)))
-    return _gitlab_merge(merged, own)
+        merged = _gitlab_merge(
+            merged, _gitlab_resolve(parent[0], jobs, resolved, (*seen, name))
+        )
+        below = max(below, 1 + resolved[parent[0]][1])
+    return _gitlab_merge(merged, own), below
 
 
 def _gitlab_items(value: Any, where: str) -> list[tuple[str, Any]]:
@@ -172,10 +199,13 @@ def _gitlab_items(value: Any, where: str) -> list[tuple[str, Any]]:
 
 
 def _gitlab_job(
-    name: str, jobs: Mapping[str, Any], default: Mapping[str, Any]
+    name: str,
+    jobs: Mapping[str, Any],
+    default: Mapping[str, Any],
+    resolved: dict[str, tuple[dict[str, Any], int]],
 ) -> list[list[tuple[str, Any]]] | None:
     """A job's shells, `before_script` + `script` as one and `after_script` as the other; None without a script."""
-    job = _gitlab_resolve(name, jobs)
+    job = _gitlab_resolve(name, jobs, resolved)
     if "script" not in job:
         return None
     main = _gitlab_items(
@@ -203,25 +233,29 @@ def _gitlab_defaults(root: Mapping[str, Any]) -> dict[str, Any]:
 
 def read_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
     """The bounded GitLab CI reader: per job, its shells, each item with its YAML line (a column table for a simple
-    folded item). Local `extends` (GitLab's merge) and `default` are resolved; anchors, aliases and nesting past 32
-    levels (task_envelope's preflight, before composition, Router 6513998438), include, `!reference`, `inherit`,
-    cycles, merge keys, more than one document and unmappable items raise GitlabUnsupported. Its caller refuses a
-    NEL, LS or PS first, at which PyYAML breaks a line and the file does not."""
+    folded item). Local `extends` (GitLab's merge, each job resolved once) and `default` are resolved. These raise
+    GitlabUnsupported: anchors, aliases and more than 32 open collections (task_envelope's preflight, before
+    composition, Router 6513998438; an indentless sequence opens none, so 32 keys over such sequences compose 64
+    levels, measured), include, `!reference`, `inherit`, cycles, merge keys, more than one document, a job that is
+    not a mapping and unmappable items. Its caller refuses a NEL, LS or PS first, at which PyYAML breaks a line and
+    the file does not."""
     import yaml
 
     from tools.task_envelope import yaml_preflight
 
     try:
-        if found := yaml_preflight(text, 32):
-            what = (
-                "a nesting deeper than 32 levels"
-                if found[0] == "depth"
-                else f"a YAML {found[0]}"
-            )
-            raise GitlabUnsupported(f"{what} at line {found[1]}")
-        nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
-    except (yaml.YAMLError, RecursionError) as exc:
+        found = yaml_preflight(text, 32)
+        nodes = [] if found else list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
+        # PyYAML's scanner raises ValueError, never a YAMLError, for an escape past U+10FFFF (cubic on #470).
         raise GitlabUnsupported(f"unparsable: {type(exc).__name__}") from exc
+    if found:
+        what = (
+            "a nesting deeper than 32 levels"
+            if found[0] == "depth"
+            else f"a YAML {found[0]}"
+        )
+        raise GitlabUnsupported(f"{what} at line {found[1]}")
     if len(nodes) != 1:
         raise GitlabUnsupported(f"{len(nodes)} documents")
     root = _gitlab_construct(nodes[0])
@@ -230,14 +264,20 @@ def read_scripts(text: str) -> dict[str, list[list[tuple[str, Any]]]]:
             "include" if isinstance(root, dict) else "the document is not a mapping"
         )
     default = _gitlab_defaults(root)
-    jobs = {
-        k: v
-        for k, v in root.items()
-        if k not in _GITLAB_RESERVED and isinstance(v, dict)
-    }
+    jobs: dict[str, Any] = {}
+    for name, value in root.items():
+        if isinstance(value, dict) and name not in _GITLAB_RESERVED:
+            jobs[name] = value
+        elif not (name in _GITLAB_RESERVED or name.startswith(".")):
+            # GitLab runs every visible key that is not a global keyword as a job, whose definition is a mapping
+            # (cubic on #470); a hidden key is never run.
+            raise GitlabUnsupported(f"job {name!r} is not a mapping")
+    resolved: dict[str, tuple[dict[str, Any], int]] = {}
     scripts = {}
     for name in jobs:
-        shells = None if name.startswith(".") else _gitlab_job(name, jobs, default)
+        shells = (
+            None if name.startswith(".") else _gitlab_job(name, jobs, default, resolved)
+        )
         if shells is not None:
             scripts[name] = shells
     return scripts
