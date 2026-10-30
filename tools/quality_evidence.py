@@ -4191,7 +4191,7 @@ def _run_secrets(
         )
         planted, unread = security_scan.scan_with_protected_plugins(root, paths)
         # The scan refuses any settings but the protected baseline's, so that is the version it was held to.
-        version = str(json.loads(baseline.read_text(encoding="utf-8"))["version"])
+        version = str(_strict_json_loads(baseline.read_bytes())["version"])
     except Exception as exc:
         # Only the scanner's refusals keep their text (a candidate by repository path, never a host path); else type.
         detail = f": {exc}" if isinstance(exc, security_scan.SecurityScanError) else ""
