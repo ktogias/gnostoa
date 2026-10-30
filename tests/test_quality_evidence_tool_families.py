@@ -599,6 +599,52 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         self.assertIn("secrets: FileNotFoundError", row["reason"])
         self.assertNotIn("host-only-directory", row["reason"])
 
+    def test_a_reviewed_baseline_without_results_is_a_named_refusal(self) -> None:
+        # Amazon Q on #470: a malformed protected baseline is refused and named, never read as empty or a crash.
+        reviewed = json.loads(_REVIEWED_BASELINE.read_text(encoding="utf-8"))
+        for change in ("absent", "null"):
+            with self.subTest(results=change):
+                document = copy.deepcopy(reviewed)
+                if change == "absent":
+                    del document["results"]
+                else:
+                    document["results"] = None
+                other = Path(self.directory.name) / f"results-{change}.baseline"
+                other.write_text(json.dumps(document), encoding="utf-8")
+                with patch.object(self.module, "_PROTECTED_BASELINE", other):
+                    row = self._rows(self._collect(base=self.base))["secrets"]
+                self.assertEqual("INCOMPLETE", row["analysis"])
+                self.assertIn(
+                    "the reviewed baseline has no results mapping", row["reason"]
+                )
+
+    def test_a_plugin_that_fails_at_import_is_a_named_refusal(self) -> None:
+        # Amazon Q on #470: any import-time failure of the protected plugin fails the scan closed, named.
+        original = importlib.util.spec_from_file_location
+
+        def failing_spec(name, location):
+            spec = original(name, location)
+            assert spec is not None and spec.loader is not None
+            spec.loader.exec_module = lambda module: (_ for _ in ()).throw(
+                ImportError("x")
+            )
+            return spec
+
+        with patch("importlib.util.spec_from_file_location", side_effect=failing_spec):
+            row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn("cannot be loaded", row["reason"])
+
+    def test_any_other_scanner_failure_is_named_by_its_type(self) -> None:
+        # Revix on #470: a failure of any other type is a named gap, never an aborted inventory.
+        with patch(
+            "tools.security_scan.scan_tracked_tree", side_effect=TypeError("host text")
+        ):
+            row = self._rows(self._collect(base=self.base))["secrets"]
+        self.assertEqual("INCOMPLETE", row["analysis"])
+        self.assertIn("secrets: TypeError", row["reason"])
+        self.assertNotIn("host text", row["reason"])
+
     def test_a_file_holding_nul_bytes_is_a_named_gap(self) -> None:
         # cubic on #470: the protected plugins never read such a file, so it must never count as clean.
         (self.root / "blob.yml").write_bytes(b"password: x\0y\n")
@@ -913,19 +959,26 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self.assertEqual(1, len(self._gitlab_analyzed()))
 
     def test_a_top_level_before_script_is_analyzed_with_each_job(self) -> None:
-        # Codex on #470: the runner runs a top-level before_script, so the reader reads it.
+        # Codex on #470: the runner runs a top-level before_script, so the reader reads it, for every job (cubic).
         self._commit(
             {
-                ".gitlab-ci.yml": "before_script:\n  - echo $UNQUOTED\njob:\n  script:\n    - echo ok\n"
+                ".gitlab-ci.yml": (
+                    "before_script:\n  - echo $UNQUOTED\n"
+                    "first:\n  script:\n    - echo one\nsecond:\n  script:\n    - echo two\n"
+                )
             }
         )
         self._collect(base=self.base)
-        (analyzed,) = self._gitlab_analyzed()
-        (body,) = [
+        analyzed = self._gitlab_analyzed()
+        bodies = [
             p.read_text(encoding="utf-8")
-            for p in self.output.glob(f"diagnostic-*/gitlab-input/{analyzed}")
+            for name in analyzed
+            for p in self.output.glob(f"diagnostic-*/gitlab-input/{name}")
         ]
-        self.assertIn("echo $UNQUOTED", body)
+        self.assertEqual(2, len(bodies))
+        for body in bodies:
+            with self.subTest(body=body):
+                self.assertIn("echo $UNQUOTED", body)
 
     def test_an_unsupported_script_outside_the_family_s_scope_is_no_gap(self) -> None:
         # Codex on #470: only what the family's scopes select can downgrade its row.
@@ -936,6 +989,66 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         self._commit({"tests/tool.zsh": "echo $1\n"})
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
         self.assertNotIn("tests/tool.zsh", row["reason"] or "")
+
+    def test_a_linked_tool_root_never_runs(self) -> None:
+        # cubic on #470: no link may stand in for the protected tool root either.
+        linked = Path(self.directory.name) / "linked-tool-root"
+        linked.symlink_to(self.tool_root)
+        self.tool_root = linked
+        row = self._rows(self._collect(base=self.base))["shell-lint"]
+        self.assertIn("tool shellcheck is reached through a link", row["reason"])
+        self.assertEqual([], self._commands_of("shellcheck"))
+
+    def test_a_gitlab_item_is_analyzed_as_it_reads(self) -> None:
+        # Codex on #470: only a newline ends an analysis line, so a decoded vertical tab stays in its command.
+        self._commit(
+            {".gitlab-ci.yml": 'job:\n  script:\n    - "echo foo\\vbar $VALUE"\n'}
+        )
+        self._collect(base=self.base)
+        (analyzed,) = self._gitlab_analyzed()
+        (body,) = [
+            p.read_text(encoding="utf-8")
+            for p in self.output.glob(f"diagnostic-*/gitlab-input/{analyzed}")
+        ]
+        self.assertEqual(
+            ["#!/bin/sh", "echo foo\x0bbar $VALUE"], body.rstrip("\n").split("\n")
+        )
+
+    def test_a_tagged_gitlab_sequence_is_a_named_gap(self) -> None:
+        # Revix on #470: `!reference` is unsupported, in a sequence as in a scalar.
+        self._commit(
+            {
+                ".gitlab-ci.yml": ".setup:\n  script:\n    - echo $A\njob:\n  script:\n    - !reference [.setup, script]\n"
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertNotEqual("COMPLETE", row["analysis"])
+        self.assertIn("!reference", row["reason"])
+
+    def test_an_unknown_runner_shell_is_named_as_unknown(self) -> None:
+        # Revix on #470: the gap says the runner's default shell is unknown, not that it runs under a sentence.
+        self._commit(
+            {
+                ".github/workflows/w.yml": "on: push\njobs:\n  a:\n    runs-on: self-hosted\n    steps:\n      - run: echo\n"
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["workflow-lint"]
+        self.assertIn(
+            "job a step 0 uses the runner's default shell, which runs-on does not name",
+            row["reason"],
+        )
+
+    def test_a_sourced_file_in_a_gitlab_script_is_a_named_gap(self) -> None:
+        # Claude on #470: the GitLab family reads shell too, so a sourced file is never followed there either.
+        self._commit(
+            {
+                ".gitlab-ci.yml": "job:\n  script:\n    - source ./ci/common.sh\n    - . ./ci/more.sh\n"
+            }
+        )
+        row = self._rows(self._collect(base=self.base))["gitlab-script"]
+        self.assertEqual("PARTIAL", row["analysis"])
+        self.assertIn(".gitlab-ci.yml:3: a sourced file, never followed", row["reason"])
+        self.assertIn(".gitlab-ci.yml:4: a sourced file, never followed", row["reason"])
 
     def test_the_verified_bytes_are_the_bytes_that_run(self) -> None:
         # cubic on #470: a tool replaced after its check must never be what runs.

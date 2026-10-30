@@ -48,6 +48,16 @@ class SecretValuesTests(unittest.TestCase):
             ]
         )
 
+    def test_a_legacy_env_value_keeps_its_equals_signs(self) -> None:
+        # Codex on #470: the form follows the first token; `ENV NAME value=` is the legacy form whatever its value.
+        self._check(
+            [
+                ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}=", [f"{_VALUE}="]),
+                ("Dockerfile", f"ENV DB_PASSWORD {_VALUE}==", [f"{_VALUE}=="]),
+                ("Dockerfile", f"ENV DB_PASSWORD=x API_TOKEN={_VALUE}", [_VALUE]),
+            ]
+        )
+
     def test_a_makefile_assignment_is_reported_and_a_reference_is_not(self) -> None:
         self._check(
             [
