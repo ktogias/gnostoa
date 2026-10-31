@@ -184,24 +184,16 @@ _PROTECTED_JOB_STEPS_SHA256 = {
 }
 
 
-def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
-    try:
-        tokens = shlex.split(command.replace("\\\n", " "), posix=True)
-    except ValueError:
-        return False
-    if tokens == ["./ci/verify", suite]:
-        return suite == "security-fast"
-    expected_script = f"./ci/verify {suite}"
-    if tokens[:2] != ["docker", "run"]:
-        return False
-
-    # This is a fail-closed recognizer for the project's exact workflow shape,
-    # not a general Docker CLI parser. Unknown run options are rejected.
+def _docker_run_options(
+    docker_arguments: list[str],
+) -> tuple[dict[str, int], dict[str, list[str]], int] | None:
+    """The recognized `docker run` options before the image, and the image's index;
+    None for an option this fail-closed recognizer does not know, or one with no
+    value."""
     flag_options = {"--rm"}
     value_options = {"--entrypoint", "--env", "--mount", "--user", "--workdir"}
     flag_counts = {option: 0 for option in flag_options}
     option_values: dict[str, list[str]] = {option: [] for option in value_options}
-    docker_arguments = tokens[2:]
     index = 0
     while index < len(docker_arguments):
         token = docker_arguments[index]
@@ -216,7 +208,7 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         value: str | None = None
         if token in value_options:
             if index + 1 >= len(docker_arguments):
-                return False
+                return None
             option = token
             value = docker_arguments[index + 1]
             index += 2
@@ -229,18 +221,13 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
                     index += 1
                     break
         if option is None or not value:
-            return False
+            return None
         option_values[option].append(value)
+    return flag_counts, option_values, index
 
-    command = docker_arguments[index:]
-    if (
-        len(command) != 3
-        or command[0] != "${GNOSTOA_CI_IMAGE}"
-        or command[1] not in {"-c", "-ec"}
-        or command[2] != expected_script
-    ):
-        return False
 
+def _approved_run_options(suite: str) -> tuple[list[str], list[str], list[str]]:
+    """The mounts, environment and user a suite's `docker run` may carry."""
     approved_mounts = [
         "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
     ]
@@ -252,6 +239,38 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         )
         approved_environment = ["HOME=/tmp", "GNOSTOA_QUALITY_OUTPUT=/evidence"]
         approved_user = ["$(id -u):$(id -g)"]
+    return approved_mounts, approved_environment, approved_user
+
+
+def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
+    try:
+        tokens = shlex.split(command.replace("\\\n", " "), posix=True)
+    except ValueError:
+        return False
+    if tokens == ["./ci/verify", suite]:
+        return suite == "security-fast"
+    expected_script = f"./ci/verify {suite}"
+    if tokens[:2] != ["docker", "run"]:
+        return False
+
+    # This is a fail-closed recognizer for the project's exact workflow shape,
+    # not a general Docker CLI parser. Unknown run options are rejected.
+    docker_arguments = tokens[2:]
+    parsed = _docker_run_options(docker_arguments)
+    if parsed is None:
+        return False
+    flag_counts, option_values, index = parsed
+
+    invocation = docker_arguments[index:]
+    if (
+        len(invocation) != 3
+        or invocation[0] != "${GNOSTOA_CI_IMAGE}"
+        or invocation[1] not in {"-c", "-ec"}
+        or invocation[2] != expected_script
+    ):
+        return False
+
+    approved_mounts, approved_environment, approved_user = _approved_run_options(suite)
     return (
         flag_counts["--rm"] == 1
         and option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
@@ -641,6 +660,19 @@ class PublicationBaselineTests(unittest.TestCase):
 
         workflow = workflow_path.read_text(encoding="utf-8")
         workflow_document = load_yaml(workflow_path)
+        self._assert_verification_triggers_and_jobs(workflow, workflow_document)
+        self._assert_workflow_bypasses_are_refused(workflow_document)
+        self._assert_job_bypasses_are_refused(workflow_document)
+        self._assert_shared_suite_recognizer_cases()
+        self._assert_verification_workflow_text(workflow, workflow_document)
+        self._assert_branch_advisory(workflow_document)
+        self._assert_code_ownership(codeowners_path)
+
+    def _assert_verification_triggers_and_jobs(
+        self, workflow: str, workflow_document: dict[str, Any]
+    ) -> None:
+        """The verification workflow's triggers, its exact jobs, and their bypass refusals."""
+        by_key: dict[object, object] = dict(workflow_document.items())
         self.assertEqual(
             {
                 "pull_request": None,
@@ -649,7 +681,7 @@ class PublicationBaselineTests(unittest.TestCase):
                 "schedule": [{"cron": "17 3 * * *"}],
                 "workflow_dispatch": None,
             },
-            workflow_document[True],
+            by_key[True],
         )
         workflow_jobs = workflow_document["jobs"]
         self.assertTrue(_workflow_has_exact_contract(workflow_document))
@@ -692,6 +724,12 @@ class PublicationBaselineTests(unittest.TestCase):
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
+
+    def _assert_workflow_bypasses_are_refused(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Workflow-level bypasses lose the blocking suite or the exact contract."""
+        workflow_jobs = workflow_document["jobs"]
         self._assert_every_suite_runs_in_its_bound_job(workflow_document)
         renamed_workflow = copy.deepcopy(workflow_document)
         renamed_workflow["jobs"]["security-fast"]["name"] = "spoofed-context"
@@ -728,6 +766,12 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         extra_job_workflow["jobs"]["attacker-context"]["name"] = "regression"
         self.assertFalse(_workflow_has_exact_contract(extra_job_workflow))
+
+    def _assert_job_bypasses_are_refused(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Step-, job- and condition-level bypasses lose the blocking suite."""
+        workflow_jobs = workflow_document["jobs"]
         base_job = workflow_jobs["security-fast"]
         self.assertTrue(_job_has_exact_contract(base_job, "security-fast"))
         self.assertTrue(_job_has_blocking_verification_suite(base_job, "security-fast"))
@@ -763,16 +807,16 @@ class PublicationBaselineTests(unittest.TestCase):
                             mutated_job, "security-fast"
                         )
                     )
-        for modifier in (
+        for job_modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
             {"defaults": {"run": {"shell": "bash {0} || true"}}},
             {"env": {"GNOSTOA_CI_IMAGE": "attacker-controlled:latest"}},
             {"container": "attacker-controlled:latest"},
         ):
-            with self.subTest(job_modifier=modifier):
+            with self.subTest(job_modifier=job_modifier):
                 mutated_job = copy.deepcopy(base_job)
-                mutated_job.update(modifier)
+                mutated_job.update(job_modifier)
                 # These job-key mutations exercise the exact structural contract,
                 # not the later step-modifier semantic guard.
                 self.assertFalse(_job_has_exact_contract(mutated_job, "security-fast"))
@@ -787,6 +831,9 @@ class PublicationBaselineTests(unittest.TestCase):
                 mutated = dict(workflow_jobs[suite])
                 mutated["if"] = condition
                 self.assertFalse(_job_has_blocking_verification_suite(mutated, suite))
+
+    def _assert_shared_suite_recognizer_cases(self) -> None:
+        """The fail-closed recognizer accepts only the exact shared-suite invocation."""
         self.assertTrue(
             _invokes_shared_verification_suite(
                 "./ci/verify security-fast",
@@ -889,6 +936,11 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
         )
+
+    def _assert_verification_workflow_text(
+        self, workflow: str, workflow_document: dict[str, Any]
+    ) -> None:
+        """The verification workflow's permissions, pins and text."""
         self.assertEqual({"contents": "read"}, workflow_document["permissions"])
         self.assertIn(
             "github.event.pull_request.number || github.ref",
@@ -907,13 +959,17 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertIn("./ci/verify fast", workflow)
         self.assertIn("docker build", workflow)
 
+    def _assert_branch_advisory(self, workflow_document: dict[str, Any]) -> None:
+        """The branch advisory is separate, read-only and blocking for its own suites."""
+        workflow_jobs = workflow_document["jobs"]
         advisory_path = ROOT / ".github" / "workflows" / "branch-advisory.yml"
         self.assertTrue(advisory_path.is_file())
         advisory_text = advisory_path.read_text(encoding="utf-8")
         advisory = load_yaml(advisory_path)
+        advisory_by_key: dict[object, object] = dict(advisory.items())
         self.assertEqual(
             {"push": {"branches-ignore": ["main"]}},
-            advisory[True],
+            advisory_by_key[True],
         )
         self.assertNotIn("pull_request:", advisory_text)
         advisory_jobs = advisory["jobs"]
@@ -942,6 +998,8 @@ class PublicationBaselineTests(unittest.TestCase):
         guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         self.assertIn("- .github/workflows/branch-advisory.yml", guardrails)
 
+    def _assert_code_ownership(self, codeowners_path: Path) -> None:
+        """The canonical paths have accountable owners."""
         codeowners = codeowners_path.read_text(encoding="utf-8")
         for owned_path in (
             "* @ktogias",
@@ -2211,16 +2269,18 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 observations.append(("stat", candidate))
             return original_stat(path, *args, **kwargs)  # type: ignore[arg-type]
 
-        def observe_readlink(path: object, *args: object, **kwargs: object) -> str:
+        def observe_readlink(
+            path: str | os.PathLike[str], *, dir_fd: int | None = None
+        ) -> str:
             candidate = observed_path(path)
             if candidate is not None:
                 observations.append(("readlink", candidate))
-            return original_readlink(path, *args, **kwargs)  # type: ignore[arg-type]
+            return original_readlink(path, dir_fd=dir_fd)
 
-        def observe_resolve(path: Path, *args: object, **kwargs: object) -> Path:
+        def observe_resolve(path: Path, strict: bool = False) -> Path:
             if observed_path(path) is not None:
                 observations.append(("resolve", path))
-            return original_resolve(path, *args, **kwargs)
+            return original_resolve(path, strict)
 
         observers = {
             observer.__code__
@@ -2234,9 +2294,11 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
             )
         }
 
-        def observe_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        def observe_read_text(
+            path: Path, encoding: str | None = None, errors: str | None = None
+        ) -> str:
             content_reads.append(path)
-            return original_read_text(path, *args, **kwargs)
+            return original_read_text(path, encoding, errors)
 
         def links_after_during(body: str) -> list[str]:
             # `during` runs inside the validator's own frames, where an
@@ -3132,7 +3194,10 @@ class ContinuousIntegrationTests(unittest.TestCase):
         )
         condition = regression["if"]
         self.assertEqual("always()", condition)
-        self.assertEqual(["main"], workflow[True]["push"]["branches"])
+        workflow_by_key: dict[object, object] = dict(workflow.items())
+        triggers = workflow_by_key[True]
+        assert isinstance(triggers, dict)
+        self.assertEqual(["main"], triggers["push"]["branches"])
 
         assertions = [
             step
@@ -4023,7 +4088,7 @@ runtime:
             _, source = self._write_runtime_lock_template_fixture(root, template)
             digest = public_surface_digest(source)
             image = f"registry.example.org/gnostoa@sha256:{'a' * 64}"
-            cases = (
+            cases: tuple[tuple[str, str, set[str]], ...] = (
                 (
                     "untouched",
                     template,
