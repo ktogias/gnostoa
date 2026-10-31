@@ -1,0 +1,36 @@
+# F-S1b's RED: the refused layout, a lock on each job (same group, queue: max). Three `probe-perjob` labels in quick
+# succession must interleave (one run's subjects between another's subjects and invalidate), or the overlap test is blind.
+name: Probe S1 per-job locks
+on:
+  pull_request:
+    types: [labeled]
+permissions: {}
+jobs:
+  subjects:
+    if: github.event.label.name == 'probe-perjob'
+    concurrency: {group: gnostoa-ma-probe-perjob, cancel-in-progress: false, queue: max}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: date -u +%FT%TZ; sleep 15; date -u +%FT%TZ
+  invalidate:
+    needs: subjects
+    concurrency: {group: gnostoa-ma-probe-perjob, cancel-in-progress: false, queue: max}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: date -u +%FT%TZ; sleep 15; date -u +%FT%TZ
+  readback:
+    needs: [subjects, invalidate]
+    concurrency: {group: gnostoa-ma-probe-perjob, cancel-in-progress: false, queue: max}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: date -u +%FT%TZ; sleep 15; date -u +%FT%TZ
+  admit:
+    needs: [subjects, invalidate, readback]
+    concurrency: {group: gnostoa-ma-probe-perjob, cancel-in-progress: false, queue: max}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: date -u +%FT%TZ; sleep 15; date -u +%FT%TZ

@@ -1,0 +1,21 @@
+# S1 probe (PAO-389-QUEUE-SURFACES-6535951232-697B06B2-v1, F-S1a-c): one caller job holds the group across a reusable core,
+# the proposed merge-admission layout with sleeping stand-ins for subjects -> invalidate -> readback -> admit. Label events
+# only: no existing workflow listens for `labeled`, so the probe wakes nothing else. `probe-hold` holds the group for 4 x 60 s,
+# `probe-run` for 4 x 15 s; any other label skips the caller (F-S1a).
+name: Probe S1 caller
+on:
+  pull_request:
+    types: [labeled]
+permissions: {}
+jobs:
+  admission:
+    if: github.event.label.name == 'probe-run' || github.event.label.name == 'probe-hold'
+    concurrency:
+      group: gnostoa-ma-probe-s1
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+    uses: ./.github/workflows/probe-s1-core.yml
+    with:
+      hold: ${{ github.event.label.name == 'probe-hold' && 60 || 15 }}
