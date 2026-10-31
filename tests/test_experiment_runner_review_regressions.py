@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import IO
 from unittest import mock
 
 import yaml
@@ -81,8 +82,8 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, stderr, timeout
@@ -133,6 +134,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
             self.assertEqual("PASS", payload["status"])
             stdout_identity = payload["stdout"]
             self.assertIsInstance(stdout_identity, dict)
+            assert isinstance(stdout_identity, dict)
             self.assertEqual(
                 hashlib.sha256(captured).hexdigest(),
                 stdout_identity["sha256"],
@@ -149,8 +151,8 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, timeout
@@ -209,8 +211,8 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, timeout
