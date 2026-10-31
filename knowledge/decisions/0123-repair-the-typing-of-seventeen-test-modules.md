@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Repair the typing of seventeen test modules, the closure's first group
-description: "The first group of the inventory's test-typing debt (#389 complete closure, N1a): 124 mypy diagnostics in 17 test modules are repaired in place by narrowing, typed test doubles and declarations, with every test's identity and outcome preserved; nothing outside those modules changes, and the coupled N1b group stays held."
+description: "The first group of the inventory's test-typing debt (#389 complete closure, N1a): 124 mypy diagnostics in 17 test modules are repaired in place by narrowing, typed test doubles and declarations, with every test's identity and outcome preserved; nothing outside those modules, this record and its index line changes, and the coupled N1b group stays held."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -37,6 +37,12 @@ sources:
   - id: review-round-1
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6544337883
     title: "Review round 1 on #473: its findings' linked disposition, the source of this text's second amendment"
+  - id: review-round-2
+    resource: https://github.com/ktogias/gnostoa/pull/473#issuecomment-6544693764
+    title: "Claude's round-2 review on #473: the reference's payload type, which point 1 now states exactly"
+  - id: pao-round-2
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6544687735
+    title: "PAO's disposition of 5a7e61e2: the description's scope summary, which now names the index line"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose typing family this group answers, unchanged
@@ -111,9 +117,10 @@ kept.
    - a typed value where a table held untyped keyword arguments;
    - one typed reference, where a test checks the runtime return of a method declared to
      return `None` (`post_accepted` in `tests/test_github_rest.py`). The reference keeps
-     the method's parameter types and reads its return as `object`, so the arguments stay
-     checked and the test's `assertIsNone` stays. This is the one place a type is widened,
-     and only the return's.
+     the method's two parameters and checks them, as `str` and `dict[str, object]`. The
+     method declares the payload `dict[str, Any]`, which accepts the same calls. The
+     reference reads the return as `object`, so the test's `assertIsNone` stays. That return
+     is the one place a type is widened.
 
    An assertion added for narrowing holds wherever the test already relied on the value.
 2. **Nothing is silenced or weakened.** There is no `cast`, `type: ignore`, `Any` added to
@@ -170,5 +177,12 @@ Router's four points (source `correction-route`):
 
 Review round 1 on #473 (source `review-round-1`) amended it once more, in two places:
 - point 1 now lists the typed reference in `tests/test_github_rest.py`, the one return
-  widened, with its parameters kept;
+  widened, with its parameters still checked;
 - point 3 now names the index line that records this Decision, which the change also adds.
+
+Review round 2 amended it twice more:
+- Claude (source `review-round-2`) found point 1's "keeps the method's parameter types"
+  inexact, since the reference checks the payload as `dict[str, object]`, not the method's
+  `dict[str, Any]`. Point 1 now says so.
+- PAO (source `pao-round-2`) found that the description's scope summary omitted the index
+  line. It now names it.
