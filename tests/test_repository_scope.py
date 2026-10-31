@@ -938,9 +938,9 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         # bundled under ensurepip that an uninstall alone cannot reach.
         self.assertIn("pip uninstall", runtime)
         self.assertIn("ensurepip", runtime)
-        self.assertIn("USER root", runtime)
+        self.assertIn("USER 0:0", runtime)
         # Privilege is dropped again before the runtime is handed to a consumer.
-        self.assertLess(runtime.index("USER root"), runtime.rindex("USER kit"))
+        self.assertLess(runtime.index("USER 0:0"), runtime.rindex("USER 10001:10001"))
 
         # Both branches install through pip; the removal must stay in the
         # published runtime and out of the shared base and of development.

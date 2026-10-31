@@ -4529,7 +4529,7 @@ runtime:
             r"python:3\.12-slim@sha256:[a-f0-9]{64}",
         )
         self.assertIn("FROM base AS runtime", dockerfile)
-        self.assertIn("USER kit", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn('ENTRYPOINT ["knowledge"]', dockerfile)
         self.assertNotIn(":latest", dockerfile)
 

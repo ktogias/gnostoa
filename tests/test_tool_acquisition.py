@@ -648,7 +648,9 @@ class ConsumerTests(unittest.TestCase):
         )
         self.assertEqual(1, development.count(run))
         self.assertEqual(1, development.count("tools.tool_acquisition"))
-        self.assertLess(development.index(run), development.index("\nUSER kit\n"))
+        self.assertLess(
+            development.index(run), development.index("\nUSER 10001:10001\n")
+        )
         self.assertNotIn("\nADD ", development)
 
 
