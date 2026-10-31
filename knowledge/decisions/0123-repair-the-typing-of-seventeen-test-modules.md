@@ -105,14 +105,19 @@ kept.
    - a narrowing assertion where a value typed `object` or Optional is used;
    - a test double that declares the interface it replaces;
    - a declaration where a test class's attribute is assigned dynamically;
-   - a typed value where a table held untyped keyword arguments.
+   - a typed value where a table held untyped keyword arguments;
+   - one typed reference, where a test checks the runtime return of a method declared to
+     return `None` (`post_accepted` in `tests/test_github_rest.py`). The reference keeps
+     the method's parameter types and reads its return as `object`, so the arguments stay
+     checked and the test's `assertIsNone` stays. This is the one place a type is widened,
+     and only the return's.
 
    An assertion added for narrowing holds wherever the test already relied on the value.
 2. **Nothing is silenced or weakened.** There is no `cast`, `type: ignore`, `Any` added to
    pass a check, removed or weakened assertion, renamed or removed test, or skip.
-3. **Nothing outside the 17 modules and this record changes.** That excludes production
-   code, the collector or its import model, the profile, any threshold or scope, fixtures,
-   and recorded evidence.
+3. **Nothing changes outside the 17 modules, this record and its line in
+   `knowledge/index.md`.** That excludes production code, the collector or its import model,
+   the profile, any threshold or scope, fixtures, and recorded evidence.
 4. **Behaviour is preserved.** The 17 modules run the same tests, by identity, with the same
    outcomes, before and after (source `lineage`).
    - That check is necessary, not sufficient.
@@ -159,3 +164,8 @@ Router's four points (source `correction-route`):
    errors and 4 notes in tests, and separate fixture diagnostics. N1a's 124 are unchanged.
 4. **The behaviour check:** identical test identities and outcomes are necessary, not
    sufficient. Intact assertions, forwarding and intent are checked on the diff.
+
+Review round 1 on #473 amended it once more, in two places:
+- point 1 now lists the typed reference in `tests/test_github_rest.py`, the one return
+  widened, with its parameters kept;
+- point 3 now names the index line that records this Decision, which the change also adds.

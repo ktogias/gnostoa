@@ -516,8 +516,9 @@ class SharedGitHubClientTests(unittest.TestCase):
         )
         client = github_rest.GitHubRestClient("t", api_root=provider.root)
         # Its contract is no answer at all: the runtime value is checked, so the
-        # reference is read as returning `object`, which every return satisfies.
-        post_accepted: Callable[..., object] = client.post_accepted
+        # reference keeps the method's parameters and is read as returning `object`,
+        # which every return satisfies.
+        post_accepted: Callable[[str, dict[str, object]], object] = client.post_accepted
         self.assertIsNone(
             post_accepted(f"{provider.root}/dispatches", {"event_type": "x"})
         )
