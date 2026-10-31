@@ -34,6 +34,9 @@ sources:
   - id: correction-route
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6543736813
     title: "The Router's four factual corrections and its reading of the chronology"
+  - id: review-round-1
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6544337883
+    title: "Review round 1 on #473: its findings' linked disposition, the source of this text's second amendment"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose typing family this group answers, unchanged
@@ -165,7 +168,7 @@ Router's four points (source `correction-route`):
 4. **The behaviour check:** identical test identities and outcomes are necessary, not
    sufficient. Intact assertions, forwarding and intent are checked on the diff.
 
-Review round 1 on #473 amended it once more, in two places:
+Review round 1 on #473 (source `review-round-1`) amended it once more, in two places:
 - point 1 now lists the typed reference in `tests/test_github_rest.py`, the one return
   widened, with its parameters kept;
 - point 3 now names the index line that records this Decision, which the change also adds.
