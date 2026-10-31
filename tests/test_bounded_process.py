@@ -265,9 +265,8 @@ class DrainTests(_Children):
     def test_a_selector_close_failure_alone_keeps_the_outcome(self) -> None:
         # The PAO's T1 on #437: with no other failure, the drain's own outcome stands,
         # and the close failure is reported beside it.
-        real = bounded_process.selectors.DefaultSelector
-
-        class CloseFails(real):
+        # The real selector class, defined before the patch below replaces it.
+        class CloseFails(selectors.DefaultSelector):
             def close(self) -> None:
                 super().close()
                 raise OSError("cannot close")
@@ -287,9 +286,8 @@ class DrainTests(_Children):
         # The PAO's T1 and the Router (6221408680) on #437: a select that returns ready
         # streams only after the deadline, deterministically. Its batch is still read,
         # as main's scanner read it, and the next loop stops at the deadline.
-        real = bounded_process.selectors.DefaultSelector
-
-        class Late(real):
+        # The real selector class, defined before the patch below replaces it.
+        class Late(selectors.DefaultSelector):
             def select(self, timeout: float | None = None) -> list:
                 # Bounded, so that a mutated deadline cannot hold the test.
                 time.sleep(min(max(0.0, (timeout or 0.0) + 0.2), 2.0))
@@ -310,6 +308,8 @@ class DrainTests(_Children):
         drained, _ = self._drain(process, seconds=0.3)
         self.assertEqual("deadline", drained.outcome)
         self.assertIsNone(process.poll())
+        assert process.stdout is not None
+        assert process.stderr is not None
         self.assertFalse(process.stdout.closed or process.stderr.closed)
 
 

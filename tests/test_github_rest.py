@@ -515,8 +515,11 @@ class SharedGitHubClientTests(unittest.TestCase):
             }
         )
         client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        # Its contract is no answer at all: the runtime value is checked, so the
+        # reference is read as returning `object`, which every return satisfies.
+        post_accepted: Callable[..., object] = client.post_accepted
         self.assertIsNone(
-            client.post_accepted(f"{provider.root}/dispatches", {"event_type": "x"})
+            post_accepted(f"{provider.root}/dispatches", {"event_type": "x"})
         )
         self.assertEqual(
             [("POST", "/dispatches", {"event_type": "x"})],
@@ -783,11 +786,15 @@ class SharedClientOwnershipTests(unittest.TestCase):
 # Legacy request_timeout floats, pinned from the frozen #441 subject 2a0421f9's own
 # function at the clock observation 1000.0, before request_limit existed (#441 R3,
 # Router 6284547841): (policy, remaining budget or None for no deadline, seconds).
-_LIMIT_POLICIES: dict[str, dict[str, float]] = {
-    "default": {},
-    "zero-floor": {"min_request_seconds": 0.0},
-    "floor-above-cap": {"timeout_seconds": 0.05, "min_request_seconds": 0.1},
-    "floor-equals-cap": {"timeout_seconds": 0.1, "min_request_seconds": 0.1},
+_LIMIT_POLICIES: dict[str, github_rest.Policy] = {
+    "default": github_rest.Policy(),
+    "zero-floor": github_rest.Policy(min_request_seconds=0.0),
+    "floor-above-cap": github_rest.Policy(
+        timeout_seconds=0.05, min_request_seconds=0.1
+    ),
+    "floor-equals-cap": github_rest.Policy(
+        timeout_seconds=0.1, min_request_seconds=0.1
+    ),
 }
 _REQUEST_TIMEOUT_GOLDEN: tuple[tuple[str, float | None, float], ...] = (
     ("default", -1.0, 0.1),
@@ -850,7 +857,7 @@ class RequestLimitTests(unittest.TestCase):
     def test_request_timeout_keeps_its_legacy_values(self) -> None:
         for name, remaining, expected in _REQUEST_TIMEOUT_GOLDEN:
             with self.subTest(policy=name, remaining=remaining):
-                policy = github_rest.Policy(**_LIMIT_POLICIES[name])
+                policy = _LIMIT_POLICIES[name]
                 with mock.patch("time.monotonic", return_value=self._NOW):
                     actual = github_rest.request_timeout(
                         self._deadline(remaining), policy
@@ -860,7 +867,7 @@ class RequestLimitTests(unittest.TestCase):
     def test_the_limit_seconds_are_the_legacy_values(self) -> None:
         for name, remaining, expected in _REQUEST_TIMEOUT_GOLDEN:
             with self.subTest(policy=name, remaining=remaining):
-                policy = github_rest.Policy(**_LIMIT_POLICIES[name])
+                policy = _LIMIT_POLICIES[name]
                 with mock.patch("time.monotonic", return_value=self._NOW):
                     limit = github_rest.request_limit(self._deadline(remaining), policy)
                 self.assertEqual(expected, limit.seconds)

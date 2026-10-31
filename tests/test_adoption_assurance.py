@@ -170,7 +170,11 @@ class AdoptionAssuranceContractTests(unittest.TestCase):
             )
 
         stale = copy.deepcopy(observation)
-        stale["evidence"][0]["sha256"] = "sha256:00"
+        stale_evidence = stale["evidence"]
+        assert isinstance(stale_evidence, list)
+        first_evidence = stale_evidence[0]
+        assert isinstance(first_evidence, dict)
+        first_evidence["sha256"] = "sha256:00"
         with self.assertRaises(adoption_assurance.AssuranceContractError):
             adoption_assurance.make_condition(
                 condition_type="CandidateStable",

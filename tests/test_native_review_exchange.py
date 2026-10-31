@@ -18,6 +18,10 @@ from typing import Any
 
 
 class NativeReviewExchangeTests(unittest.TestCase):
+    # Set once in setUpClass: the exchange fixture's root and the oracle's parsed inputs.
+    fixture: Path
+    inputs: dict[str, Any]
+
     @classmethod
     def setUpClass(cls) -> None:
         default = Path(__file__).parent / "fixtures" / "review_exchange"

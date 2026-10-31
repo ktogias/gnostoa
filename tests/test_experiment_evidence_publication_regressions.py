@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import IO
 from unittest import mock
 
 import yaml
@@ -94,8 +95,8 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, timeout
@@ -120,8 +121,8 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, timeout
@@ -151,8 +152,8 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
                 argv: list[str],
                 *,
                 check: bool,
-                stdout: object,
-                stderr: object,
+                stdout: IO[bytes],
+                stderr: IO[bytes],
                 timeout: int,
             ) -> subprocess.CompletedProcess[bytes]:
                 del check, timeout

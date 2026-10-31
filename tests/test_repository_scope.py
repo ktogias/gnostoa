@@ -518,6 +518,10 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 elif content is not None:
                     content(record)
 
+            def fifo_behind_symlink(entry: Path) -> None:
+                os.mkfifo(entry.with_name("gitdir.fifo"))
+                entry.symlink_to(entry.with_name("gitdir.fifo"))
+
             for label, content, detail in (
                 ("missing", None, "no worktree back-pointer"),
                 (
@@ -530,14 +534,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 ("a FIFO", os.mkfifo, "not a regular file"),
                 # A symlink in the record's place is an unsafe entry, whatever it names
                 # (the owner's N-a 6241486091; cubic and the PAO's NA-BP-01 on #436).
-                (
-                    "a symlink to a FIFO",
-                    lambda entry: (
-                        os.mkfifo(entry.with_name("gitdir.fifo")),
-                        entry.symlink_to(entry.with_name("gitdir.fifo")),
-                    ),
-                    "not a regular file",
-                ),
+                ("a symlink to a FIFO", fifo_behind_symlink, "not a regular file"),
                 (
                     "a symlink to a regular record naming this root",
                     lambda entry: (
@@ -552,6 +549,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     try:
                         raised = self._watched(module, worktree, record)
                         self.assertIsInstance(raised, module.RepositoryScopeError)
+                        assert isinstance(raised, module.RepositoryScopeError)
                         self.assertEqual("UNSAFE_PATH", raised.category)
                         self.assertIn(detail, str(raised))
                     finally:
@@ -572,11 +570,11 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             with self.subTest("unreadable"):
                 with (
                     mock.patch.object(module.os, "open", side_effect=failing),
-                    self.assertRaises(module.RepositoryScopeError) as raised,
+                    self.assertRaises(module.RepositoryScopeError) as unreadable,
                 ):
                     module.has_git_metadata(worktree)
-                self.assertEqual("GIT_METADATA_IO", raised.exception.category)
-            seen: list[object] = []
+                self.assertEqual("GIT_METADATA_IO", unreadable.exception.category)
+            seen: list[float] = []
             real = subprocess.run
 
             def recording(command, **arguments):
@@ -607,10 +605,10 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                         os.environ,
                         {"PATH": f"{stalled}{os.pathsep}{os.environ['PATH']}"},
                     ),
-                    self.assertRaises(module.RepositoryScopeError) as raised,
+                    self.assertRaises(module.RepositoryScopeError) as stalled_query,
                 ):
                     module.has_git_metadata(worktree, timeout=0.5)
-                self.assertEqual("GIT_TIMEOUT", raised.exception.category)
+                self.assertEqual("GIT_TIMEOUT", stalled_query.exception.category)
 
     def test_the_identity_check_compares_the_resolved_root(self) -> None:
         # cubic on #436, by the Router's I-b ("the resolved requested root"): Git's top
