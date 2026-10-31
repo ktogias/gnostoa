@@ -156,10 +156,10 @@ jobs:
           {
             echo "### R2 restoration runtime qualification"
             echo
-            printf -- '- source revision: `%s`\n' "${SOURCE_COMMIT}"
-            printf -- '- source tree: `%s`\n' "${SOURCE_TREE}"
-            printf -- '- local image id: `%s`\n' "${{ steps.identity.outputs.image_id }}"
-            printf -- '- public surface: `%s`\n' "${{ steps.identity.outputs.public_surface_digest }}"
+            printf -- "- source revision: \`%s\`\n" "${SOURCE_COMMIT}"
+            printf -- "- source tree: \`%s\`\n" "${SOURCE_TREE}"
+            printf -- "- local image id: \`%s\`\n" "${{ steps.identity.outputs.image_id }}"
+            printf -- "- public surface: \`%s\`\n" "${{ steps.identity.outputs.public_surface_digest }}"
             echo "- registry publication: **NOT PERFORMED**"
             echo "- protected authority/catalog promotion: **NOT PERFORMED**"
           } >> "${GITHUB_STEP_SUMMARY}"

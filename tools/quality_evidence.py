@@ -1487,6 +1487,31 @@ _PROFILE_SHAPE: dict[str, Any] = {
                 "additionalProperties": False,
                 "properties": {
                     "version": {"type": "string", "minLength": 1},
+                    # Where tool acquisition fetches each machine's release asset, and its own pin: the asset's bytes,
+                    # and the one archive member that is the executable (absent when the asset is the executable).
+                    "asset": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": {
+                            "type": "object",
+                            "required": ["url", "sha256"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "url": {
+                                    "type": "string",
+                                    "pattern": "^https://github\\.com/[^?#@]+$",
+                                },
+                                "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$",
+                                },
+                                "member": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                                },
+                            },
+                        },
+                    },
                     "sha256": {
                         "type": "object",
                         "minProperties": 1,
@@ -1686,6 +1711,18 @@ def _check_version(profile: Mapping[str, Any]) -> None:
 def _active_families(profile: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """The families acquisition runs: an inactive one is never planned, run or rowed (#389 H-PYSEC-2)."""
     return [family for family in profile["families"] if family.get("active", True)]
+
+
+def tool_names(profile: Mapping[str, Any]) -> list[str]:
+    """The pinned tools the active families' producers run, sorted: what the inventory needs at `TOOL_ROOT`, and so
+    what tool acquisition fetches. None while every tool family is inactive (#389 Decision 0122's remainder)."""
+    return sorted(
+        {
+            tool
+            for family in _active_families(profile)
+            for tool in _TOOL_PRODUCER_TOOLS.get(family["producer"], ())
+        }
+    )
 
 
 def _check_identifiers(profile: Mapping[str, Any]) -> None:
@@ -2973,6 +3010,7 @@ def _family_row(
 TOOL_ROOT = Path("/opt/gnostoa-tools")
 # Every read is bounded; the largest pin, Hadolint 2.15.1, is about 56 MB.
 _MAX_TOOL_BYTES = 256 * 1024 * 1024
+MAX_TOOL_BYTES = _MAX_TOOL_BYTES  # the same bound, for tool acquisition
 _SHEBANG = re.compile(
     rb"#!\s*(?:/usr/bin/env\s+(?:-S\s+)?)?(?:\S*/)?([A-Za-z][\w.+-]*)"
 )

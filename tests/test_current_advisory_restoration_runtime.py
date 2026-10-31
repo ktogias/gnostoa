@@ -59,6 +59,12 @@ def _step_run(step: dict[str, object], name: str) -> str:
     return run
 
 
+def _assert_all_in(case: unittest.TestCase, text: str, *required: str) -> None:
+    """Each required fragment appears in a step's run text."""
+    for fragment in required:
+        case.assertIn(fragment, text)
+
+
 class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
     def test_r2_has_structural_verification_only_qualification_surface(self) -> None:
         self.assertTrue(DECISION_PATH.is_file(), "R2_RESTORATION_DECISION_UNAVAILABLE")
@@ -165,7 +171,9 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "git -C restoration-source merge-base",
             bind_run,
         )
-        for required in (
+        _assert_all_in(
+            self,
+            bind_run,
             "git -C restoration-source rev-parse HEAD",
             "git -C restoration-source rev-parse 'HEAD^{tree}'",
             "git -C restoration-source status --porcelain",
@@ -173,12 +181,13 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             'git merge-base --is-ancestor "${SOURCE_COMMIT}" "${protected_main}"',
             "restoration source is not an ancestor of protected main",
             "SOURCE_COMMIT is the immutable runtime subject",
-        ):
-            self.assertIn(required, bind_run)
+        )
 
         _, build = _named_step(steps, "Build exact integrated runtime locally")
         build_run = _step_run(build, "local runtime build")
-        for required in (
+        _assert_all_in(
+            self,
+            build_run,
             "cd restoration-source",
             'GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}"',
             "./ci/build-runtime",
@@ -187,12 +196,13 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "--pull",
             "--no-cache",
             'docker run --rm "${GNOSTOA_R2_CANDIDATE_IMAGE}" self-check',
-        ):
-            self.assertIn(required, build_run)
+        )
 
         _, identity = _named_step(steps, "Measure candidate runtime identity")
         identity_run = _step_run(identity, "runtime identity")
-        for required in (
+        _assert_all_in(
+            self,
+            identity_run,
             "docker image inspect",
             "^sha256:[0-9a-f]{64}$",
             "org.opencontainers.image.revision",
@@ -200,21 +210,21 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             'echo "image_id=${image_id}"',
             'echo "public_surface_digest=${public_surface_digest}"',
             '>> "${GITHUB_OUTPUT}"',
-        ):
-            self.assertIn(required, identity_run)
+        )
 
         _, contracts = _named_step(
             steps,
             "Run exact-source transport regression contracts via native orchestration fallback",
         )
         contracts_run = _step_run(contracts, "transport contracts")
-        for required in (
+        _assert_all_in(
+            self,
+            contracts_run,
             "restoration-source/tests/test_review_current_payload_transport.py",
             "restoration-source/tests/test_review_outer_containment.py",
             "restoration-source/tests/test_security_review_followup.py",
             "tests/test_current_advisory_restoration_runtime.py",
-        ):
-            self.assertIn(required, contracts_run)
+        )
 
         _, smoke_step = _named_step(steps, "Exercise layered candidate transport")
         smoke_run = _step_run(smoke_step, "layered transport smoke")
@@ -257,10 +267,13 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         _, receipt = _named_step(steps, "Record bounded qualification receipt")
         receipt_run = _step_run(receipt, "qualification receipt")
         self.assertIn("set -euo pipefail", receipt_run)
-        self.assertIn("printf -- '- source revision: `%s`", receipt_run)
-        self.assertIn("printf -- '- source tree: `%s`", receipt_run)
-        self.assertIn(r"`%s`\n", receipt_run)
-        self.assertNotIn(r"`%s`\\n", receipt_run)
+        self.assertIn('printf -- "- source revision: \\`%s\\`\\n"', receipt_run)
+        self.assertIn('printf -- "- source tree: \\`%s\\`\\n"', receipt_run)
+        # Double-quoted formats with escaped backticks: nothing in them expands, and ShellCheck (SC2016) sees no
+        # single-quoted expression. The format still ends in printf's own newline escape, never a doubled one.
+        self.assertIn(r"\`%s\`\n", receipt_run)
+        self.assertNotIn(r"\`%s\`\\n", receipt_run)
+        self.assertNotIn("printf -- '", receipt_run)
         self.assertNotIn('echo "- source revision: `', receipt_run)
         self.assertNotIn('echo "- source tree: `', receipt_run)
         self.assertIn("registry publication: **NOT PERFORMED**", receipt_run)

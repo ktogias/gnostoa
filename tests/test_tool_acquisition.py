@@ -1,0 +1,656 @@
+"""Tool acquisition for the diagnostic profile's pinned tools (#389 H-PYSEC-2, Decision 0122's remainder).
+
+Both mandatory consumers -- the protected inventory job and the development image -- run the one acquisition entry, and
+with every tool family inactive it selects nothing and makes no request. On the active path an asset must equal its pin
+before any member is read, an archive yields exactly one regular member of the pinned name under a decompression bound,
+the executable must equal its pin before it is installed read-only, and nothing already at the target is followed or
+replaced (PAO 6530109793). Every refusal installs nothing for that tool."""
+
+from __future__ import annotations
+
+import hashlib
+import http.client
+import io
+import os
+import stat
+import tarfile
+import tempfile
+import unittest
+import urllib.request
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import yaml
+
+from tools import quality_evidence, security_scan, tool_acquisition
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _tar(members: list[tuple[str, bytes | None, str]], mode: str = "w:xz") -> bytes:
+    """An archive of the given members: (name, bytes, kind) with kind file, symlink or dir."""
+    buffer = io.BytesIO()
+    # One literal mode per call, as typeshed types tarfile.open, so no type suppression is needed.
+    assert mode in ("w:xz", "w:gz"), mode
+    opened = (
+        tarfile.open(fileobj=buffer, mode="w:gz")
+        if mode == "w:gz"
+        else tarfile.open(fileobj=buffer, mode="w:xz")
+    )
+    with opened as archive:
+        for name, data, kind in members:
+            info = tarfile.TarInfo(name)
+            if kind == "file":
+                assert data is not None
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = "elsewhere"
+                archive.addfile(info)
+            else:
+                info.type = tarfile.DIRTYPE
+                archive.addfile(info)
+    return buffer.getvalue()
+
+
+def _sparse_tar(size: int) -> bytes:
+    """An xz archive whose one member, `d/shellcheck`, is a PAX sparse file: 4 stored bytes and `size` logical ones."""
+    buffer = io.BytesIO()
+    with tarfile.open(
+        fileobj=buffer, mode="w:xz", format=tarfile.PAX_FORMAT
+    ) as archive:
+        info = tarfile.TarInfo("d/shellcheck")
+        info.size = 4
+        info.pax_headers = {"GNU.sparse.map": "0,4", "GNU.sparse.realsize": str(size)}
+        archive.addfile(info, io.BytesIO(b"\x7fELF"))
+    return buffer.getvalue()
+
+
+def _profile(
+    active: tuple[str, ...], tools: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    families = [
+        {"id": "typing", "producer": "mypy", "diff": "all", "full": "all"},
+        {
+            "id": "shell-lint",
+            "producer": "shellcheck",
+            "diff": "all",
+            "full": "all",
+            "active": "shell-lint" in active,
+        },
+        {
+            "id": "workflow-lint",
+            "producer": "actionlint",
+            "diff": "all",
+            "full": "all",
+            "active": "workflow-lint" in active,
+        },
+        {
+            "id": "dockerfile-lint",
+            "producer": "hadolint",
+            "diff": "all",
+            "full": "all",
+            "active": "dockerfile-lint" in active,
+        },
+    ]
+    return {"families": families, "tools": tools or {}}
+
+
+def _pins(
+    name: str, asset: bytes, executable: bytes, member: str | None
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "url": f"https://github.com/o/{name}/releases/download/v1/{name}.tar.xz",
+        "sha256": _sha(asset),
+    }
+    if member is not None:
+        entry["member"] = member
+    return {
+        name: {
+            "version": "1",
+            "sha256": {"x86_64": _sha(executable)},
+            "asset": {"x86_64": entry},
+        }
+    }
+
+
+class SelectionTests(unittest.TestCase):
+    def test_mains_profile_acquires_nothing_and_makes_no_request(self) -> None:
+        profile = quality_evidence.load_diagnostic_profile(
+            ROOT / "policy" / "diagnostic-profile.yaml"
+        )
+        self.assertEqual([], quality_evidence.tool_names(profile))
+        fetcher = mock.Mock(side_effect=AssertionError("no request may be made"))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                [], tool_acquisition.acquire(profile, Path(directory), fetcher=fetcher)
+            )
+            self.assertEqual([], os.listdir(directory))
+        fetcher.assert_not_called()
+
+    def test_selection_follows_the_active_families_producers(self) -> None:
+        self.assertEqual(
+            ["shellcheck"], quality_evidence.tool_names(_profile(("shell-lint",)))
+        )
+        self.assertEqual(
+            ["actionlint", "shellcheck"],
+            quality_evidence.tool_names(_profile(("workflow-lint",))),
+        )
+        self.assertEqual(
+            ["hadolint"], quality_evidence.tool_names(_profile(("dockerfile-lint",)))
+        )
+        self.assertEqual([], quality_evidence.tool_names(_profile(())))
+
+    def test_an_unsupported_machine_is_refused_before_any_fetch(self) -> None:
+        tools = _pins("shellcheck", b"a", b"e", "d/shellcheck")
+        fetcher = mock.Mock(side_effect=AssertionError("no request may be made"))
+        profile = _profile(("shell-lint",), tools)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(
+                tool_acquisition.AcquisitionError, "no pin for machine riscv64"
+            ):
+                tool_acquisition.acquire(
+                    profile,
+                    root,
+                    machine="riscv64",
+                    fetcher=fetcher,
+                )
+            self.assertEqual([], os.listdir(directory))
+        fetcher.assert_not_called()
+
+
+class ArchiveTests(unittest.TestCase):
+    def _acquire(
+        self,
+        asset: bytes,
+        executable: bytes,
+        member: str | None,
+        served: bytes | None = None,
+    ) -> tuple[Path, Exception | None]:
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        tools = _pins("shellcheck", asset, executable, member)
+        try:
+            tool_acquisition.acquire(
+                _profile(("shell-lint",), tools),
+                directory,
+                machine="x86_64",
+                fetcher=lambda url: served if served is not None else asset,
+            )
+        except tool_acquisition.AcquisitionError as exc:
+            return directory, exc
+        return directory, None
+
+    def test_an_asset_of_other_bytes_installs_nothing(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable, "file")])
+        directory, error = self._acquire(
+            asset, executable, "d/shellcheck", served=asset + b"x"
+        )
+        self.assertRegex(str(error), "the asset's bytes are not its pin")
+        self.assertEqual([], os.listdir(directory))
+
+    def test_the_member_must_be_one_regular_file_of_the_pinned_name(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        cases: dict[str, list[tuple[str, bytes | None, str]]] = {
+            "missing": [("d/other", executable, "file")],
+            "duplicated": [
+                ("d/shellcheck", executable, "file"),
+                ("d/shellcheck", executable, "file"),
+            ],
+            "a link": [("d/shellcheck", None, "symlink")],
+            "a directory": [("d/shellcheck", None, "dir")],
+        }
+        for name, members in cases.items():
+            with self.subTest(name):
+                directory, error = self._acquire(
+                    _tar(members), executable, "d/shellcheck"
+                )
+                self.assertRegex(str(error), "member d/shellcheck")
+                self.assertEqual([], os.listdir(directory))
+
+    def test_a_pinned_member_name_outside_the_archive_root_is_refused(self) -> None:
+        executable = b"x"
+        for member in (
+            "../shellcheck",
+            "/shellcheck",
+            "d/../shellcheck",
+            "d//shellcheck",
+        ):
+            with self.subTest(member):
+                directory, error = self._acquire(
+                    _tar([(member, executable, "file")]), executable, member
+                )
+                self.assertRegex(str(error), "member name")
+                self.assertEqual([], os.listdir(directory))
+
+    def test_decompression_is_bounded_and_a_truncated_archive_is_refused(self) -> None:
+        big = _tar([("d/shellcheck", b"\0" * 4096, "file")])
+        with self.assertRaisesRegex(
+            tool_acquisition.AcquisitionError, "decompresses past 1024 bytes"
+        ):
+            tool_acquisition.member_bytes(big, "d/shellcheck", 1024)
+        for mode in ("w:xz", "w:gz"):
+            truncated = _tar([("d/shellcheck", b"x" * 4096, "file")], mode)[:-16]
+            with (
+                self.subTest(mode),
+                self.assertRaisesRegex(tool_acquisition.AcquisitionError, "truncated"),
+            ):
+                tool_acquisition.member_bytes(
+                    truncated,
+                    "d/shellcheck",
+                    1 << 20,
+                )
+        with self.assertRaisesRegex(
+            tool_acquisition.AcquisitionError, "not an xz or gzip archive"
+        ):
+            tool_acquisition.member_bytes(b"PK\x03\x04", "d/shellcheck", 1 << 20)
+
+    def test_a_sparse_member_is_refused_unexpanded(self) -> None:
+        """Cubic on #471: tarfile counts a sparse member as regular, and reading it expands its holes: this archive is
+        236 bytes of xz, and its member reads back as 1 MiB."""
+        sparse = _sparse_tar(1 << 20)
+        with self.assertRaisesRegex(tool_acquisition.AcquisitionError, "non-sparse"):
+            tool_acquisition.member_bytes(sparse, "d/shellcheck", 1 << 15)
+
+    def test_the_member_read_is_bounded_on_its_own(self) -> None:
+        """The read bound holds even if a member's expansion were not refused before it."""
+        sparse = _sparse_tar(1 << 20)
+        with (
+            mock.patch.object(tarfile.TarInfo, "issparse", return_value=False),
+            self.assertRaisesRegex(
+                tool_acquisition.AcquisitionError, "past 32768 bytes"
+            ),
+        ):
+            tool_acquisition.member_bytes(sparse, "d/shellcheck", 1 << 15)
+
+    def test_an_executable_of_other_bytes_installs_nothing(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable + b"#", "file")])
+        directory, error = self._acquire(asset, executable, "d/shellcheck")
+        self.assertRegex(str(error), "the executable's bytes are not its pin")
+        self.assertEqual([], os.listdir(directory))
+
+    def test_a_verified_executable_is_installed_read_only(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        for mode in ("w:xz", "w:gz"):
+            with self.subTest(mode):
+                directory, error = self._acquire(
+                    _tar([("d/shellcheck", executable, "file")], mode),
+                    executable,
+                    "d/shellcheck",
+                )
+                self.assertIsNone(error)
+                installed = directory / "shellcheck"
+                self.assertEqual(0o555, stat.S_IMODE(installed.lstat().st_mode))
+                self.assertEqual(
+                    executable,
+                    security_scan.verified_pinned_bytes(
+                        directory,
+                        "shellcheck",
+                        _sha(executable),
+                        1 << 20,
+                        label="tool shellcheck",
+                    ),
+                )
+
+    def test_an_asset_that_is_the_executable_is_installed_as_is(self) -> None:
+        executable = b"#!/bin/sh\necho hadolint\n"
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        tools = _pins("hadolint", executable, executable, None)
+        installed = tool_acquisition.acquire(
+            _profile(("dockerfile-lint",), tools),
+            directory,
+            machine="x86_64",
+            fetcher=lambda url: executable,
+        )
+        self.assertEqual(["hadolint"], installed)
+        self.assertEqual(executable, (directory / "hadolint").read_bytes())
+
+    def test_nothing_already_at_the_target_is_followed_or_replaced(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable, "file")])
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        outside = directory / "outside"
+        outside.write_bytes(b"keep")
+        (directory / "root").mkdir()
+        for kind in ("link", "file"):
+            with self.subTest(kind):
+                target = directory / "root" / "shellcheck"
+                if kind == "link":
+                    target.symlink_to(outside)
+                else:
+                    target.write_bytes(b"old")
+                profile = _profile(
+                    ("shell-lint",),
+                    _pins("shellcheck", asset, executable, "d/shellcheck"),
+                )
+                with self.assertRaisesRegex(
+                    tool_acquisition.AcquisitionError, "already exists"
+                ):
+                    tool_acquisition.acquire(
+                        profile,
+                        directory / "root",
+                        machine="x86_64",
+                        fetcher=lambda url: asset,
+                    )
+                self.assertEqual(b"keep", outside.read_bytes())
+                if kind == "file":
+                    self.assertEqual(b"old", target.read_bytes())
+                target.unlink()
+
+
+class InstallBoundaryTests(unittest.TestCase):
+    """The Router's 6530414059: provisioning the initially absent root is its own boundary, not the collector's run copy."""
+
+    def test_a_failed_removal_keeps_the_refusal_named(self) -> None:
+        """Revix on #471: a removal that fails after a mismatch never replaces the refusal with an escaping error."""
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable, "file")])
+        profile = _profile(
+            ("shell-lint",), _pins("shellcheck", asset, executable, "d/shellcheck")
+        )
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        mismatch = security_scan.SecurityScanError("not as pinned")
+        with (
+            mock.patch.object(
+                security_scan, "verified_pinned_bytes", side_effect=mismatch
+            ),
+            mock.patch.object(Path, "unlink", side_effect=PermissionError("denied")),
+            self.assertRaisesRegex(
+                tool_acquisition.AcquisitionError,
+                r"^tool shellcheck: .* did not install as pinned: not as pinned; "
+                r"its removal failed: denied$",
+            ),
+        ):
+            tool_acquisition.acquire(
+                profile, root, machine="x86_64", fetcher=lambda url: asset
+            )
+
+    def test_the_root_must_be_a_directory_and_never_a_link(self) -> None:
+        executable = b"#!/bin/sh\necho shellcheck\n"
+        asset = _tar([("d/shellcheck", executable, "file")])
+        tools = _pins("shellcheck", asset, executable, "d/shellcheck")
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        real = directory / "real"
+        real.mkdir()
+        (directory / "link").symlink_to(real)
+        (directory / "file").write_bytes(b"")
+        profile = _profile(("shell-lint",), tools)
+        for root in ("missing", "link", "file"):
+            with (
+                self.subTest(root),
+                self.assertRaisesRegex(
+                    tool_acquisition.AcquisitionError,
+                    "is not a directory to install into",
+                ),
+            ):
+                tool_acquisition.acquire(
+                    profile,
+                    directory / root,
+                    machine="x86_64",
+                    fetcher=lambda url: asset,
+                )
+        self.assertEqual([], os.listdir(real))
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self._body = io.BytesIO(body)
+        self.headers: dict[str, str] = {}
+
+    def read1(self, size: int) -> bytes:
+        return self._body.read(min(size, 1024))
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class FetchTests(unittest.TestCase):
+    def test_redirects_go_only_once_to_the_release_asset_host(self) -> None:
+        handler = tool_acquisition.PinnedRedirect()
+        first = urllib.request.Request("https://github.com/o/r/releases/download/v1/a")
+        asset = "https://release-assets.githubusercontent.com/x/y?sig=1"
+        redirected = handler.redirect_request(first, None, 302, "Found", {}, asset)
+        assert redirected is not None
+        self.assertEqual(asset, redirected.full_url)
+        for target in (
+            "https://example.com/a",
+            "http://release-assets.githubusercontent.com/a",
+            "https://user@release-assets.githubusercontent.com/a",
+            "https://release-assets.githubusercontent.com:8443/a",
+        ):
+            with (
+                self.subTest(target),
+                self.assertRaisesRegex(tool_acquisition.AcquisitionError, "redirect"),
+            ):
+                handler.redirect_request(first, None, 302, "Found", {}, target)
+        second = urllib.request.Request(asset)
+        with self.assertRaisesRegex(
+            tool_acquisition.AcquisitionError, "a second redirect"
+        ):
+            handler.redirect_request(second, None, 302, "Found", {}, asset)
+
+    def test_no_credential_crosses_to_the_asset_host(self) -> None:
+        """The Router's 6530414059: no App, owner or readback credential reaches the release-asset host. Acquisition
+        sends none, and a redirect carries none even when the first request had one."""
+        handler = tool_acquisition.PinnedRedirect()
+        first = urllib.request.Request(
+            "https://github.com/o/r/releases/download/v1/a",
+            headers={
+                "Authorization": "token t",
+                "Cookie": "c=1",
+                "Proxy-Authorization": "p",
+            },
+        )
+        redirected = handler.redirect_request(
+            first,
+            None,
+            302,
+            "Found",
+            {},
+            "https://release-assets.githubusercontent.com/x",
+        )
+        assert redirected is not None
+        sent = {key.lower() for key, _ in redirected.header_items()}
+        self.assertTrue(
+            {"authorization", "cookie", "proxy-authorization"}.isdisjoint(sent), sent
+        )
+        opener = mock.Mock()
+        opener.open.return_value = _Response(b"x")
+        tool_acquisition.fetch(
+            "https://github.com/o/r/releases/download/v1/a", opener=opener
+        )
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            [],
+            [
+                key
+                for key, _ in request.header_items()
+                if key.lower() in ("authorization", "cookie")
+            ],
+        )
+
+    def test_only_a_github_release_url_is_fetched(self) -> None:
+        opener = mock.Mock()
+        for url in (
+            "https://example.com/a",
+            "http://github.com/a",
+            "https://github.com:8443/a",
+            "https://u@github.com/a",
+        ):
+            with (
+                self.subTest(url),
+                self.assertRaisesRegex(
+                    tool_acquisition.AcquisitionError, "not a GitHub release URL"
+                ),
+            ):
+                tool_acquisition.fetch(url, opener=opener)
+        opener.open.assert_not_called()
+
+    def test_the_transfer_is_bounded(self) -> None:
+        opener = mock.Mock()
+        opener.open.return_value = _Response(b"x" * 5000)
+        with self.assertRaisesRegex(
+            tool_acquisition.AcquisitionError, "exceeded 4096 bytes"
+        ):
+            tool_acquisition.fetch(
+                "https://github.com/o/r/releases/download/v1/a",
+                opener=opener,
+                max_bytes=4096,
+            )
+        opener.open.return_value = _Response(b"x" * 4096)
+        self.assertEqual(
+            b"x" * 4096,
+            tool_acquisition.fetch(
+                "https://github.com/o/r/releases/download/v1/a",
+                opener=opener,
+                max_bytes=4096,
+            ),
+        )
+
+
+class FetchFailureTests(unittest.TestCase):
+    """Cubic on #471: every transport failure below the client's own is a named refusal, never an escaping exception."""
+
+    def test_a_transport_failure_is_a_named_refusal(self) -> None:
+        for error in (
+            http.client.BadStatusLine("x"),
+            ValueError("x"),
+            ConnectionResetError("x"),
+        ):
+            opener = mock.Mock()
+            opener.open.side_effect = error
+            with (
+                self.subTest(type(error).__name__),
+                self.assertRaisesRegex(
+                    tool_acquisition.AcquisitionError,
+                    r"^https://github\.com/o/r/releases/download/v1/a: ",
+                ),
+            ):
+                tool_acquisition.fetch(
+                    "https://github.com/o/r/releases/download/v1/a", opener=opener
+                )
+
+
+class EntryTests(unittest.TestCase):
+    """SonarCloud S8707 on #471: no path reaches the install from the command line. The entry acquires into the
+    collector's own TOOL_ROOT from the protected profile, and refuses any argument."""
+
+    def test_the_entry_takes_no_path_from_its_command_line(self) -> None:
+        for argv in (
+            ["--root", "/elsewhere"],
+            ["--profile", "/elsewhere.yaml"],
+            ["/elsewhere"],
+        ):
+            with self.subTest(argv), mock.patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(SystemExit) as refused:
+                    tool_acquisition.main(argv)
+                self.assertEqual(2, refused.exception.code)
+
+    def test_the_entry_acquires_into_tool_root_from_the_protected_profile(self) -> None:
+        acquire = mock.Mock(return_value=[])
+        with mock.patch.object(tool_acquisition, "acquire", acquire):
+            self.assertEqual(0, tool_acquisition.main([]))
+        # Exactly one acquisition, never a second download or install attempt (Cubic on #471).
+        acquire.assert_called_once()
+        profile, root = acquire.call_args.args
+        self.assertEqual(quality_evidence.load_diagnostic_profile(), profile)
+        self.assertEqual(Path(quality_evidence.TOOL_ROOT), root)
+
+    def test_a_refusal_or_an_unusable_profile_is_one_named_line(self) -> None:
+        """Cubic on #471: an unusable profile is refused like any other acquisition, never an escaping traceback."""
+        for name, patch in (
+            (
+                "refused",
+                mock.patch.object(
+                    tool_acquisition,
+                    "acquire",
+                    side_effect=tool_acquisition.AcquisitionError("tool x: refused"),
+                ),
+            ),
+            (
+                "profile",
+                mock.patch.object(
+                    quality_evidence,
+                    "load_diagnostic_profile",
+                    side_effect=quality_evidence.QualityEvidenceError("unusable"),
+                ),
+            ),
+        ):
+            stderr = io.StringIO()
+            with self.subTest(name):
+                with patch, mock.patch("sys.stderr", stderr):
+                    code = tool_acquisition.main([])
+                self.assertEqual(1, code)
+                self.assertEqual(1, len(stderr.getvalue().splitlines()))
+                self.assertTrue(
+                    stderr.getvalue().startswith("tool acquisition refused: ")
+                )
+
+
+class ConsumerTests(unittest.TestCase):
+    def test_the_protected_inventory_job_acquires_before_it_collects(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "analyzer-readback.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        steps = workflow["jobs"]["inventory"]["steps"]
+        names = [step.get("name") for step in steps]
+        acquire = names.index("Acquire the active families' pinned tools")
+        self.assertLess(names.index("Install main's development tools"), acquire)
+        self.assertLess(acquire, names.index("Inventory the head"))
+        step = steps[acquire]
+        # The command itself, a top-level line of the step's script, never only text in it (Cubic on #471).
+        self.assertEqual(
+            [
+                "set -eu",
+                'sudo install --directory --owner="$(id -u)" --group="$(id -g)" '
+                "--mode=0755 /opt/gnostoa-tools",
+                "PYTHONPATH=. python -m tools.tool_acquisition",
+            ],
+            step["run"].splitlines(),
+        )
+        # A refused acquisition leaves its families INCOMPLETE in the inventory; it never stops the inventory itself.
+        self.assertIs(True, step.get("continue-on-error"))
+        # Nothing else on the step, so no condition, shell or environment can skip or reroute it (Sourcery on #471).
+        self.assertEqual({"name", "continue-on-error", "run"}, set(step))
+        self.assertNotIn("curl", step["run"])
+        self.assertNotIn("wget", step["run"])
+
+    def test_the_development_image_acquires_with_the_same_entry(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        development = dockerfile[
+            dockerfile.index("FROM development-build AS development") :
+        ]
+        # A command of one RUN, after the development lock's install and joined to it by `&&`, so a failure stops
+        # the build; never only text in the image (Cubic on #471).
+        run = (
+            "\nRUN python -m pip install \\\n"
+            "      --no-cache-dir \\\n"
+            "      --only-binary=:all: \\\n"
+            "      --require-hashes \\\n"
+            "      --report .evidence/development-install-report.json \\\n"
+            "      -r requirements/development.lock \\\n"
+            "    && chmod 0444 .evidence/development-install-report.json \\\n"
+            "    && install --directory --mode=0755 /opt/gnostoa-tools \\\n"
+            "    && python -m tools.tool_acquisition\n"
+        )
+        self.assertEqual(1, development.count(run))
+        self.assertEqual(1, development.count("tools.tool_acquisition"))
+        self.assertLess(development.index(run), development.index("\nUSER kit\n"))
+        self.assertNotIn("\nADD ", development)
+
+
+if __name__ == "__main__":
+    unittest.main()
