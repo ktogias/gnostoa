@@ -110,12 +110,15 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         abstract_input = copy.deepcopy(input_document)
         abstract_evidence = abstract_input["evidence_set"]
         self.assertIsInstance(abstract_evidence, dict)
+        assert isinstance(abstract_evidence, dict)
         abstract_evidence["observations"] = []
         abstract_qualification = abstract_input["qualification_snapshot"]
         self.assertIsInstance(abstract_qualification, dict)
+        assert isinstance(abstract_qualification, dict)
         abstract_qualification["entries"] = []
         abstract_authority = abstract_input["authority"]
         self.assertIsInstance(abstract_authority, dict)
+        assert isinstance(abstract_authority, dict)
         abstract_authority["policy_digest"] = canonical_digest(abstract_policy)
         abstract_authority["qualification_snapshot_digest"] = canonical_digest(
             abstract_qualification
@@ -131,6 +134,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         unresolved_input = copy.deepcopy(input_document)
         unresolved_authority = unresolved_input["authority"]
         self.assertIsInstance(unresolved_authority, dict)
+        assert isinstance(unresolved_authority, dict)
         unresolved_authority["policy_digest"] = canonical_digest(unresolved_policy)
         code, payload = review_check.evaluate_documents(
             unresolved_input, unresolved_policy
@@ -141,6 +145,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         zero_input = copy.deepcopy(input_document)
         zero_evidence = zero_input["evidence_set"]
         self.assertIsInstance(zero_evidence, dict)
+        assert isinstance(zero_evidence, dict)
         zero_evidence["observations"] = []
         code, payload = review_check.evaluate_documents(zero_input, policy_document)
         self.assertEqual(3, code)
@@ -153,6 +158,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         input_document, policy_document = _documents()
         evidence_set = input_document["evidence_set"]
         self.assertIsInstance(evidence_set, dict)
+        assert isinstance(evidence_set, dict)
         sources = evidence_set["sources"]
         self.assertIsInstance(sources, list)
         sources.append(
@@ -185,6 +191,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             input_document, policy_document = _documents()
             evidence_set = input_document["evidence_set"]
             self.assertIsInstance(evidence_set, dict)
+            assert isinstance(evidence_set, dict)
             observations = evidence_set["observations"]
             self.assertIsInstance(observations, list)
             unsupported = observations[1]
@@ -197,9 +204,11 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             if mode == "conflict":
                 blockers = policy_document["blockers"]
                 self.assertIsInstance(blockers, dict)
+                assert isinstance(blockers, dict)
                 blockers["recommendations"] = []
                 authority = input_document["authority"]
                 self.assertIsInstance(authority, dict)
+                assert isinstance(authority, dict)
                 authority["policy_digest"] = canonical_digest(policy_document)
 
             code, payload = review_check.evaluate_documents(
@@ -234,6 +243,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
 
         evidence_set = input_document["evidence_set"]
         self.assertIsInstance(evidence_set, dict)
+        assert isinstance(evidence_set, dict)
         observations = evidence_set["observations"]
         self.assertIsInstance(observations, list)
         first = copy.deepcopy(observations[0])
@@ -250,6 +260,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             candidate = copy.deepcopy(input_document)
             candidate_evidence = candidate["evidence_set"]
             self.assertIsInstance(candidate_evidence, dict)
+            assert isinstance(candidate_evidence, dict)
             candidate_evidence["observations"] = copy.deepcopy(variant)
 
             code, payload = review_check.evaluate_documents(
@@ -345,6 +356,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         input_document, policy_document = _documents()
         evidence_set = input_document["evidence_set"]
         self.assertIsInstance(evidence_set, dict)
+        assert isinstance(evidence_set, dict)
         sources = evidence_set["sources"]
         self.assertIsInstance(sources, list)
         conflict = copy.deepcopy(sources[0])
@@ -384,6 +396,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             input_document, policy_document = _documents()
             evidence_set = input_document["evidence_set"]
             self.assertIsInstance(evidence_set, dict)
+            assert isinstance(evidence_set, dict)
             observations = evidence_set["observations"]
             self.assertIsInstance(observations, list)
             observation = observations[0]
@@ -399,8 +412,10 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
                 self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
                 error = payload.get("error")
                 self.assertIsInstance(error, dict)
+                assert isinstance(error, dict)
                 details = error.get("details")
                 self.assertIsInstance(details, dict)
+                assert isinstance(details, dict)
                 mismatches = details.get("mismatches")
                 self.assertIsInstance(mismatches, list)
                 self.assertTrue(mismatches)
@@ -412,6 +427,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             input_document, policy_document = _documents()
             qualification = input_document["qualification_snapshot"]
             self.assertIsInstance(qualification, dict)
+            assert isinstance(qualification, dict)
             entries = qualification["entries"]
             self.assertIsInstance(entries, list)
             original = copy.deepcopy(entries[0])
@@ -423,6 +439,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             )
             authority = input_document["authority"]
             self.assertIsInstance(authority, dict)
+            assert isinstance(authority, dict)
             authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
             code, payload = review_check.evaluate_documents(
@@ -437,11 +454,13 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         input_document, policy_document = _documents()
         qualification = input_document["qualification_snapshot"]
         self.assertIsInstance(qualification, dict)
+        assert isinstance(qualification, dict)
         entries = qualification["entries"]
         self.assertIsInstance(entries, list)
         entries.append(copy.deepcopy(entries[0]))
         authority = input_document["authority"]
         self.assertIsInstance(authority, dict)
+        assert isinstance(authority, dict)
         authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
         code, payload = review_check.evaluate_documents(input_document, policy_document)
@@ -463,6 +482,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             candidate = copy.deepcopy(input_document)
             target = candidate["subject"]
             self.assertIsInstance(target, dict)
+            assert isinstance(target, dict)
             if dimension == "change_request":
                 change_request = target["change_request"]
                 self.assertIsInstance(change_request, dict)

@@ -53,19 +53,24 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             manifest["packet_version"],
         )
 
-        entries = [manifest["review_request"], manifest["requirement"]]
-        self.assertEqual({"path", "sha256"}, set(manifest["review_request"]))
-        self.assertEqual({"path", "sha256"}, set(manifest["requirement"]))
-        self.assertEqual("review-request.md", manifest["review_request"]["path"])
-        self.assertEqual("requirement.md", manifest["requirement"]["path"])
+        review_request = manifest["review_request"]
+        assert isinstance(review_request, dict)
+        requirement = manifest["requirement"]
+        assert isinstance(requirement, dict)
+        entries = [review_request, requirement]
+        self.assertEqual({"path", "sha256"}, set(review_request))
+        self.assertEqual({"path", "sha256"}, set(requirement))
+        self.assertEqual("review-request.md", review_request["path"])
+        self.assertEqual("requirement.md", requirement["path"])
         bases = manifest["bases"]
+        assert isinstance(bases, list)
         self.assertEqual(2, len(bases))
         self.assertEqual(2, len({base["id"] for base in bases}))
         base_by_id = {base["id"]: base for base in bases}
         declared_packet_paths = {
             "manifest.yaml",
             "review-request.md",
-            manifest["requirement"]["path"],
+            requirement["path"],
         }
         for base in bases:
             self.assertEqual({"id", "tree", "files"}, set(base))
@@ -79,6 +84,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                 entries.append(entry)
 
         cases = manifest["cases"]
+        assert isinstance(cases, list)
         self.assertEqual(3, len(cases))
         self.assertEqual(3, len({case["id"] for case in cases}))
         self.assertEqual(
@@ -151,13 +157,17 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         self,
     ) -> None:
         manifest = load_mapping(BLIND_REPLAY / "manifest.yaml")
-        base_by_id = {base["id"]: base for base in manifest["bases"]}
+        bases = manifest["bases"]
+        assert isinstance(bases, list)
+        base_by_id = {base["id"]: base for base in bases}
         allowed_argv = {
             "case-b683": ["python", "-m", "unittest", "-q", "tests.test_help_text"],
             "case-2d91": ["python", "-m", "unittest", "-q", "tests.test_relocate"],
             "case-7ac4": ["python", "-m", "unittest", "-q", "tests.test_relocate"],
         }
-        for case in manifest["cases"]:
+        cases = manifest["cases"]
+        assert isinstance(cases, list)
+        for case in cases:
             candidate_path = (BLIND_REPLAY / case["candidate"]["path"]).resolve()
             for line in candidate_path.read_text(encoding="utf-8").splitlines():
                 if line == " ":
@@ -261,8 +271,10 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                 environment = dict(os.environ)
                 environment["PYTHONDONTWRITEBYTECODE"] = "1"
                 environment["PYTHONPATH"] = str(work)
+                argv = verification["argv"]
+                assert isinstance(argv, list)
                 executed = subprocess.run(
-                    [sys.executable, *verification["argv"][1:]],
+                    [sys.executable, *argv[1:]],
                     cwd=work,
                     env=environment,
                     check=False,
@@ -275,6 +287,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                 )
                 match = re.search(r"Ran (\d+) tests? in ", combined)
                 self.assertIsNotNone(match, combined)
+                assert match is not None
                 self.assertEqual(verification["tests_run"], int(match.group(1)))
                 self.assertRegex(combined, r"(?m)^OK$")
                 self.assertEqual("OK", verification["result"])
@@ -345,13 +358,13 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         forbidden_verdicts = re.compile(
             r"\b(?:supports|contradicts|unknown|blocked|accept|not applicable)\b"
         )
-        reviewer_visible = [
-            entry for base in manifest["bases"] for entry in base["files"]
-        ]
+        bases = manifest["bases"]
+        assert isinstance(bases, list)
+        cases = manifest["cases"]
+        assert isinstance(cases, list)
+        reviewer_visible = [entry for base in bases for entry in base["files"]]
         reviewer_visible.extend(
-            case[key]
-            for case in manifest["cases"]
-            for key in ("task", "candidate", "verification")
+            case[key] for case in cases for key in ("task", "candidate", "verification")
         )
         for entry in reviewer_visible:
             path = (BLIND_REPLAY / entry["path"]).resolve()
@@ -376,7 +389,9 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, metadata)
 
-        requirement_path = (BLIND_REPLAY / manifest["requirement"]["path"]).resolve()
+        requirement_entry = manifest["requirement"]
+        assert isinstance(requirement_entry, dict)
+        requirement_path = (BLIND_REPLAY / requirement_entry["path"]).resolve()
         requirement_path.relative_to(BLIND_REPLAY.resolve())
         requirement = requirement_path.read_text(encoding="utf-8").lower()
         for leaked_composition in (
