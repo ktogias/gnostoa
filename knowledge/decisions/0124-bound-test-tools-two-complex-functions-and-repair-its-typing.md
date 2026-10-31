@@ -28,6 +28,18 @@ sources:
   - id: lineage
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6546798582
     title: T1's exact-base lineage and pre-change evidence
+  - id: original-record
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6546806750
+    title: This Decision's first published version
+  - id: characterization
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6547077552
+    title: The six surviving mutants, characterized as four test gaps and two equivalent mutants
+  - id: supplement-route
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6547182640
+    title: "The Router's prepared supplement: four cases, with their concrete command and transformations"
+  - id: owner-supplement
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6547543717
+    title: "The owner's selection of A: exactly four assertFalse cases"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose typing and complexity families this answers, unchanged
@@ -91,12 +103,25 @@ two security guardrails' coverage (source `route`).
 3. **`test_github_provider_surface_is_active_and_owned` is brought below 16 by extracting
    private helper methods of its test class,** one per checked surface. The test's id and
    every assertion stay.
-4. **Nothing else changes.**
+4. **Nothing else changes, beyond item 5's cases.**
    - Production code is untouched, including `tools/knowledge_common.py`'s `load_yaml`.
    - So are the file's third complex function, public APIs, the profile and the threshold.
    - Beyond the file, only this record and its line in `knowledge/index.md` change.
-   - The existing tests' gaps are not closed here (source `lineage`). They are reported
-     separately, because new assertions are outside this scope.
+   - Of the six mutants that survive the existing tests (source `lineage`), four are real
+     test gaps and two are equivalent mutants (source `characterization`). Item 5 closes the
+     four.
+5. **Exactly four `assertFalse` cases join `_assert_shared_suite_recognizer_cases`** (source
+   `owner-supplement`). Each takes the workflow's concrete `fast` invocation (source
+   `supplement-route`) and changes one thing:
+   - evaluated for `policy`: its script names another suite (T1R03);
+   - `--entrypoint bash` in place of `sh` (T1R05);
+   - one unmatched single quote appended (T1R10);
+   - `docker create` in place of `docker run` (T1R11).
+
+   No other assertion, test or test id is added. The recognizer, its approved sets and its
+   final checks are unchanged. The two equivalent mutants, T1R02 and T1R12, stay named. Their
+   argument rests on the source and on 0 differences over 216,624 inputs, which is not a
+   formal proof.
 
 ## Verification
 
@@ -111,7 +136,9 @@ two security guardrails' coverage (source `route`).
   - The same 142 test identities run with the same outcomes, again with the checkout's
     `tools` imported.
   - The same mutation table, re-anchored to the moved code, gives exactly the baseline's
-    kill set.
+    kill set, before item 5's cases.
+  - With them, it kills 15 of 17; the survivors are T1R02 and T1R12. Each new case passes on
+    the unmutated recognizer and fails on its matched mutant, and the other 11 stay killed.
   - The test id stays cited by both guardrails.
 
 ## Consequences
@@ -119,5 +146,12 @@ two security guardrails' coverage (source `route`).
 - **The cost to the cutover:** this file joins the Docker repair in the critical cutover.
   No standalone transition is selected.
 - **The debt:** the closure's typing debt falls by 12 diagnostics, and its complexity debt
-  by two functions.
+  by two functions. The recognizer's four test gaps are closed.
 - **What it unblocks:** the Docker identity repair.
+
+## Amendments
+
+This text amends the first published version (source `original-record`: 6,525 bytes,
+SHA-256 `9c6b685e528bb56aee780968be7f0588abcd315cf0a2d7b95a5e017bc86891f1`). The owner
+admitted the four cases of item 5 (source `owner-supplement`), and item 4's last point,
+Verification and Consequences follow them.

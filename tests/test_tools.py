@@ -936,6 +936,23 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
         )
+        accepted = (
+            "docker run --rm --entrypoint sh "
+            "--mount type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+            "--workdir /workspace ${GNOSTOA_CI_IMAGE} -ec './ci/verify fast'"
+        )
+        self.assertFalse(_invokes_shared_verification_suite(accepted, "policy"))
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                accepted.replace("--entrypoint sh", "--entrypoint bash"), "fast"
+            )
+        )
+        self.assertFalse(_invokes_shared_verification_suite(accepted + " '", "fast"))
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                accepted.replace("docker run", "docker create", 1), "fast"
+            )
+        )
 
     def _assert_verification_workflow_text(
         self, workflow: str, workflow_document: dict[str, Any]
