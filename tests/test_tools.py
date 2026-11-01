@@ -4547,6 +4547,17 @@ runtime:
         )
         self.assertIn("FROM base AS runtime", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
+        account = re.search(
+            r"groupadd --gid (\d+) kit \\\n\s+&& useradd --uid (\d+) --gid (\d+) ",
+            dockerfile,
+        )
+        assert account is not None
+        group_id, user_id, user_group_id = account.groups()
+        self.assertEqual(group_id, user_group_id)
+        self.assertEqual(
+            ["0:0", f"{user_id}:{group_id}", "0:0", f"{user_id}:{group_id}"],
+            re.findall(r"^USER (\S+)$", dockerfile, re.M),
+        )
         self.assertIn('ENTRYPOINT ["knowledge"]', dockerfile)
         self.assertNotIn(":latest", dockerfile)
 
@@ -4563,6 +4574,7 @@ runtime:
         )
         self.assertEqual("development", definition["build"]["target"])
         self.assertEqual("kit", definition["remoteUser"])
+        self.assertEqual("kit", definition["containerUser"])
         self.assertEqual("/workspace", definition["workspaceFolder"])
 
     def test_unified_cli_exposes_supported_commands(self) -> None:
