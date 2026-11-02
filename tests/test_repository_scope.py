@@ -21,18 +21,14 @@ FORBIDDEN_PATTERNS = {
 }
 
 
-def _git_path() -> str:
-    """Git by its full path, resolved from this process's PATH, for the test's own commands."""
-    found = shutil.which("git")
-    if found is None:
-        raise AssertionError("git is not on PATH")
-    return found
+# The test's own Git commands name Git by its full path, /usr/bin/git, where both images and the
+# ubuntu-latest runners install it. The code under test still resolves `git` from PATH.
 
 
 def git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
-            _git_path(),
+            "/usr/bin/git",
             "-c",
             f"safe.directory={root.resolve()}",
             "-C",
@@ -47,7 +43,7 @@ def git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 def initialize_repository(root: Path) -> None:
     subprocess.run(
-        [_git_path(), "init", "--quiet", str(root)],
+        ["/usr/bin/git", "init", "--quiet", str(root)],
         check=True,
         capture_output=True,
         text=True,
@@ -345,7 +341,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             declared = parent / "declared"
             subprocess.run(
                 [
-                    _git_path(),
+                    "/usr/bin/git",
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'declared.git'}",
@@ -360,7 +356,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             per_worktree = parent / "per-worktree"
             subprocess.run(
                 [
-                    _git_path(),
+                    "/usr/bin/git",
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'per-worktree.git'}",
@@ -376,7 +372,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             shared = parent / "shared"
             subprocess.run(
                 [
-                    _git_path(),
+                    "/usr/bin/git",
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'shared.git'}",
@@ -390,7 +386,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             undeclared = parent / "undeclared"
             subprocess.run(
                 [
-                    _git_path(),
+                    "/usr/bin/git",
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'undeclared.git'}",

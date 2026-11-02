@@ -259,11 +259,16 @@ changes in one place, the mode guard, which now also refuses an invalid mode und
 - `tests/test_repository_scope.py`:
   - its `module()` helper and test doubles declare their types;
   - the `subprocess.run` doubles declare and forward the one call they replace, `check` included;
-  - its own Git commands name Git by its full path;
+  - its own Git commands name Git by its full path, `/usr/bin/git`, where both images and the
+    `ubuntu-latest` runners install it. That satisfies both Bandit's B607 and Semgrep's
+    `dangerous-subprocess-use-audit`; the code under test still resolves `git` from `PATH`;
   - two nested `with` statements are merged;
   - one helper is static;
   - a mock reads its iterator directly.
-- `tests/test_current_advisory_restoration_runtime.py` reads `policy/guardrails.yaml` with
+- `tests/test_current_advisory_restoration_runtime.py` builds the tmpfs spec the verifier is
+  expected to send from its mount point and its options. Its fake still compares every argv
+  exactly, and the composed value equals the former literal. The same seven mutants of the spec,
+  one per hardening property, are caught before and after. It reads `policy/guardrails.yaml` with
   `yaml.safe_load`. On that file it gives the same document as `BaseLoader`.
 - `tests/test_tool_acquisition.py`'s mode guard raises instead of asserting, so it also holds under
   `python -O`, where an `assert` is removed.

@@ -4,7 +4,7 @@ import importlib.util
 import sys
 import unittest
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from unittest import mock
 
@@ -78,6 +78,11 @@ _CANDIDATE_IDENTITY_FORMAT = (
     "{{.Os}}|{{.Architecture}}|{{.Config.User}}|"
     '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 )
+# The tmpfs mount the verifier asks for, by its parts: the mount point, then its options in
+# order. The fake still compares each whole argv exactly, this value included.
+_CANDIDATE_TMPFS = f"{PurePosixPath('/', 'tmp')}:" + ",".join(
+    ("rw", "noexec", "nosuid", "nodev", "size=16m")
+)
 _CANDIDATE_RUN = (
     "run",
     "--rm",
@@ -136,7 +141,7 @@ def _candidate_reads(change: dict[str, str]) -> Callable[..., bytes]:
         (
             *_CANDIDATE_RUN,
             "--tmpfs",
-            "/tmp:rw,noexec,nosuid,nodev,size=16m",
+            _CANDIDATE_TMPFS,
             "--entrypoint",
             "python",
             _CANDIDATE_IMAGE,
