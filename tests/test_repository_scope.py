@@ -10,7 +10,9 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,10 +21,18 @@ FORBIDDEN_PATTERNS = {
 }
 
 
+def _git_path() -> str:
+    """Git by its full path, resolved from this process's PATH, for the test's own commands."""
+    found = shutil.which("git")
+    if found is None:
+        raise AssertionError("git is not on PATH")
+    return found
+
+
 def git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
-            "git",
+            _git_path(),
             "-c",
             f"safe.directory={root.resolve()}",
             "-C",
@@ -37,7 +47,7 @@ def git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 def initialize_repository(root: Path) -> None:
     subprocess.run(
-        ["git", "init", "--quiet", str(root)],
+        [_git_path(), "init", "--quiet", str(root)],
         check=True,
         capture_output=True,
         text=True,
@@ -56,7 +66,7 @@ def fake_git(parent: Path, body: str) -> str:
 
 class RepositoryCandidateScopeTests(unittest.TestCase):
     @staticmethod
-    def module():
+    def module() -> ModuleType:
         return importlib.import_module("tools.repository_scope")
 
     def test_only_git_tracked_candidate_files_are_semantic_inputs(self) -> None:
@@ -182,7 +192,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     "a dangling symlink",
                     lambda entry: entry.symlink_to(parent / "missing"),
                 ),
-                ("another kind", lambda entry: os.mkfifo(entry)),
+                ("another kind", os.mkfifo),
             ):
                 with self.subTest(label):
                     root = parent / label.replace(" ", "-")
@@ -193,14 +203,16 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     self.assertEqual("UNSAFE_PATH", raised.exception.category)
             real_lstat = Path.lstat
 
-            def failing(path, *args, **kwargs):
+            def failing(path: Path) -> os.stat_result:
                 if path.name == ".git" and path.parent == outer:
                     raise PermissionError(13, "denied")
-                return real_lstat(path, *args, **kwargs)
+                return real_lstat(path)
 
-            with mock.patch.object(Path, "lstat", failing):
-                with self.assertRaises(module.RepositoryScopeError) as raised:
-                    module.has_git_metadata(outer)
+            with (
+                mock.patch.object(Path, "lstat", failing),
+                self.assertRaises(module.RepositoryScopeError) as raised,
+            ):
+                module.has_git_metadata(outer)
             self.assertEqual("GIT_METADATA_IO", raised.exception.category)
 
     def test_unsafe_git_metadata_refuses_the_enumeration_before_any_fallback(
@@ -279,7 +291,10 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 "-m",
                 "base",
             )
-            for label, make in (("an empty directory", lambda entry: entry.mkdir()),):
+            makers: tuple[tuple[str, Callable[[Path], object]], ...] = (
+                ("an empty directory", lambda entry: entry.mkdir()),
+            )
+            for label, make in makers:
                 with self.subTest(label):
                     package = outer / label.replace(" ", "-")
                     package.mkdir()
@@ -330,7 +345,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             declared = parent / "declared"
             subprocess.run(
                 [
-                    "git",
+                    _git_path(),
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'declared.git'}",
@@ -345,7 +360,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             per_worktree = parent / "per-worktree"
             subprocess.run(
                 [
-                    "git",
+                    _git_path(),
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'per-worktree.git'}",
@@ -361,7 +376,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             shared = parent / "shared"
             subprocess.run(
                 [
-                    "git",
+                    _git_path(),
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'shared.git'}",
@@ -375,7 +390,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             undeclared = parent / "undeclared"
             subprocess.run(
                 [
-                    "git",
+                    _git_path(),
                     "init",
                     "-q",
                     f"--separate-git-dir={parent / 'undeclared.git'}",
@@ -472,7 +487,9 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                         module.has_git_metadata(root)
                     self.assertEqual("UNSAFE_PATH", raised.exception.category)
 
-    def _watched(self, module, worktree: Path, record: Path) -> BaseException | None:
+    def _watched(
+        self, module: ModuleType, worktree: Path, record: Path
+    ) -> BaseException | None:
         """has_git_metadata's outcome, watched: a read that blocks on a FIFO in the
         record's place is released by a writer and fails the test, never hangs it."""
         outcome: dict[str, BaseException] = {}
@@ -511,7 +528,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             record = admin / "gitdir"
             original = record.read_bytes()
 
-            def replace(content) -> None:
+            def replace(content: bytes | Callable[[Path], object] | None) -> None:
                 record.unlink()
                 if isinstance(content, bytes):
                     record.write_bytes(content)
@@ -562,10 +579,16 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 self.assertTrue(module.has_git_metadata(worktree))
             real_open = os.open
 
-            def failing(path, *args, **kwargs):
+            def failing(
+                path: str | os.PathLike[str],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
                 if Path(path) == record:
                     raise PermissionError(13, "denied")
-                return real_open(path, *args, **kwargs)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
 
             with self.subTest("unreadable"):
                 with (
@@ -577,9 +600,19 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             seen: list[float] = []
             real = subprocess.run
 
-            def recording(command, **arguments):
-                seen.append(arguments.get("timeout"))
-                return real(command, **arguments)
+            def recording(
+                command: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                timeout: float | None,
+            ) -> subprocess.CompletedProcess[bytes]:
+                # The one-budget checks below compare every recorded timeout as a number.
+                assert timeout is not None
+                seen.append(timeout)
+                return real(
+                    command, check=check, capture_output=capture_output, timeout=timeout
+                )
 
             with self.subTest("one budget"):
                 with mock.patch.object(module.subprocess, "run", side_effect=recording):
@@ -644,10 +677,18 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             (root / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
             real = subprocess.run
 
-            def malformed(command, **arguments):
+            def malformed(
+                command: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                timeout: float | None,
+            ) -> object:
                 if "rev-parse" in command:
                     return mock.Mock(returncode=0, stdout=b"\n", stderr=b"")
-                return real(command, **arguments)
+                return real(
+                    command, check=check, capture_output=capture_output, timeout=timeout
+                )
 
             with (
                 mock.patch.object(module.subprocess, "run", side_effect=malformed),
@@ -671,9 +712,20 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     self.assertEqual(category, raised.exception.category)
             clock = [100.0]
 
-            def advancing(command, **arguments):
+            def advancing(
+                command: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                timeout: float | None,
+            ) -> subprocess.CompletedProcess[bytes]:
                 if "rev-parse" in command:
-                    result = real(command, **arguments)
+                    result = real(
+                        command,
+                        check=check,
+                        capture_output=capture_output,
+                        timeout=timeout,
+                    )
                     clock[0] = 200.0
                     return result
                 raise AssertionError("the enumeration started past the budget")
@@ -688,7 +740,8 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 module.candidate_paths(root, timeout=2.5)
             self.assertEqual("GIT_TIMEOUT", raised.exception.category)
 
-    def _tracked_repository(self, parent: Path) -> Path:
+    @staticmethod
+    def _tracked_repository(parent: Path) -> Path:
         root = parent / "repository"
         root.mkdir()
         initialize_repository(root)
@@ -696,13 +749,23 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         git(root, "add", "tracked.md")
         return root
 
-    def _enumerate_recording_git(self, root: Path, **options) -> tuple[list, list]:
-        seen: list[object] = []
+    def _enumerate_recording_git(
+        self, root: Path, **options: float
+    ) -> tuple[list[Path], list[float | None]]:
+        seen: list[float | None] = []
         real = subprocess.run
 
-        def recording(command, **arguments):
-            seen.append(arguments.get("timeout"))
-            return real(command, **arguments)
+        def recording(
+            command: list[str],
+            *,
+            check: bool,
+            capture_output: bool,
+            timeout: float | None,
+        ) -> subprocess.CompletedProcess[bytes]:
+            seen.append(timeout)
+            return real(
+                command, check=check, capture_output=capture_output, timeout=timeout
+            )
 
         with mock.patch.object(self.module().subprocess, "run", side_effect=recording):
             paths = self.module().candidate_paths(root, **options)
@@ -726,10 +789,12 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         # One absolute budget for both (the Router's I-b on #436): each Git read gets
         # only what is left of it, never a fresh one (Codex on #436).
         self.assertEqual(2, len(seen))
-        self.assertLess(2.0, seen[0])
-        self.assertLessEqual(seen[0], 2.5)
-        self.assertLess(0, seen[1])
-        self.assertLess(seen[1], seen[0])
+        first, second = seen
+        assert first is not None and second is not None
+        self.assertLess(2.0, first)
+        self.assertLessEqual(first, 2.5)
+        self.assertLess(0, second)
+        self.assertLess(second, first)
 
     def test_the_identity_check_gets_what_is_left_of_the_budget(self) -> None:
         # The surviving mutant on e412f307: the identity check took the caller's whole
@@ -739,9 +804,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         readings = iter([100.0, 100.5, 101.0])
         identity = mock.Mock(return_value=True)
         with (
-            mock.patch.object(
-                module.time, "monotonic", side_effect=lambda: next(readings)
-            ),
+            mock.patch.object(module.time, "monotonic", side_effect=readings),
             mock.patch.object(module, "has_git_metadata", identity),
             mock.patch.object(module, "_git_candidate_paths", return_value=[]),
         ):
@@ -756,10 +819,10 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         module = self.module()
         real = Path.lstat
 
-        def slow(path, *args, **kwargs):
+        def slow(path: Path) -> os.stat_result:
             if path.name == ".git":
                 time.sleep(0.3)
-            return real(path, *args, **kwargs)
+            return real(path)
 
         with tempfile.TemporaryDirectory() as directory:
             root = self._tracked_repository(Path(directory))
@@ -772,15 +835,25 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     paths, seen = self._enumerate_recording_git(root, timeout=10.0)
                 self.assertEqual([Path("tracked.md")], paths)
                 self.assertEqual(2, len(seen))
-                self.assertLessEqual(seen[0], 10.0 - 0.3)
-                self.assertLess(seen[1], seen[0])
+                first, second = seen
+                assert first is not None and second is not None
+                self.assertLessEqual(first, 10.0 - 0.3)
+                self.assertLess(second, first)
                 self.assertLess(time.monotonic() - started, 10.0)
             spent: list[object] = []
             run = subprocess.run
 
-            def recording(command, **arguments):
+            def recording(
+                command: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                timeout: float | None,
+            ) -> subprocess.CompletedProcess[bytes]:
                 spent.append(command)
-                return run(command, **arguments)
+                return run(
+                    command, check=check, capture_output=capture_output, timeout=timeout
+                )
 
             # The Router's 6244180021: exhaustion before the launch starts neither the
             # identity read nor the enumeration, at either entry.
@@ -802,19 +875,21 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                         call(root, timeout=0.2)
                     self.assertEqual("GIT_TIMEOUT", raised.exception.category)
                     self.assertEqual([], spent)
-        with self.subTest("a missing .git is the manifest's, budget or not"):
-            with tempfile.TemporaryDirectory() as directory:
-                packaged = Path(directory)
-                (packaged / "tracked.md").write_text("tracked\n", encoding="utf-8")
-                (packaged / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
-                spent.clear()
-                with (
-                    mock.patch.object(Path, "lstat", autospec=True, side_effect=slow),
-                    mock.patch.object(module.subprocess, "run", side_effect=recording),
-                ):
-                    paths = module.candidate_paths(packaged, timeout=0.2)
-                self.assertEqual([Path("tracked.md")], paths)
-                self.assertEqual([], spent)
+        with (
+            self.subTest("a missing .git is the manifest's, budget or not"),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            packaged = Path(directory)
+            (packaged / "tracked.md").write_text("tracked\n", encoding="utf-8")
+            (packaged / module.SOURCE_MANIFEST).write_bytes(b"tracked.md\0")
+            spent.clear()
+            with (
+                mock.patch.object(Path, "lstat", autospec=True, side_effect=slow),
+                mock.patch.object(module.subprocess, "run", side_effect=recording),
+            ):
+                paths = module.candidate_paths(packaged, timeout=0.2)
+            self.assertEqual([Path("tracked.md")], paths)
+            self.assertEqual([], spent)
 
     def test_a_stalled_enumeration_is_refused_within_its_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

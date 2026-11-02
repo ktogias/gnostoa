@@ -55,6 +55,9 @@ sources:
   - id: owner-package
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6565729702
     title: "The owner's admission of the five-path compatibility package"
+  - id: m17-blocker
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6589001006
+    title: "#477's merge blocker, measured: M17 counts DeepSource's full-run findings in the PR's touched files"
   - id: review-477
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6588287035
     title: "#477's review round 1: the restoration job's failed import and the residue probe's missing image"
@@ -245,3 +248,21 @@ review round (source `review-477`):
 2. **The residue probe without a plan:** r3 said that the probe then reports an inspection
    failure, but the code ran Docker with the image name `None`. The probe now reports the
    missing image before any Docker run, and a test pins that.
+
+## Merge-admission repairs
+
+M17 counts every analyzer finding the readback lists, with no waiver. For this `critical` change,
+DeepSource's full run lists the issues in the whole files it touches, not only on its lines
+(source `m17-blocker`). The test files' findings are repaired without suppression or behaviour
+change:
+
+- `tests/test_repository_scope.py`:
+  - its `module()` helper and test doubles declare their types;
+  - the `subprocess.run` doubles declare and forward the one call they replace, `check` included;
+  - its own Git commands name Git by its full path;
+  - two nested `with` statements are merged;
+  - one helper is static;
+  - a mock reads its iterator directly.
+- `tests/test_current_advisory_restoration_runtime.py` reads `policy/guardrails.yaml` with
+  `yaml.safe_load`. On that file it gives the same document as `BaseLoader`.
+- `tests/test_tool_acquisition.py`'s mode guard raises instead of asserting.

@@ -420,9 +420,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("R3 requires separate owner authorization", decision)
 
     def test_r2_surface_is_owned_by_security_and_semantic_guardrails(self) -> None:
-        document = yaml.load(
-            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8"),
-            Loader=yaml.BaseLoader,
+        document = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         )
         self.assertIsInstance(document, dict)
         assert isinstance(document, dict)
