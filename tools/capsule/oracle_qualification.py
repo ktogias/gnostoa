@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.capsule.spec import Semantics
+from tools.capsule.spec import Control, Semantics
 
 _JS_CASE = re.compile(r"\b(?:it|test)\(\s*['\"](?P<title>[^'\"]+)['\"]")
 _JS_EXPECT = re.compile(
@@ -140,6 +140,96 @@ def read_shape(path: Path) -> OracleShape:
     return _javascript_shape(source)
 
 
+def _control_blocker(
+    control: Control,
+    *,
+    present: set[str],
+    literals_by_case: Mapping[str, tuple[object, ...]],
+    base_tree: Path,
+    task_id: str,
+    prior_qualification_sha256: str | None,
+) -> dict[str, object] | None:
+    """The blocker for one declared control, or None when it prequalifies."""
+    if control.case not in present:
+        return {
+            "task": task_id,
+            "code": "declared-control-absent-from-oracle",
+            "detail": f"declared control case {control.case!r} is not present in the oracle",
+        }
+    if control.corroboration is None:
+        return {
+            "task": task_id,
+            "code": "oracle-control-not-corroborated",
+            "detail": (
+                f"control {control.case!r} declares no corroboration; a control must "
+                "cite where its expected behaviour is already evidenced in the base tree"
+            ),
+        }
+
+    declared_prior = control.corroboration.prior_qualification_sha256
+    if declared_prior is not None:
+        if prior_qualification_sha256 and declared_prior == prior_qualification_sha256:
+            return None
+        return {
+            "task": task_id,
+            "code": "prior-qualification-not-current",
+            "detail": (
+                f"control {control.case!r} cites a prior qualification that the task does "
+                "not bind; requalify or cite base-tree evidence"
+            ),
+        }
+    assert control.corroboration.path is not None
+    citation = base_tree / control.corroboration.path
+    if not citation.is_file():
+        return {
+            "task": task_id,
+            "code": "oracle-control-corroboration-path-missing",
+            "detail": (
+                f"control {control.case!r} cites {control.corroboration.path!r}, "
+                "which is not a file in the frozen base tree"
+            ),
+        }
+
+    symbol = control.corroboration.symbol
+    if not symbol:
+        return {
+            "task": task_id,
+            "code": "oracle-control-corroboration-symbol-required",
+            "detail": (
+                f"control {control.case!r} cites a file but no symbol; name the exact "
+                "function whose behaviour is the evidence"
+            ),
+        }
+
+    evidence_literals = _symbol_literals(citation.read_text(), symbol)
+    if evidence_literals is None:
+        return {
+            "task": task_id,
+            "code": "oracle-control-corroboration-symbol-missing",
+            "detail": (
+                f"control {control.case!r} cites symbol {symbol!r} in "
+                f"{control.corroboration.path!r}, which does not define it"
+            ),
+        }
+
+    substitutions = control.corroboration.value_substitutions
+    corroborated = any(
+        _corroborates(literal, evidence_literals, substitutions)
+        for literal in literals_by_case.get(control.case, ())
+    )
+    if not corroborated:
+        return {
+            "task": task_id,
+            "code": "oracle-control-not-corroborated",
+            "detail": (
+                f"control {control.case!r} asserts an expectation that does not appear in "
+                f"{control.corroboration.path}::{control.corroboration.symbol} under the "
+                "declared value substitutions; the control may be over-strong for this subject"
+            ),
+        }
+    return None
+
+
 def qualify(
     shape: OracleShape,
     semantics: Semantics,
@@ -179,104 +269,14 @@ def qualify(
 
     literals_by_case = {case.name: case.literals for case in shape.cases}
     for control in semantics.controls:
-        if control.case not in present:
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "declared-control-absent-from-oracle",
-                    "detail": f"declared control case {control.case!r} is not present in the oracle",
-                }
-            )
-            continue
-        if control.corroboration is None:
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "oracle-control-not-corroborated",
-                    "detail": (
-                        f"control {control.case!r} declares no corroboration; a control must "
-                        "cite where its expected behaviour is already evidenced in the base tree"
-                    ),
-                }
-            )
-            continue
-
-        declared_prior = control.corroboration.prior_qualification_sha256
-        if declared_prior is not None:
-            if (
-                prior_qualification_sha256
-                and declared_prior == prior_qualification_sha256
-            ):
-                continue
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "prior-qualification-not-current",
-                    "detail": (
-                        f"control {control.case!r} cites a prior qualification that the task does "
-                        "not bind; requalify or cite base-tree evidence"
-                    ),
-                }
-            )
-            continue
-        assert control.corroboration.path is not None
-        citation = base_tree / control.corroboration.path
-        if not citation.is_file():
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "oracle-control-corroboration-path-missing",
-                    "detail": (
-                        f"control {control.case!r} cites {control.corroboration.path!r}, "
-                        "which is not a file in the frozen base tree"
-                    ),
-                }
-            )
-            continue
-
-        symbol = control.corroboration.symbol
-        if not symbol:
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "oracle-control-corroboration-symbol-required",
-                    "detail": (
-                        f"control {control.case!r} cites a file but no symbol; name the exact "
-                        "function whose behaviour is the evidence"
-                    ),
-                }
-            )
-            continue
-
-        evidence_literals = _symbol_literals(citation.read_text(), symbol)
-        if evidence_literals is None:
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "oracle-control-corroboration-symbol-missing",
-                    "detail": (
-                        f"control {control.case!r} cites symbol {symbol!r} in "
-                        f"{control.corroboration.path!r}, which does not define it"
-                    ),
-                }
-            )
-            continue
-
-        substitutions = control.corroboration.value_substitutions
-        corroborated = any(
-            _corroborates(literal, evidence_literals, substitutions)
-            for literal in literals_by_case.get(control.case, ())
+        blocker = _control_blocker(
+            control,
+            present=present,
+            literals_by_case=literals_by_case,
+            base_tree=base_tree,
+            task_id=task_id,
+            prior_qualification_sha256=prior_qualification_sha256,
         )
-        if not corroborated:
-            blockers.append(
-                {
-                    "task": task_id,
-                    "code": "oracle-control-not-corroborated",
-                    "detail": (
-                        f"control {control.case!r} asserts an expectation that does not appear in "
-                        f"{control.corroboration.path}::{control.corroboration.symbol} under the "
-                        "declared value substitutions; the control may be over-strong for this subject"
-                    ),
-                }
-            )
+        if blocker is not None:
+            blockers.append(blocker)
     return blockers
