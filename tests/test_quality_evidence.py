@@ -13,6 +13,7 @@ import subprocess  # nosec B404 -- test-only: drives git on temporary fixture re
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from collections.abc import Iterable
 from email.message import Message
@@ -20,6 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import BinaryIO, Self
 from unittest.mock import ANY, Mock, patch
+
+import yaml
 
 from tests.quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
@@ -842,6 +845,21 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("evidence: [artifact, test-report]", verification)
+
+    def test_the_pull_request_lane_type_checks_the_declared_strict_scope(self) -> None:
+        # #221: the lane's mypy step named a subset of the strict scope, so a type error
+        # elsewhere in it passed the lane. The step runs mypy on the declared scope.
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(["tools", "ci"], project["tool"]["mypy"]["files"])
+        self.assertIs(True, project["tool"]["mypy"]["strict"])
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        steps = workflow["jobs"]["python-compatibility"]["steps"]
+        runs = [step["run"].split() for step in steps if "mypy" in step.get("run", "")]
+        self.assertEqual([["python", "-m", "mypy"]], runs)
 
     # The module imports where the diagnostic path's POSIX-only directory flags are
     # absent, so the default collection does not need them: they are read on that
