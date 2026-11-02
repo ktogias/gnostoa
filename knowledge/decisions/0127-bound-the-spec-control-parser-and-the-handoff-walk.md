@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Bound the spec's control parser and the handoff's source walk
-description: "Complexity Slice 1.2 of #389's closure: _parse_semantics is brought to 15 or below by one private helper for each control, and the handoff's nested walk moves to module level with private helpers for its regular-file and symlink entries, which also lowers its enclosing function. A new characterization module, written first and passing on the unchanged code, pins the behaviour that twelve surviving mutants showed unpinned, including the walk's race guards; the thirteenth survivor is equivalent."
+description: "Complexity Slice 1.2 of #389's closure: _parse_semantics is brought to 15 or below by one private helper for each control, and the handoff's nested walk moves to module level with private helpers for its directory, regular-file and symlink entries, which also lowers its enclosing function. A new characterization module, written first and passing on the unchanged code, pins the behaviour that twelve surviving mutants showed unpinned, including the walk's race guards; the thirteenth survivor is equivalent."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -25,6 +25,9 @@ sources:
   - id: review-1-1
     resource: https://github.com/ktogias/gnostoa/pull/475#discussion_r4443716009
     title: "Review round 1 on #475, Slice 1.1: the complexity family's scope, the same sentence"
+  - id: review-1-2
+    resource: https://github.com/ktogias/gnostoa/pull/476
+    title: "Review round 1 on #476: SonarCloud S3776, the module-level walk's cognitive complexity"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose complexity family this answers, unchanged
@@ -73,10 +76,12 @@ with the characterization tests first (source `owner-admission`), and later the 
    included, moves into the private helper `_parse_control`. The loop over the controls
    stays.
 2. **The walk moves to module level** as a private function, with the members list passed
-   in, so `_source_members_and_copy_fd` keeps only the call. The walk's regular-file and
-   symlink entries each move into their own private helper, so the walk comes to 15 or
-   below with a margin. Every descriptor is opened and closed in the same function as
-   before, and every race guard and message stays.
+   in, so `_source_members_and_copy_fd` keeps only the call. The walk's directory,
+   regular-file and symlink entries each move into their own private helper
+   (`_copy_source_directory`, `_copy_source_file`, `_copy_source_symlink`). So the walk comes
+   to 15 or below, by the protected metric with a margin and by SonarCloud's cognitive
+   complexity. Every descriptor is opened and closed in the same function as before, and
+   every race guard and message stays.
 3. **A new characterization module, `tests/test_spec_handoff_characterization.py`, comes
    first.**
    - It passes on the unchanged code, and kills the 12 gap mutants (S1, S3, S4, S6, S7, S8,
@@ -127,3 +132,9 @@ The second published version, of 6,472 bytes (SHA-256
 above the threshold. Review round 1 on Slice 1.1's #475 found the same sentence in Decision
 0126 (source `review-1-1`): the profile acquires complexity only for the functions a change
 adds a line to (`full: null`). The Context and the Consequences now say so.
+
+The third published version, of 7,192 bytes (SHA-256
+`4b728b70742807c317e6fa4467ca736e75e6fd15462786136af20fb45915d66f`), moved only the regular-file and symlink entries into
+helpers. On #476 (source `review-1-2`), SonarCloud measured the module-level walk's cognitive
+complexity at 21, above its limit of 15. Most of that came from the directory entry's two
+race guards, nested inside the loop. The directory entry now has its own helper as well.

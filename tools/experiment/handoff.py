@@ -266,6 +266,34 @@ def _copy_source_symlink(
     }
 
 
+def _copy_source_directory(
+    name: str,
+    relative: str,
+    mode: int,
+    observed: os.stat_result,
+    source_dir_fd: int,
+    destination_dir_fd: int,
+    members: list[dict[str, object]],
+) -> None:
+    os.mkdir(name, 0o700, dir_fd=destination_dir_fd)
+    source_child_fd = os.open(name, _directory_flags(), dir_fd=source_dir_fd)
+    destination_child_fd = os.open(name, _directory_flags(), dir_fd=destination_dir_fd)
+    try:
+        opened = os.fstat(source_child_fd)
+        if not _same_stat_identity(observed, opened):
+            raise HandoffError(f"source-entry-changed:{relative}")
+        members.append({"path": relative, "type": "directory", "mode": mode})
+        _walk_source(source_child_fd, destination_child_fd, relative, members)
+        after_child = os.fstat(source_child_fd)
+        if not _same_stat_identity(opened, after_child):
+            raise HandoffError(f"source-directory-changed:{relative}")
+        os.fchmod(destination_child_fd, mode)
+        os.fsync(destination_child_fd)
+    finally:
+        os.close(destination_child_fd)
+        os.close(source_child_fd)
+
+
 def _walk_source(
     source_dir_fd: int,
     destination_dir_fd: int,
@@ -288,25 +316,15 @@ def _walk_source(
         mode = _normalized_mode(observed.st_mode)
 
         if stat.S_ISDIR(observed.st_mode):
-            os.mkdir(name, 0o700, dir_fd=destination_dir_fd)
-            source_child_fd = os.open(name, _directory_flags(), dir_fd=source_dir_fd)
-            destination_child_fd = os.open(
-                name, _directory_flags(), dir_fd=destination_dir_fd
+            _copy_source_directory(
+                name,
+                relative,
+                mode,
+                observed,
+                source_dir_fd,
+                destination_dir_fd,
+                members,
             )
-            try:
-                opened = os.fstat(source_child_fd)
-                if not _same_stat_identity(observed, opened):
-                    raise HandoffError(f"source-entry-changed:{relative}")
-                members.append({"path": relative, "type": "directory", "mode": mode})
-                _walk_source(source_child_fd, destination_child_fd, relative, members)
-                after_child = os.fstat(source_child_fd)
-                if not _same_stat_identity(opened, after_child):
-                    raise HandoffError(f"source-directory-changed:{relative}")
-                os.fchmod(destination_child_fd, mode)
-                os.fsync(destination_child_fd)
-            finally:
-                os.close(destination_child_fd)
-                os.close(source_child_fd)
             continue
 
         if stat.S_ISREG(observed.st_mode):
