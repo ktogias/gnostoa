@@ -6,7 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -24,6 +24,92 @@ def _fixtures() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _translate_native(reducer: ModuleType, document: dict[str, Any]) -> dict[str, Any]:
+    """The test's native translator, outside the test: it reads only `reducer` from it."""
+    proposal = document["proposal"]
+    verdict_map = {
+        "accept": "APPROVED",
+        "note": "COMMENTED",
+    }
+    signals = document.get("signals")
+    checks_available = isinstance(signals, list)
+    native_checks = signals if isinstance(signals, list) else []
+    return {
+        "schema_version": reducer.PROVIDER_STATE_SCHEMA_VERSION,
+        "provider": {
+            "id": document["engine"],
+            "adapter": "test.nebula-native/v1",
+        },
+        "observed_at": "2026-09-19T16:41:00Z",
+        "subject": {
+            "repository": f"urn:nebula:project:{document['project_key']}",
+            "change_request": {
+                "kind": "proposal",
+                "id": proposal["native_ref"],
+            },
+            "state": "open" if proposal["phase"] == "active" else "closed",
+            "head_commit": proposal["tip"],
+            "base_commit": proposal["parent"],
+            "comparison": {
+                "kind": "merge_base",
+                "commit_sha": proposal["fork_point"],
+            },
+            "source_url": proposal["locator"],
+            "title": "Opaque native proposal",
+        },
+        "coverage": {
+            "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
+            "conversation": {"status": "COMPLETE", "pages": 1, "count": 0},
+            "reviews": {
+                "status": "COMPLETE",
+                "pages": 1,
+                "count": len(document["decisions"]),
+            },
+            "review_threads": {"status": "COMPLETE", "pages": 1, "count": 0},
+            "checks": {
+                "status": "COMPLETE" if checks_available else "UNAVAILABLE",
+                "pages": 1 if checks_available else 0,
+                "count": len(native_checks),
+            },
+        },
+        "conversation": [],
+        "reviews": [
+            {
+                "observation_id": item["native_ref"],
+                "reviewer_id": item["actor"],
+                "recommendation_state": verdict_map.get(
+                    item["verdict"],
+                    "UNKNOWN",
+                ),
+                "observed_at": item["when"],
+                "head_commit": item["revision"],
+                "source_url": f"urn:nebula:{item['native_ref']}",
+            }
+            for item in document["decisions"]
+        ],
+        "review_threads": [],
+        "checks": [
+            {
+                "id": item["native_ref"],
+                "key": f"nebula-signal:{item['label']}",
+                "name": item["label"],
+                "head_commit": item["revision"],
+                "observed_at": item["when"],
+                "status": "completed" if item["phase"] == "done" else "queued",
+                "conclusion": (
+                    "success"
+                    if item["result"] == "ok"
+                    else "failure"
+                    if item["result"] == "error"
+                    else None
+                ),
+                "source_url": f"urn:nebula:{item['native_ref']}",
+            }
+            for item in native_checks
+        ],
+    }
 
 
 class UsefulL1FollowupTests(unittest.TestCase):
@@ -882,91 +968,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             "threads": [],
         }
 
-        def translate(document: dict[str, Any]) -> dict[str, Any]:
-            proposal = document["proposal"]
-            verdict_map = {
-                "accept": "APPROVED",
-                "note": "COMMENTED",
-            }
-            signals = document.get("signals")
-            checks_available = isinstance(signals, list)
-            native_checks = signals if isinstance(signals, list) else []
-            return {
-                "schema_version": reducer.PROVIDER_STATE_SCHEMA_VERSION,
-                "provider": {
-                    "id": document["engine"],
-                    "adapter": "test.nebula-native/v1",
-                },
-                "observed_at": "2026-09-19T16:41:00Z",
-                "subject": {
-                    "repository": f"urn:nebula:project:{document['project_key']}",
-                    "change_request": {
-                        "kind": "proposal",
-                        "id": proposal["native_ref"],
-                    },
-                    "state": "open" if proposal["phase"] == "active" else "closed",
-                    "head_commit": proposal["tip"],
-                    "base_commit": proposal["parent"],
-                    "comparison": {
-                        "kind": "merge_base",
-                        "commit_sha": proposal["fork_point"],
-                    },
-                    "source_url": proposal["locator"],
-                    "title": "Opaque native proposal",
-                },
-                "coverage": {
-                    "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
-                    "conversation": {"status": "COMPLETE", "pages": 1, "count": 0},
-                    "reviews": {
-                        "status": "COMPLETE",
-                        "pages": 1,
-                        "count": len(document["decisions"]),
-                    },
-                    "review_threads": {"status": "COMPLETE", "pages": 1, "count": 0},
-                    "checks": {
-                        "status": "COMPLETE" if checks_available else "UNAVAILABLE",
-                        "pages": 1 if checks_available else 0,
-                        "count": len(native_checks),
-                    },
-                },
-                "conversation": [],
-                "reviews": [
-                    {
-                        "observation_id": item["native_ref"],
-                        "reviewer_id": item["actor"],
-                        "recommendation_state": verdict_map.get(
-                            item["verdict"],
-                            "UNKNOWN",
-                        ),
-                        "observed_at": item["when"],
-                        "head_commit": item["revision"],
-                        "source_url": f"urn:nebula:{item['native_ref']}",
-                    }
-                    for item in document["decisions"]
-                ],
-                "review_threads": [],
-                "checks": [
-                    {
-                        "id": item["native_ref"],
-                        "key": f"nebula-signal:{item['label']}",
-                        "name": item["label"],
-                        "head_commit": item["revision"],
-                        "observed_at": item["when"],
-                        "status": "completed" if item["phase"] == "done" else "queued",
-                        "conclusion": (
-                            "success"
-                            if item["result"] == "ok"
-                            else "failure"
-                            if item["result"] == "error"
-                            else None
-                        ),
-                        "source_url": f"urn:nebula:{item['native_ref']}",
-                    }
-                    for item in native_checks
-                ],
-            }
-
-        snapshot = translate(native)
+        snapshot = _translate_native(reducer, native)
         review_input = reducer.build_review_input(snapshot, fixtures.bundle())
         projection = reducer.build_projection(
             snapshot,
@@ -1015,7 +1017,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "result": "ok",
             }
         ]
-        native_full = translate(full_native)
+        native_full = _translate_native(reducer, full_native)
         reference = fixtures.snapshot(
             provider_id="reference-provider",
             repository="urn:reference:project:7",
