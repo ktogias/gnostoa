@@ -67,7 +67,8 @@ def _spec(controls: object) -> dict[str, Any]:
 class SpecControlParsingTests(unittest.TestCase):
     """What a declared control may be, and what it carries once parsed."""
 
-    def _parse(self, controls: object) -> Any:
+    @staticmethod
+    def _parse(controls: object) -> Any:
         return parse_spec(copy.deepcopy(_spec(controls)), source_path=Path("spec.json"))
 
     def test_each_malformed_control_is_refused_by_its_own_message(self) -> None:

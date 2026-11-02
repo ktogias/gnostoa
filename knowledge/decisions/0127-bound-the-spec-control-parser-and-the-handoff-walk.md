@@ -22,6 +22,9 @@ sources:
   - id: design
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6568479405
     title: "The slice's read-only characterization and falsifier design: 3 of 16 mutants killed"
+  - id: review-1-1
+    resource: https://github.com/ktogias/gnostoa/pull/475#discussion_r4443716009
+    title: "Review round 1 on #475, Slice 1.1: the complexity family's scope, the same sentence"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose complexity family this answers, unchanged
@@ -45,9 +48,9 @@ x-project-knowledge:
 
 ## Context
 
-The protected profile's complexity family lists every function above a cyclomatic
-complexity of 15 (source `profile`). Three of them are bounded here, in two files (source
-`design`):
+The protected profile's complexity family reports a function above a cyclomatic complexity
+of 15 when a change adds a line to it; it has no full scan (source `profile`). Three
+functions above that threshold are bounded here, in two files (source `design`):
 
 - `tools/capsule/spec.py`, `_parse_semantics`, at 20;
 - `tools/experiment/handoff.py`, `walk`, at 17. It is nested in
@@ -107,7 +110,7 @@ with the characterization tests first (source `owner-admission`), and later the 
 
 ## Consequences
 
-- **What it settles:** three of the complexity family's findings.
+- **What it settles:** three of the functions above the complexity threshold.
 - **The class and route:** it is outside the gates, so its class is NORMAL. It integrates
   through the single serialized lane, after Slice 1.1. Its index line is reconciled with
   0126's when the lane integrates.
@@ -118,3 +121,9 @@ This text amends the first published version, of 5,554 bytes (SHA-256
 `78303366c2976762d6e56a862f104f9c8a4753a57a2c0c515e4f44938529c809`). That version said that all 13 survivors were real gaps
 and that the new module would kill all 16 mutants. The module's own test of an unsupported
 entry then showed that the walk's final refusal is unreachable, which makes W6 equivalent.
+
+The second published version, of 6,472 bytes (SHA-256
+`37c38375e162043bc7297f54512dec004c34e687b1039b8000f6fa0648b61b39`), said that the complexity family lists every function
+above the threshold. Review round 1 on Slice 1.1's #475 found the same sentence in Decision
+0126 (source `review-1-1`): the profile acquires complexity only for the functions a change
+adds a line to (`full: null`). The Context and the Consequences now say so.
