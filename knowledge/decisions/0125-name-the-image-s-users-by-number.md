@@ -149,9 +149,10 @@ owners as `USER kit` in both targets (source `identity`).
    - `tools/review_current.py`, `tools/review_outer.py` and the historical pins stay.
    - `tests/test_current_advisory_restoration_runtime.py` gains two behavioural tests.
      - The first has a refusing fake that answers only the verifier's exact argvs. It takes
-       the verifier from the smoke module's own namespace, so it reads no private attribute
-       and imports no other test module: the restoration job runs this file with only the
-       restoration source on its path. It covers both accepted users and the root,
+       the private `_verify_local_candidate` from the smoke module's own namespace,
+       `vars(smoke)`, rather than by attribute access, and imports no other test module: the
+       restoration job runs this file with only the restoration source on its path. It
+       covers both accepted users and the root,
        malformed, field-count, OS, architecture, revision, image, uid, gid and surface
        negatives.
      - The second pins the residue probe's report when no daemon image was recorded.

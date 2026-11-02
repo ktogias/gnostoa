@@ -569,7 +569,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             issue = vars(smoke)["_tmp_residue_issue"](
                 run, "gnostoa-r2-tmp-boundary-test", ROOT / "docker-config-unused"
             )
-        self.assertEqual(issue, "R2 shared tmp residue inspection had no daemon image")
+        self.assertEqual("R2 shared tmp residue inspection had no daemon image", issue)
         docker.assert_not_called()
         self.assertFalse(run.sentinel_absent)
 
