@@ -126,6 +126,7 @@ inherited, copied or loaded by adopting projects.
 - [Refresh the development lock's msgpack pin for an unbounded memory leak](decisions/0121-refresh-the-development-lock-msgpack-pin.md)
 - [Add the inventory's pinned tool and secrets families, inactive until a separate activation](decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md)
 - [Repair the typing of seventeen test modules, the closure's first group](decisions/0123-repair-the-typing-of-seventeen-test-modules.md)
+- [Bound three capsule functions by one extraction each](decisions/0126-bound-three-capsule-functions-by-one-extraction-each.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
