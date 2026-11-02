@@ -284,7 +284,10 @@ def _tmp_residue_issue(
     run: _CandidateRun, volume_name: str, config_dir: Path
 ) -> str | None:
     """Whether the shared tmp volume holds the protected input sentinel; None once the
-    probe proves it absent."""
+    probe proves it absent. Without the original plan's daemon image there is no probe."""
+    image = run.daemon_image
+    if image is None:
+        return "R2 shared tmp residue inspection had no daemon image"
     try:
         probe = _run_docker(
             [
@@ -303,7 +306,7 @@ def _tmp_residue_issue(
                 f"type=volume,source={volume_name},target=/probe,readonly",
                 "--entrypoint",
                 "sh",
-                str(run.daemon_image),
+                image,
                 "-ec",
                 (
                     "set +e; "

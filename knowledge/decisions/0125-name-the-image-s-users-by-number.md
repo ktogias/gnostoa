@@ -55,6 +55,9 @@ sources:
   - id: owner-package
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6565729702
     title: "The owner's admission of the five-path compatibility package"
+  - id: review-477
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6588287035
+    title: "#477's review round 1: the restoration job's failed import and the residue probe's missing image"
 x-project-knowledge:
   id: kit.decision.0125.name-the-image-s-users-by-number
   owners:
@@ -141,14 +144,17 @@ owners as `USER kit` in both targets (source `identity`).
      The daemon image is taken from the original plan before the plan is validated.
    - **The one behaviour difference:** only when the original plan builder itself raises,
      so that no plan exists, does a later tmp-volume residue probe lack the image. It then
-     reports an inspection failure instead of probing with the module constant. The run
-     already fails on that path.
+     reports that it has no daemon image, before any Docker run, instead of probing with the
+     module constant. The run already fails on that path.
    - `tools/review_current.py`, `tools/review_outer.py` and the historical pins stay.
-   - `tests/test_current_advisory_restoration_runtime.py` gains one behavioural test, with a
-     refusing fake that answers only the verifier's exact argvs. It reaches the verifier
-     through the same idiom, so it reads no private attribute. It covers both accepted users
-     and the root, malformed, field-count, OS, architecture, revision, image, uid, gid and
-     surface negatives.
+   - `tests/test_current_advisory_restoration_runtime.py` gains two behavioural tests.
+     - The first has a refusing fake that answers only the verifier's exact argvs. It takes
+       the verifier from the smoke module's own namespace, so it reads no private attribute
+       and imports no other test module: the restoration job runs this file with only the
+       restoration source on its path. It covers both accepted users and the root,
+       malformed, field-count, OS, architecture, revision, image, uid, gid and surface
+       negatives.
+     - The second pins the residue probe's report when no daemon image was recorded.
 7. **A persistent account invariant:** `test_runtime_image_contract_is_pinned_and_non_root`
    asserts the four `USER` instructions are `0:0`, then the account's `uid:gid`, then `0:0`,
    then `uid:gid` again. The account is the one `groupadd` and `useradd` create.
@@ -224,3 +230,17 @@ of the five-path compatibility package, scope revision 2 (source `owner-package`
 in `package-return` and `package-delta`, and routed in `package-route`). Items 5 to 7 are
 added, with `main`'s same-file factoring in item 6. Items 2 and 4, Verification and
 Consequences follow them.
+
+## Review corrections
+
+This text, r4, corrects r3 (14207 bytes, SHA-256
+`06b83a77606266a527c3ab14c15c19c5cf80faf0072daaf7e1c937cf3cad4634`), the version #477 published, on its first
+review round (source `review-477`):
+
+1. **The boundary test's route to the verifier:** r3 reached it through the shared
+   `_original` helper, imported from `tests.test_quality_evidence_profile`. The restoration
+   job runs this file with only the restoration source on its path, so that import failed
+   there. The test now takes the verifier from the smoke module's own namespace.
+2. **The residue probe without a plan:** r3 said that the probe then reports an inspection
+   failure, but the code ran Docker with the image name `None`. The probe now reports the
+   missing image before any Docker run, and a test pins that.

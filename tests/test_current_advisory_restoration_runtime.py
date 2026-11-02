@@ -6,12 +6,9 @@ import unittest
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 from unittest import mock
 
 import yaml
-
-from tests.test_quality_evidence_profile import _original
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_RELATIVE_PATH = (
@@ -473,8 +470,9 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             provider_tests,
         )
 
+    @staticmethod
     def _verify_candidate(
-        self, smoke: ModuleType, verify: Any, change: dict[str, str]
+        smoke: ModuleType, verify: Callable[..., None], change: dict[str, str]
     ) -> None:
         with mock.patch.object(
             smoke, "_checked_output", side_effect=_candidate_reads(change)
@@ -497,7 +495,9 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         every other identity, field count, platform, revision, image id, uid, gid or
         public surface is refused with its own reason (Decision 0125, item 6)."""
         smoke = _load_smoke()
-        verify = _original(smoke, "_verify_local_candidate")
+        # The module's own binding: the restoration job runs this file with only the
+        # restoration source on its path, so no other test module is importable.
+        verify = vars(smoke)["_verify_local_candidate"]
         accepted = {
             "kit": {},
             "10001:10001": {"identity": f"linux|amd64|10001:10001|{SOURCE_COMMIT}"},
@@ -554,6 +554,24 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, reason),
             ):
                 self._verify_candidate(smoke, verify, change)
+
+    def test_residue_probe_without_a_daemon_image_reports_it_and_runs_nothing(
+        self,
+    ) -> None:
+        """When the original plan builder raised, so that no daemon image was recorded,
+        the residue probe reports that before any Docker run (Decision 0125, item 6)."""
+        smoke = _load_smoke()
+        run = vars(smoke)["_CandidateRun"](
+            candidate_image=_CANDIDATE_IMAGE,
+            synthetic_runtime_image="gnostoa-r2-synthetic:boundary-test",
+        )
+        with mock.patch.object(smoke, "_run_docker") as docker:
+            issue = vars(smoke)["_tmp_residue_issue"](
+                run, "gnostoa-r2-tmp-boundary-test", ROOT / "docker-config-unused"
+            )
+        self.assertEqual(issue, "R2 shared tmp residue inspection had no daemon image")
+        docker.assert_not_called()
+        self.assertFalse(run.sentinel_absent)
 
 
 if __name__ == "__main__":
