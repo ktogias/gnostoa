@@ -28,6 +28,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -75,7 +76,7 @@ class ProvenanceFixture(ConsumptionFixture):
 
     def die_before_the_first_canonical_write(self) -> Any:
         """Interrupt a publication after its intent and before any canonical byte."""
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash(path: Path, payload: bytes) -> None:
             if (

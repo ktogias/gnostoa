@@ -33,6 +33,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -76,7 +77,7 @@ class ContainmentFixture(ConsumptionFixture):
 
     def crash_writing(self, filename: str) -> Any:
         """Patch the atomic writer to die when it reaches one canonical file."""
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash(path: Path, payload: bytes) -> None:
             if path.name == filename and path.parent == self.workspace:

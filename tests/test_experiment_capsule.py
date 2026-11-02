@@ -18,6 +18,8 @@ from tests.experiment_capsule_support import IMAGE_A, CapsuleFixture, git
 from tools.capsule import certificates, compiler, execute, profiles, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.authority import LaunchAuthority, PreflightAuthority
+from tools.capsule.compiler import _frozen_or_blocked, _materialize_verified
+from tools.capsule.execute import _materialize
 from tools.capsule.preparation import discover_test_config, project_test_config
 from tools.capsule.spec import SpecError, load_spec
 
@@ -1744,7 +1746,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         project = self.root / "project"
         project.mkdir()
         with self.assertRaises(execute.ExecuteError) as raised:
-            execute._materialize(repo, tree, project)
+            _materialize(repo, tree, project)
         self.assertIn("escaping-link", str(raised.exception))
         self.assertNotIn("SECRET-LINK", str(raised.exception))
         self.assertNotIn("outside", str(raised.exception))
@@ -1752,7 +1754,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
     def test_a_compiler_blocker_names_the_code_not_the_path(self) -> None:
         repo, tree = self.escaping_repo()
         blockers: list[dict[str, object]] = []
-        result = compiler._materialize_verified(
+        result = _materialize_verified(
             repo, tree, self.root / "subject", "base", blockers, "T1"
         )
         self.assertIsNone(result)
@@ -1772,9 +1774,9 @@ class RoundTwoConsumerTests(CapsuleFixture):
         second = git(repo, "rev-parse", "HEAD^{tree}")
         project = self.root / "project"
         project.mkdir()
-        execute._materialize(repo, first, project)
+        _materialize(repo, first, project)
         with self.assertRaises(execute.ExecuteError):
-            execute._materialize(repo, second, project)
+            _materialize(repo, second, project)
 
     # K: a re-prepare for another base tree does not reuse the execution project
     # (a kill test, added with the mutants).
@@ -1806,9 +1808,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
     def test_an_unlistable_subject_tree_is_a_blocker(self) -> None:
         repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
         blockers: list[dict[str, object]] = []
-        self.assertIsNone(
-            compiler._frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1")
-        )
+        self.assertIsNone(_frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1"))
         self.assertEqual(
             [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
         )
@@ -1819,7 +1819,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         tree = git(repo, "rev-parse", "HEAD^{tree}")
         first: list[dict[str, object]] = []
         self.assertIsNotNone(
-            compiler._materialize_verified(
+            _materialize_verified(
                 repo, tree, self.root / "subject", "base", first, "T1"
             )
         )
@@ -1830,7 +1830,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         )
         blockers: list[dict[str, object]] = []
         with mock.patch.object(exact_tree.Limits, "within", return_value=tight):
-            result = compiler._materialize_verified(
+            result = _materialize_verified(
                 repo, tree, self.root / "subject", "base", blockers, "T1"
             )
         self.assertIsNone(result)
@@ -1847,9 +1847,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         subject.mkdir()
         (subject / f"base-{tree}").write_text("planted\n")
         blockers: list[dict[str, object]] = []
-        result = compiler._materialize_verified(
-            repo, tree, subject, "base", blockers, "T1"
-        )
+        result = _materialize_verified(repo, tree, subject, "base", blockers, "T1")
         self.assertIsNone(result)
         self.assertEqual(
             [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]

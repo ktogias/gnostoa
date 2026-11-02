@@ -15,6 +15,7 @@ import shutil
 import subprocess  # nosec B404 -- test-only: drives git on temporary fixture repositories
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -27,6 +28,60 @@ from tests.quality_evidence_fixtures import (
     _DiagnosticFixture,
     _fixture_git_env,
 )
+from tests.quality_evidence_profile_support import _original
+
+
+def _promisor(root: Path, run_git: Callable[..., str], marker: Path) -> tuple[str, str]:
+    """A partial clone whose HEAD tracks a Python file by a missing blob, its base
+    the same path's real bytes, and a promisor whose configured command only leaves
+    `marker` (PAO 6325156914)."""
+
+    def git(*args: str, stdin: bytes) -> str:
+        return (
+            subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on a temporary fixture repository
+                [
+                    "git",
+                    "-c",
+                    "user.name=diagnostic",
+                    "-c",
+                    "user.email=diagnostic@example.invalid",
+                    *args,
+                ],
+                cwd=root,
+                env=_fixture_git_env(),
+                input=stdin,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    real = git("hash-object", "-w", "--stdin", stdin=b"VALUE = 1\n")
+    base_tree = git("mktree", stdin=f"100644 blob {real}\tf.py\n".encode())
+    head_tree = git(
+        "mktree", "--missing", stdin=f"100644 blob {'1' * 40}\tf.py\n".encode()
+    )
+    base = git("commit-tree", base_tree, "-m", "base", stdin=b"")
+    head = git("commit-tree", head_tree, "-p", base, "-m", "head", stdin=b"")
+    run_git("update-ref", "HEAD", head)
+    for key, value in (
+        ("core.repositoryformatversion", "1"),
+        ("extensions.partialClone", "o"),
+        ("remote.o.url", str(root)),
+        ("remote.o.promisor", "true"),
+        ("remote.o.uploadpack", f"touch {shlex.quote(str(marker))}; false"),
+        ("protocol.file.allow", "always"),
+    ):
+        run_git("config", key, value)
+    # A live probe: a plain read of the missing object fetches, and leaves the
+    # marker, so its later absence proves that no fetch ran (Amazon Q on #451).
+    with contextlib.suppress(subprocess.CalledProcessError):
+        run_git("cat-file", "-p", "1" * 40)
+    if not marker.exists():
+        raise AssertionError("the promisor probe did not fire")
+    marker.unlink()
+    return base, head
 
 
 class ExactSourceTreeTests(_DiagnosticFixture):
@@ -115,7 +170,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             self.files["tools/sample.py"] + "\n# the frozen change\n", encoding="utf-8"
         )
         self._git("commit", "-q", "-am", "the frozen commit")
-        real = self.module._run_complexity
+        real = _original(self.module, "_run_complexity")
 
         def moving(*args, **kwargs):
             (self.root / "tests" / "test_sample.py").write_text(
@@ -138,7 +193,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             self.files["tools/sample.py"] + _EXTRA_COMPLEX, encoding="utf-8"
         )
         self._git("commit", "-q", "-am", "the frozen change")
-        real = self.module._run_complexity
+        real = _original(self.module, "_run_complexity")
 
         def reverting(*args, **kwargs):
             (self.root / "tools" / "sample.py").write_text(
@@ -156,7 +211,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # published as the tree's evidence, and the refusal names the run directory that
     # keeps the raw reports.
     def test_a_changed_staged_source_is_refused(self) -> None:
-        real = self.module._run_complexity
+        real = _original(self.module, "_run_complexity")
 
         def mutating(root, paths, *args, **kwargs):
             with open(Path(root) / "tools" / "sample.py", "a", encoding="utf-8") as f:
@@ -216,7 +271,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # A special entry a producer leaves in the staged source is refused as an
     # unrepresentable re-observation, never as a demonstrated change.
     def test_a_special_entry_left_in_the_staged_source_is_refused(self) -> None:
-        real = self.module._run_complexity
+        real = _original(self.module, "_run_complexity")
 
         def leaving(root, paths, *args, **kwargs):
             os.mkfifo(Path(root) / "tools" / "pipe")
@@ -270,7 +325,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # stops at the bound, leaving it named on the refusal rather than listed whole.
     def test_a_staged_source_grown_past_the_bound_is_left_named(self) -> None:
         bound = 12
-        real = self.module._run_complexity
+        real = _original(self.module, "_run_complexity")
 
         def growing(root, paths, *args, **kwargs):
             for n in range(6):
@@ -300,7 +355,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             seen.append(kwargs["limits"])
             return real(*args, **kwargs)
 
-        reader, deadlines = self.module._diagnostic_git, []
+        reader, deadlines = _original(self.module, "_diagnostic_git"), []
 
         def reading(root, deadline, *arguments, **options):
             deadlines.append(deadline)
@@ -351,64 +406,13 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self.collect(self.root, self.output)
         self.assertFalse(marker.exists())
 
-    def _promisor(self: _DiagnosticFixture, marker: Path) -> tuple[str, str]:
-        """A partial clone whose HEAD tracks a Python file by a missing blob, its base
-        the same path's real bytes, and a promisor whose configured command only leaves
-        `marker` (PAO 6325156914)."""
-
-        def git(*args: str, stdin: bytes) -> str:
-            return (
-                subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on a temporary fixture repository
-                    [
-                        "git",
-                        "-c",
-                        "user.name=diagnostic",
-                        "-c",
-                        "user.email=diagnostic@example.invalid",
-                        *args,
-                    ],
-                    cwd=self.root,
-                    env=_fixture_git_env(),
-                    input=stdin,
-                    check=True,
-                    capture_output=True,
-                )
-                .stdout.decode()
-                .strip()
-            )
-
-        real = git("hash-object", "-w", "--stdin", stdin=b"VALUE = 1\n")
-        base_tree = git("mktree", stdin=f"100644 blob {real}\tf.py\n".encode())
-        head_tree = git(
-            "mktree", "--missing", stdin=f"100644 blob {'1' * 40}\tf.py\n".encode()
-        )
-        base = git("commit-tree", base_tree, "-m", "base", stdin=b"")
-        head = git("commit-tree", head_tree, "-p", base, "-m", "head", stdin=b"")
-        self._git("update-ref", "HEAD", head)
-        for key, value in (
-            ("core.repositoryformatversion", "1"),
-            ("extensions.partialClone", "o"),
-            ("remote.o.url", str(self.root)),
-            ("remote.o.promisor", "true"),
-            ("remote.o.uploadpack", f"touch {shlex.quote(str(marker))}; false"),
-            ("protocol.file.allow", "always"),
-        ):
-            self._git("config", key, value)
-        # A live probe: a plain read of the missing object fetches, and leaves the
-        # marker, so its later absence proves that no fetch ran (Amazon Q on #451).
-        with contextlib.suppress(subprocess.CalledProcessError):
-            self._git("cat-file", "-p", "1" * 40)
-        self.assertTrue(marker.exists(), "the promisor probe did not fire")
-        marker.unlink()
-        return base, head
-
     # No diagnostic Git read fetches: the missing object is refused, and the
     # repository's configured promisor command never runs (PAO 6325156914).
     def test_a_diagnostic_read_fetches_no_missing_object(self) -> None:
         marker = Path(self.directory.name) / "was fetched"
-        self._promisor(marker)
+        _promisor(self.root, self._git, marker)
         with self.assertRaises(subprocess.CalledProcessError):
-            self.module._diagnostic_git(
+            _original(self.module, "_diagnostic_git")(
                 self.root, time.monotonic() + 60, "cat-file", "-p", "1" * 40
             )
         self.assertFalse(marker.exists())
@@ -417,7 +421,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # comparison's patch read all refuse the missing object, and none fetches it.
     def test_the_collection_fetches_no_missing_object(self) -> None:
         marker = Path(self.directory.name) / "was fetched"
-        base, _ = self._promisor(marker)
+        base, _ = _promisor(self.root, self._git, marker)
         self.collect(self.root, self.output, base=base)
         self.assertFalse(marker.exists())
 
@@ -602,9 +606,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         for label, change in cases.items():
             with self.subTest(label):
                 started, spawning = self._spawns()
-                with patch.dict(owner._GIT_ENV, change), spawning:
+                with patch.dict(_original(owner, "_GIT_ENV"), change), spawning:
                     with self.assertRaises((OSError, ValueError)) as raised:
-                        self.module._diagnostic_git(
+                        _original(self.module, "_diagnostic_git")(
                             self.root, time.monotonic() + 60, "rev-parse", "HEAD"
                         )
                 self.assertIn("no-fetch policy", str(raised.exception))
@@ -613,19 +617,19 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             started, spawning = self._spawns()
             with patch.dict(sys.modules, {"tools.exact_tree": None}), spawning:
                 with self.assertRaises((OSError, ValueError)) as raised:
-                    self.module._diagnostic_git(
+                    _original(self.module, "_diagnostic_git")(
                         self.root, time.monotonic() + 60, "rev-parse", "HEAD"
                     )
             self.assertIn("no-fetch policy", str(raised.exception))
             self.assertEqual([], started)
-        self.assertEqual("", owner._GIT_ENV["GIT_ALLOW_PROTOCOL"])
-        self.assertEqual("1", owner._GIT_ENV["GIT_NO_LAZY_FETCH"])
+        self.assertEqual("", _original(owner, "_GIT_ENV")["GIT_ALLOW_PROTOCOL"])
+        self.assertEqual("1", _original(owner, "_GIT_ENV")["GIT_NO_LAZY_FETCH"])
 
     # The collection's missing object is refused by the stage, and nothing is fetched
     # (PAO 6325156914: a failed read alone proves no absence of a side effect).
     def test_a_missing_object_is_refused_by_the_stage(self) -> None:
         marker = Path(self.directory.name) / "was fetched"
-        base, _ = ExactSourceTreeTests._promisor(self, marker)
+        base, _ = _promisor(self.root, self._git, marker)
         inventory = self._read(self.collect(self.root, self.output, base=base))
         self.assertFalse(marker.exists())
         self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
@@ -716,7 +720,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     def _producers_ending(self, before: float):
         """A patch under which the producers run, then return `before` seconds before
         the inventory's deadline, or after it when negative."""
-        real = self.module._run_producers
+        real = _original(self.module, "_run_producers")
 
         def ending(staged, run, expected, limits, gaps, deadline, *plan):
             result = real(staged, run, expected, limits, gaps, deadline, *plan)
@@ -792,7 +796,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             return real_open(*args, **kwargs)
 
         with counting, patch.object(os, "open", opening):
-            retained = self.module._discard_staged(
+            retained = _original(self.module, "_discard_staged")(
                 top, self._limits(time.monotonic() - 1)
             )
         self.assertEqual([], reads)
@@ -817,7 +821,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             patch.object(os, "scandir", spending),
             patch.object(self.module, "time", clocked),
         ):
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(1, len(reads))
         self.assertIn("deadline", retained or "")
         self.assertTrue(top.joinpath(*(f"d{n}" for n in range(13)), "leaf.py").exists())
@@ -847,7 +851,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         counting, reads = self._counting_reads()
         opening, clocked, opens = self._spending("open", 2)
         with counting, opening, clocked:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(2, len(opens))
         self.assertEqual(1, len(reads))
         self.assertIn("deadline", retained or "")
@@ -857,7 +861,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         unlinking, clocked, unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(1, len(unlinks))
         self.assertEqual(4, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -867,7 +871,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._deep(3)
         unlinking, clocked, _unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertTrue(top.joinpath("d0", "d1", "d2").is_dir())
         self.assertIn("deadline", retained or "")
 
@@ -877,7 +881,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         outside = self._deep(2)
         link = Path(self.directory.name) / "staged-link"
         link.symlink_to(outside)
-        retained = self.module._discard_staged(
+        retained = _original(self.module, "_discard_staged")(
             link, self._limits(time.monotonic() + 60)
         )
         self.assertIn("could not be removed whole", retained or "")
@@ -956,7 +960,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, advances, dispatched = self._listing(spend_on="next")
         with patches:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(1, len(advances))
         self.assertEqual(["open"], dispatched)
         self.assertEqual(5, len(list(top.iterdir())))
@@ -970,7 +974,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, _advances, dispatched = self._listing(spend_on="type")
         with patches:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(["open", "type"], dispatched)
         self.assertEqual(5, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -980,7 +984,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._flat(5)
         patches, _advances, dispatched = self._listing(spend_on="unlink")
         with patches:
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertEqual(["open", "type", "unlink"], dispatched)
         self.assertEqual(4, len(list(top.iterdir())))
         self.assertIn("deadline", retained or "")
@@ -991,14 +995,18 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         before = _open_descriptors(self)
         completed = self._deep(4)
         self.assertIsNone(
-            self.module._discard_staged(completed, self._limits(time.monotonic() + 60))
+            _original(self.module, "_discard_staged")(
+                completed, self._limits(time.monotonic() + 60)
+            )
         )
         self.assertFalse(completed.exists())
         self.assertEqual(before, _open_descriptors(self))
         stopped = self._deep(4, name="stopped")
         unlinking, clocked, _unlinks = self._spending("unlink", 1)
         with unlinking, clocked:
-            retained = self.module._discard_staged(stopped, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(
+                stopped, self._limits(5.0)
+            )
         self.assertIn("deadline", retained or "")
         self.assertEqual(before, _open_descriptors(self))
 
@@ -1021,14 +1029,14 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 raise OSError(errno.EIO, "the close failed")
 
         with unlinking, clocked, patch.object(os, "close", failing):
-            retained = self.module._discard_staged(top, self._limits(5.0))
+            retained = _original(self.module, "_discard_staged")(top, self._limits(5.0))
         self.assertIn("deadline", retained or "")
         self.assertEqual(4, len(closes))
         self.assertEqual(before, _open_descriptors(self))
 
     def _bounded(self, top: Path, entries: int) -> str | None:
         """Remove `top` with ample time and `entries` as the removal's entry bound."""
-        return self.module._discard_staged(
+        return _original(self.module, "_discard_staged")(
             top, self._limits(time.monotonic() + 60, entries=entries)
         )
 
@@ -1132,7 +1140,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
 
     # D4: an answer that is not exactly one full object id freezes nothing.
     def test_a_freeze_answer_that_is_not_one_full_id_freezes_nothing(self) -> None:
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
         for label, answer in (
             ("two answers", lambda text: text + text),
             ("no id", lambda _text: "not an object id\n"),
@@ -1146,7 +1154,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 with patch.object(
                     self.module, "_diagnostic_git", side_effect=answering
                 ):
-                    commit, tree, gaps = self.module._frozen_subject(
+                    commit, tree, gaps = _original(self.module, "_frozen_subject")(
                         self.root, None, time.monotonic() + 60
                     )
                 self.assertEqual((None, None), (commit, tree))
@@ -1223,7 +1231,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     # D4: the tree is the frozen commit id's, never a second read of a moving HEAD.
     def test_the_tree_is_derived_from_the_frozen_commit(self) -> None:
         first = self._git("rev-parse", "HEAD")
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
         moved: list[int] = []
 
         def moving(root, deadline, *arguments, **kwargs):
@@ -1308,9 +1316,7 @@ class FixtureIsolationTests(_DiagnosticFixture):
             marker.unlink()
             self._a_change()
             self._git("commit", "-q", "-am", "under a hostile home")
-            ExactSourceTreeTests._promisor(
-                self, Path(self.directory.name) / "was fetched"
-            )
+            _promisor(self.root, self._git, Path(self.directory.name) / "was fetched")
         self.assertFalse(marker.exists())
 
     # A malformed global or system configuration cannot fail or steer them either.
@@ -1327,6 +1333,8 @@ class FixtureIsolationTests(_DiagnosticFixture):
             with self.subTest(label), patch.dict(os.environ, change):
                 self._a_change()
                 self._git("commit", "-q", "-am", f"under a broken {label} config")
-                ExactSourceTreeTests._promisor(
-                    self, Path(self.directory.name) / f"was fetched-{label}"
+                _promisor(
+                    self.root,
+                    self._git,
+                    Path(self.directory.name) / f"was fetched-{label}",
                 )

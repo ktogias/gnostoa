@@ -12,13 +12,20 @@ import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
 
+from tests.quality_evidence_profile_support import _original
 from tests.security_gates_support import _report
 from tools import security_scan
 from tools.extended_route import route_extended
 from tools.knowledge_common import load_yaml
 from tools.repository_scope import RepositoryScopeError
 from tools.security_scan import (
+    _PROCESS_REAP_TIMEOUT_SECONDS,
+    _PROTECTED_BASELINE_FILE_SHA256,
+    _SNAPSHOT_CHUNK_BYTES,
     SecurityScanError,
+    _immutable_candidate_snapshot,
+    _read_document,
+    _validate_baseline_schema,
     evaluate_secret_report,
     scan_tracked_tree,
 )
@@ -115,7 +122,7 @@ class SecretBaselineTests(unittest.TestCase):
                 PROTECTED_BASELINE_PATH: [
                     _candidate(
                         PUBLIC_HASH,
-                        line=security_scan._MAX_SNAPSHOT_FILE_BYTES + 1,
+                        line=_original(security_scan, "_MAX_SNAPSHOT_FILE_BYTES") + 1,
                         false_positive=True,
                     )
                 ]
@@ -214,7 +221,7 @@ class SecretBaselineTests(unittest.TestCase):
                 with self.subTest(label=label):
                     path.write_text(content, encoding="utf-8")
                     with self.assertRaisesRegex(SecurityScanError, "duplicate"):
-                        security_scan._read_document(path, "test document")
+                        _read_document(path, "test document")
 
     def test_json_reader_normalizes_excessive_nesting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -226,7 +233,7 @@ class SecretBaselineTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(SecurityScanError, "cannot read"):
-                security_scan._read_document(path, "test document")
+                _read_document(path, "test document")
 
     def test_baseline_rejects_every_non_finite_json_number(self) -> None:
         template = (
@@ -244,11 +251,11 @@ class SecretBaselineTests(unittest.TestCase):
                         SecurityScanError,
                         "non-finite|plugin limit",
                     ):
-                        document = security_scan._read_document(
+                        document = _read_document(
                             path,
                             "test document",
                         )
-                        security_scan._validate_baseline_schema(document)
+                        _validate_baseline_schema(document)
 
     def test_arbitrary_size_integer_limit_fails_closed_without_overflow(self) -> None:
         huge_integer = 10**10_000
@@ -279,19 +286,17 @@ class SecretBaselineTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
 
             with self.assertRaisesRegex(SecurityScanError, "cannot read"):
-                security_scan._read_document(path, "test document")
+                _read_document(path, "test document")
 
     def test_scanner_child_reaping_is_bounded(self) -> None:
         process = mock.Mock(spec=subprocess.Popen)
         process.poll.return_value = None
         process.wait.return_value = 0
 
-        security_scan._terminate_and_reap(process)
+        _original(security_scan, "_terminate_and_reap")(process)
 
         process.kill.assert_called_once_with()
-        process.wait.assert_called_once_with(
-            timeout=security_scan._PROCESS_REAP_TIMEOUT_SECONDS
-        )
+        process.wait.assert_called_once_with(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
 
     def test_scanner_child_reap_timeout_fails_closed(self) -> None:
         process = mock.Mock(spec=subprocess.Popen)
@@ -299,12 +304,10 @@ class SecretBaselineTests(unittest.TestCase):
         process.wait.side_effect = subprocess.TimeoutExpired(["scanner"], 1)
 
         with self.assertRaisesRegex(SecurityScanError, "could not be reaped"):
-            security_scan._terminate_and_reap(process)
+            _original(security_scan, "_terminate_and_reap")(process)
 
         process.kill.assert_called_once_with()
-        process.wait.assert_called_once_with(
-            timeout=security_scan._PROCESS_REAP_TIMEOUT_SECONDS
-        )
+        process.wait.assert_called_once_with(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
 
     def test_scanner_timeout_survives_a_failed_reap(self) -> None:
         """A failed reap must not replace the primary scanner timeout."""
@@ -346,7 +349,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaises(SecurityScanError) as raised:
-                    security_scan._run_bounded_scan(
+                    _original(security_scan, "_run_bounded_scan")(
                         ["scanner"],
                         cwd=Path("."),
                         timeout=1,
@@ -622,7 +625,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot file size"),
             ):
-                with security_scan._immutable_candidate_snapshot(
+                with _immutable_candidate_snapshot(
                     root,
                     [Path("first.txt")],
                 ):
@@ -643,7 +646,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot total size"),
             ):
-                with security_scan._immutable_candidate_snapshot(
+                with _immutable_candidate_snapshot(
                     root,
                     [Path("first.txt"), Path("second.txt")],
                 ):
@@ -663,7 +666,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot timed out"),
             ):
-                with security_scan._immutable_candidate_snapshot(
+                with _immutable_candidate_snapshot(
                     root,
                     [Path("tracked.txt")],
                 ):
@@ -700,7 +703,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
             ):
-                with security_scan._immutable_candidate_snapshot(
+                with _immutable_candidate_snapshot(
                     root,
                     [Path("nested/tracked.txt")],
                 ):
@@ -712,7 +715,7 @@ class SecretBaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             candidate = root / "tracked.txt"
-            candidate.write_bytes(b"a" * (security_scan._SNAPSHOT_CHUNK_BYTES + 1))
+            candidate.write_bytes(b"a" * (_SNAPSHOT_CHUNK_BYTES + 1))
             real_read = os.read
             changed = False
 
@@ -720,9 +723,7 @@ class SecretBaselineTests(unittest.TestCase):
                 nonlocal changed
                 chunk = real_read(descriptor, size)
                 if chunk and not changed:
-                    candidate.write_bytes(
-                        b"b" * (security_scan._SNAPSHOT_CHUNK_BYTES + 1)
-                    )
+                    candidate.write_bytes(b"b" * (_SNAPSHOT_CHUNK_BYTES + 1))
                     changed = True
                 return chunk
 
@@ -733,7 +734,7 @@ class SecretBaselineTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
             ):
-                with security_scan._immutable_candidate_snapshot(
+                with _immutable_candidate_snapshot(
                     root,
                     [Path("tracked.txt")],
                 ):
@@ -759,7 +760,7 @@ class SecretBaselineTests(unittest.TestCase):
                 json.dumps(baseline),
                 encoding="utf-8",
             )
-            real_validate = security_scan._validated_candidate_paths
+            real_validate = _original(security_scan, "_validated_candidate_paths")
             real_open = os.open
             replaced = False
 
@@ -882,7 +883,7 @@ class SecretBaselineTests(unittest.TestCase):
             expected = hashlib.sha256(approved).hexdigest()
 
             with mock.patch.dict(
-                security_scan._PROTECTED_BASELINE_FILE_SHA256,
+                _PROTECTED_BASELINE_FILE_SHA256,
                 {relative.as_posix(): expected},
                 clear=True,
             ):
@@ -902,7 +903,7 @@ class SecretBaselineTests(unittest.TestCase):
                 with self.subTest(stream=stream):
                     with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
                         with self.assertRaisesRegex(SecurityScanError, expected):
-                            security_scan._run_bounded_scan(
+                            _original(security_scan, "_run_bounded_scan")(
                                 [sys.executable, "-c", script],
                                 cwd=Path(directory),
                                 timeout=5,
@@ -917,14 +918,14 @@ class SecretBaselineTests(unittest.TestCase):
             mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
         ):
             with self.assertRaisesRegex(SecurityScanError, "exceeds the bounded size"):
-                security_scan._read_document(Path("baseline.json"), "baseline")
+                _read_document(Path("baseline.json"), "baseline")
         bounded_stream.read.assert_called_once_with(65)
 
         with tempfile.TemporaryDirectory() as directory:
             baseline = Path(directory) / "baseline.json"
             baseline.write_bytes(b'{{"results":"\xff"}}')
             with self.assertRaisesRegex(SecurityScanError, "cannot read baseline"):
-                security_scan._read_document(baseline, "baseline")
+                _read_document(baseline, "baseline")
 
 
 class ExtendedRoutingTests(unittest.TestCase):
@@ -1315,7 +1316,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
     def _scan(
         self, script: str, *, timeout: int = 10
     ) -> subprocess.CompletedProcess[bytes]:
-        return security_scan._run_bounded_scan(
+        return _original(security_scan, "_run_bounded_scan")(
             [sys.executable, "-c", script], cwd=self.directory, timeout=timeout
         )
 

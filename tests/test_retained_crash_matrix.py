@@ -28,6 +28,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -83,7 +84,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         seen: list[str] = []
-        real = retained_commit._write_at
+        real = _original(retained_commit, "_write_at")
 
         def record(directory_fd: int, name: str, payload: bytes) -> None:
             seen.append(name)
@@ -103,7 +104,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
         authority = self.consumption_authority(candidate)
         effects: list[str] = []
         seen: list[str] = []
-        real = retained_commit._write_at
+        real = _original(retained_commit, "_write_at")
 
         def crash(directory_fd: int, name: str, payload: bytes) -> None:
             seen.append(name)

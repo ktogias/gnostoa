@@ -14,6 +14,7 @@ from unittest import mock
 
 from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler, effect_claim, qualification, stages
+from tools.capsule.compiler import _qualification_bound
 from tools.capsule.spec import load_spec
 
 
@@ -52,7 +53,7 @@ class ReuseBeforeFreshGuardTests(CapsuleFixture):
             [blocker["code"] for blocker in observed.blockers],
         )
 
-        bound = compiler._qualification_bound(loaded.tasks[0], observed.task("T1"))
+        bound = _qualification_bound(loaded.tasks[0], observed.task("T1"))
         return qualification.QualificationReceipt(
             task="T1",
             backend=qualification.OCI,

@@ -32,6 +32,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -79,7 +80,7 @@ class IntentProvenanceFixture(ConsumptionFixture):
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
     def crash_before_the_first_canonical_write(self) -> Any:
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash(path: Path, payload: bytes) -> None:
             if (
@@ -196,7 +197,7 @@ class NonReservingIntentTests(IntentProvenanceFixture):
         )
         before = (self.workspace / "experiment-state.json").read_text()
 
-        real_digest = retained_commit._staged_manifest_digest
+        real_digest = _original(retained_commit, "_staged_manifest_digest")
         substituted: list[str] = []
 
         def digest_then_substitute(root: Path, transaction_id: str) -> Any:

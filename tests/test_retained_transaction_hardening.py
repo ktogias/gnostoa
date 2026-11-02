@@ -22,7 +22,9 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
+from tools.capsule.retained_commit import _matches_reservation
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -410,11 +412,11 @@ class CoherentPublicationTests(ConsumptionFixture):
             staged_manifest_sha256=first.manifest_sha256,
         )
         self.assertFalse(
-            retained_commit._matches_reservation(second, reservation),
+            _matches_reservation(second, reservation),
             "output the reservation was never sealed to must not match it",
         )
         self.assertTrue(
-            retained_commit._matches_reservation(
+            _matches_reservation(
                 second,
                 dataclasses.replace(
                     reservation, staged_manifest_sha256=second.manifest_sha256
@@ -741,7 +743,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
             assert isinstance(bound, dict)
             return _receipt(task_id, dict(bound))
 
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash_before_recording(path: Path, payload: bytes) -> None:
             if path.name == retained_commit.COMMIT_RECORD_FILENAME:

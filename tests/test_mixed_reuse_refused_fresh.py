@@ -13,6 +13,7 @@ from unittest import mock
 
 from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler, effect_claim, qualification, stages
+from tools.capsule.compiler import _qualification_bound
 from tools.capsule.spec import load_spec
 
 
@@ -80,7 +81,7 @@ class MixedReuseRefusedFreshTests(CapsuleFixture):
         prior = self._qualified_receipt(
             task_id=reuse_task["id"],
             backend=qualification.OCI,
-            bound=compiler._qualification_bound(
+            bound=_qualification_bound(
                 seed_loaded.tasks[0], seed.task(reuse_task["id"])
             ),
         )

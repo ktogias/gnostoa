@@ -25,6 +25,7 @@ from unittest import mock
 if TYPE_CHECKING:
     pass
 from tests.exact_tree_support import _ENV, ExactTreeFixture, _owner, git
+from tests.quality_evidence_profile_support import _original
 
 # The suppression markers the Popen line must carry, built so that this module never
 # writes a marker itself: merge admission reads every marker an added line holds (M13).
@@ -453,8 +454,10 @@ class RoundTwoTests(ExactTreeFixture):
             f"{oid} blob 1 extra\n".encode(),
         ):
             with self.subTest(header=header):
-                writer = owner._BatchWriter(
-                    self.root, [owner._Entry("100644", oid, "a.txt")], "sha1"
+                writer = _original(owner, "_BatchWriter")(
+                    self.root,
+                    [_original(owner, "_Entry")("100644", oid, "a.txt")],
+                    "sha1",
                 )
                 self.assertRefused(
                     "git-failed", lambda writer=writer, header=header: writer(header)
@@ -555,7 +558,8 @@ class RoundTwoTests(ExactTreeFixture):
     ) -> None:
         owner = _owner()
         self.assertEqual(
-            "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin", owner._GIT_ENV["PATH"]
+            "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+            _original(owner, "_GIT_ENV")["PATH"],
         )
         tree = self.commit({"a.txt": b"a\n"})
         seen: list[list[str]] = []
@@ -598,7 +602,7 @@ class RoundTwoTests(ExactTreeFixture):
         spent = self.limits(deadline=time.monotonic() - 1)
         self.assertRefused(
             "deadline",
-            lambda: owner._git(
+            lambda: _original(owner, "_git")(
                 self.repo, ["ls-tree"], limits=spent, cap=1, stdin=read_end
             ),
         )
@@ -725,7 +729,9 @@ class RoundThreeTests(ExactTreeFixture):
         try:
             self.assertRefused(
                 "deadline",
-                lambda: owner._observed(root_fd, "sha1", spent, frozenset()),
+                lambda: _original(owner, "_observed")(
+                    root_fd, "sha1", spent, frozenset()
+                ),
             )
         finally:
             os.close(root_fd)
@@ -735,9 +741,13 @@ class RoundThreeTests(ExactTreeFixture):
         self,
     ) -> None:
         owner = _owner()
-        self.assertEqual("0", owner._GIT_ENV.get("GIT_OPTIONAL_LOCKS"))
+        self.assertEqual("0", _original(owner, "_GIT_ENV").get("GIT_OPTIONAL_LOCKS"))
         self.assertFalse(
-            [part for part in owner._GIT_OVERRIDES if "safe.directory" in part]
+            [
+                part
+                for part in _original(owner, "_GIT_OVERRIDES")
+                if "safe.directory" in part
+            ]
         )
 
     # V: a failed bind leaves the published tree unbound, so no later reuse accepts it,
@@ -814,7 +824,7 @@ class RoundFourTests(ExactTreeFixture):
         owner = _owner()
         for number in (errno.EMFILE, errno.ENFILE):
             with self.subTest(errno=number):
-                refusal = owner._filesystem(OSError(number, "exhausted"))
+                refusal = _original(owner, "_filesystem")(OSError(number, "exhausted"))
                 self.assertEqual("cap-descriptors", refusal.code)
 
     def test_a_sinks_own_os_error_keeps_its_meaning(self) -> None:
@@ -894,7 +904,8 @@ class RoundSevenTests(ExactTreeFixture):
         dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         limits = self.limits()
         waited, outcome = self.without_waiting(
-            lambda: owner._blob_id_at(dir_fd, "f", 1, "sha1", limits), root / "f"
+            lambda: _original(owner, "_blob_id_at")(dir_fd, "f", 1, "sha1", limits),
+            root / "f",
         )
         os.close(dir_fd)
         self.assertFalse(waited, "the open waited on a FIFO")
@@ -913,7 +924,7 @@ class RoundSevenTests(ExactTreeFixture):
         try:
             self.assertRefused(
                 "tree-mismatch",
-                lambda: owner._blob_id_at(dir_fd, "f", 0, "sha1", limits),
+                lambda: _original(owner, "_blob_id_at")(dir_fd, "f", 0, "sha1", limits),
             )
         finally:
             os.close(dir_fd)
@@ -993,7 +1004,7 @@ class RoundEightTests(ExactTreeFixture):
         owner = _owner()
         tree = self.commit({"d/a.txt": b"a\n"})
         destination = self.root / "out"
-        real_write_tree = owner._write_tree
+        real_write_tree = _original(owner, "_write_tree")
         seen: list[int] = []
 
         def spy(
@@ -1017,7 +1028,7 @@ class RoundEightTests(ExactTreeFixture):
     def test_the_listing_streams_into_entries(self) -> None:
         owner = _owner()
         tree = self.commit({"a.txt": b"a\n", "d/b.txt": b"b\n"})
-        real_git = owner._git
+        real_git = _original(owner, "_git")
         calls: list[tuple[str, bool]] = []
 
         def spy(repo: Path, args: list[str], **kwargs: Any) -> Any:
@@ -1062,7 +1073,11 @@ class RoundElevenTests(ExactTreeFixture):
             ("protocol.file.allow", "always"),
         ):
             git(self.repo, "config", key, value)
-        out, limits, env = self.root / "out", self.limits(), _owner()._GIT_ENV
+        out, limits, env = (
+            self.root / "out",
+            self.limits(),
+            _original(_owner(), "_GIT_ENV"),
+        )
         kept = {k: v for k, v in env.items() if k != "GIT_NO_LAZY_FETCH"}
         with mock.patch.dict(env, kept, clear=True):
             self.assertRefused(
@@ -1079,8 +1094,13 @@ class RoundElevenTests(ExactTreeFixture):
         with mock.patch(
             "os.write", side_effect=lambda fd, data: real_write(fd, bytes(data)[:5])
         ):
-            owner._bind(destination, owner._Record("a" * 40, 1, 2))
-        self.assertEqual(owner._Record("a" * 40, 1, 2), owner._bound_tree(destination))
+            _original(owner, "_bind")(
+                destination, _original(owner, "_Record")("a" * 40, 1, 2)
+            )
+        self.assertEqual(
+            _original(owner, "_Record")("a" * 40, 1, 2),
+            _original(owner, "_bound_tree")(destination),
+        )
 
     # AW: a link target holding a NUL cannot be written exactly.
     def test_a_link_target_with_a_nul_is_refused(self) -> None:

@@ -18,7 +18,7 @@ ADAPTER_PATH = ROOT / "ci" / "review_github_current_state.py"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 
 
-def _reducer() -> ModuleType:
+def reducer() -> ModuleType:
     spec = importlib.util.find_spec("tools.review_reconcile")
     if spec is None:
         raise AssertionError("L1_REDUCER_UNAVAILABLE")
@@ -27,15 +27,15 @@ def _reducer() -> ModuleType:
 
 def reducer_fixture() -> ModuleType:
     """Public test-only access to the shared provider-neutral reducer fixture."""
-    return _reducer()
+    return reducer()
 
 
 def snapshot_fixture() -> dict[str, Any]:
     """Public test-only access to the shared normalized provider snapshot."""
-    return _snapshot()
+    return snapshot()
 
 
-def _adapter() -> ModuleType:
+def adapter() -> ModuleType:
     if not ADAPTER_PATH.is_file():
         raise AssertionError("L1_GITHUB_ADAPTER_UNAVAILABLE")
     spec = importlib.util.spec_from_file_location(
@@ -50,10 +50,10 @@ def _adapter() -> ModuleType:
 
 def adapter_fixture() -> ModuleType:
     """Public test-only access to the shared GitHub adapter fixture."""
-    return _adapter()
+    return adapter()
 
 
-def _bundle() -> dict[str, Any]:
+def bundle() -> dict[str, Any]:
     path = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
     loaded = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
@@ -61,14 +61,14 @@ def _bundle() -> dict[str, Any]:
     return loaded
 
 
-def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes]:
+def valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes]:
     """A valid outer result for ``input_document``: the public evaluator's own
     non-binding INCOMPLETE answer for current advisory, exit 3, canonically encoded
     as the protected outer runtime returns it."""
     from tools import review_check
     from tools.review_model import canonical_json
 
-    code, payload = review_check.evaluate_documents(input_document, _bundle()["policy"])
+    code, payload = review_check.evaluate_documents(input_document, bundle()["policy"])
     if (
         code != 3
         or payload.get("outcome") != "INCOMPLETE"
@@ -81,7 +81,7 @@ def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes
     return code, (canonical_json(payload) + "\n").encode("utf-8")
 
 
-def _snapshot(
+def snapshot(
     *,
     provider_id: str = "github",
     repository: str = "https://github.com/ktogias/gnostoa",
@@ -171,7 +171,7 @@ def _snapshot(
     }
 
 
-class _PagedFake:
+class PagedFake:
     def __init__(self, replies: dict[str, tuple[Any, dict[str, str]]]) -> None:
         self.replies = replies
         self.calls: list[str] = []
@@ -247,7 +247,7 @@ class _PagedFake:
         }
 
 
-def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
+def complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
     return {
         f"{root}/pulls/300": (
             {
@@ -381,10 +381,10 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
     }
 
 
-def _complete_replies_without_review_comments(
+def complete_replies_without_review_comments(
     root: str,
 ) -> dict[str, tuple[Any, dict[str, str]]]:
-    replies = _complete_replies(root)
+    replies = complete_replies(root)
     replies[f"{root}/pulls/300/comments?per_page=100"] = ([], {})
     replies.pop("https://api.github.com/page2/review-comments", None)
     return replies
@@ -393,9 +393,9 @@ def _complete_replies_without_review_comments(
 def paged_fake_fixture(replies: dict[str, tuple[Any, dict[str, str]]]) -> Any:
     """Public test-only access to the fake provider, which refuses any URL it was
     not given (#407, slice 1b.3a)."""
-    return _PagedFake(replies)
+    return PagedFake(replies)
 
 
 def complete_replies_fixture(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
     """Public test-only access to the complete provider replies for PR 300."""
-    return _complete_replies(root)
+    return complete_replies(root)

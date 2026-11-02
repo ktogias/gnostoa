@@ -29,6 +29,7 @@ from tests.quality_evidence_fixtures import (
     _DiagnosticFixture,
     _DiagnosticInventoryFixture,
 )
+from tests.quality_evidence_profile_support import _original
 from tools.quality_evidence import (
     QualityEvidenceError,
     build_cyclonedx_sbom,
@@ -1279,7 +1280,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # The Router's V1 (6225341677), its stated conservative loss, in v2: a commit
         # resolved just before its tree could not be read is dropped too; no commit is
         # recorded without the tree derived from it.
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
 
         def no_tree(root, deadline, *arguments, **options):
             if arguments[-1].endswith("^{tree}"):
@@ -1287,7 +1288,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             return real(root, deadline, *arguments, **options)
 
         with patch.object(self.module, "_diagnostic_git", side_effect=no_tree):
-            commit, tree, gaps = self.module._frozen_subject(
+            commit, tree, gaps = _original(self.module, "_frozen_subject")(
                 self.root, None, time.monotonic() + 60
             )
         self.assertEqual((None, None), (commit, tree))
@@ -1300,18 +1301,24 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         tree = self._git("rev-parse", "HEAD^{tree}")
         self.assertEqual(
             (self.base, tree, []),
-            self.module._frozen_subject(self.root, None, time.monotonic() + 60),
+            _original(self.module, "_frozen_subject")(
+                self.root, None, time.monotonic() + 60
+            ),
         )
         (self.root / "tools" / "sample.py").write_text(
             _DIAGNOSTIC_SAMPLE + "\n# dirty\n", encoding="utf-8"
         )
         self.assertEqual(
             (self.base, tree, []),
-            self.module._frozen_subject(self.root, self.base, time.monotonic() + 60),
+            _original(self.module, "_frozen_subject")(
+                self.root, self.base, time.monotonic() + 60
+            ),
         )
         self.assertEqual(
             (None, None, ["the deadline passed before the subject was frozen"]),
-            self.module._frozen_subject(self.root, self.base, time.monotonic() - 1),
+            _original(self.module, "_frozen_subject")(
+                self.root, self.base, time.monotonic() - 1
+            ),
         )
 
     def test_a_file_budget_or_a_producer_gap_is_explicit(self) -> None:
@@ -1387,7 +1394,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             )
         self.assertIn("--isolated", runs["ruff:every-rule"]["argv"])
         self.assertIn("--config-file=", runs["mypy:main"]["argv"])
-        observation = self.module._environment_command()
+        observation = _original(self.module, "_environment_command")()
         for command, _, _ in self.commands:
             # The environment observations run the same isolated interpreter with the
             # collector's own observer module, never a producer (#389 F3 S2-C).
@@ -1495,7 +1502,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # neither wait for a writer nor parse what it is not.
         done = self._tracked_fifo()
         started = time.monotonic()
-        result = self.module._run_complexity(
+        result = _original(self.module, "_run_complexity")(
             self.root, ["tools/sample.py"], time.monotonic() + 30
         )
         waited = time.monotonic() - started
@@ -1540,7 +1547,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
     def test_the_in_process_read_keeps_its_own_byte_bound(self) -> None:
         # A source that grows after the size check still meets the metric's own bound.
         size = len(_DIAGNOSTIC_SAMPLE.encode("utf-8"))
-        result = self.module._run_complexity(
+        result = _original(self.module, "_run_complexity")(
             self.root,
             ["tools/sample.py"],
             time.monotonic() + 30,
@@ -1573,7 +1580,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             with self.subTest(error.__name__):
                 opening, wrapping, streams = self._read_raises(error, "tools/first.py")
                 with opening, wrapping:
-                    result = self.module._run_complexity(
+                    result = _original(self.module, "_run_complexity")(
                         self.root,
                         ["tools/first.py", "tools/sample.py"],
                         time.monotonic() + 30,
@@ -1637,7 +1644,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         ):
             with self.subTest(label):
                 tree = ast.parse(source)
-                (finding,) = self.module._function_findings(
+                (finding,) = _original(self.module, "_function_findings")(
                     tree, "tools/sample.py", source.splitlines()
                 )
                 self.assertEqual(16, finding["native"]["value"])
@@ -1649,10 +1656,14 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 end_line = finding["range"]["end_line"]
                 self.assertEqual(len(source.splitlines()), end_line)
                 self.assertTrue(
-                    self.module._in_diff(finding, {"tools/sample.py": [counted]})
+                    _original(self.module, "_in_diff")(
+                        finding, {"tools/sample.py": [counted]}
+                    )
                 )
                 self.assertFalse(
-                    self.module._in_diff(finding, {"tools/sample.py": [end_line + 1]})
+                    _original(self.module, "_in_diff")(
+                        finding, {"tools/sample.py": [end_line + 1]}
+                    )
                 )
 
     def test_the_metric_stops_past_its_remaining_findings_allowance(self) -> None:
@@ -1665,7 +1676,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         )
         paths = ["tools/sample.py", "tools/zlater.py"]
         deadline = time.monotonic() + 30
-        each = len(self.module._run_complexity(self.root, paths[:1], deadline).findings)
+        each = len(
+            _original(self.module, "_run_complexity")(
+                self.root, paths[:1], deadline
+            ).findings
+        )
         self.assertGreater(each, 0)
         for label, allowance, visited in (
             ("past the allowance", each - 1, paths[:1]),
@@ -1676,7 +1691,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             with self.subTest(label):
                 spy, opened = self._opened_sources()
                 with spy:
-                    result = self.module._run_complexity(
+                    result = _original(self.module, "_run_complexity")(
                         self.root, paths, deadline, max_findings=allowance
                     )
                 self.assertEqual(visited, opened)
@@ -1684,7 +1699,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.assertEqual({}, result.unanalyzed)
         spy, opened = self._opened_sources()
         with spy:
-            self.module._run_complexity(self.root, paths, deadline)
+            _original(self.module, "_run_complexity")(self.root, paths, deadline)
         self.assertEqual(paths, opened)
 
     def test_a_metric_past_the_findings_budget_starts_no_later_file(self) -> None:
@@ -1736,7 +1751,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         }
         for path, data in sources.items():
             (self.root / path).write_bytes(data)
-        result = self.module._run_complexity(
+        result = _original(self.module, "_run_complexity")(
             self.root, sorted(sources), time.monotonic() + 30
         )
         self.assertEqual({}, result.unanalyzed)
@@ -1747,7 +1762,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
 
     def test_complexity_stops_at_the_deadline(self) -> None:
         # The metric runs in this process and checks the deadline before each file.
-        result = self.module._run_complexity(
+        result = _original(self.module, "_run_complexity")(
             self.root, ["tools/sample.py"], time.monotonic() - 1.0
         )
         self.assertIn("deadline", result.unanalyzed["tools/sample.py"])
@@ -1970,7 +1985,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 self.subTest(answer=name),
                 patch("tools.quality_evidence._bounded_run", side_effect=answer),
             ):
-                version = self.module._producer_version(
+                version = _original(self.module, "_producer_version")(
                     self.root, run, "ruff", self.module.DiagnosticLimits(), 0.0
                 )
                 (run / "diagnostic-ruff-version.txt").unlink()
@@ -2092,7 +2107,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         run = Path(self.directory.name) / "groups"
         run.mkdir()
         with patch("tools.quality_evidence._bounded_run", side_effect=recording):
-            self.module._run_mypy(
+            _original(self.module, "_run_mypy")(
                 self.root, run, paths, self.module.DiagnosticLimits(), 0.0, None
             )
         self.assertEqual(3, len(reports))
@@ -2103,7 +2118,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         branches = "".join(f"    if a == {i}:\n        a += 1\n" for i in range(16))
         source = "def accented(a):\n" + branches + '    return "\u00e9\u00e9\u00e9"\n'
         (self.root / "tools" / "accented.py").write_text(source, encoding="utf-8")
-        result = self.module._run_complexity(
+        result = _original(self.module, "_run_complexity")(
             self.root, ["tools/accented.py"], time.monotonic() + 30
         )
         (finding,) = result.findings
@@ -2149,7 +2164,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 return real_read(fd, size)
             raise OSError(5, "Input/output error")
 
-        real_new_file = self.module._new_file
+        real_new_file = _original(self.module, "_new_file")
 
         def failing_sink(path: Path) -> BinaryIO:
             stream = real_new_file(path)
@@ -2210,7 +2225,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 patch.object(self.module.subprocess, "Popen", side_effect=no_stdout),
             ),
         )
-        real_producers = self.module._run_producers
+        real_producers = _original(self.module, "_run_producers")
 
         def during_producers(failure):
             def run(*args, **kwargs):
@@ -2270,7 +2285,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # allowance, each record is still validated and counted, never kept, and the
         # refusal names the real count.
         peak = [0]
-        real = self.module._ProducerResult
+        real = _original(self.module, "_ProducerResult")
 
         class Peaked(list[object]):
             def append(self, item: object) -> None:
@@ -2315,7 +2330,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # error is that error, and every other outcome is the comparison's own reason
         # with the cleanup's detail. The child is reaped once, never by the mapper.
         drained = self.module.bounded_process.Drained
-        refused = self.module._ComparisonRefused
+        refused = _original(self.module, "_ComparisonRefused")
         error = OSError(errno.EIO, "/host/private")
         failed = "its process could not be reaped: OSError"
         cases = (
@@ -2351,7 +2366,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                     patch.object(self.module, "_reap", reap),
                     self.assertRaises(raised) as caught,
                 ):
-                    self.module._diagnostic_git(
+                    _original(self.module, "_diagnostic_git")(
                         self.root, deadline, "rev-parse", "HEAD", cap=4096
                     )
                 self.assertEqual(1, reap.call_count)
@@ -2369,7 +2384,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 patch.object(self.module, "_reap", Mock(return_value=failed)),
                 self.assertRaises(refused) as caught,
             ):
-                self.module._diagnostic_git(
+                _original(self.module, "_diagnostic_git")(
                     self.root, deadline, "rev-parse", "HEAD", cap=4096
                 )
             self.assertEqual(
@@ -2409,7 +2424,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 patch.object(self.module.bounded_process, "reap", reap),
                 self.assertRaises(type(interrupt)) as raised,
             ):
-                self.module._diagnostic_git(
+                _original(self.module, "_diagnostic_git")(
                     self.root, deadline, "rev-parse", "HEAD", cap=4096
                 )
             return raised.exception, seen["process"]
@@ -2437,9 +2452,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             reap = Mock(side_effect=real_reap)
             deadline = time.monotonic() + 30
             with patch.object(self.module.bounded_process, "reap", reap):
-                self.module._diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
+                _original(self.module, "_diagnostic_git")(
+                    self.root, deadline, "rev-parse", "HEAD"
+                )
                 with self.assertRaises(subprocess.CalledProcessError):
-                    self.module._diagnostic_git(
+                    _original(self.module, "_diagnostic_git")(
                         self.root, deadline, "rev-parse", "--verify", "no-such-ref"
                     )
             self.assertEqual(0, reap.call_count)
@@ -2454,7 +2471,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 ),
                 self.assertRaises(FileNotFoundError),
             ):
-                self.module._diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
+                _original(self.module, "_diagnostic_git")(
+                    self.root, deadline, "rev-parse", "HEAD"
+                )
             self.assertEqual(0, reap.call_count)
         with self.subTest("an interrupted comparison writes no inventory"):
             reap = Mock(side_effect=real_reap)
@@ -2489,7 +2508,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         run = Path(tempfile.mkdtemp(prefix="producers-", dir=self.directory.name))
         deadline = time.monotonic() + 30
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
-            result = self.module._run_producers(
+            result = _original(self.module, "_run_producers")(
                 self.root,
                 run,
                 ["tests/test_sample.py", "tools/sample.py"],
@@ -2497,7 +2516,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 [],
                 deadline,
                 _EVERY_FAMILY,
-                self.module._Changes(frozenset(), {}),
+                _original(self.module, "_Changes")(frozenset(), {}),
             )
         self.assertEqual(12, result.count())
         self.assertEqual(4, len(result.findings))
@@ -2507,14 +2526,14 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # reads them whole; a cap of 40 is the comparison's own reason, never a prefix.
         deadline = time.monotonic() + 30
         head = self._git("rev-parse", "HEAD")
-        answer = self.module._diagnostic_git(
+        answer = _original(self.module, "_diagnostic_git")(
             self.root, deadline, "rev-parse", "HEAD", cap=41
         )
         self.assertEqual(head + "\n", answer)
         with self.assertRaisesRegex(
             ValueError, "the comparison's Git output exceeds max_report_bytes"
         ):
-            self.module._diagnostic_git(
+            _original(self.module, "_diagnostic_git")(
                 self.root, deadline, "rev-parse", "HEAD", cap=40
             )
 
@@ -2529,11 +2548,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             with self.assertRaisesRegex(
                 subprocess.SubprocessError, "deadline had passed"
             ):
-                self.module._diagnostic_git(
+                _original(self.module, "_diagnostic_git")(
                     self.root, spent, "rev-parse", "HEAD", cap=4096
                 )
         with self.assertRaises(subprocess.CalledProcessError):
-            self.module._diagnostic_git(
+            _original(self.module, "_diagnostic_git")(
                 self.root,
                 deadline,
                 "rev-parse",
@@ -2553,7 +2572,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ).write_text("VALUE = 1\n", encoding="utf-8")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "many changed names")
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
         for cap, read_last, reads in ((40, "rev-parse", 1), (100, "diff", 2)):
             with self.subTest(cap=cap):
                 spy = Mock(side_effect=real)
@@ -2565,7 +2584,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         "the comparison's Git output exceeds max_report_bytes",
                     ),
                 ):
-                    self.module._diff_scope(
+                    _original(self.module, "_diff_scope")(
                         self.root, self.base, deadline, cap=cap, head=self._head()
                     )
                 verbs = [call.args[2] for call in spy.call_args_list]
@@ -2580,7 +2599,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             stream.write(b"VALUE = 1\n")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a name that is not UTF-8")
-        diff, _lines = self.module._diff_scope(
+        diff, _lines = _original(self.module, "_diff_scope")(
             self.root, self.base, time.monotonic() + 30, head=self._head()
         )
         self.assertIn("tools/odd\udcffname.py", diff["changed_paths"])
@@ -2677,7 +2696,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # The Router's T1: an on-time inventory is unchanged, and every inventory is one
         # payload write to its one destination.
         writes: list[int] = []
-        real_new_file = self.module._new_file
+        real_new_file = _original(self.module, "_new_file")
 
         def counting(path):
             stream = real_new_file(path)
@@ -2735,7 +2754,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # Codex on #436: a write or close failure left a partial inventory at its
         # canonical path. The file the collector created is removed, the error is
         # raised as before, and the raw reports stay.
-        real = self.module._new_file
+        real = _original(self.module, "_new_file")
 
         def failing(path, stage):
             stream = real(path)
@@ -2822,7 +2841,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             limits=self.module.DiagnosticLimits(),
             profile=_EVERY_FAMILY,
             origin="argument",
-            result=self.module._ProducerResult(),
+            result=_original(self.module, "_ProducerResult")(),
             expected=[],
             diff=None,
             findings=[],
@@ -2830,10 +2849,10 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         )
         deadline = time.monotonic() + 30
         with self.assertRaises(FileExistsError):
-            self.module._publish(run, deadline, **arguments)
+            _original(self.module, "_publish")(run, deadline, **arguments)
         self.assertEqual(b"not ours\n", existing.read_bytes())
         existing.unlink()
-        real = self.module._new_file
+        real = _original(self.module, "_new_file")
 
         def partial(path):
             stream = real(path)
@@ -2852,7 +2871,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ),
             self.assertRaises(OSError) as raised,
         ):
-            self.module._publish(run, deadline, **arguments)
+            _original(self.module, "_publish")(run, deadline, **arguments)
         self.assertEqual(errno.ENOSPC, raised.exception.errno)
         notes = getattr(raised.exception, "__notes__", [])
         self.assertEqual(1, len(notes), notes)
@@ -3219,7 +3238,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with self.subTest("a spent budget starts no Git read to overflow"):
             identity = Mock(side_effect=OverflowError("raw detail"))
             with patch.object(self.module, "has_git_metadata", identity):
-                commit, tree, _gaps = self.module._frozen_subject(
+                commit, tree, _gaps = _original(self.module, "_frozen_subject")(
                     self.root, None, time.monotonic() - 1
                 )
             self.assertEqual([], identity.call_args_list)
@@ -3584,7 +3603,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             marker.unlink()
             run = Path(self.directory.name) / "run"
             run.mkdir()
-            self.module._producer_version(
+            _original(self.module, "_producer_version")(
                 self.root,
                 run,
                 "gnostoa_no_such_producer",
@@ -3691,7 +3710,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # cubic on #436: every later group and producer still ran before the existing
         # refusal. Its predicate, the raw count above max_findings, now stops them.
         complexity = patch.object(
-            self.module, "_run_complexity", wraps=self.module._run_complexity
+            self.module,
+            "_run_complexity",
+            wraps=_original(self.module, "_run_complexity"),
         )
         limits = self.module.DiagnosticLimits(max_findings=1)
         with (
@@ -3701,7 +3722,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ),
         ):
             self._inventory(limits=limits)
-        observation = self.module._environment_command()
+        observation = _original(self.module, "_environment_command")()
         started = [
             c for c, _, _ in self.commands if "--version" not in c and c != observation
         ]
@@ -3736,7 +3757,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertIn(("mypy", "tests/fixtures/one"), started)
         self.assertIn(("ruff", "."), started)
         complexity = patch.object(
-            self.module, "_run_complexity", wraps=self.module._run_complexity
+            self.module,
+            "_run_complexity",
+            wraps=_original(self.module, "_run_complexity"),
         )
         limits = self.module.DiagnosticLimits(max_findings=5)
         with (
@@ -3784,7 +3807,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             "GIT_CONFIG_KEY_12",
         )
         owner = importlib.import_module("tools.candidate_prepare")
-        self.assertLessEqual(set(owner._GIT_ENVIRONMENT_VARIABLES), set(overrides))
+        self.assertLessEqual(
+            set(_original(owner, "_GIT_ENVIRONMENT_VARIABLES")), set(overrides)
+        )
         for key in overrides:
             for value in ("/elsewhere-value-marker", ""):
                 with self.subTest(key=key, value=value):
@@ -3798,7 +3823,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # unchanged scrub as data, and keeps no list of its own.
         self.assertFalse(hasattr(self.module, "_CALLER_GIT_ROUTING"))
         owner = importlib.import_module("tools.candidate_prepare")
-        scrub = owner._git_env_without_caller_overrides
+        scrub = _original(owner, "_git_env_without_caller_overrides")
 
         def stricter() -> dict[str, str]:
             kept = scrub()
@@ -3849,11 +3874,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         owner = importlib.import_module("tools.exact_tree")
         with patch.dict(owner.__dict__):
             del owner.__dict__["_GIT_ENV"]
-            with self.assertRaises(self.module._ComparisonUnavailable):
-                self.module._no_fetch_policy()
+            with self.assertRaises(_original(self.module, "_ComparisonUnavailable")):
+                _original(self.module, "_no_fetch_policy")()
         self.assertEqual(
             {"GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1"},
-            self.module._no_fetch_policy(),
+            _original(self.module, "_no_fetch_policy")(),
         )
 
     def test_a_base_that_is_not_that_commit_is_a_comparison_gap(self) -> None:
@@ -3875,7 +3900,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
     def test_a_failed_or_unusable_commit_check_is_a_comparison_gap(self) -> None:
         # The Router's B1 (6224373564): a read failure, an answer that is not exactly
         # the base, and a spent shared budget each take the comparison's gap.
-        real = self.module._diagnostic_git
+        real = _original(self.module, "_diagnostic_git")
 
         def failing(root, deadline, *arguments, **options):
             if arguments[0] == "rev-parse":
@@ -3932,7 +3957,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # The Router's N1 (6227604656): the fixed option reaches B1's commit check, the
         # name list and every patch, through the one comparison reader.
         self._changed_once()
-        git = importlib.import_module("tools.candidate_prepare")._git_executable()
+        git = _original(
+            importlib.import_module("tools.candidate_prepare"), "_git_executable"
+        )()
         # Git is spawned through Popen and drained by the shared owner (the Router's G1).
         with patch.object(
             self.module.subprocess, "Popen", wraps=self.module.subprocess.Popen
@@ -3957,7 +3984,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # exact argv, and a commit base still compares.
         self._changed_once()
         with patch.object(
-            self.module, "_diagnostic_git", wraps=self.module._diagnostic_git
+            self.module,
+            "_diagnostic_git",
+            wraps=_original(self.module, "_diagnostic_git"),
         ) as git:
             inventory = self._inventory(base=self.base)
         self.assertIn(
@@ -4081,7 +4110,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                     if location is not None:
                         finding["range"] = location
                     changed = {"tools/sample.py": sorted(lines)}
-                    self.assertIs(expected, self.module._in_diff(finding, changed))
+                    self.assertIs(
+                        expected, _original(self.module, "_in_diff")(finding, changed)
+                    )
 
     def test_each_paths_changed_lines_are_ordered_once_for_every_finding(self) -> None:
         # cubic on #436, by the Router's I1 (6231894979): each finding scanned the whole
@@ -4107,7 +4138,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with patch.object(
             self.module, "_diff_scope", return_value=(diff, {"tools/sample.py": lines})
         ):
-            self.module._annotate_diff(
+            _original(self.module, "_annotate_diff")(
                 self.root,
                 self.base,
                 findings,
@@ -4127,7 +4158,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with patch.object(
             self.module, "_diff_scope", return_value=(diff, {"tools/other.py": {8, 1}})
         ):
-            self.module._annotate_diff(
+            _original(self.module, "_annotate_diff")(
                 self.root,
                 self.base,
                 unordered,
@@ -4198,7 +4229,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self._git("commit", "-q", "-m", "subject")
         head = self._head()
         with patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
-            scope, _ = self.module._diff_scope(
+            scope, _ = _original(self.module, "_diff_scope")(
                 self.root, self.base, time.monotonic() + 60, head=head
             )
         self.assertEqual(["tools/sample.py"], scope["changed_paths"])
@@ -4351,7 +4382,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         magic.write_text("A = 2\n", encoding="utf-8")
         (self.root / "other.py").write_text("B = 2\nC = 3\n", encoding="utf-8")
         self._git("commit", "-q", "-am", "change both")
-        _diff, lines = self.module._diff_scope(
+        _diff, lines = _original(self.module, "_diff_scope")(
             self.root, base, time.monotonic() + 30, head=self._head()
         )
         self.assertEqual({1}, lines[":(glob)*.py"])
@@ -4393,7 +4424,9 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
             ),
             self.assertRaisesRegex(subprocess.SubprocessError, "deadline had passed"),
         ):
-            self.module._diff_scope(self.root, self.base, spent, head=head)
+            _original(self.module, "_diff_scope")(
+                self.root, self.base, spent, head=head
+            )
 
     def test_a_spent_budget_reads_no_subject(self) -> None:
         with (
@@ -4408,7 +4441,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
                 side_effect=AssertionError("git started past the deadline"),
             ),
         ):
-            commit, tree, gaps = self.module._frozen_subject(
+            commit, tree, gaps = _original(self.module, "_frozen_subject")(
                 self.root, None, time.monotonic() - 1.0
             )
         self.assertEqual((None, None), (commit, tree))
@@ -4435,7 +4468,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "a large data file")
         calls: list[tuple[str, ...]] = []
-        git = self.module._diagnostic_git
+        git = _original(self.module, "_diagnostic_git")
 
         def recording(root, deadline, *arguments, **options):
             calls.append(arguments)
@@ -4506,7 +4539,7 @@ class BoundedRunTests(unittest.TestCase):
         self, code: str, *, report: str = "report", limits=None, seconds: float = 30.0
     ):
         limits = limits or self.module.DiagnosticLimits()
-        return self.module._bounded_run(
+        return _original(self.module, "_bounded_run")(
             [sys.executable, "-c", code],
             cwd=self.path,
             environment=dict(os.environ),
@@ -4523,7 +4556,7 @@ class BoundedRunTests(unittest.TestCase):
         # Codex on #436: a flush or close failure of the report escaped _bounded_run.
         # The report's tail may be lost, so the capture is invalid, and the collector's
         # refusal follows; the gap names the error's type, never its text.
-        real = self.module._new_file
+        real = _original(self.module, "_new_file")
 
         def failing(path):
             stream = real(path)
@@ -4555,7 +4588,7 @@ class BoundedRunTests(unittest.TestCase):
                 limits=limits,
             )
         self.assertTrue(invalid)
-        self.assertEqual(f"{self.module._OUTPUT_CAP_GAP}; {closed}", gap)
+        self.assertEqual(f"{_original(self.module, '_OUTPUT_CAP_GAP')}; {closed}", gap)
         self.assertEqual(1, reap.call_count)
         # The prefix read before the cut stays: the shared drain never writes part of
         # the chunk that crosses the cap.
@@ -4579,7 +4612,10 @@ class BoundedRunTests(unittest.TestCase):
         # shared drain left the producer running. The child is reaped once, through the
         # existing owner, the pipe and the report are closed, and the same exception is
         # raised again; a failed reap is noted on it, never in its place.
-        real_reap, real_new = self.module.bounded_process.reap, self.module._new_file
+        real_reap, real_new = (
+            self.module.bounded_process.reap,
+            _original(self.module, "_new_file"),
+        )
 
         def run(code, report, interrupt, reap):
             seen = {}
@@ -4687,7 +4723,7 @@ class BoundedRunTests(unittest.TestCase):
 
         process = SimpleNamespace(poll=lambda: None, kill=lambda: None, wait=no_child)
         # The shared owner's reap, worded by the consumer (#365; the Router's X1).
-        gap = self.module._reap(process)
+        gap = _original(self.module, "_reap")(process)
         self.assertEqual("its process could not be reaped: ChildProcessError", gap)
 
     def test_a_producer_whose_output_cannot_be_read_is_a_gap(self) -> None:
@@ -4867,7 +4903,7 @@ class BoundedRunTests(unittest.TestCase):
                         (status, closed if broken else plain, False), result
                     )
                     self.assertEqual(0, reap.call_count)
-        real_new = self.module._new_file
+        real_new = _original(self.module, "_new_file")
 
         def failing(path):
             stream = real_new(path)
@@ -4915,7 +4951,7 @@ class BoundedRunTests(unittest.TestCase):
             raise subprocess.TimeoutExpired(["git"], options.get("timeout"))
 
         with patch("tools.quality_evidence.subprocess.run", side_effect=slow):
-            state = self.module._git_state(self.path, timeout=0.5)
+            state = _original(self.module, "_git_state")(self.path, timeout=0.5)
         self.assertIsNone(state["tracked_tree_dirty"])
 
     def test_the_two_subject_reads_share_one_budget(self) -> None:
@@ -4934,10 +4970,10 @@ class BoundedRunTests(unittest.TestCase):
             ),
             patch("tools.quality_evidence.subprocess.run", side_effect=run),
         ):
-            self.module._git_state(self.path, timeout=1.0)
+            _original(self.module, "_git_state")(self.path, timeout=1.0)
             self.assertEqual([1.0, 0.25], seen)
             seen.clear()
-            self.module._git_state(self.path)
+            _original(self.module, "_git_state")(self.path)
         self.assertEqual([None, None], seen)
 
     def test_a_spent_budget_starts_no_second_subject_read(self) -> None:
@@ -4957,7 +4993,7 @@ class BoundedRunTests(unittest.TestCase):
             ),
             patch("tools.quality_evidence.subprocess.run", side_effect=run),
         ):
-            state = self.module._git_state(self.path, timeout=1.0)
+            state = _original(self.module, "_git_state")(self.path, timeout=1.0)
         self.assertEqual(["HEAD"], seen)
         self.assertIsNone(state["tracked_tree_dirty"])
 
@@ -4986,7 +5022,7 @@ class BoundedRunTests(unittest.TestCase):
                 ),
                 patch("tools.quality_evidence.subprocess.run", side_effect=run),
             ):
-                state = self.module._git_state(self.path, timeout=timeout)
+                state = _original(self.module, "_git_state")(self.path, timeout=timeout)
             return state, seen
 
         with self.subTest("crossed between the check and the timeout"):

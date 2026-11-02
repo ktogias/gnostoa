@@ -21,6 +21,7 @@ import unittest
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -110,7 +111,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         before = (self.workspace / "experiment-state.json").read_text()
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash_before_recording(path, payload):  # type: ignore[no-untyped-def]
             if path.name == retained_commit.COMMIT_RECORD_FILENAME:

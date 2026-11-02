@@ -43,6 +43,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, effect_claim, qualification, retained_commit
 
@@ -214,7 +215,7 @@ class ForwardRecoveryTests(ProtocolFixture):
             assert isinstance(bound, dict)
             return _receipt(task_id, dict(bound))
 
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash_before_recording(path: Path, payload: bytes) -> None:
             if path.name == retained_commit.COMMIT_RECORD_FILENAME:

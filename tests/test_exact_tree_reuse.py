@@ -17,6 +17,7 @@ from unittest import mock
 
 from tests.exact_tree_reuse_support import _open_descriptors
 from tests.exact_tree_support import ExactTreeFixture, _owner, git
+from tests.quality_evidence_profile_support import _original
 
 
 class RoundFiveTests(ExactTreeFixture):
@@ -256,7 +257,9 @@ class RoundSixTests(ExactTreeFixture):
             with mock.patch("os.open", side_effect=counting):
                 self.assertRefused(
                     "deadline",
-                    lambda: owner._resolves_on_disk(root_fd, "d/t", "x", spent),
+                    lambda: _original(owner, "_resolves_on_disk")(
+                        root_fd, "d/t", "x", spent
+                    ),
                 )
         finally:
             os.close(root_fd)
@@ -288,7 +291,7 @@ class RoundNineTests(ExactTreeFixture):
         record = self.root / ".project.exact-tree"
         os.mkfifo(record)
         waited, outcome = self.without_waiting(
-            lambda: owner._bound_tree(destination), record
+            lambda: _original(owner, "_bound_tree")(destination), record
         )
         self.assertFalse(waited, "the record's open waited on a FIFO")
         self.assertEqual(["unsafe-path"], outcome)
@@ -304,8 +307,10 @@ class RoundTenTests(ExactTreeFixture):
         destination.mkdir()
         record = self.root / ".project.exact-tree"
         record.write_text("another\n", encoding="ascii")
-        binding = owner._Record("a" * 40, 1, 2)
-        self.assertRefused("tree-mismatch", lambda: owner._bind(destination, binding))
+        binding = _original(owner, "_Record")("a" * 40, 1, 2)
+        self.assertRefused(
+            "tree-mismatch", lambda: _original(owner, "_bind")(destination, binding)
+        )
         self.assertEqual("another\n", record.read_text(encoding="ascii"))
         names = [p.name for p in self.root.iterdir() if ".exact-tree." in p.name]
         self.assertEqual([], names)
@@ -389,7 +394,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
     def test_a_directory_replaced_after_the_bind_is_not_blessed(self) -> None:
         owner, empty = _owner(), self.empty_tree()
         other = self.commit({"b.txt": b"b\n"})
-        destination, real_bind = self.root / "project", owner._bind
+        destination, real_bind = self.root / "project", _original(owner, "_bind")
 
         def bind(where: Path, record: Any) -> None:
             real_bind(where, record)
@@ -418,7 +423,10 @@ class RoundTwelveReuseTests(ExactTreeFixture):
                 owner.materialize(self.repo, other, aside, limits=self.limits())
                 real_rename(aside, destination)
                 info = os.lstat(destination)
-                owner._bind(destination, owner._Record(other, info.st_dev, info.st_ino))
+                _original(owner, "_bind")(
+                    destination,
+                    _original(owner, "_Record")(other, info.st_dev, info.st_ino),
+                )
 
         with mock.patch("os.rename", side_effect=rename):
             self.assertRefused("tree-mismatch", self.reuse(empty, destination))
@@ -433,7 +441,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         owner, empty = _owner(), self.empty_tree()
         other = self.commit({"b.txt": b"b\n"})
         destination, record = self.root / "project", self.root / ".project.exact-tree"
-        real_check = owner._still_published
+        real_check = _original(owner, "_still_published")
         raced: list[bytes | None] = []
 
         def check(where: Path, binding: Any) -> None:
@@ -447,7 +455,7 @@ class RoundTwelveReuseTests(ExactTreeFixture):
             self.assertRefused("tree-mismatch", self.reuse(empty, destination))
         self.assertIsNone(raced[0])
         self.assertEqual(raced[1], record.read_bytes())
-        self.assertEqual(other, owner._bound_tree(destination).tree)
+        self.assertEqual(other, _original(owner, "_bound_tree")(destination).tree)
         self.assertEqual(b"b\n", (destination / "b.txt").read_bytes())
         self.reuse(other, destination)()
 
@@ -493,12 +501,14 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         owner, destination = _owner(), self.root / "project"
         for tree in ("a" * 40, "b" * 64):
             with self.subTest(len(tree)):
-                record = owner._Record(tree, 2**64 - 1, 2**64 - 2)
+                record = _original(owner, "_Record")(tree, 2**64 - 1, 2**64 - 2)
                 (self.root / ".project.exact-tree").unlink(missing_ok=True)
-                owner._bind(destination, record)
-                self.assertEqual(record, owner._bound_tree(destination))
+                _original(owner, "_bind")(destination, record)
+                self.assertEqual(record, _original(owner, "_bound_tree")(destination))
         written = (self.root / ".project.exact-tree").read_bytes()
-        self.assertTrue(written.startswith(owner._RECORD_VERSION.encode() + b" "))
+        self.assertTrue(
+            written.startswith(_original(owner, "_RECORD_VERSION").encode() + b" ")
+        )
 
     # G2: a missing, old, malformed, oversized or mismatched record never makes a
     # non-empty destination trusted, and the record and bytes are left as they were.
@@ -533,7 +543,9 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         owner = _owner()
         nameless = os.stat_result((stat.S_IFDIR | 0o755, 0, 1, 2, 0, 0, 0, 0, 0, 0))
         with mock.patch("os.fstat", return_value=nameless):
-            self.assertRefused("identity-unavailable", lambda: owner._identity(0))
+            self.assertRefused(
+                "identity-unavailable", lambda: _original(owner, "_identity")(0)
+            )
         tree, destination = self.commit({"a.txt": b"a\n"}), self.root / "project"
         refusal = owner.ExactTreeError("identity-unavailable", "injected")
         with mock.patch.object(owner, "_identity", side_effect=refusal):
@@ -602,10 +614,10 @@ class RoundTwelveReuseTests(ExactTreeFixture):
     # round-12 mutants).
     def test_a_short_read_still_reads_the_whole_record(self) -> None:
         owner, destination = _owner(), self.root / "project"
-        record, real_read = owner._Record("a" * 64, 1, 2), os.read
-        owner._bind(destination, record)
+        record, real_read = _original(owner, "_Record")("a" * 64, 1, 2), os.read
+        _original(owner, "_bind")(destination, record)
         with mock.patch("os.read", side_effect=lambda fd, n: real_read(fd, min(n, 5))):
-            self.assertEqual(record, owner._bound_tree(destination))
+            self.assertEqual(record, _original(owner, "_bound_tree")(destination))
 
     # G2: binding, reuse and their refusals release every descriptor they open.
     def test_binding_and_reuse_release_their_descriptors(self) -> None:

@@ -16,12 +16,15 @@ from unittest import mock
 
 import yaml
 
+from tests.quality_evidence_profile_support import _original
 from tests.review_assurance_p2b_b2_activation_red_support import (
     _consumer_authority,
     _current_advisory_input,
 )
 from tools import review_check, review_outer
+from tools.review_check import _schema_errors
 from tools.review_model import canonical_json
+from tools.review_outer import _validate_consumer_authority
 from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,7 +147,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         acquired = authority["acquired_consumer"]
         self.assertEqual(
             frozenset({canonical_json(acquired)}),
-            review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES,
+            _original(review_outer, "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES"),
         )
 
     def test_guardrail_records_exact_restored_transport_without_merge_authority(
@@ -167,7 +170,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         )
 
     def test_catalog_keys_bind_every_consumer_field(self) -> None:
-        consumer = review_outer._validate_consumer_authority(_consumer_authority())
+        consumer = _validate_consumer_authority(_consumer_authority())
         self.assertEqual(9, len(consumer))
         # Hypothetical admission probes the comparator, not runtime safety.
         with mock.patch.object(
@@ -175,7 +178,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
             "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
             frozenset({canonical_json(consumer)}),
         ):
-            review_outer._require_transport_compatible_consumer(consumer)
+            _original(review_outer, "_require_transport_compatible_consumer")(consumer)
             for field, value in consumer.items():
                 changed = copy.deepcopy(consumer)
                 changed[field] = (
@@ -186,7 +189,9 @@ class ReviewOuterContainmentTests(unittest.TestCase):
                         review_outer.PriorEffectiveOuterUnavailable,
                         "transport is not admitted",
                     ):
-                        review_outer._require_transport_compatible_consumer(changed)
+                        _original(
+                            review_outer, "_require_transport_compatible_consumer"
+                        )(changed)
 
     def test_hypothetical_catalog_entry_does_not_bypass_image_proof(self) -> None:
         protected = ProtectedMainDocument("c" * 40, _consumer_authority())
@@ -231,7 +236,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
             consumer["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
         authorities = {
             "historical-p2b": historical_p2b,
-            "historical-b16": historical_smoke._stale_b16_authority(),
+            "historical-b16": _original(historical_smoke, "_stale_b16_authority")(),
             "unknown": unknown,
         }
         for label, authority in authorities.items():
@@ -327,8 +332,8 @@ class ContainmentSmokeTests(unittest.TestCase):
         smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         self.assertEqual(
             [],
-            review_check._schema_errors(
-                smoke._synthetic_input(), "review-check-input.schema.json"
+            _schema_errors(
+                _original(smoke, "_synthetic_input")(), "review-check-input.schema.json"
             ),
         )
 
@@ -375,15 +380,17 @@ class ContainmentSmokeTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     RuntimeError, "exact transport containment"
                 ):
-                    smoke._assert_contained_result(code, raw)
-        smoke._assert_contained_result(2, _unavailable_bytes())
+                    _original(smoke, "_assert_contained_result")(code, raw)
+        _original(smoke, "_assert_contained_result")(2, _unavailable_bytes())
 
     def test_smoke_fails_if_real_route_attempts_outer_execution(self) -> None:
         smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         protected = ProtectedMainDocument("c" * 40, _historical_p2b_authority())
         with mock.patch.object(review_outer, "_require_transport_compatible_consumer"):
             with self.assertRaisesRegex(AssertionError, "outer temporary resource"):
-                smoke._exercise_containment(protected, _current_advisory_input())
+                _original(smoke, "_exercise_containment")(
+                    protected, _current_advisory_input()
+                )
 
 
 class MergeSubjectSecurityTests(unittest.TestCase):

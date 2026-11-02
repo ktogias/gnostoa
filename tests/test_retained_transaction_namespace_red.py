@@ -28,6 +28,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -201,7 +202,7 @@ class StagingRootSwapTests(ConsumptionFixture):
         (outside / transaction / "evidence.json").write_text("someone else's file\n")
         before = sorted(entry.name for entry in (outside / transaction).iterdir())
 
-        real_resolver = retained_commit._open_child_directory
+        real_resolver = _original(retained_commit, "_open_child_directory")
         swapped: list[str] = []
 
         def swap_after_resolving(parent_fd: int, name: str, *, create: bool) -> Any:

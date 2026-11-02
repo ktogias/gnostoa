@@ -29,6 +29,7 @@ from typing import Any
 from unittest import mock
 
 from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
 
 
@@ -104,8 +105,8 @@ class StagedSubstitutionDuringPublicationTests(ConsumptionFixture):
             assert isinstance(bound, dict)
             return _receipt(task_id, dict(bound))
 
-        real_digest = retained_commit._staged_manifest_digest
-        real_write = retained_commit._write_atomic
+        real_digest = _original(retained_commit, "_staged_manifest_digest")
+        real_write = _original(retained_commit, "_write_atomic")
 
         def substitute_then_digest(root: Path, transaction_id: str) -> Any:
             # The publication has read its members from the directory it opened and

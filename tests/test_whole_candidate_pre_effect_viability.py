@@ -14,6 +14,7 @@ from unittest import mock
 
 from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler, effect_claim, qualification, stages
+from tools.capsule.compiler import _qualification_bound
 from tools.capsule.spec import load_spec
 
 
@@ -210,7 +211,7 @@ class WholeCandidatePreEffectViabilityTests(CapsuleFixture):
         prior = self._qualified_receipt(
             task_id="T1",
             backend=qualification.OCI,
-            bound=compiler._qualification_bound(seed_loaded.tasks[0], seed.task("T1")),
+            bound=_qualification_bound(seed_loaded.tasks[0], seed.task("T1")),
         )
         prior_path = self.root / "mixed-prior.json"
         prior_path.write_text(
