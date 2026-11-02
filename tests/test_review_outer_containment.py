@@ -15,11 +15,11 @@ from types import ModuleType
 from unittest import mock
 
 import yaml
-from test_review_assurance_p2b_b2_activation_red import (
+
+from tests.review_assurance_p2b_b2_activation_red_support import (
     _consumer_authority,
     _current_advisory_input,
 )
-
 from tools import review_check, review_outer
 from tools.review_model import canonical_json
 from tools.review_protected import ProtectedMainDocument
@@ -109,6 +109,10 @@ module = importlib.util.module_from_spec(spec)
 sys.modules["tools"] = module
 spec.loader.exec_module(module)
 sys.path.insert(0, str(root / "tests"))
+import types
+tests_package = types.ModuleType("tests")
+tests_package.__path__ = [str(root / "tests")]
+sys.modules["tests"] = tests_package
 import test_review_outer_containment as contracts
 suite = unittest.TestSuite(
     unittest.defaultTestLoader.loadTestsFromTestCase(case)

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
 
+from tests.security_gates_support import _report
 from tools import security_scan
 from tools.extended_route import route_extended
 from tools.knowledge_common import load_yaml
@@ -28,16 +29,6 @@ PUBLIC_HASH = "a" * 40
 UNKNOWN_HASH = "b" * 40
 STALE_HASH = "c" * 40
 CANDIDATE_HASH = "d" * 40
-
-
-def _report(results: dict[str, list[dict[str, object]]]) -> dict[str, object]:
-    return {
-        "version": "1.5.0",
-        "plugins_used": [{"name": "HexHighEntropyString"}],
-        "filters_used": [],
-        "results": results,
-        "generated_at": "2026-09-17T14:33:10Z",
-    }
 
 
 def _candidate(

@@ -42,13 +42,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, effect_claim, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:

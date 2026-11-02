@@ -22,6 +22,7 @@ from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
+from tests.quality_evidence_profile_support import _original
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -143,20 +144,6 @@ PROTECTED: dict[str, Any] = {
 }
 # The active families: the inactive ones are never planned, run or rowed.
 FAMILIES = {"typing", "protected-access", "literal-secrets", "complexity"}
-
-
-def _original(module: object, name: str) -> Any:
-    """`module`'s own `name`, as unittest.mock hands an original to new_callable under spec=True, so no private
-    attribute is named (the fixtures' own pattern, #389 6480056885)."""
-    found: list[object] = []
-
-    def kept(*, spec: object) -> object:
-        found.append(spec)
-        return spec
-
-    with patch.object(module, name, spec=True, new_callable=kept):
-        pass
-    return found[0]
 
 
 # The owner's accepted residual (#389 6405841272), which only a BOUND record names: for

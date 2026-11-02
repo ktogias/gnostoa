@@ -22,8 +22,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from test_merge_evidence_github import _evidence, _snapshot
-
+from tests.merge_evidence_github_support import _evidence, _snapshot
 from tools import assurance_completeness, github_rest, merge_admission
 from tools.review_check import MAX_REVIEW_DOCUMENT_DEPTH
 from tools.verdict_cli import MAX_INPUT_BYTES

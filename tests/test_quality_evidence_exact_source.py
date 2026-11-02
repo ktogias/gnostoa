@@ -20,13 +20,13 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from quality_evidence_fixtures import (
+from tests.exact_tree_reuse_support import _open_descriptors
+from tests.quality_evidence_fixtures import (
     _EXTRA_COMPLEX,
     _diagnostic_line,
     _DiagnosticFixture,
     _fixture_git_env,
 )
-from test_exact_tree_reuse import _open_descriptors
 
 
 class ExactSourceTreeTests(_DiagnosticFixture):

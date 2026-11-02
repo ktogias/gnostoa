@@ -13,13 +13,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-try:
-    # unittest discovery puts tests/ itself on sys.path, and the repository's own
-    # self-check runs that way against an installed artifact where `tests` is not
-    # an importable package.
-    from test_experiment_capsule import CapsuleFixture, git
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_experiment_capsule import CapsuleFixture, git
+from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler
 from tools.capsule.adapters import get as get_adapter
 from tools.capsule.spec import SpecError, load_spec

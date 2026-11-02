@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from tests.merge_admission_support import _evidence, _failed, _verdict
 from tests.quality_evidence_fixtures import _DiagnosticFixture
-from tests.test_merge_admission import _evidence, _failed, _verdict
 from tools import analyzer_inventory
 from tools.analyzer_readback import parse_readback
 

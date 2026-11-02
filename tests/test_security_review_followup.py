@@ -13,8 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from test_security_gates import _report
-
+from tests.security_gates_support import _report
 from tools import quality_evidence, repository_scope, review_current, security_scan
 
 ROOT = Path(__file__).resolve().parents[1]

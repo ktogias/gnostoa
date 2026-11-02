@@ -28,14 +28,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import authority as authority_module
 from tools.capsule import effect_claim
 from tools.capsule.identity import digest_of
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 _TASKS = ({"id": "T1", "capsule_identity": "c" * 64, "qualification_mode": "fresh"},)
 

@@ -15,15 +15,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from test_exact_tree import ExactTreeFixture, _owner, git
-
-
-def _open_descriptors(case: unittest.TestCase) -> int:
-    """This process's open descriptors, as Linux and macOS both list them."""
-    for listing in ("/dev/fd", "/proc/self/fd"):
-        if os.path.isdir(listing):
-            return len(os.listdir(listing))
-    case.skipTest("this platform lists no open descriptors")
+from tests.exact_tree_reuse_support import _open_descriptors
+from tests.exact_tree_support import ExactTreeFixture, _owner, git
 
 
 class RoundFiveTests(ExactTreeFixture):

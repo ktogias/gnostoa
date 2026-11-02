@@ -13,7 +13,7 @@ _NONEMPTY_TEST_VALUE = "x"
 
 
 def _fixtures() -> Any:
-    path = Path(__file__).with_name("test_review_reconcile_l1.py")
+    path = Path(__file__).with_name("review_reconcile_l1_support.py")
     spec = importlib.util.spec_from_file_location("l1_thread_state_fixtures", path)
     if spec is None or spec.loader is None:
         raise AssertionError("L1_FIXTURES_UNAVAILABLE")

@@ -22,7 +22,7 @@ from unittest import mock
 
 
 def _fixtures() -> Any:
-    path = Path(__file__).with_name("test_review_reconcile_l1.py")
+    path = Path(__file__).with_name("review_reconcile_l1_support.py")
     spec = importlib.util.spec_from_file_location(
         "l1_publication_boundary_fixtures", path
     )

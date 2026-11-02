@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _calling_through
-from tests.test_quality_evidence_profile import _original
-from tests.test_quality_evidence_tool_families import (
+from tests.quality_evidence_profile_support import _original
+from tests.quality_evidence_tool_families_support import (
     _GITLAB,
     _SC_NATIVE,
     _sourced,

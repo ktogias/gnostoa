@@ -19,7 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, Mock, patch
 
-from quality_evidence_fixtures import (
+from tests.quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
     _EVERY_FAMILY,
     _EXTRA_COMPLEX,
@@ -27,7 +27,6 @@ from quality_evidence_fixtures import (
     _DiagnosticFixture,
     _DiagnosticInventoryFixture,
 )
-
 from tools.quality_evidence import (
     QualityEvidenceError,
     build_cyclonedx_sbom,

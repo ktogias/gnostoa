@@ -14,7 +14,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from deepsource_fakes import (
+from tests.deepsource_fakes import (
     HEAD,
     OBSERVED,
     RUN_UID,
@@ -23,7 +23,6 @@ from deepsource_fakes import (
     issue,
     run_page,
 )
-
 from tools import analyzer_deepsource
 from tools.analyzer_readback import AnalyzerReadbackError
 

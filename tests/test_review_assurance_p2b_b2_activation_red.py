@@ -13,12 +13,17 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from test_r2a_p2b_b16_publication import _has_direct_top_level_shell_sequence
 
+from tests.r2a_p2b_b16_publication_support import _has_direct_top_level_shell_sequence
+from tests.review_assurance_p2b_b2_activation_red_support import (
+    CONSUMER_PATH,
+    ROOT,
+    _consumer_authority,
+    _current_advisory_input,
+)
 from tools import review_check, review_protected
 from tools.review_protected import ProtectedMainDocument
 
-ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAIL_PATH = ROOT / "policy" / "guardrails.yaml"
 DECISION_PATH = (
@@ -27,7 +32,6 @@ DECISION_PATH = (
     / "decisions"
     / "0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
 )
-CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"
 PROTECTED_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
 B16_PUBLIC_SURFACE_DIGEST = "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- public surface digest
@@ -48,13 +52,6 @@ _DIGEST_IMAGE = re.compile(
 )
 
 
-def _consumer_authority() -> dict[str, object]:
-    document = json.loads((ROOT / CONSUMER_PATH).read_text(encoding="utf-8"))
-    if not isinstance(document, dict):
-        raise AssertionError("protected outer-consumer authority must be an object")
-    return document
-
-
 def _historical_p2b_consumer() -> dict[str, object]:
     return {
         "role": "current_advisory_outer_consumer",
@@ -66,36 +63,6 @@ def _historical_p2b_consumer() -> dict[str, object]:
         "runtime_revision": P2B_SOURCE_REVISION,
         "supported_input_schema_versions": ["1.0"],
         "status": "accepted",
-    }
-
-
-def _current_advisory_input() -> dict[str, object]:
-    return {
-        "schema_version": "1.0",
-        "subject": {
-            "repository": "https://github.com/ktogias/gnostoa",
-            "change_request": {"kind": "pull_request", "id": "p2b-b2-red"},
-            "head_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  # pragma: allowlist secret -- synthetic public test commit
-            "comparison": {
-                "kind": "merge_base",
-                "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",  # pragma: allowlist secret -- synthetic public test merge base
-            },
-            "observed_at": "2026-09-16T00:00:00Z",
-        },
-        "evaluation_context": {
-            "mode": "current_advisory",
-            "as_of": "2026-09-16T00:00:00Z",
-            "judge_relation": "prior_integrated",
-            "fixture_only": False,
-        },
-        "authority": {},
-        "acquired_judge": {},
-        "evidence_set": {
-            "observed_at": "2026-09-16T00:00:00Z",
-            "sources": [],
-            "observations": [],
-        },
-        "qualification_snapshot": {},
     }
 
 

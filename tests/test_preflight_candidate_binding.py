@@ -13,15 +13,11 @@ import shutil
 import unittest
 from pathlib import Path
 
+from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, qualification, stages
 from tools.capsule.identity import digest_of
 from tools.capsule.spec import load_spec
-
-try:
-    from test_experiment_capsule import CapsuleFixture, git
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_experiment_capsule import CapsuleFixture, git
 
 IMAGE_A = "sha256:" + "a" * 64
 IMAGE_B = "sha256:" + "b" * 64

@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 import yaml
-from test_r2a_p2b_b16_publication import (
+
+from tests.r2a_p2b_b16_publication_support import (
     _has_direct_top_level_shell_sequence,
 )
 

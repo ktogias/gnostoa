@@ -21,7 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from quality_evidence_fixtures import (
+from tests.quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
     _EXTRA_COMPLEX,
     _SOURCE_BINDING_GAP,

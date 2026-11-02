@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.test_quality_evidence_profile import _original
-from tests.test_quality_evidence_tool_families import _ToolFamilyFixture
+from tests.quality_evidence_profile_support import _original
+from tests.quality_evidence_tool_families_support import _ToolFamilyFixture
 
 
 class CandidateReadTests(_ToolFamilyFixture):
