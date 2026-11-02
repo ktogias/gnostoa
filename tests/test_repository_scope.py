@@ -608,7 +608,8 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                 timeout: float | None,
             ) -> subprocess.CompletedProcess[bytes]:
                 # The one-budget checks below compare every recorded timeout as a number.
-                assert timeout is not None
+                if timeout is None:
+                    raise AssertionError("a budgeted Git read got no timeout")
                 seen.append(timeout)
                 return real(
                     command, check=check, capture_output=capture_output, timeout=timeout
@@ -789,8 +790,9 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         # One absolute budget for both (the Router's I-b on #436): each Git read gets
         # only what is left of it, never a fresh one (Codex on #436).
         self.assertEqual(2, len(seen))
-        first, second = seen
-        assert first is not None and second is not None
+        first, second = seen[0], seen[1]
+        if first is None or second is None:
+            self.fail(f"a budgeted Git read got no timeout: {seen}")
         self.assertLess(2.0, first)
         self.assertLessEqual(first, 2.5)
         self.assertLess(0, second)
@@ -835,8 +837,9 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
                     paths, seen = self._enumerate_recording_git(root, timeout=10.0)
                 self.assertEqual([Path("tracked.md")], paths)
                 self.assertEqual(2, len(seen))
-                first, second = seen
-                assert first is not None and second is not None
+                first, second = seen[0], seen[1]
+                if first is None or second is None:
+                    self.fail(f"a budgeted Git read got no timeout: {seen}")
                 self.assertLessEqual(first, 10.0 - 0.3)
                 self.assertLess(second, first)
                 self.assertLess(time.monotonic() - started, 10.0)
