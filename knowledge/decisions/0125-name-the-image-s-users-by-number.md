@@ -253,8 +253,8 @@ review round (source `review-477`):
 
 M17 counts every analyzer finding the readback lists, with no waiver. For this `critical` change,
 DeepSource's full run lists the issues in the whole files it touches, not only on its lines
-(source `m17-blocker`). The test files' findings are repaired without suppression or behaviour
-change:
+(source `m17-blocker`). The test files' findings are repaired without suppression. Behaviour
+changes in one place, the mode guard, which now also refuses an invalid mode under `python -O`:
 
 - `tests/test_repository_scope.py`:
   - its `module()` helper and test doubles declare their types;
@@ -265,4 +265,5 @@ change:
   - a mock reads its iterator directly.
 - `tests/test_current_advisory_restoration_runtime.py` reads `policy/guardrails.yaml` with
   `yaml.safe_load`. On that file it gives the same document as `BaseLoader`.
-- `tests/test_tool_acquisition.py`'s mode guard raises instead of asserting.
+- `tests/test_tool_acquisition.py`'s mode guard raises instead of asserting, so it also holds under
+  `python -O`, where an `assert` is removed.
