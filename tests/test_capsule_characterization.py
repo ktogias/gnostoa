@@ -73,7 +73,11 @@ _AUTHORITY = PreflightAuthority(
 class RetainedClaimBindingTests(unittest.TestCase):
     """The retained claim binds the authority that completed qualification."""
 
-    def _workspace(self, tasks: Mapping[str, object]) -> Path:
+    def _workspace(
+        self,
+        tasks: Mapping[str, object],
+        stage_authority: PreflightAuthority = _AUTHORITY,
+    ) -> Path:
         workspace = Path(self.enterContext(tempfile.TemporaryDirectory()))
         candidate_tasks = [
             {"id": task, "qualification_mode": "fresh"} for task in tasks
@@ -92,7 +96,7 @@ class RetainedClaimBindingTests(unittest.TestCase):
             if isinstance(record, dict)
         }
         stage_inputs = {
-            "authority": _AUTHORITY.as_json(),
+            "authority": stage_authority.as_json(),
             "preflight_candidate_sha256": _CANDIDATE,
             "authorised_candidate_sha256": _CANDIDATE,
             "backend": "oci",
@@ -106,7 +110,8 @@ class RetainedClaimBindingTests(unittest.TestCase):
         (workspace / "experiment-state.json").write_text(json.dumps(state))
         return workspace
 
-    def _load(self, workspace: Path, tasks: Mapping[str, object]) -> dict[str, object]:
+    @staticmethod
+    def _load(workspace: Path, tasks: Mapping[str, object]) -> dict[str, object]:
         return load_consumed_candidate(
             workspace,
             experiment_id=_EXPERIMENT,
@@ -145,8 +150,9 @@ class RetainedClaimBindingTests(unittest.TestCase):
         for label, (record, message) in cases.items():
             tasks = {"task-1": record}
             with self.subTest(label):
+                workspace = self._workspace(tasks)
                 with self.assertRaisesRegex(EffectClaimError, message) as refused:
-                    self._load(self._workspace(tasks), tasks)
+                    self._load(workspace, tasks)
                 self.assertEqual(INVALID_CLAIM, refused.exception.code)
 
     def test_disagreeing_backends_are_refused(self) -> None:
@@ -160,10 +166,32 @@ class RetainedClaimBindingTests(unittest.TestCase):
                 "qualification": {"backend": "process"},
             },
         }
+        workspace = self._workspace(tasks)
         with self.assertRaisesRegex(
             EffectClaimError, "disagree on qualification backend"
-        ):
-            self._load(self._workspace(tasks), tasks)
+        ) as refused:
+            self._load(workspace, tasks)
+        self.assertEqual(INVALID_CLAIM, refused.exception.code)
+
+    def test_a_stage_another_authority_completed_is_refused(self) -> None:
+        tasks = {
+            "task-1": {
+                "capsule_identity": "capsule-1",
+                "qualification": {"backend": "oci"},
+            }
+        }
+        other = PreflightAuthority(
+            id="authority-2",
+            experiment_id=_EXPERIMENT,
+            scope=(_SCOPE,),
+            preflight_candidate_sha256=_CANDIDATE,
+        )
+        workspace = self._workspace(tasks, stage_authority=other)
+        with self.assertRaisesRegex(
+            EffectClaimError, "does not bind the completed qualification stage"
+        ) as refused:
+            self._load(workspace, tasks)
+        self.assertEqual(INVALID_CLAIM, refused.exception.code)
 
 
 def _shape(*cases: tuple[str, tuple[object, ...]]) -> OracleShape:

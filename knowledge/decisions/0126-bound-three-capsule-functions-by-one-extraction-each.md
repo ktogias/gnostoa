@@ -25,6 +25,9 @@ sources:
   - id: corrections
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6574600040
     title: "The corrections that made the packet exact"
+  - id: review-round-1
+    resource: https://github.com/ktogias/gnostoa/pull/475#discussion_r4443716009
+    title: "Review round 1 on #475: the complexity family's scope"
   - id: profile
     resource: ./0117-select-the-diagnostic-inventory-s-families-through-a-protected-profile.md
     title: The protected profile whose complexity family this answers, unchanged
@@ -48,9 +51,10 @@ x-project-knowledge:
 
 ## Context
 
-The protected profile's complexity family lists every function above a cyclomatic
-complexity of 15 (source `profile`). Three of them each stand alone in their file and need
-only one extraction to come to 15 or below (source `design`):
+The protected profile's complexity family reports a function above a cyclomatic complexity
+of 15 when a change adds a line to it; it has no full scan (source `profile`). Three
+functions above that threshold each stand alone in their file and need only one extraction
+to come to 15 or below (source `design`):
 
 - `tools/capsule/preparation.py`, `discover_preparation`, at 16;
 - `tools/capsule/effect_claim.py`, `_validate_completed_stage_binding`, at 19;
@@ -104,6 +108,14 @@ admitted exactly five paths, with the characterization tests first (source
 
 ## Consequences
 
-- **What it settles:** three of the complexity family's findings.
+- **What it settles:** three of the functions above the complexity threshold.
 - **The class and route:** it is outside the gates, so its class is NORMAL. It integrates
   through the single serialized lane, separately from Slice 1.2 and from the Docker cutover.
+
+## Corrections
+
+Review round 1 on #475 (source `review-round-1`) found that the Context overstated the
+complexity family's scope. The profile acquires complexity only for the functions a change
+adds a line to (`full: null`), so it does not list every function above the threshold. The
+Context and the Consequences now say so. The first published text was 5,595 bytes
+(SHA-256 `16e18ac8fab9fc3f17c31d00b59f7350b7631930bee72ec73c5527eb2ba60df6`).
