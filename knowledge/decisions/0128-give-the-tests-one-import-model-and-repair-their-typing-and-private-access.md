@@ -28,6 +28,9 @@ sources:
   - id: typing-rules
     resource: ./0123-repair-the-typing-of-seventeen-test-modules.md
     title: N1a's typing rules, reused
+  - id: digest-admission
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6591116903
+    title: "The owner's admission of the python-compatibility job's protected digest line in tests/test_tools.py"
   - id: characterization
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6589390794
     title: "The shell-sequence helper's characterization, measured before its extraction"
@@ -103,9 +106,12 @@ only part of the declared strict scope (source `ci-gap`).
      moves unchanged to module level.
 6. **The pull-request lane type-checks the declared strict scope.** Its mypy step runs the
    configured `[tool.mypy]` scope (`tools`, `ci`) instead of a listed subset. A failing case comes
-   first: an invalid change in an omitted path that the current step passes.
+   first: an invalid change in an omitted path that the current step passes. The job's
+   protected step digest in `tests/test_tools.py` changes with it, admitted for that one line
+   (source `digest-admission`); the workflow-structure contract keeps pinning the job.
 7. **This record is listed in `knowledge/index.md`.**
-8. **Nothing else changes:** no file under `tools/` or `ci/`, the profile or the threshold.
+8. **Nothing else changes:** no file under `tools/` or `ci/`, the profile or the threshold, and
+   in `tests/test_tools.py` only that digest line.
 
 ## Verification
 
@@ -138,3 +144,6 @@ This text amends the first published version (6,773 bytes, SHA-256
    16 on `main`, so it is bounded too.
 3. **#221's verification:** that version said the failing case fails under the current step. The
    invalid change passes it; the contract test is what fails on it.
+4. **#221's digest:** that version left out `tests/test_tools.py`. Its `_PROTECTED_JOB_STEPS_SHA256`
+   pins the python-compatibility job's steps, so the step change changes that job's digest. The owner
+   admitted that one line (source `digest-admission`).
