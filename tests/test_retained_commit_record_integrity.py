@@ -124,7 +124,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
             ),
         ):
             with self.assertRaises(RuntimeError):
-                self.prepare(authority=self.authority(candidate))
+                self.prepare(authority=self.consumption_authority(candidate))
 
         self.assertNotEqual(
             (self.workspace / "experiment-state.json").read_text(),
@@ -171,7 +171,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
         shutil.copytree(self.workspace, old_snapshot)
 
         with _patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         winner = compiler.status(self.workspace)
         self.assertEqual(winner["status"], "READY_FOR_OWNER_REVIEW")
         winner_generation = self._committed_generation()

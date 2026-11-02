@@ -574,14 +574,18 @@ class RoundTwoTests(ExactTreeFixture):
         )
 
     def test_the_popen_call_carries_its_bandit_justification(self) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        assert owner_file is not None
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all("nosec B603" in line for line in lines), lines)
 
     def test_no_assert_statement_guards_production_logic(self) -> None:
         import ast
 
-        tree = ast.parse(Path(_owner().__file__).read_text(encoding="utf-8"))
+        owner_file = _owner().__file__
+        assert owner_file is not None
+        tree = ast.parse(Path(owner_file).read_text(encoding="utf-8"))
         asserts = [
             node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)
         ]
@@ -666,7 +670,9 @@ class RoundThreeTests(ExactTreeFixture):
     def test_the_popen_call_carries_its_semgrep_justification_on_its_line(
         self,
     ) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        assert owner_file is not None
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all(_NOSEMGREP in line for line in lines), lines)
 
@@ -794,7 +800,9 @@ class RoundFourTests(ExactTreeFixture):
 
     # AA (M13): each suppression on the Popen line carries its reason.
     def test_the_popen_suppressions_carry_their_reason(self) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        assert owner_file is not None
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines, "no Popen line")
         for line in lines:

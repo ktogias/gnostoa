@@ -92,7 +92,7 @@ class CanonicallyInvalidLockTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect(effects):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )

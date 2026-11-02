@@ -18,12 +18,14 @@ from tools.experiment.evidence import canonical_json_bytes
 
 
 class RetainedConsumptionReviewRedTests(ConsumptionFixture):
-    def _complete_once(self):  # type: ignore[no-untyped-def]
+    def _complete_once(
+        self,
+    ) -> tuple[str, authority_module.PreflightAuthority, list[str]]:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         retained = qualification.load_receipt(self.prior_receipt(observed))
         effects: list[str] = []
 
@@ -61,9 +63,11 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self.assertEqual(after_state["stage"], before_state["stage"])
         self.assertEqual(after_state["lock_sha256"], before_state["lock_sha256"])
         self.assertEqual(after_state["stage_receipts"], before_state["stage_receipts"])
+        before_tasks = before_state["tasks"]
+        assert isinstance(before_tasks, dict)
         self.assertEqual(
             after_state["tasks"]["T1"]["qualification"],
-            before_state["tasks"]["T1"]["qualification"],
+            before_tasks["T1"]["qualification"],
         )
         self.assertEqual(
             (self.workspace / compiler.STATE_FILENAME).read_text(), before_state_bytes

@@ -87,7 +87,7 @@ class StorageFixture(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         with self.patched_effect(effects):
             with mock.patch.object(
                 retained_commit,
@@ -263,7 +263,7 @@ class WaiterRecoversOwnerDeathTests(StorageFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
 
         owner_in_effect = threading.Event()
         waiter_observed_owner = threading.Event()

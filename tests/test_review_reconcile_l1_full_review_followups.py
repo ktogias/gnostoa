@@ -287,20 +287,24 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         )
         replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["commit_id"] = "d" * 40
 
-        class UnresolvedOlderThreadFake(fixtures._PagedFake):
-            def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-                document = super().graphql(query, variables)
-                nodes = document["data"]["repository"]["pullRequest"]["reviewThreads"][
-                    "nodes"
-                ]
-                for node in nodes:
-                    comments = node["comments"]["nodes"]
-                    if comments and comments[0]["databaseId"] == 20:
-                        node["isResolved"] = False
-                return document
+        # The fake's own answers, with the older thread left unresolved.
+        fake = fixtures._PagedFake(replies)
+        paged_graphql = fake.graphql
 
+        def graphql(query: str, variables: dict[str, Any]) -> Any:
+            document = paged_graphql(query, variables)
+            nodes = document["data"]["repository"]["pullRequest"]["reviewThreads"][
+                "nodes"
+            ]
+            for node in nodes:
+                comments = node["comments"]["nodes"]
+                if comments and comments[0]["databaseId"] == 20:
+                    node["isResolved"] = False
+            return document
+
+        fake.graphql = graphql
         snapshot = adapter._collect_snapshot_once(
-            UnresolvedOlderThreadFake(replies),
+            fake,
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",

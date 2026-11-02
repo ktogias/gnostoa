@@ -14,9 +14,11 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Iterable
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from typing import BinaryIO, Self
 from unittest.mock import ANY, Mock, patch
 
 from tests.quality_evidence_fixtures import (
@@ -1391,6 +1393,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             # collector's own observer module, never a producer (#389 F3 S2-C).
             expected = observation[:3] if command == observation else None
             self.assertEqual(expected or [sys.executable, "-I", "-m"], command[:3])
+        assert self.module.__file__ is not None
         observer = Path(self.module.__file__).resolve().parent
         self.assertEqual(
             [sys.executable, "-I", str(observer / "python_environment_observation.py")],
@@ -1892,6 +1895,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         target.read_text(encoding="utf-8") + _EXTRA_COMPLEX,
                         encoding="utf-8",
                     )
+                    assert flag is not None
                     self._git("update-index", flag, path)
                 self.assertEqual(
                     "", self._git("status", "--porcelain", "--untracked-files=no")
@@ -2147,7 +2151,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
 
         real_new_file = self.module._new_file
 
-        def failing_sink(path):
+        def failing_sink(path: Path) -> BinaryIO:
             stream = real_new_file(path)
             if not path.name.endswith("-mypy-main.jsonl"):
                 return stream
@@ -2268,12 +2272,15 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         peak = [0]
         real = self.module._ProducerResult
 
-        class Peaked(list):
-            def append(self, item):
+        class Peaked(list[object]):
+            def append(self, item: object) -> None:
                 super().append(item)
                 peak[0] = max(peak[0], len(self))
 
-            def __iadd__(self, other):
+            def __add__(self, other: Iterable[object]) -> list[object]:
+                return super().__add__(list(other))
+
+            def __iadd__(self, other: Iterable[object]) -> Self:
                 result = super().__iadd__(other)
                 peak[0] = max(peak[0], len(self))
                 return result
@@ -4039,7 +4046,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             return walked
 
         huge = 10**12
-        cases = (
+        cases: tuple[tuple[str, dict[str, int] | None, set[int], bool], ...] = (
             (
                 "a huge end, a sparse hit",
                 {"start_line": 1, "end_line": huge},
@@ -4070,7 +4077,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with patch.object(self.module, "range", side_effect=bounded_range, create=True):
             for label, location, lines, expected in cases:
                 with self.subTest(label):
-                    finding = {"path": "tools/sample.py"}
+                    finding: dict[str, object] = {"path": "tools/sample.py"}
                     if location is not None:
                         finding["range"] = location
                     changed = {"tools/sample.py": sorted(lines)}
@@ -4128,10 +4135,16 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 time.monotonic() + 30,
                 head=self._head(),
             )
-        self.assertIs(True, unordered[0]["native"]["in_diff"])
+        first_native = unordered[0]["native"]
+        assert isinstance(first_native, dict)
+        self.assertIs(True, first_native["in_diff"])
+        in_diff: list[object] = []
+        for finding in findings:
+            native = finding["native"]
+            assert isinstance(native, dict)
+            in_diff.append(native["in_diff"])
         self.assertEqual(
-            [n % 2 == 0 and 10 <= n < 2010 for n in range(1, 401)],
-            [f["native"]["in_diff"] for f in findings],
+            [n % 2 == 0 and 10 <= n < 2010 for n in range(1, 401)], in_diff
         )
 
     def test_a_deletion_only_change_is_a_known_empty_set(self) -> None:
@@ -4802,9 +4815,7 @@ class BoundedRunTests(unittest.TestCase):
         # close, and the run says so rather than declaring a clean capture.
         import selectors as real_selectors
 
-        real_selector = real_selectors.DefaultSelector
-
-        class Unclosable(real_selector):
+        class Unclosable(real_selectors.DefaultSelector):
             def close(self):
                 super().close()
                 raise OSError(9, "Bad file descriptor")
@@ -4819,10 +4830,9 @@ class BoundedRunTests(unittest.TestCase):
         # non-0/1 exit comes first, once; an already waited exit is not reaped again.
         import selectors as real_selectors
 
-        real_selector = real_selectors.DefaultSelector
         selector = "its output selector could not be closed"
 
-        class Unclosable(real_selector):
+        class Unclosable(real_selectors.DefaultSelector):
             def close(self):
                 super().close()
                 raise OSError(9, "Bad file descriptor")
@@ -4959,7 +4969,9 @@ class BoundedRunTests(unittest.TestCase):
         # timeout was floored to a millisecond, so a deadline crossed in between, or
         # spent before the first read, still started Git. One reading now decides
         # both, unfloored.
-        def clocked(readings, timeout):
+        def clocked(
+            readings: list[float], timeout: float
+        ) -> tuple[dict[str, object], list[object]]:
             values = iter(readings)
             seen: list[object] = []
 
@@ -4981,6 +4993,7 @@ class BoundedRunTests(unittest.TestCase):
             _state, seen = clocked([100.0, 100.0, 100.9995, 101.2], 1.0)
             self.assertEqual(2, len(seen))
             self.assertEqual(1.0, seen[0])
+            assert isinstance(seen[1], float)
             self.assertAlmostEqual(0.0005, seen[1], places=9)
         with self.subTest("spent before the first read"):
             state, seen = clocked([100.0, 100.000002], 0.000001)
@@ -4989,6 +5002,7 @@ class BoundedRunTests(unittest.TestCase):
         with self.subTest("barely open before the first read"):
             state, seen = clocked([100.0, 100.9996, 101.0], 1.0)
             self.assertEqual(1, len(seen))
+            assert isinstance(seen[0], float)
             self.assertAlmostEqual(0.0004, seen[0], places=9)
             self.assertIsNone(state["tracked_tree_dirty"])
 
@@ -5045,6 +5059,7 @@ class BoundedRunTests(unittest.TestCase):
         self.assertIn("timed out", gap)
         self.assertEqual(-signal.SIGKILL, status)
         self.assertEqual(-signal.SIGKILL, started[0].returncode)
+        assert started[0].stdout is not None
         self.assertTrue(started[0].stdout.closed)
 
     def test_a_report_is_never_an_existing_file_or_a_symlink(self) -> None:

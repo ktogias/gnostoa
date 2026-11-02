@@ -30,7 +30,7 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        first_authority = self.authority(candidate)
+        first_authority = self.consumption_authority(candidate)
         second_authority = PreflightAuthority(
             id="auth-197-second",
             experiment_id="E1",
@@ -85,7 +85,7 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
             ),
         ):
             authorised = self.prepare(
-                authority=self.authority(candidate), receipt=receipt
+                authority=self.consumption_authority(candidate), receipt=receipt
             )
 
         self.assertTrue(authorised.task("T1").qualification_reused)

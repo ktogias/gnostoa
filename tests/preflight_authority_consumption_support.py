@@ -64,7 +64,7 @@ class ConsumptionFixture(CapsuleFixture):
         )
 
     @staticmethod
-    def authority(candidate: str) -> authority_module.PreflightAuthority:
+    def consumption_authority(candidate: str) -> authority_module.PreflightAuthority:
         return authority_module.PreflightAuthority(
             id="auth-197",
             experiment_id="E1",

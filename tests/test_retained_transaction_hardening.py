@@ -309,7 +309,7 @@ class CompletedWorkspaceFixture(ConsumptionFixture):
                 k.get("task_id", "T1"), dict(k.get("bound") or {})
             ),
         ):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
 
 
 class ConcurrentStagingCreationTests(ConsumptionFixture):
@@ -668,7 +668,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         before = (self.workspace / "experiment-state.json").read_text()
         effects: list[str] = []
 
@@ -729,7 +729,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
 
         def qualify(*args: object, **kwargs: object) -> Any:

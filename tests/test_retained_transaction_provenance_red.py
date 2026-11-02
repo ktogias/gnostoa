@@ -121,7 +121,7 @@ class InterruptedPublicationDisplacementTests(ProvenanceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effect_bearing_spec = self._spec()
         effects: list[str] = []
         interrupted: list[str] = []
@@ -190,7 +190,7 @@ class PublicationIntentBindingTests(ProvenanceFixture):
         with self.patched_effect():
             with self.die_before_the_first_canonical_write():
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=self.consumption_authority(candidate))
 
         transaction = retained_commit.read_publication_intent(self.workspace)
         self.assertIsNotNone(transaction)
@@ -235,7 +235,7 @@ class ReadyLockChainTests(ProvenanceFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )

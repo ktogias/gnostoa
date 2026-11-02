@@ -92,7 +92,7 @@ class ProtocolFixture(ConsumptionFixture):
         return candidate
 
     def authorised_candidate(self) -> Any:
-        return self.authority(self.prepared_candidate())
+        return self.consumption_authority(self.prepared_candidate())
 
     @staticmethod
     def second_approval(candidate: str) -> authority_module.PreflightAuthority:
@@ -457,7 +457,7 @@ class ReservationRaceGapTests(ProtocolFixture):
         still holding the transaction.
         """
         candidate = self.prepared_candidate()
-        winner_authority = self.authority(candidate)
+        winner_authority = self.consumption_authority(candidate)
         contender_authority = self.second_approval(candidate)
 
         contender_reaching_reserve = threading.Event()

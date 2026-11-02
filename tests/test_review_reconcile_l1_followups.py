@@ -885,7 +885,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             }
             signals = document.get("signals")
             checks_available = isinstance(signals, list)
-            native_checks = signals if checks_available else []
+            native_checks = signals if isinstance(signals, list) else []
             return {
                 "schema_version": reducer.PROVIDER_STATE_SCHEMA_VERSION,
                 "provider": {
@@ -1036,9 +1036,11 @@ class UsefulL1FollowupTests(unittest.TestCase):
             binding_semantics(reference_input),
             binding_semantics(native_input),
         )
+        decisions = full_native["decisions"]
+        assert isinstance(decisions, list)
         self.assertEqual(
             {"accept", "note"},
-            {item["verdict"] for item in full_native["decisions"]},
+            {item["verdict"] for item in decisions},
         )
         self.assertEqual(
             {"APPROVED", "COMMENTED"},

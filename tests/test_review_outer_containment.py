@@ -226,7 +226,9 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         historical_p2b = _historical_p2b_authority()
         unknown = copy.deepcopy(historical_p2b)
         for key in ("expected_consumer", "acquired_consumer"):
-            unknown[key]["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
+            consumer = unknown[key]
+            assert isinstance(consumer, dict)
+            consumer["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
         authorities = {
             "historical-p2b": historical_p2b,
             "historical-b16": historical_smoke._stale_b16_authority(),
@@ -305,7 +307,9 @@ class ReviewOuterContainmentTests(unittest.TestCase):
 
     def test_authority_validation_is_not_replaced_by_containment(self) -> None:
         malformed = _consumer_authority()
-        malformed["acquired_consumer"]["source_revision"] = "invalid"
+        acquired = malformed["acquired_consumer"]
+        assert isinstance(acquired, dict)
+        acquired["source_revision"] = "invalid"
         protected = ProtectedMainDocument("c" * 40, malformed)
         with mock.patch.object(
             review_outer,

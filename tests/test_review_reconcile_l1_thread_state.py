@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import email
 import importlib.util
 import io
 import unittest
@@ -1296,7 +1297,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
             403,
             "Forbidden",
-            {"x-ratelimit-remaining": "42"},
+            email.message_from_string("x-ratelimit-remaining: 42\n"),
             response,
         )
 
@@ -1320,7 +1321,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
             403,
             "Forbidden",
-            {"x-ratelimit-remaining": "0"},
+            email.message_from_string("x-ratelimit-remaining: 0\n"),
             response,
         )
 
@@ -1344,7 +1345,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "https://api.github.com/graphql",
             503,
             "Service Unavailable",
-            {},
+            email.message_from_string(""),
             response,
         )
 

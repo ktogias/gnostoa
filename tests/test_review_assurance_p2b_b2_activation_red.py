@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import yaml
@@ -66,7 +67,7 @@ def _historical_p2b_consumer() -> dict[str, object]:
     }
 
 
-def _load_outer() -> object:
+def _load_outer() -> ModuleType:
     try:
         return importlib.import_module("tools.review_outer")
     except ModuleNotFoundError as exc:
@@ -270,13 +271,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         def observe_write_text(
             path: Path,
             data: str,
-            *args: object,
-            **kwargs: object,
+            encoding: str | None = None,
+            errors: str | None = None,
+            newline: str | None = None,
         ) -> int:
             if marker in data:
                 host_payload_writes.append(path)
                 raise AssertionError("outer review payload reached a host text write")
-            return original_write_text(path, data, *args, **kwargs)
+            return original_write_text(path, data, encoding, errors, newline)
 
         def observe_write_bytes(
             path: Path,
@@ -635,9 +637,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 "extra": True,
             },
         )
-        for payload in invalid_payloads:
-            raw = (outer.canonical_json(payload) + "\n").encode("utf-8")
-            with self.subTest(invalid_payload=payload):
+        for invalid_payload in invalid_payloads:
+            raw = (outer.canonical_json(invalid_payload) + "\n").encode("utf-8")
+            with self.subTest(invalid_payload=invalid_payload):
                 with self.assertRaisesRegex(
                     outer.PriorEffectiveOuterUnavailable,
                     "error envelope is malformed",

@@ -314,15 +314,17 @@ class SecretBaselineTests(unittest.TestCase):
 
         def start_process(
             command: list[str],
+            *,
+            stdin: int | None = None,
+            stdout: int | None = None,
+            stderr: int | None = None,
             **kwargs: object,
         ) -> subprocess.Popen[bytes]:
             process = real_popen(
                 [sys.executable, "-c", "import time; time.sleep(30)"],
-                **{
-                    key: value
-                    for key, value in kwargs.items()
-                    if key in {"stdin", "stdout", "stderr"}
-                },
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
             )
             started["process"] = process
             return process
@@ -1349,6 +1351,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 )
         (process,) = self.started
         self.assertIsNotNone(process.poll(), "the child was left running")
+        assert process.stdout is not None and process.stderr is not None
         self.assertTrue(process.stdout.closed and process.stderr.closed)
 
     def test_a_nonzero_exit_is_returned_not_raised(self) -> None:
@@ -1388,6 +1391,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
             with self.assertRaises(SecurityScanError):
                 self._scan("print('too long')")
         for process in self.started:
+            assert process.stdout is not None and process.stderr is not None
             self.assertTrue(process.stdout.closed and process.stderr.closed)
             self.assertIsNotNone(process.poll())
 
@@ -1428,9 +1432,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
     def test_a_selector_close_failure_alone_fails_the_scan(self) -> None:
         # The PAO's T1 on #437: a close failure with no primary failure still fails
         # the scan, named as finalization, and the child has exited normally.
-        real = selectors.DefaultSelector
-
-        class CloseFails(real):
+        class CloseFails(selectors.DefaultSelector):
             def close(self) -> None:
                 super().close()
                 raise OSError("cannot close")
@@ -1450,9 +1452,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
     ) -> None:
         # The PAO's T1 on #437: a timeout, then a selector that cannot close. The
         # timeout stays primary, the close failure follows, and the child is reaped.
-        real = selectors.DefaultSelector
-
-        class CloseFails(real):
+        class CloseFails(selectors.DefaultSelector):
             def close(self) -> None:
                 super().close()
                 raise OSError("cannot close")
@@ -1471,9 +1471,7 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         # Main's precedence, which the factor preserves (Router 6221408680 on #437):
         # a batch that select returns after the deadline is still read, so a cap
         # crossing in it is reported as the cap, not as a timeout.
-        real = selectors.DefaultSelector
-
-        class Late(real):
+        class Late(selectors.DefaultSelector):
             def select(self, timeout: float | None = None) -> list:
                 # Bounded, so that a mutated deadline cannot hold the test.
                 time.sleep(min(max(0.0, (timeout or 0.0) + 0.3), 2.0))

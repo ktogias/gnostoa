@@ -49,7 +49,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         self._git("commit", "-q", "-m", "a package")
         standalone = self._package(Path(self.directory.name) / "standalone")
         unfrozen = "the subject has no Git metadata of its own: no commit was frozen"
-        cases = (
+        cases: tuple[tuple[str, Path, dict[str, str]], ...] = (
             ("nested, a base", nested, {"base": self.base}),
             ("nested, no base", nested, {}),
             ("outside any repository, a base", standalone, {"base": self.base}),
@@ -664,7 +664,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     faked at `_bounded_run`; anything they launch besides a version read, mypy and
     Ruff is the environment's isolated identity read, answered by `installed`."""
 
-    def _environment(self, *installed: tuple[str, ...]):
+    def _environment(self, *installed: tuple[str, ...] | None):
         """A launcher whose identity reads answer `installed[0]`, then `installed[1]`
         and so on, keeping the last one; None answers as an unreadable read."""
         answers = list(installed)
@@ -1206,6 +1206,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observed = getattr(self.module, "_ISOLATED_PYTHON", None)
         self.assertIsNotNone(observed, "the collector declares no observed launch")
         other = self.module._Launch("/another/python", ("-I",))
+        assert observed is not None
         with self._with_probe_runs(
             ("probe-producer", [*observed.argv(), "-m", "probe"], observed),
             ("another-interpreter", [*other.argv(), "-m", "probe"], other),
@@ -1232,6 +1233,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIn("environment_observation", runs["mypy"])
 
     def _observer(self) -> Path:
+        assert self.module.__file__ is not None
         return (
             Path(self.module.__file__).resolve().parent
             / "python_environment_observation.py"
@@ -1923,8 +1925,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # A hashed row that is not a supported, well-formed sha256 over a readable
         # regular file in the root never passes as verified (Router #389 6361147179).
         # A well-formed sha256 claim, so that each case isolates its own condition.
-        claim = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).rstrip(b"=")
-        claim = claim.decode()
+        digest = hashlib.sha256(b"x").digest()
+        claim = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         cases = (
             (
                 "an unsupported algorithm",

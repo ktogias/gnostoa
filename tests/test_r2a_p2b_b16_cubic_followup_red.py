@@ -155,9 +155,9 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
                 )
 
         native_run = _run(_named_step(steps, R2A_ACTIVE_CONTRACT_STEP))
-        command = f"PYTHONPATH=. python {FOLLOWUP_TEST_RELATIVE_PATH}"
+        native_command = f"PYTHONPATH=. python {FOLLOWUP_TEST_RELATIVE_PATH}"
         self.assertTrue(
-            _has_direct_top_level_shell_sequence(native_run, (command,)),
+            _has_direct_top_level_shell_sequence(native_run, (native_command,)),
             "the follow-up regression guard must execute directly in dedicated R2A verification",
         )
 

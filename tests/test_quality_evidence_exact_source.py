@@ -351,7 +351,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self.collect(self.root, self.output)
         self.assertFalse(marker.exists())
 
-    def _promisor(self, marker: Path) -> tuple[str, str]:
+    def _promisor(self: _DiagnosticFixture, marker: Path) -> tuple[str, str]:
         """A partial clone whose HEAD tracks a Python file by a missing blob, its base
         the same path's real bytes, and a promisor whose configured command only leaves
         `marker` (PAO 6325156914)."""
@@ -766,7 +766,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         (bottom / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
         return top
 
-    def _counting_reads(self):
+    def _counting_reads(
+        self,
+    ) -> tuple[contextlib.AbstractContextManager[object], list[int]]:
         """A patch counting every directory read, and the list it counts into."""
         reads: list[int] = []
         real = os.scandir
@@ -1222,7 +1224,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     def test_the_tree_is_derived_from_the_frozen_commit(self) -> None:
         first = self._git("rev-parse", "HEAD")
         real = self.module._diagnostic_git
-        moved = []
+        moved: list[int] = []
 
         def moving(root, deadline, *arguments, **kwargs):
             answer = real(root, deadline, *arguments, **kwargs)

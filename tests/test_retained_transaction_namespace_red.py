@@ -77,7 +77,7 @@ class SealedTransactionFixture(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         with self.patched_effect(effects):
             with mock.patch.object(
                 retained_commit,
@@ -101,7 +101,7 @@ class SealedTransactionFixture(ConsumptionFixture):
         before = (self.workspace / "experiment-state.json").read_text()
         with self.patched_effect(effects):
             refused = self.prepare(
-                authority=self.authority(reservation.candidate_sha256)
+                authority=self.consumption_authority(reservation.candidate_sha256)
             )
         self.assertEqual(effects, ["effect"], "nothing may be re-run here")
         self.assertNotEqual(refused.status, "READY_FOR_OWNER_REVIEW")

@@ -28,7 +28,7 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        granted = self.authority(candidate)
+        granted = self.consumption_authority(candidate)
 
         effects: list[str] = []
 
@@ -61,7 +61,7 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        granted = self.authority(candidate)
+        granted = self.consumption_authority(candidate)
 
         effects: list[str] = []
 
@@ -102,7 +102,7 @@ class ReviewBlockerRedTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        granted = self.authority(candidate)
+        granted = self.consumption_authority(candidate)
         retained = qualification.load_receipt(self.prior_receipt(observed))
         effects: list[str] = []
 
@@ -148,7 +148,7 @@ class ReviewBlockerRedTests(ConsumptionFixture):
 
         with mock.patch.object(compiler, "qualify_subjects", side_effect=forbidden):
             result = self.prepare(
-                authority=self.authority(candidate),
+                authority=self.consumption_authority(candidate),
                 qualification_backend=qualification.OCI,
             )
 
@@ -185,7 +185,7 @@ class ReviewBlockerRedTests(ConsumptionFixture):
             ),
             mock.patch.object(compiler, "qualify_subjects", side_effect=forbidden),
         ):
-            result = self.prepare(authority=self.authority(candidate))
+            result = self.prepare(authority=self.consumption_authority(candidate))
 
         self.assertIn(
             "synthetic-future-pre-effect-refusal",
@@ -233,7 +233,7 @@ class ConsumptionBoundaryGuards(ConsumptionFixture):
         self.assertIsNotNone(reuse_candidate)
         self.assertNotEqual(fresh_candidate, reuse_candidate)
         assert reuse_candidate is not None
-        granted = self.authority(reuse_candidate)
+        granted = self.consumption_authority(reuse_candidate)
 
         effects: list[str] = []
 

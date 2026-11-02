@@ -366,7 +366,8 @@ class RoundTwelveReuseTests(ExactTreeFixture):
     def test_a_replaced_empty_tree_is_never_reused_as_it(self) -> None:
         owner, empty = _owner(), self.empty_tree()
         other = self.commit({"b.txt": b"b\n"})
-        destination, real_rename, raced = self.root / "project", os.rename, []
+        destination, real_rename = self.root / "project", os.rename
+        raced: list[bool] = []
 
         def rename(source: Any, target: Any, **kwargs: Any) -> None:
             real_rename(source, target, **kwargs)
@@ -406,7 +407,8 @@ class RoundTwelveReuseTests(ExactTreeFixture):
     def test_a_replaced_publisher_keeps_the_winners_record(self) -> None:
         owner, empty = _owner(), self.empty_tree()
         other = self.commit({"b.txt": b"b\n"})
-        destination, real_rename, raced = self.root / "project", os.rename, []
+        destination, real_rename = self.root / "project", os.rename
+        raced: list[bool] = []
 
         def rename(source: Any, target: Any, **kwargs: Any) -> None:
             real_rename(source, target, **kwargs)
@@ -431,7 +433,8 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         owner, empty = _owner(), self.empty_tree()
         other = self.commit({"b.txt": b"b\n"})
         destination, record = self.root / "project", self.root / ".project.exact-tree"
-        real_check, raced = owner._still_published, []
+        real_check = owner._still_published
+        raced: list[bytes | None] = []
 
         def check(where: Path, binding: Any) -> None:
             real_check(where, binding)

@@ -91,7 +91,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
 
         with self._patched_effect([]):
             with mock.patch.object(retained_commit, "_write_at", side_effect=record):
-                self.prepare(authority=self.authority(candidate))
+                self.prepare(authority=self.consumption_authority(candidate))
         return seen
 
     def _crash_at(self, index: int, *, keep_blockers: bool = False) -> Outcome:
@@ -100,7 +100,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
         seen: list[str] = []
         real = retained_commit._write_at

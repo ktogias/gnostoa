@@ -65,7 +65,7 @@ class SameWorkspaceConcurrencyTests(ConsumptionFixture):
             "qualify_subjects",
             side_effect=qualify_then_let_the_other_caller_run,
         ):
-            winner = self.prepare(authority=self.authority(candidate))
+            winner = self.prepare(authority=self.consumption_authority(candidate))
 
         self.assertEqual(
             effects, ["winner"], "the losing caller must never open a second effect"

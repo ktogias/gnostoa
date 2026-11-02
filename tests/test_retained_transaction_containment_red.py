@@ -154,7 +154,7 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         with self.patched_effect():
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=self.consumption_authority(candidate))
 
         self.tamper_reservation(transaction_id=str(escaped))
         with self.assertRaises(retained_commit.RetainedTransactionError):
@@ -180,7 +180,7 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         with self.patched_effect():
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=self.consumption_authority(candidate))
 
         relative = "../../outside-the-workspace/traversed"
         self.tamper_reservation(transaction_id=relative)
@@ -263,7 +263,7 @@ class CommitRecordLockProvenanceTests(ContainmentFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
@@ -311,7 +311,7 @@ class RecoveryBindingTests(ContainmentFixture):
             # visible in the canonical state rather than already applied.
             with self.crash_writing(retained_commit.LEDGER_FILENAME):
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=self.consumption_authority(candidate))
 
             reservation = retained_commit.read_reservation(self.workspace)
             self.assertIsNotNone(reservation)

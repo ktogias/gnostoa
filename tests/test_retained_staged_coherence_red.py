@@ -90,7 +90,7 @@ class StagedSubstitutionDuringPublicationTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         before = (self.workspace / "experiment-state.json").read_text()
         effects: list[str] = []
         substituted: list[str] = []

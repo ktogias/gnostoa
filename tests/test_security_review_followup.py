@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -333,7 +334,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         descriptor: int | None,
                         role: str,
                         *,
-                        real_close: object = real_close,
+                        real_close: Callable[[int], None] = real_close,
                         failed_role: str = failed_role,
                     ) -> str | None:
                         if descriptor is not None:
@@ -426,7 +427,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     observed_roles: list[str] = observed_roles,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                     failed_role: str = failed_role,
                 ) -> str | None:
                     nonlocal failed
@@ -483,7 +484,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     descriptor: int | None,
                     role: str,
                     *,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         real_close(descriptor)
@@ -533,7 +534,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def failing_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise OSError(errno.EIO, PRIVATE, PRIVATE)
@@ -582,7 +585,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def recursing_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise RecursionError(PRIVATE)
@@ -592,7 +597,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     closed: list[int] = closed,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         closed.append(descriptor)
@@ -644,7 +649,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def surprising_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise RuntimeError(PRIVATE)
@@ -654,7 +661,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     closed: list[int] = closed,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         closed.append(descriptor)
@@ -905,7 +912,9 @@ class ReviewFollowupTests(unittest.TestCase):
             def failing_cleanup(
                 workspace: tempfile.TemporaryDirectory[str],
                 *,
-                real_cleanup: object = real_cleanup,
+                real_cleanup: Callable[
+                    [tempfile.TemporaryDirectory[str]], None
+                ] = real_cleanup,
             ) -> None:
                 real_cleanup(workspace)
                 raise RuntimeError(PRIVATE)

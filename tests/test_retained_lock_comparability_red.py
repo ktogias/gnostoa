@@ -84,7 +84,7 @@ class UncomparableLockRaceTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect(effects):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
@@ -173,7 +173,7 @@ class UncomparableLockRaceTests(ConsumptionFixture):
         candidate, retained = self._reach_ready(effects)
         damaged: list[str] = []
         with self.patched_effect(effects), self._damaging_seam(damaged):
-            refused = self.prepare(authority=self.authority(candidate))
+            refused = self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(effects, ["effect"], "no new effect may run")
         self.assertIn(
             "experiment-lock-conflict",
