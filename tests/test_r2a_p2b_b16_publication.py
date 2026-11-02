@@ -435,6 +435,46 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             _has_direct_top_level_shell_sequence(multiline_loop_inert, sequence)
         )
 
+    def test_shell_structure_helper_characterization(self) -> None:
+        # Pinned before the helper's extraction (#389 N1b, Decision 0128 point 5): each
+        # case tells apart one decision the smoke scripts above leave unexercised.
+        sequence = ("python tests/sample_check.py",)
+        cases = (
+            ("the sequence twice at top level", [*sequence, *sequence], False),
+            (
+                "a <<- heredoc whose delimiter is tab-indented",
+                ["cat <<-EOF", "\tbody", "\tEOF", *sequence],
+                True,
+            ),
+            (
+                "a comment that reads like a heredoc",
+                ["# cat <<EOF is only a comment", *sequence],
+                True,
+            ),
+            (
+                "a closer that does not match its block",
+                ["if true; then", "done", *sequence],
+                False,
+            ),
+            ("a closer with no open block", ["fi", *sequence], False),
+            (
+                "a closed case block",
+                ["case x in", "  a) echo a ;;", "esac", *sequence],
+                True,
+            ),
+            (
+                "a command substitution closed on a later line",
+                ["value=$(", "  echo a", ")", *sequence],
+                True,
+            ),
+        )
+        for label, lines, expected in cases:
+            with self.subTest(label):
+                self.assertIs(
+                    expected,
+                    _has_direct_top_level_shell_sequence("\n".join(lines), sequence),
+                )
+
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
     ) -> None:
