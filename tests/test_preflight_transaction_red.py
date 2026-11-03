@@ -316,8 +316,10 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
 
         owner_result = results["owner"]
         waiter_result = results["waiter"]
-        assert isinstance(owner_result, compiler.PrepareResult)
-        assert isinstance(waiter_result, compiler.PrepareResult)
+        if not isinstance(owner_result, compiler.PrepareResult):
+            self.fail("owner_result must be a compiler.PrepareResult")
+        if not isinstance(waiter_result, compiler.PrepareResult):
+            self.fail("waiter_result must be a compiler.PrepareResult")
         self.assertEqual(owner_result.status, "READY_FOR_OWNER_REVIEW")
         self.assertEqual(
             waiter_result.status,
@@ -372,7 +374,8 @@ class ConcurrentAuthorityLessCallerTests(ConsumptionFixture):
         self.assertEqual(effects, ["qualify_subjects"])
         # The authority-less caller is entitled to remain blocked ...
         authority_less = results["authority_less"]
-        assert isinstance(authority_less, compiler.PrepareResult)
+        if not isinstance(authority_less, compiler.PrepareResult):
+            self.fail("authority_less must be a compiler.PrepareResult")
         self.assertEqual(authority_less.status, "BLOCKED")
         # ... but not to cost the owner its committed transaction.
         self.assertEqual(owner.status, "READY_FOR_OWNER_REVIEW")

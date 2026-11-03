@@ -17,6 +17,7 @@ import string
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -671,7 +672,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     faked at `_bounded_run`; anything they launch besides a version read, mypy and
     Ruff is the environment's isolated identity read, answered by `installed`."""
 
-    def _environment(self, *installed: tuple[str, ...] | None):
+    def _environment(
+        self, *installed: tuple[str, ...] | None
+    ) -> Callable[..., tuple[int, str | None, bool]]:
         """A launcher whose identity reads answer `installed[0]`, then `installed[1]`
         and so on, keeping the last one; None answers as an unreadable read."""
         answers = list(installed)
@@ -1213,7 +1216,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observed = getattr(self.module, "_ISOLATED_PYTHON", None)
         self.assertIsNotNone(observed, "the collector declares no observed launch")
         other = _original(self.module, "_Launch")("/another/python", ("-I",))
-        assert observed is not None
+        if observed is None:
+            self.fail("observed must be set")
         with self._with_probe_runs(
             ("probe-producer", [*observed.argv(), "-m", "probe"], observed),
             ("another-interpreter", [*other.argv(), "-m", "probe"], other),
@@ -1240,7 +1244,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIn("environment_observation", runs["mypy"])
 
     def _observer(self) -> Path:
-        assert self.module.__file__ is not None
+        if self.module.__file__ is None:
+            self.fail("self.module.__file__ must be set")
         return (
             Path(self.module.__file__).resolve().parent
             / "python_environment_observation.py"
@@ -2208,7 +2213,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         record_lines = _original(observer, "_record_lines")
         record_stream = record_lines(endless)
         with self.assertRaises(csv.Error):
-            next(record_stream)
+            next(record_stream, None)
         self.assertGreater(len(endless), 40)
         # CodeAnt on #453: a line whose end falls in the chunk that takes it past the
         # bound is refused before it is joined; one at the bound, its newline

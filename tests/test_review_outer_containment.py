@@ -233,7 +233,8 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         unknown = copy.deepcopy(historical_p2b)
         for key in ("expected_consumer", "acquired_consumer"):
             consumer = unknown[key]
-            assert isinstance(consumer, dict)
+            if not isinstance(consumer, dict):
+                self.fail("consumer must be a dict")
             consumer["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
         authorities = {
             "historical-p2b": historical_p2b,
@@ -314,7 +315,8 @@ class ReviewOuterContainmentTests(unittest.TestCase):
     def test_authority_validation_is_not_replaced_by_containment(self) -> None:
         malformed = _consumer_authority()
         acquired = malformed["acquired_consumer"]
-        assert isinstance(acquired, dict)
+        if not isinstance(acquired, dict):
+            self.fail("acquired must be a dict")
         acquired["source_revision"] = "invalid"
         protected = ProtectedMainDocument("c" * 40, malformed)
         with mock.patch.object(

@@ -60,7 +60,8 @@ class D1PreloadTests(CapsuleFixture):
         )
 
         harness = result.task("T1").harness
-        assert harness is not None
+        if harness is None:
+            self.fail("harness must be set")
         self.assertIn("pkg._impl", harness.preload_modules)
         self.assertTrue(
             any("import pkg._impl" in f.content for f in harness.generated_files),
@@ -128,7 +129,8 @@ class D2ConfigIsolationTests(CapsuleFixture):
         )
         task = result.task("T1")
 
-        assert task.invocation is not None
+        if task.invocation is None:
+            self.fail("task.invocation must be set")
         self.assertIn("-c", task.invocation.argv)
         joined = " ".join(task.invocation.argv)
         self.assertNotIn("--benchmark", joined)
@@ -471,7 +473,8 @@ class GeneratedArtifactTests(CapsuleFixture):
             offline=True,
         )
         profile = result.task("T1").execution_profile
-        assert profile is not None
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(profile["schema"], PROFILE_SCHEMA)
         self.assertEqual(
             validate_profile_data(profile, for_run=True),
@@ -622,7 +625,8 @@ class PreparationReceiptTests(CapsuleFixture):
         self.assertTrue(task.preparation.required)
         self.assertIsNotNone(task.preparation_receipt, result.blockers)
         receipt = task.preparation_receipt
-        assert receipt is not None
+        if receipt is None:
+            self.fail("receipt must be set")
         self.assertIn("src/pkg/_version.py", receipt.generated)
         self.assertTrue(receipt.tracked_tree_unchanged)
         self.assertTrue(
@@ -632,7 +636,8 @@ class PreparationReceiptTests(CapsuleFixture):
             receipt.runnability, "deferred-to-base-reference-qualification"
         )
         self.assertTrue(str(receipt.derivation["version"]).startswith("1.0.0.dev"))
-        assert task.base_path is not None
+        if task.base_path is None:
+            self.fail("task.base_path must be set")
         generated = task.base_path / "src/pkg/_version.py"
         self.assertTrue(generated.is_file(), "the declared artifact must exist on disk")
         self.assertIn("__version__ = version =", generated.read_text())
@@ -674,7 +679,8 @@ class StaleMaterializationTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         subject = first.task("T1").base_path
-        assert subject is not None
+        if subject is None:
+            self.fail("subject must be set")
         (subject / "src/pkg/__init__.py").write_text("tampered = True\n")
 
         second = compiler.prepare(
@@ -777,7 +783,8 @@ class ConfigProjectionTests(CapsuleFixture):
         self.assertIn("filterwarnings", projection.preserved)
         self.assertIn("markers", projection.preserved)
         addopts = projection.preserved["addopts"]
-        assert isinstance(addopts, list)
+        if not isinstance(addopts, list):
+            self.fail("addopts must be a list")
         self.assertIn("-q", addopts)
         self.assertIn("--benchmark-disable", projection.removed_options)
         self.assertIn("pytest-benchmark", projection.removed_for_plugins)
@@ -856,7 +863,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_execution_profile_admits_no_private_surface(self) -> None:
         result = self._capsule()
         task = result.task("T1")
-        assert task.execution_profile is not None
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         admitted = profiles.admitted_paths(task.execution_profile)
         private = [
             task.reference_path,
@@ -874,7 +882,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_executor_workspace_contains_no_oracle_or_reference_content(self) -> None:
         result = self._capsule()
         task = result.task("T1")
-        assert task.execution_profile is not None
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         project = Path(task.execution_profile["project_root"])
         blob = "".join(
             path.read_text(errors="replace")
@@ -889,7 +898,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_qualification_and_execution_are_distinct_trust_domains(self) -> None:
         result = self._capsule()
         task = result.task("T1")
-        assert task.execution_profile is not None
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         self.assertEqual(task.execution_profile["trust_domain"], profiles.EXECUTION)
         for profile in task.qualification_profiles.values():
             self.assertEqual(profile["trust_domain"], profiles.QUALIFICATION)
@@ -902,8 +912,10 @@ class ExecutionBoundaryTests(CapsuleFixture):
         """The exact regression the owner review identified."""
         result = self._capsule()
         task = result.task("T1")
-        assert task.execution_profile is not None
-        assert task.reference_path is not None
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
+        if task.reference_path is None:
+            self.fail("task.reference_path must be set")
         leaky = dict(task.execution_profile)
         leaky["read_only_roots"] = [str(Path(task.reference_path).parent)]
         with self.assertRaises(profiles.ProfileBoundaryError):
@@ -940,7 +952,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
         self.assertEqual(first.status, stages.READY_FOR_OWNER_REVIEW, first.blockers)
         receipt = first.task("T1").qualification
         receipt_path = self.root / "receipt.json"
-        assert receipt is not None
+        if receipt is None:
+            self.fail("receipt must be set")
         receipt_path.write_text(json.dumps(receipt.as_json(), indent=2))
 
         spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
@@ -959,7 +972,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
     def test_a_receipt_bound_to_other_identities_is_refused(self) -> None:
         spec, first = self._qualified()
         qualification = first.task("T1").qualification
-        assert qualification is not None
+        if qualification is None:
+            self.fail("qualification must be set")
         stale = dict(qualification.as_json())
         bound = stale["bound"]
         assert isinstance(bound, dict)
@@ -982,7 +996,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
         """A changed generated preparation must invalidate a prior qualification."""
         spec, first = self._qualified()
         qualification = first.task("T1").qualification
-        assert qualification is not None
+        if qualification is None:
+            self.fail("qualification must be set")
         stale = dict(qualification.as_json())
         bound = stale["bound"]
         assert isinstance(bound, dict)
@@ -1006,7 +1021,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
     def test_a_receipt_without_bound_identities_is_refused(self) -> None:
         spec, first = self._qualified()
         qualification = first.task("T1").qualification
-        assert qualification is not None
+        if qualification is None:
+            self.fail("qualification must be set")
         naked = dict(qualification.as_json())
         naked.pop("bound")
         receipt_path = self.root / "naked.json"
@@ -1053,13 +1069,18 @@ class LockExecutionTests(CapsuleFixture):
     def test_capsule_materialises_from_the_lock_alone(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        root = next(iter(outcome.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(outcome.runs.values()), None)
+        if first_run is None:
+            self.fail("outcome must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
 
@@ -1076,13 +1097,18 @@ class LockExecutionTests(CapsuleFixture):
         (repo / ".git" / "info" / "attributes").write_text(
             "src/pkg/__init__.py export-ignore\n"
         )
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        root = next(iter(outcome.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(outcome.runs.values()), None)
+        if first_run is None:
+            self.fail("outcome must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         self.assertTrue(
             (project / "src/pkg/__init__.py").is_file(),
@@ -1096,12 +1122,17 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_reused_capsule_keeps_its_run_outputs(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        root = next(iter(first.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(first.runs.values()), None)
+        if first_run is None:
+            self.fail("first must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         (project / "run-output.log").write_text("made by a previous run\n")
         again = execute.execute_lock(
@@ -1111,12 +1142,17 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_reused_capsule_whose_tracked_source_changed_is_refused(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        root = next(iter(first.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(first.runs.values()), None)
+        if first_run is None:
+            self.fail("first must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         (project / "src/pkg/__init__.py").write_text("tampered = True\n")
         again = execute.execute_lock(
@@ -1133,19 +1169,25 @@ class LockExecutionTests(CapsuleFixture):
         git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
         (repo / ".git" / "info").mkdir(exist_ok=True)
         (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         execute.execute_lock(result.lock_path, self.workspace / "exec", dry_run=True)
         self.assertFalse(marker.exists(), "a source repository's driver ran")
 
     def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
         """Qualification-domain artifacts must not reach the executor capsule."""
         result = self._locked(execution_command=["python", "-c", "print(1)"])
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        root = next(iter(outcome.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(outcome.runs.values()), None)
+        if first_run is None:
+            self.fail("outcome must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         self.assertFalse(
             (project / "conftest.py").exists(), "harness is qualification-only"
@@ -1163,7 +1205,8 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_tampered_lock_is_refused(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         payload = json.loads(result.lock_path.read_text())
         payload["tasks"][0]["base_tree"] = "0" * 40
         result.lock_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -1174,7 +1217,8 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_missing_store_artifact_blocks_materialisation(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         payload = json.loads(result.lock_path.read_text())
         payload["tasks"][0]["stored_artifacts"].append(
             {
@@ -1287,7 +1331,8 @@ class LaunchAuthorityTests(CapsuleFixture):
 
     def test_execution_without_an_authority_is_refused(self) -> None:
         result = self._locked()
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "x", dry_run=False
         )
@@ -1299,7 +1344,8 @@ class LaunchAuthorityTests(CapsuleFixture):
     def test_an_authority_for_another_lock_is_refused(self) -> None:
         result = self._locked()
         stale = self.launch_authority("0" * 64)
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path,
             self.workspace / "x",
@@ -1315,8 +1361,10 @@ class LaunchAuthorityTests(CapsuleFixture):
     def test_an_authority_with_the_wrong_scope_is_refused(self) -> None:
         result = self._locked()
         # right lock, wrong scope: a preflight scope must not open execution
-        assert result.lock_identity is not None
-        assert result.lock_path is not None
+        if result.lock_identity is None:
+            self.fail("result.lock_identity must be set")
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         capped = LaunchAuthority(
             id="c",
             experiment_id="E1",
@@ -1388,8 +1436,10 @@ class RunPlanTests(CapsuleFixture):
     def test_plan_follows_the_declared_schedule_order_verbatim(self) -> None:
         result = self._planned()
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
-        assert result.run_plan is not None
-        assert result.lock_path is not None
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         self.assertEqual(len(result.run_plan), 4)
         payload = json.loads(result.lock_path.read_text())
         plan = payload["run_plan"]
@@ -1507,7 +1557,8 @@ class RunPlanTests(CapsuleFixture):
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
         run = next(iter(outcome.runs.values()))
         root = run["project_root"]
-        assert isinstance(root, str)
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         capsule = Path(root).parent
         statements = list(capsule.rglob("task.md"))
         self.assertTrue(statements, "the declared executor input must be materialised")
@@ -1515,7 +1566,8 @@ class RunPlanTests(CapsuleFixture):
 
     def test_every_planned_run_materialises_with_only_its_own_arm(self) -> None:
         result = self._planned()
-        assert result.lock_path is not None
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
@@ -1523,7 +1575,8 @@ class RunPlanTests(CapsuleFixture):
         self.assertEqual(len(outcome.runs), 4)
         for run_id, run in outcome.runs.items():
             root = run["project_root"]
-            assert isinstance(root, str)
+            if not isinstance(root, str):
+                self.fail("root must be a str")
             capsule = Path(root).parent
             blob = "".join(
                 path.read_text(errors="replace")
@@ -1597,8 +1650,12 @@ class PreparedExecutionCapsuleTests(CapsuleFixture):
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        root = next(iter(outcome.runs.values()))["project_root"]
-        assert isinstance(root, str)
+        first_run = next(iter(outcome.runs.values()), None)
+        if first_run is None:
+            self.fail("outcome must hold a run")
+        root = first_run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
         project = Path(root)
         generated = project / "src/pkg/_version.py"
         self.assertTrue(
@@ -1680,7 +1737,8 @@ class ScheduleCompletenessTests(CapsuleFixture):
         ]
         result = self._prepare(shuffled, "shuffled")
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
-        assert result.run_plan is not None
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
         self.assertEqual(len(result.run_plan), 4)
         self.assertEqual(
             [(e.repetition, e.arm) for e in result.run_plan.entries],
@@ -1724,7 +1782,8 @@ class ScheduleCompletenessTests(CapsuleFixture):
     def test_run_identities_are_unique_across_the_plan(self) -> None:
         result = self._prepare(self._complete(), "unique")
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
-        assert result.run_plan is not None
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
         identities = [entry.id for entry in result.run_plan.entries]
         self.assertEqual(len(set(identities)), len(identities))
 

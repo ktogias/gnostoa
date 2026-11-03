@@ -64,7 +64,8 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self.assertEqual(after_state["lock_sha256"], before_state["lock_sha256"])
         self.assertEqual(after_state["stage_receipts"], before_state["stage_receipts"])
         before_tasks = before_state["tasks"]
-        assert isinstance(before_tasks, dict)
+        if not isinstance(before_tasks, dict):
+            self.fail("before_tasks must be a dict")
         self.assertEqual(
             after_state["tasks"]["T1"]["qualification"],
             before_tasks["T1"]["qualification"],

@@ -163,7 +163,8 @@ class OracleStagingCompilerTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         harness = result.task("T1").harness
-        assert harness is not None
+        if harness is None:
+            self.fail("harness must be set")
         identity = harness.identity
         staged = harness.invocation.argv
         self.assertTrue(
@@ -347,7 +348,8 @@ class RelayImageBindingTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         profile = result.task("T1").execution_profile
-        assert profile is not None
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(profile["runtime"]["image"], IMAGE_A)
         self.assertEqual(profile["runtime"]["relay_image"], RELAY_DIGEST)
         codes = {b["code"] for b in result.blockers}
@@ -360,7 +362,8 @@ class RelayImageBindingTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         profile = result.task("T1").execution_profile
-        assert profile is not None
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(
             profile["runtime"]["relay_image"],
             RELAY_PINNED,
@@ -420,7 +423,8 @@ class RelayImageBindingTests(CapsuleFixture):
         codes = {b["code"] for b in result.blockers}
         self.assertIn("relay-image-requires-restricted-execution", codes)
         profile = result.task("T1").execution_profile
-        assert profile is not None
+        if profile is None:
+            self.fail("profile must be set")
         self.assertNotIn("relay_image", profile["runtime"])
 
     def test_relay_reaches_the_lock_task_payload(self) -> None:
@@ -452,7 +456,8 @@ class RelayImageBindingTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         profile = result.task("T1").execution_profile
-        assert profile is not None
+        if profile is None:
+            self.fail("profile must be set")
         self.assertNotIn("relay_image", profile["runtime"])
 
 
@@ -489,7 +494,8 @@ class QualificationNetworkIsolationTests(CapsuleFixture):
                 self.assertEqual(profile["network"], {"mode": "none", "allow": []})
                 self.assertNotIn("relay_image", profile["runtime"])
         # The experimental envelope is untouched.
-        assert task.execution_profile is not None
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         self.assertEqual(
             task.execution_profile["network"],
             {"mode": "restricted", "allow": ["provider.example:443"]},

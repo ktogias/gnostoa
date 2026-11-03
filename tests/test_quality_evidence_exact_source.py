@@ -771,9 +771,10 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         (bottom / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
         return top
 
-    def _counting_reads(
-        self,
-    ) -> tuple[contextlib.AbstractContextManager[object], list[int]]:
+    @staticmethod
+    def _counting_reads() -> tuple[
+        contextlib.AbstractContextManager[object], list[int]
+    ]:
         """A patch counting every directory read, and the list it counts into."""
         reads: list[int] = []
         real = os.scandir

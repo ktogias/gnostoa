@@ -577,7 +577,8 @@ class RoundTwoTests(ExactTreeFixture):
 
     def test_the_popen_call_carries_its_bandit_justification(self) -> None:
         owner_file = _owner().__file__
-        assert owner_file is not None
+        if owner_file is None:
+            self.fail("owner_file must be set")
         source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all("nosec B603" in line for line in lines), lines)
@@ -586,7 +587,8 @@ class RoundTwoTests(ExactTreeFixture):
         import ast
 
         owner_file = _owner().__file__
-        assert owner_file is not None
+        if owner_file is None:
+            self.fail("owner_file must be set")
         tree = ast.parse(Path(owner_file).read_text(encoding="utf-8"))
         asserts = [
             node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)
@@ -673,7 +675,8 @@ class RoundThreeTests(ExactTreeFixture):
         self,
     ) -> None:
         owner_file = _owner().__file__
-        assert owner_file is not None
+        if owner_file is None:
+            self.fail("owner_file must be set")
         source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all(_NOSEMGREP in line for line in lines), lines)
@@ -809,7 +812,8 @@ class RoundFourTests(ExactTreeFixture):
     # AA (M13): each suppression on the Popen line carries its reason.
     def test_the_popen_suppressions_carry_their_reason(self) -> None:
         owner_file = _owner().__file__
-        assert owner_file is not None
+        if owner_file is None:
+            self.fail("owner_file must be set")
         source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines, "no Popen line")

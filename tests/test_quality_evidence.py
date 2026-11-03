@@ -1418,7 +1418,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             # collector's own observer module, never a producer (#389 F3 S2-C).
             expected = observation[:3] if command == observation else None
             self.assertEqual(expected or [sys.executable, "-I", "-m"], command[:3])
-        assert self.module.__file__ is not None
+        if self.module.__file__ is None:
+            self.fail("self.module.__file__ must be set")
         observer = Path(self.module.__file__).resolve().parent
         self.assertEqual(
             [sys.executable, "-I", str(observer / "python_environment_observation.py")],
@@ -1928,7 +1929,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         target.read_text(encoding="utf-8") + _EXTRA_COMPLEX,
                         encoding="utf-8",
                     )
-                    assert flag is not None
+                    if flag is None:
+                        self.fail("flag must be set")
                     self._git("update-index", flag, path)
                 self.assertEqual(
                     "", self._git("status", "--porcelain", "--untracked-files=no")
@@ -4186,12 +4188,14 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 head=self._head(),
             )
         first_native = unordered[0]["native"]
-        assert isinstance(first_native, dict)
+        if not isinstance(first_native, dict):
+            self.fail("first_native must be a dict")
         self.assertIs(True, first_native["in_diff"])
         in_diff: list[object] = []
         for finding in findings:
             native = finding["native"]
-            assert isinstance(native, dict)
+            if not isinstance(native, dict):
+                self.fail("native must be a dict")
             in_diff.append(native["in_diff"])
         self.assertEqual(
             [n % 2 == 0 and 10 <= n < 2010 for n in range(1, 401)], in_diff
@@ -5047,7 +5051,8 @@ class BoundedRunTests(unittest.TestCase):
             _state, seen = clocked([100.0, 100.0, 100.9995, 101.2], 1.0)
             self.assertEqual(2, len(seen))
             self.assertEqual(1.0, seen[0])
-            assert isinstance(seen[1], float)
+            if not isinstance(seen[1], float):
+                self.fail("seen[1] must be a float")
             self.assertAlmostEqual(0.0005, seen[1], places=9)
         with self.subTest("spent before the first read"):
             state, seen = clocked([100.0, 100.000002], 0.000001)
@@ -5056,7 +5061,8 @@ class BoundedRunTests(unittest.TestCase):
         with self.subTest("barely open before the first read"):
             state, seen = clocked([100.0, 100.9996, 101.0], 1.0)
             self.assertEqual(1, len(seen))
-            assert isinstance(seen[0], float)
+            if not isinstance(seen[0], float):
+                self.fail("seen[0] must be a float")
             self.assertAlmostEqual(0.0004, seen[0], places=9)
             self.assertIsNone(state["tracked_tree_dirty"])
 
@@ -5113,7 +5119,8 @@ class BoundedRunTests(unittest.TestCase):
         self.assertIn("timed out", gap)
         self.assertEqual(-signal.SIGKILL, status)
         self.assertEqual(-signal.SIGKILL, started[0].returncode)
-        assert started[0].stdout is not None
+        if started[0].stdout is None:
+            self.fail("started[0].stdout must be set")
         self.assertTrue(started[0].stdout.closed)
 
     def test_a_report_is_never_an_existing_file_or_a_symlink(self) -> None:
