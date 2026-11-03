@@ -9,6 +9,7 @@ oracle or identification-key content from #183 is reproduced here.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -1261,9 +1262,12 @@ class LockExecutionTests(CapsuleFixture):
 
 def _local_image(reference: str = "python:3.12-slim") -> str | None:
     """The immutable id of a locally present image, or None."""
+    docker = shutil.which("docker")
+    if docker is None:
+        return None
     try:
         completed = subprocess.run(
-            ["/usr/bin/docker", "image", "inspect", "--format", "{{.Id}}", reference],
+            [docker, "image", "inspect", "--format", "{{.Id}}", reference],
             check=False,
             capture_output=True,
             text=True,

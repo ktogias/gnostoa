@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -17,20 +18,25 @@ IMAGE_A = "sha256:" + "a" * 64
 
 
 def git(repo: Path, *args: str) -> str:
+    environment = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "PATH": "/usr/bin:/bin",
+    }
+    # The child's own PATH is where subprocess would look for git.
+    executable = shutil.which("git", path=environment["PATH"])
+    if executable is None:
+        raise FileNotFoundError(f"git is not on {environment['PATH']}")
     return subprocess.run(
-        ["/usr/bin/git", "-C", str(repo), *args],
+        [executable, "-C", str(repo), *args],
         check=True,
         capture_output=True,
         text=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@example.invalid",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@example.invalid",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=environment,
     ).stdout.strip()
 
 

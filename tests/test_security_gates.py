@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import selectors
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1199,8 +1200,11 @@ class ProviderSecurityGateTests(unittest.TestCase):
                         "RUNNER_TEMP": str(temporary),
                     }
                 )
+                bash = shutil.which("bash", path=environment["PATH"])
+                if bash is None:
+                    self.fail("bash must be on the route's PATH")
                 completed = subprocess.run(
-                    ["/usr/bin/bash", "-c", route_script],
+                    [bash, "-c", route_script],
                     cwd=ROOT,
                     env=environment,
                     check=False,
@@ -1291,8 +1295,11 @@ class ProviderSecurityGateTests(unittest.TestCase):
                 }
             )
 
+            bash = shutil.which("bash", path=environment["PATH"])
+            if bash is None:
+                self.fail("bash must be on the route's PATH")
             completed = subprocess.run(
-                ["/usr/bin/bash", "-c", route_script],
+                [bash, "-c", route_script],
                 cwd=temporary,
                 env=environment,
                 check=False,
