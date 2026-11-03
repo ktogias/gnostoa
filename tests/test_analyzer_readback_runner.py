@@ -940,6 +940,11 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     }
                 ],
                 urls["checks"]: {"check_runs": []},
+                # The finding's file at the head, for its enclosing scope (#389):
+                # GitHub has none here, so the readback keeps its findings as they are.
+                f"https://api.github.com/repos/ktogias/gnostoa/contents/tools/example.py?ref={HEAD}": (
+                    runner.RunnerError("Not Found")
+                ),
                 urls["comments"]: [
                     {
                         "body": "<!-- DeepSource: id=carried -->\n<h3>finding</h3>",
@@ -1767,6 +1772,152 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', bind_step["run"]
         )
+
+
+def _scoped_readback(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    return analyzer_readback.build_readback(
+        provider="synthetic-analyzer",
+        adapter="fixture/v1",
+        repository="ktogias/gnostoa",
+        pull_number=312,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id="run-1",
+        scope="FULL",
+        completeness="FULL_RUN",
+        native_mode="COMPLETE_SCAN",
+        observed_at=OBSERVED,
+        run_state="SUCCESS",
+        coverage_record=analyzer_readback.coverage(
+            "COMPLETE", pages=1, count=len(findings)
+        ),
+        findings=findings,
+    )
+
+
+class EnclosingScopeRunnerTests(unittest.TestCase):
+    """The readback gives each Python finding its enclosing scope, from its file at the
+    exact head, read over REST as data; past a bound or unreadable, none (#389,
+    6615072518)."""
+
+    SOURCE = "import os\n\n\ndef f(x):\n    return x\n"
+
+    def test_each_python_finding_gets_its_enclosing_scope(self) -> None:
+        readback = _scoped_readback(
+            [
+                {
+                    "id": "in-f",
+                    "message": "m",
+                    "path": "a.py",
+                    "range": {"start_line": 5},
+                },
+                {
+                    "id": "module",
+                    "message": "m",
+                    "path": "a.py",
+                    "range": {"start_line": 1},
+                },
+                {
+                    "id": "markdown",
+                    "message": "m",
+                    "path": "b.md",
+                    "range": {"start_line": 1},
+                },
+                {"id": "no-line", "message": "m", "path": "a.py"},
+            ]
+        )
+        read: list[str] = []
+
+        def source_of(path: str) -> str | None:
+            read.append(path)
+            return self.SOURCE if path == "a.py" else None
+
+        (scoped,) = runner._with_enclosing([readback], source_of)
+        by_id = {finding["id"]: finding for finding in scoped["findings"]}
+        self.assertEqual(
+            analyzer_readback.enclosing_scope(self.SOURCE, 5),
+            by_id["in-f"]["enclosing"],
+        )
+        for identity in ("module", "markdown", "no-line"):
+            self.assertNotIn("enclosing", by_id[identity])
+        self.assertEqual(["a.py"], read)
+        self.assertEqual(scoped, analyzer_readback.parse_readback(scoped))
+
+    def test_an_unreadable_file_gives_no_scope_and_leaves_the_readback(self) -> None:
+        readback = _scoped_readback(
+            [{"id": "in-f", "message": "m", "path": "a.py", "range": {"start_line": 5}}]
+        )
+        self.assertEqual([readback], runner._with_enclosing([readback], lambda _: None))
+
+    def test_the_source_is_read_as_a_file_at_the_exact_head_within_bounds(self) -> None:
+        url = f"https://api.github.com/repos/ktogias/gnostoa/contents/dir/a%20b.py?ref={HEAD}"
+        encoded = __import__("base64").b64encode(self.SOURCE.encode()).decode()
+        file = {
+            "type": "file",
+            "encoding": "base64",
+            "content": encoded,
+            "size": len(self.SOURCE),
+        }
+        cases: list[tuple[str, Any, str | None]] = [
+            ("a file", file, self.SOURCE),
+            ("a directory", [file], None),
+            ("a symlink", {**file, "type": "symlink"}, None),
+            ("another encoding", {**file, "encoding": "none"}, None),
+            (
+                "past the file bound",
+                {**file, "size": runner._SCOPE_FILE_BYTES + 1},
+                None,
+            ),
+            ("not UTF-8", {**file, "content": "//79"}, None),
+            ("a failed read", runner.RunnerError("not found"), None),
+        ]
+        for name, reply, expected in cases:
+            with self.subTest(name):
+                github = _GitHubFake({url: reply})
+                budget = runner._ScopeBudget()
+                self.assertEqual(
+                    expected,
+                    runner._head_source(
+                        github, "ktogias/gnostoa", HEAD, "dir/a b.py", budget
+                    ),
+                )
+                self.assertEqual([url], github.calls)
+
+    def test_the_budget_bounds_the_files_read_and_their_bytes(self) -> None:
+        budget = runner._ScopeBudget()
+        self.assertTrue(all(budget.admit(1) for _ in range(runner._SCOPE_FILES)))
+        self.assertFalse(budget.admit(1))
+        budget = runner._ScopeBudget()
+        self.assertTrue(budget.admit(runner._SCOPE_TOTAL_BYTES))
+        self.assertFalse(budget.admit(1))
+
+    def test_a_bound_bundle_is_given_its_enclosing_scopes(self) -> None:
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                urls["sonar_checks"]: {"check_runs": []},
+            }
+        )
+        with patch.object(
+            runner, "_with_enclosing", wraps=runner._with_enclosing
+        ) as scoped:
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=None,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        scoped.assert_called_once()
+        self.assertEqual(bundle["readbacks"], scoped.call_args.args[0])
 
 
 class _SonarCloudReader:

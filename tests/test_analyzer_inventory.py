@@ -275,7 +275,10 @@ class _PullRequestReader:
 
     def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
         self.calls.append(url)
-        return self.answers[url], {}
+        answer = self.answers[url]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer, {}
 
 
 class InventoryRunnerTests(_InventoryReadbackFixture):
@@ -1273,6 +1276,15 @@ class InventoryBundleTests(_InventoryReadbackFixture):
                         f"{root}/commits/{head}": {"commit": {"tree": {"sha": read}}},
                     }
                 )
+                # Each Python finding's file at the head, for its enclosing scope
+                # (#389): GitHub has none here, so the document's readbacks are kept.
+                for finding in (
+                    f for r in document["readbacks"] for f in r["findings"]
+                ):
+                    if finding.get("path", "").endswith(".py") and "range" in finding:
+                        github.answers[
+                            f"{root}/contents/{finding['path']}?ref={head}"
+                        ] = runner.RunnerError("Not Found")
                 bundle = runner.collect_bundle(
                     github,
                     repository=REPOSITORY,

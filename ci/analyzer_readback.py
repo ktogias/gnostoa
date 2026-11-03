@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import functools
 import hashlib
 import os
@@ -26,6 +27,7 @@ from tools.analyzer_readback import (
     build_readback,
     canonical_json,
     coverage,
+    enclosing_scope,
     normalize_repository,
     parse_readback,
 )
@@ -38,6 +40,13 @@ _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 40
 _MAX_ITEMS = 10_000
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+# Each Python finding's enclosing scope, read from its file at the exact head over
+# REST, as data: nothing in the head runs or selects a tool (#389, 6615072518). Past
+# these bounds, or unreadable, a finding has no enclosing scope and is never matched
+# to inherited debt.
+_SCOPE_FILES = 64
+_SCOPE_FILE_BYTES = 1_048_576
+_SCOPE_TOTAL_BYTES = 8_388_608
 
 
 class RunnerError(RuntimeError):
@@ -493,6 +502,89 @@ def _commit_tree(github: GitHubReader, repository: str, head: str) -> str:
     return _exact_head(tree, "the commit's tree")
 
 
+class _ScopeBudget:
+    """How many files, and how many bytes, the readback may still read for its
+    findings' enclosing scopes."""
+
+    def __init__(self) -> None:
+        self.files = _SCOPE_FILES
+        self.bytes = _SCOPE_TOTAL_BYTES
+
+    def admit(self, size: int) -> bool:
+        """Spend one file of `size` bytes, or refuse it past either bound."""
+        if self.files <= 0 or size > self.bytes:
+            return False
+        self.files -= 1
+        self.bytes -= size
+        return True
+
+
+def _head_source(
+    github: GitHubReader, repository: str, head: str, path: str, budget: _ScopeBudget
+) -> str | None:
+    """One file's text at the exact head, as GitHub's contents API returns it: a
+    file, in base64, within the bounds and UTF-8. Anything else is None."""
+
+    url = (
+        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}?ref={head}"
+    )
+    try:
+        document, _ = github.get(url)
+    except RunnerError:
+        return None
+    if (
+        not isinstance(document, Mapping)
+        or document.get("type") != "file"
+        or document.get("encoding") != "base64"
+    ):
+        return None
+    size, content = document.get("size"), document.get("content")
+    if type(size) is not int or not 0 <= size <= _SCOPE_FILE_BYTES:
+        return None
+    if not isinstance(content, str) or not budget.admit(size):
+        return None
+    try:
+        return base64.b64decode(content).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _with_enclosing(
+    readbacks: list[dict[str, Any]], source_of: Callable[[str], str | None]
+) -> list[dict[str, Any]]:
+    """Each readback, its Python findings given their enclosing scopes: each file is
+    read once, and a readback is rebuilt through its own contract only when one of
+    its findings gained a scope."""
+
+    sources: dict[str, str | None] = {}
+    result = []
+    for readback in readbacks:
+        findings, changed = [], False
+        for finding in readback["findings"]:
+            path = finding.get("path")
+            line = (finding.get("range") or {}).get("start_line")
+            scope = None
+            if (
+                "enclosing" not in finding
+                and isinstance(path, str)
+                and path.endswith(".py")
+                and isinstance(line, int)
+            ):
+                if path not in sources:
+                    sources[path] = source_of(path)
+                source = sources[path]
+                scope = None if source is None else enclosing_scope(source, line)
+            if scope is None:
+                findings.append(finding)
+            else:
+                findings.append({**finding, "enclosing": scope})
+                changed = True
+        result.append(
+            parse_readback({**readback, "findings": findings}) if changed else readback
+        )
+    return result
+
+
 def collect_bundle(
     github: GitHubReader,
     *,
@@ -641,30 +733,37 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": [
-            diff_local,
-            full,
-            codacy_readback,
-            sonarcloud_readback,
-            # The project's own inventory, when the workflow gives it, bound to its
-            # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
-            *(
-                []
-                if inventory is None
-                else inventory_bundle_readbacks(
-                    inventory.document,
-                    expected_sha256=inventory.expected_sha256,
-                    result=inventory.result,
-                    attempt=inventory.attempt,
-                    run_attempt=inventory.run_attempt,
-                    repository=repository,
-                    pull_number=pull_number,
-                    requested_head=requested,
-                    tree=functools.partial(_commit_tree, github, repository, requested),
-                    observed_at=observed,
-                )
+        "readbacks": _with_enclosing(
+            [
+                diff_local,
+                full,
+                codacy_readback,
+                sonarcloud_readback,
+                # The project's own inventory, when the workflow gives it, bound to its
+                # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
+                *(
+                    []
+                    if inventory is None
+                    else inventory_bundle_readbacks(
+                        inventory.document,
+                        expected_sha256=inventory.expected_sha256,
+                        result=inventory.result,
+                        attempt=inventory.attempt,
+                        run_attempt=inventory.run_attempt,
+                        repository=repository,
+                        pull_number=pull_number,
+                        requested_head=requested,
+                        tree=functools.partial(
+                            _commit_tree, github, repository, requested
+                        ),
+                        observed_at=observed,
+                    )
+                ),
+            ],
+            functools.partial(
+                _head_source, github, repository, requested, budget=_ScopeBudget()
             ),
-        ],
+        ),
     }
 
 
