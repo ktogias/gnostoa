@@ -277,11 +277,9 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
     def _gitlab_analyzed(self) -> list[str]:
         command = next(
             (
-                (
-                    c
-                    for c, _cwd, _env in self._commands_of("shellcheck")
-                    if "--shell=sh" in c
-                )
+                c
+                for c, _cwd, _env in self._commands_of("shellcheck")
+                if "--shell=sh" in c
             ),
             None,
         )

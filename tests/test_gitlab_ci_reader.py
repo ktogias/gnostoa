@@ -59,11 +59,9 @@ class GitlabReaderTests(_ToolFamilyFixture):
         self._collect(base=self.base)
         command = next(
             (
-                (
-                    c
-                    for c, _cwd, _env in self._commands_of("shellcheck")
-                    if "--shell=sh" in c
-                )
+                c
+                for c, _cwd, _env in self._commands_of("shellcheck")
+                if "--shell=sh" in c
             ),
             None,
         )

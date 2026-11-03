@@ -1136,12 +1136,9 @@ class ProviderSecurityGateTests(unittest.TestCase):
         route_steps = workflow["jobs"]["extended-route"]["steps"]
         route_script = next(
             (
-                (
-                    step["run"]
-                    for step in route_steps
-                    if step.get("name")
-                    == "Classify extended verification applicability"
-                )
+                step["run"]
+                for step in route_steps
+                if step.get("name") == "Classify extended verification applicability"
             ),
             None,
         )
@@ -1230,12 +1227,9 @@ class ProviderSecurityGateTests(unittest.TestCase):
         route_steps = workflow["jobs"]["extended-route"]["steps"]
         route_script = next(
             (
-                (
-                    step["run"]
-                    for step in route_steps
-                    if step.get("name")
-                    == "Classify extended verification applicability"
-                )
+                step["run"]
+                for step in route_steps
+                if step.get("name") == "Classify extended verification applicability"
             ),
             None,
         )

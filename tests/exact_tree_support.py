@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
@@ -147,7 +148,9 @@ class ExactTreeFixture(unittest.TestCase):
         return child
 
     @staticmethod
-    def without_waiting(call: Any, fifo: Path) -> tuple[bool, list[Any]]:
+    def without_waiting(
+        call: Callable[[], object], fifo: Path
+    ) -> tuple[bool, list[Any]]:
         """Run `call` in a thread: whether it waited on `fifo` past 5 s, and its result
         or refusal code. A writer's open releases a reader that waits."""
         outcome: list[Any] = []

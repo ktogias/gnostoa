@@ -679,9 +679,7 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: the comparison was read only when a Python path reached past FULL.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-python"] = {"exclude": ["tools/", "tests/"]}
-        shell = next(
-            ((f for f in profile["families"] if f["id"] == "shell-lint")), None
-        )
+        shell = next((f for f in profile["families"] if f["id"] == "shell-lint"), None)
         if shell is None:
             self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-python", full=None)
@@ -704,11 +702,9 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         inventory = self._collect(base=self.base)
         command = next(
             (
-                (
-                    c
-                    for c, _cwd, _env in self._commands_of("shellcheck")
-                    if "--shell=sh" not in c
-                )
+                c
+                for c, _cwd, _env in self._commands_of("shellcheck")
+                if "--shell=sh" not in c
             ),
             None,
         )
@@ -805,9 +801,7 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: only what the family's scopes select can downgrade its row.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-tests"] = {"exclude": ["tests/"]}
-        shell = next(
-            ((f for f in profile["families"] if f["id"] == "shell-lint")), None
-        )
+        shell = next((f for f in profile["families"] if f["id"] == "shell-lint"), None)
         if shell is None:
             self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-tests", full="no-tests")

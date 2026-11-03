@@ -1021,11 +1021,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
             (
-                (
-                    b
-                    for b in result.blockers
-                    if b["code"] == "prior-qualification-receipt-not-current"
-                )
+                b
+                for b in result.blockers
+                if b["code"] == "prior-qualification-receipt-not-current"
             ),
             None,
         )
@@ -1781,11 +1779,9 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
             (
-                (
-                    b
-                    for b in result.blockers
-                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
-                )
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
             ),
             None,
         )
@@ -1800,11 +1796,9 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
             (
-                (
-                    b
-                    for b in result.blockers
-                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
-                )
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
             ),
             None,
         )
@@ -1821,11 +1815,9 @@ class ScheduleCompletenessTests(CapsuleFixture):
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
             (
-                (
-                    b
-                    for b in result.blockers
-                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
-                )
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
             ),
             None,
         )
