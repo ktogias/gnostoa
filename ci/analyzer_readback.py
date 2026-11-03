@@ -504,17 +504,24 @@ def _commit_tree(github: GitHubReader, repository: str, head: str) -> str:
 
 class _ScopeBudget:
     """How many files, and how many bytes, the readback may still read for its
-    findings' enclosing scopes."""
+    findings' enclosing scopes: a file is spent when it is requested, whatever the
+    answer, and its bytes when they are admitted."""
 
     def __init__(self) -> None:
         self.files = _SCOPE_FILES
         self.bytes = _SCOPE_TOTAL_BYTES
 
-    def admit(self, size: int) -> bool:
-        """Spend one file of `size` bytes, or refuse it past either bound."""
-        if self.files <= 0 or size > self.bytes:
+    def request(self) -> bool:
+        """Spend one request, or refuse it past the file bound."""
+        if self.files <= 0:
             return False
         self.files -= 1
+        return True
+
+    def admit(self, size: int) -> bool:
+        """Spend `size` bytes, or refuse them past the total bound."""
+        if size > self.bytes:
+            return False
         self.bytes -= size
         return True
 
@@ -525,6 +532,8 @@ def _head_source(
     """One file's text at the exact head, as GitHub's contents API returns it: a
     file, in base64, within the bounds and UTF-8. Anything else is None."""
 
+    if not budget.request():
+        return None
     url = (
         f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}?ref={head}"
     )

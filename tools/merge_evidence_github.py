@@ -1731,11 +1731,7 @@ def evidence_from_snapshot(
         "suppressions": _suppressions(files, suppression_markers),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
-        "analyzer_debt": (
-            {"coverage": "UNAVAILABLE", "entries": []}
-            if debt_ledger is None
-            else {"coverage": "COMPLETE", "entries": [dict(e) for e in debt_ledger]}
-        ),
+        "analyzer_debt": _analyzer_debt(debt_ledger),
         # The check items' receipts (1b.3b-1), SonarCloud's gate among them, and
         # the readback items' (1b.3b-2), SonarCloud's inventory among them (1b.3c).
         "receipts": [
@@ -1743,6 +1739,14 @@ def evidence_from_snapshot(
             *analyzer_receipts,
         ],
     }
+
+
+def _analyzer_debt(debt_ledger: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
+    """The protected target's debt ledger as evidence: UNAVAILABLE without one."""
+
+    if debt_ledger is None:
+        return {"coverage": "UNAVAILABLE", "entries": []}
+    return {"coverage": "COMPLETE", "entries": [dict(e) for e in debt_ledger]}
 
 
 def _analyzer_receipt(

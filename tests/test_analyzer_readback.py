@@ -1687,6 +1687,172 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("token", str(raised.exception).lower())
 
 
+def _full_read(*findings: dict[str, Any]) -> dict[str, Any]:
+    """The run's complete full read of the head, as DeepSource's adapter builds it."""
+    return analyzer_readback.build_readback(
+        provider="deepsource",
+        adapter="deepsource-graphql/v1",
+        repository="ktogias/gnostoa",
+        pull_number=312,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id=RUN_UID,
+        scope="FULL",
+        completeness="FULL_RUN",
+        native_mode="FULL_RUN",
+        observed_at=OBSERVED,
+        run_state="FAILURE",
+        coverage_record=analyzer_readback.coverage(
+            "COMPLETE", pages=1, count=len(findings), total=len(findings)
+        ),
+        findings=findings,
+    )
+
+
+def _full_finding(identity: str, line: int, message: str) -> dict[str, Any]:
+    return {
+        "id": identity,
+        "message": message,
+        "rule": "PY-TYPE",
+        "path": "tools/example.py",
+        "range": {"start_line": line, "end_line": line},
+    }
+
+
+def _python_status(state: str = "failure") -> dict[str, Any]:
+    return {
+        "context": "DeepSource: Python",
+        "source_kind": "commit_status",
+        "creator_login": "deepsource-io[bot]",
+        "creator_type": "Bot",
+        "state": state,
+        "target_url": (
+            f"https://app.deepsource.com/gh/ktogias/gnostoa/run/{RUN_UID}/python/"
+        ),
+    }
+
+
+def _marked_comment(marker: str, **change: Any) -> dict[str, Any]:
+    return {
+        "body": (
+            f"<!-- DeepSource: id={marker} -->\n"
+            "<h3><picture></picture>A finding</h3>\n"
+            "severity_major.svg category_typecheck.svg"
+        ),
+        "path": "tools/example.py",
+        "line": 7,
+        "commit_id": HEAD,
+        "original_commit_id": HEAD,
+        "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_r1",
+        "author_login": "deepsource-io[bot]",
+        "author_type": "Bot",
+        **change,
+    }
+
+
+# A comment made on another head that GitHub carries to this one, at line 9.
+_CARRIED = _marked_comment("carried", original_commit_id=OTHER_HEAD, line=9)
+
+
+class CarriedForwardTests(unittest.TestCase):
+    """A carried-forward comment and the same run's full read (#389, the M17
+    transition; addendum 6615072518): the read is complete only when that full
+    read shows the comment's finding gone from the head."""
+
+    @staticmethod
+    def _diff(
+        full: dict[str, Any] | None,
+        comments: list[dict[str, Any]] | None = None,
+        statuses: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=[_python_status()] if statuses is None else statuses,
+            comments=(
+                [_marked_comment("on-head"), _CARRIED] if comments is None else comments
+            ),
+            observed_at=OBSERVED,
+            full=full,
+        )
+
+    def test_a_comment_the_full_run_no_longer_lists_leaves_the_read_complete(
+        self,
+    ) -> None:
+        document = self._diff(_full_read(_full_finding("i-1", 3, "Issue i-1")))
+        self.assertEqual(
+            ("DIFF_LOCAL", "COMPLETE", None),
+            (
+                document["completeness"],
+                document["coverage"]["status"],
+                document["coverage"].get("reason"),
+            ),
+        )
+        self.assertEqual(["on-head"], [f["id"] for f in document["findings"]])
+        self.assertEqual(1, document["native"]["carried_forward_comments_excluded"])
+        self.assertEqual(
+            1, document["native"]["carried_forward_comments_absent_from_full_run"]
+        )
+
+    def test_otherwise_the_read_stays_partial(self) -> None:
+        full = _full_read(_full_finding("i-1", 3, "Issue i-1"))
+        unfinished = analyzer_readback.build_readback(
+            provider="deepsource",
+            adapter="deepsource-graphql/v1",
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id=RUN_UID,
+            scope="FULL",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="FULL_RUN",
+            observed_at=OBSERVED,
+            run_state="RUNNING",
+            coverage_record=analyzer_readback.coverage(
+                "PARTIAL", pages=1, count=0, reason="ANALYSIS_RUN_NOT_COMPLETE"
+            ),
+            findings=[],
+        )
+        untitled = {**_CARRIED, "body": "<!-- DeepSource: id=carried -->"}
+        for name, given, comments in (
+            ("no full read", None, None),
+            (
+                "the full run lists it",
+                _full_read(_full_finding("i-9", 9, "A finding")),
+                None,
+            ),
+            ("a full read not complete", unfinished, None),
+            ("another run's full read", {**full, "analysis_id": "other-run"}, None),
+            ("another head's full read", {**full, "observed_head": OTHER_HEAD}, None),
+            ("another provider's read", {**full, "provider": "codacy"}, None),
+            ("a diff read for the full one", self._diff(None, []), None),
+            ("a comment without a line", full, [{**_CARRIED, "line": None}]),
+            ("a comment without a path", full, [{**_CARRIED, "path": ""}]),
+            ("a comment without a title", full, [untitled]),
+        ):
+            with self.subTest(name):
+                document = self._diff(given, comments)
+                self.assertEqual("PARTIAL", document["coverage"]["status"])
+                self.assertEqual(
+                    "CARRIED_FORWARD_COMMENTS_EXCLUDED",
+                    document["coverage"]["reason"],
+                )
+                self.assertNotIn(
+                    "carried_forward_comments_absent_from_full_run",
+                    document["native"],
+                )
+
+    def test_an_analyzer_s_state_still_decides_first(self) -> None:
+        document = self._diff(_full_read(), statuses=[_python_status("pending")])
+        self.assertEqual(
+            ("PARTIAL", "ANALYZER_STATE_UNAVAILABLE"),
+            (document["coverage"]["status"], document["coverage"]["reason"]),
+        )
+
+
 class PaginationProgressTests(unittest.TestCase):
     def test_deepsource_check_cursor_must_advance(self) -> None:
         page = _run_page(cursor="same")

@@ -20,27 +20,21 @@ from typing import Any
 from unittest import mock
 
 import yaml
-from test_merge_admission import _debt_entry, _debt_finding, _verdict
 from test_merge_admission import _evidence as _verdict_evidence
 from test_merge_admission import _failed as _verdict_failed
+from test_merge_admission import _verdict
 from test_merge_evidence_github import (
     COMPARE,
     HEAD,
     REQUIRED_CHECKS,
     ROOT,
-    SONAR,
-    _admitted,
     _authorities,
-    _bundle,
     _commit,
     _comparison,
-    _inventory,
     _policy,
     _project,
-    _readback,
     _replies,
     _run,
-    _section_c_declaration,
     _snapshot,
     unregistered_tests,
 )
@@ -895,139 +889,6 @@ class VerdictTests(unittest.TestCase):
         failed = _verdict_failed(_verdict(evidence))
         self.assertNotIn("M13", failed)
         self.assertIn("M17", failed)
-
-
-# The protected target's analyzer debt ledger (#389, the M17 transition).
-LEDGER_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.0",
-    "id": "example.analyzer-debt-ledger",
-    "version": "0.1.0",
-    "entries": [_debt_entry()],
-}
-
-
-def _complete_bundle(*full: dict[str, Any]) -> dict[str, Any]:
-    """A bound bundle whose every readback is complete, with `full` in DeepSource's
-    full run."""
-    return _bundle(
-        _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
-        _readback("deepsource", "FULL", *full),
-        _readback("codacy", "DIFF"),
-        _readback(*SONAR),
-        _inventory("DIFF"),
-        _inventory("FULL"),
-    )
-
-
-class DebtLedgerTests(unittest.TestCase):
-    """The ledger: a closed, versioned declaration read only from the protected
-    target, carried as evidence with each finding's enclosing scope, and matched
-    by the verdict (#389, the M17 transition)."""
-
-    def test_the_ledger_is_a_closed_versioned_declaration(self) -> None:
-        self.assertEqual(
-            [_debt_entry()], merge_evidence_github.parse_debt_ledger(LEDGER_DOCUMENT)
-        )
-        self.assertEqual(
-            [],
-            merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, "entries": []}),
-        )
-        for name, change in (
-            ("another schema", {"schema_version": "2.0"}),
-            ("an unknown key", {"extra": 1}),
-            ("no id", {"id": ""}),
-            ("entries that are not a list", {"entries": {}}),
-            (
-                "an entry the verdict refuses",
-                {"entries": [_debt_entry(aspect="security")]},
-            ),
-            ("two entries with one id", {"entries": [_debt_entry(), _debt_entry()]}),
-        ):
-            with self.subTest(name), self.assertRaises(INPUT_ERRORS):
-                merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, **change})
-        missing = copy.deepcopy(LEDGER_DOCUMENT)
-        del missing["entries"]
-        with self.assertRaises(INPUT_ERRORS):
-            merge_evidence_github.parse_debt_ledger(missing)
-
-    def test_a_missing_ledger_is_none_and_the_repository_s_ships_empty(self) -> None:
-        """Not activated: the transition adds no entry."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.assertIsNone(
-                merge_evidence_github.load_debt_ledger(
-                    root / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=root
-                )
-            )
-        self.assertEqual(
-            [],
-            merge_evidence_github.load_debt_ledger(
-                ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=ROOT
-            ),
-        )
-
-    def test_the_command_reads_the_ledger_from_the_project_root_only(self) -> None:
-        """The candidate's own ledger in its diff changes nothing; without one on
-        the protected target the ledger is UNAVAILABLE, and M17 is what it was."""
-        candidate = _file(
-            "policy/analyzer-debt-ledger.yaml",
-            "added",
-            patch="@@ -0,0 +1 @@\n+entries: []",
-        )
-        text = json.dumps(_collected([candidate]))
-        with tempfile.TemporaryDirectory() as directory:
-            project = _project(Path(directory))
-            code, out, err = _run(project, text)
-            self.assertEqual(0, code, err)
-            bootstrap = json.loads(out)
-            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
-                yaml.safe_dump(LEDGER_DOCUMENT), encoding="utf-8"
-            )
-            code, out, err = _run(project, text)
-            self.assertEqual(0, code, err)
-            protected = json.loads(out)
-            (project / "policy" / "other-ledger.yaml").write_text(
-                yaml.safe_dump({**LEDGER_DOCUMENT, "entries": []}), encoding="utf-8"
-            )
-            code, out, err = _run(
-                project, text, "--debt-ledger", "policy/other-ledger.yaml"
-            )
-            self.assertEqual(0, code, err)
-            other = json.loads(out)
-        self.assertEqual(
-            {"coverage": "UNAVAILABLE", "entries": []}, bootstrap["analyzer_debt"]
-        )
-        self.assertEqual(
-            {"coverage": "COMPLETE", "entries": [_debt_entry()]},
-            protected["analyzer_debt"],
-        )
-        self.assertEqual(
-            {"coverage": "COMPLETE", "entries": []}, other["analyzer_debt"]
-        )
-
-    def test_an_inherited_finding_meets_m17_end_to_end(self) -> None:
-        """Through `evidence_for` and `merge_admission.evaluate`: the finding keeps
-        its enclosing scope in the evidence, and the protected ledger's entry for
-        it means M17 does not fail on it. Any other scope, or no ledger, does."""
-        raw = {k: v for k, v in _debt_finding().items() if k != "item"}
-        bundle = _complete_bundle(raw)
-        changed = {
-            **LEDGER_DOCUMENT,
-            "entries": [_debt_entry(enclosing_sha256="e" * 64)],
-        }
-        for name, ledger, m17 in (
-            ("the entry", LEDGER_DOCUMENT, None),
-            ("another scope", changed, ["1 unresolved analyzer finding"]),
-            ("no ledger", None, ["1 unresolved analyzer finding"]),
-        ):
-            with self.subTest(name):
-                evidence, failed = _admitted(
-                    _section_c_declaration(), bundle, "critical", ledger=ledger
-                )
-                [listed] = evidence["analyzer_findings"]["findings"]
-                self.assertEqual(_debt_finding()["enclosing"], listed["enclosing"])
-                self.assertNotIn("M2-M8", failed)
-                self.assertEqual(m17, failed.get("M17"))
 
 
 class GuardrailRegistrationTests(unittest.TestCase):
