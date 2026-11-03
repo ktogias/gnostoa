@@ -36,9 +36,10 @@ from test_merge_evidence_github import (
     _replies,
     _run,
     _snapshot,
+    adapter_fixture,
+    paged_fake_fixture,
     unregistered_tests,
 )
-from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
 
 from tools import assurance_completeness, merge_evidence_github
 
