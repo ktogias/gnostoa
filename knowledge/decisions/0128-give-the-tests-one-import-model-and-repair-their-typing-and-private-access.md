@@ -81,7 +81,7 @@ only part of the declared strict scope (source `ci-gap`).
      so it stays isolated without a bare-import exception.
 3. **The touched files' typing diagnostics are repaired** under N1a's rules: no `cast`,
    `type: ignore`, weakened assertion, renamed or removed test, or skip (source `typing-rules`).
-4. **The touched files' SLF001 findings are repaired, by kind** (counts measured on the remedy):
+4. **The touched files' SLF001 findings are cleared, by kind** (counts measured on the remedy):
    - 189 reach private helpers of the moved L1 fixtures. Those helpers are now the
      support module's shared API, so they get public names.
    - 101 reach privates of a statically imported `tools` module.
@@ -115,12 +115,15 @@ only part of the declared strict scope (source `ci-gap`).
 
 ## Verification
 
-- **Collection:** the runner collects the same tests, by module and id, as on `main`. No file is
-  loaded under two module names. The suite's outcome is unchanged.
+- **Collection:** the runner collects `main`'s tests, by module and id, plus the 2 this PR adds: the
+  #221 contract test and the shell-helper characterization. No file is loaded under two module names,
+  and the suite's outcome is otherwise unchanged.
 - **Typing:** the exit test's `import-not-found` falls to the 2 fixture repositories with their own
   source roots.
-- **The collector's DIFF lists 0 findings for the PR's head:** typing, SLF001 and complexity
-  included.
+- **The collector's DIFF lists 0 findings on every file but `tests/test_tools.py`:** typing, SLF001
+  and complexity included. Because of the admitted digest line, the collector reads that file
+  whole and lists its own 12 typing diagnostics. #477's T1 repairs those 12, and they go when this
+  PR rebases onto it.
 - **#221:** an invalid change in an omitted path passes the current step and fails the new one.
   The new contract test fails on the current step and passes on the new one.
 - **The full round passes,** with exact-parent receipts.

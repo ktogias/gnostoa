@@ -19,11 +19,9 @@ import time
 import traceback
 import unittest
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest import mock
 
-if TYPE_CHECKING:
-    pass
 from tests.exact_tree_support import _ENV, ExactTreeFixture, _owner, git
 from tests.quality_evidence_profile_support import _original
 
