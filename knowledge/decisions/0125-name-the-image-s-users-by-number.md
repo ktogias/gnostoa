@@ -61,6 +61,12 @@ sources:
   - id: review-477
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6588287035
     title: "#477's review round 1: the restoration job's failed import and the residue probe's missing image"
+  - id: typ028-admission
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6606320054
+    title: "The owner's admission of the step reader's TYP-028 remedy and its characterization test"
+  - id: typ028-round-5
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6608390902
+    title: "#477's round 5: TYP-028 gone from DeepSource's exact-head run, and the touched file's pre-existing findings"
 x-project-knowledge:
   id: kit.decision.0125.name-the-image-s-users-by-number
   owners:
@@ -235,33 +241,6 @@ in `package-return` and `package-delta`, and routed in `package-route`). Items 5
 added, with `main`'s same-file factoring in item 6. Items 2 and 4, Verification and
 Consequences follow them.
 
-### `TYP-028`: the step reader's located YAML (owner 6606320054 on #389)
-
-The owner admitted two more paths into this change: `tools/quality_evidence.py`, for `TYP-028`'s
-remedy, and its permanent characterization test, `tests/test_quality_evidence_located_load.py`.
-- **The finding:** DeepSource's `TYP-028` lists the step reader's located loader. It is a subclass
-  of `yaml.BaseLoader`, which has type `Any` where PyYAML is untyped. M17 counts it on every PR
-  whose tests import the module. Without PyYAML's stubs, mypy with `--disallow-subclassing-any`
-  reports it at line 3390 of the parent.
-- **The remedy:** `_located_load(text)` replaces the subclass at its one call site. It runs
-  `yaml.compose` with the same `BaseLoader`, then builds each node as `BaseConstructor` builds it.
-  An alias returns the object its anchor built. A node that contains itself, and an unhashable key,
-  are refused as before. Each scalar is the same `_Located`, with the same `first` and `step`.
-- **The oracle is the replaced implementation:**
-  - The test pins that implementation's outputs, written by it on the parent `81c41aa0`. Per
-    document, it holds the structure, every scalar's value, type, `first` and `step`, alias
-    identity, and the class of each refusal. Its cases are 20 edge cases and one workflow; every
-    tracked workflow must also read as `BaseLoader` reads it.
-  - It passed on the parent before the edit. Two mutants of the old loader, `first` off by one and a
-    literal's `step` set to 0, each fail it.
-- **The evidence:**
-  - Both implementations give identical results on 77 documents: 57 tracked YAML
-    files and 20 edge cases, 7 of them refused.
-  - The `test_quality_evidence*` modules run 461 tests, OK; they ran 458 on the parent.
-  - After the remedy, mypy reports nothing at that line.
-- **Its limit:** the evidence is local. DeepSource's exact-head run is the falsifier: `TYP-028`
-  still listed, or a behaviour that differs, rejects the remedy.
-
 ## Review corrections
 
 This text, r4, corrects r3 (14207 bytes, SHA-256
@@ -299,3 +278,40 @@ changes in one place, the mode guard, which now also refuses an invalid mode und
   `yaml.safe_load`. On that file it gives the same document as `BaseLoader`.
 - `tests/test_tool_acquisition.py`'s mode guard raises instead of asserting, so it also holds under
   `python -O`, where an `assert` is removed.
+
+## The step reader's located YAML (`TYP-028`)
+
+This text amends the version #477 published at `81c41aa0` (17,361 bytes, SHA-256
+`6db90a1b98593ba80fd913e14621ea180f8c6f7b2e64a918416b2ec515cc3321`), on the owner's admission of two more
+paths into this change (source `typ028-admission`): `tools/quality_evidence.py`, for `TYP-028`'s
+remedy, and its permanent characterization test, `tests/test_quality_evidence_located_load.py`.
+
+- **The finding:** DeepSource's `TYP-028` lists the step reader's located loader. It is a subclass
+  of `yaml.BaseLoader`, which has type `Any` where PyYAML is untyped. M17 counts it on every PR
+  whose tests import the module. Without PyYAML's stubs, mypy with `--disallow-subclassing-any`
+  reports it at line 3390 of the parent.
+- **The remedy:** `_located_load(text)` replaces the subclass at its one call site. It runs
+  `yaml.compose` with the same `BaseLoader`, then builds each node as `BaseConstructor` builds it.
+  An alias returns the object its anchor built. A node that contains itself, and an unhashable key,
+  are refused as before. Each scalar is the same `_Located`, with the same `first` and `step`. A
+  module function, `_located_value`, builds each node, so `_located_load` stays within Sonar's
+  cognitive limit.
+- **The oracle is the replaced implementation:**
+  - The test pins that implementation's outputs, written by it on the parent `81c41aa0`. Per
+    document, it holds the structure, every scalar's value, type, `first` and `step`, alias
+    identity, and the class of each refusal. Its cases are 20 edge cases and one workflow; every
+    tracked workflow must also read as `BaseLoader` reads it.
+  - That check reads each workflow by `yaml.BaseLoader(text).get_single_data()`, the loader call
+    `yaml.load` makes. Written out, it is not the call form Bandit's B506 matches; on the 17 tracked
+    workflows and the 77 documents it equals `yaml.load`'s result. `yaml.safe_load` differs on all
+    17 workflows: `on:` becomes the key `True`.
+  - It passed on the parent before the edit. Two mutants of the old loader, `first` off by one and a
+    literal's `step` set to 0, each fail it.
+- **The evidence:**
+  - Both implementations give identical results on 77 documents: 57 tracked YAML
+    files and 20 edge cases, 7 of them refused.
+  - The `test_quality_evidence*` modules run 461 tests, OK; they ran 458 on the parent.
+  - After the remedy, mypy reports nothing at that line.
+- **The falsifier's result:** DeepSource's complete exact-head run at `b003c5fd` lists no `TYP-028`
+  (source `typ028-round-5`). Touching the file also enters its pre-existing findings into that run;
+  that remainder is for the owner's decision there.
