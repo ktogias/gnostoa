@@ -188,7 +188,9 @@ This text amends the first published version (6,773 bytes, SHA-256
    `tests/quality_evidence_fixtures.py`, which this PR does not change, stay untyped until that
    path is admitted.
 8. **The analyzers' other rules on the touched files:** outside the two held files, the repairs follow
-   one remedy per rule, as the readback measured them:
+   one remedy per rule, as the readback measured them. The held files are `tests/test_quality_evidence.py`,
+   whose patch is past M13's cap while the owner chooses its route (#389 6600810770), and
+   `tests/quality_evidence_fixtures.py`, whose admission is pending (#389 6598180505):
    - **Nested `with` pairs** become one `with`, outer items first.
    - **Helpers that never read `self`** are static methods. A test method stays one, because unittest
      cannot select a static test by its id.
@@ -197,7 +199,8 @@ This text amends the first published version (6,773 bytes, SHA-256
      `StopIteration` itself.
    - **A partial executable path** is resolved with `shutil.which` over the search path `subprocess` uses.
    - **An `assertRaises` block** keeps one call that can raise. Any other call moves just before the
-     block, inside the same contexts.
+     block, inside the same contexts. This changes one outcome: if a moved call raised the expected
+     exception, the test passed before and now errors.
    - **A stand-in's unused positional parameter** takes a `_` prefix. A keyword-only one keeps its name.
 
    **Retained, and still counted by M17:**
