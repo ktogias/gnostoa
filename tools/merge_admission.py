@@ -75,7 +75,13 @@ _DEBT_ENTRY_KEYS = frozenset(
         "provenance",
     }
 )
+# The analyzer's identity at the entry's proof, as the finding names it (PAO P2,
+# 6614901388): an entry without one matches only a finding without one.
+_DEBT_ENTRY_OPTIONAL_KEYS = frozenset({"tool"})
 _DEBT_PROVENANCE_KEYS = frozenset({"commit", "readback_run", "admitted_by"})
+# Each provider's own security category, compared without case: such a finding is
+# never matched, whatever its entry says.
+_SECURITY_CATEGORIES = frozenset({"security", "vulnerability", "security_hotspot"})
 # The aspects an entry may name. A security finding is never inherited debt: it is
 # repaired (PAO 6614901388 on #389).
 _DEBT_ASPECTS = frozenset(
@@ -400,65 +406,77 @@ def _debt_entries(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
         raise AssuranceCompletenessError("analyzer_debt entries must be a list")
     if record["coverage"] == "UNAVAILABLE" and entries:
         raise AssuranceCompletenessError("analyzer_debt has entries but no ledger")
-    result: list[dict[str, Any]] = []
-    for index, item in enumerate(entries):
-        label = f"analyzer_debt entry {index}"
-        entry = require_mapping(item, label)
-        require_closed_keys(entry, label, _DEBT_ENTRY_KEYS)
-        for key in ("id", "item", "rule", "path", "message"):
-            require_text(entry[key], f"{label} {key}")
-        digest = entry["enclosing_sha256"]
-        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-            raise AssuranceCompletenessError(
-                f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
-            )
-        if entry["aspect"] == "security":
-            raise AssuranceCompletenessError(
-                f"{label} is a security finding, which is never inherited debt"
-            )
-        if entry["aspect"] not in _DEBT_ASPECTS:
-            raise AssuranceCompletenessError(
-                f"{label} aspect {entry['aspect']!r} is unknown"
-            )
-        provenance = require_mapping(entry["provenance"], f"{label} provenance")
-        require_closed_keys(provenance, f"{label} provenance", _DEBT_PROVENANCE_KEYS)
-        require_commit(provenance["commit"], f"{label} provenance commit")
-        require_text(provenance["readback_run"], f"{label} provenance readback_run")
-        require_text(provenance["admitted_by"], f"{label} provenance admitted_by")
-        result.append(dict(entry))
+    result = [
+        _debt_entry(item, f"analyzer_debt entry {index}")
+        for index, item in enumerate(entries)
+    ]
     require_unique_texts(
         [e["id"] for e in result], "analyzer_debt entry ids", allow_empty=True
     )
     return result
 
 
-def _finding_identity(finding: Mapping[str, Any]) -> tuple[str, ...] | None:
-    """What a finding must share with a ledger entry: its item, rule, path, message
-    and enclosing scope. One without a rule, a path or a scope has none."""
+def _debt_entry(item: object, label: str) -> dict[str, Any]:
+    entry = require_mapping(item, label)
+    require_closed_keys(entry, label, _DEBT_ENTRY_KEYS, _DEBT_ENTRY_OPTIONAL_KEYS)
+    for key in ("id", "item", "rule", "path", "message"):
+        require_text(entry[key], f"{label} {key}")
+    digest = entry["enclosing_sha256"]
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        raise AssuranceCompletenessError(
+            f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
+        )
+    if entry["aspect"] == "security":
+        raise AssuranceCompletenessError(
+            f"{label} is a security finding, which is never inherited debt"
+        )
+    if entry["aspect"] not in _DEBT_ASPECTS:
+        raise AssuranceCompletenessError(
+            f"{label} aspect {entry['aspect']!r} is unknown"
+        )
+    provenance = require_mapping(entry["provenance"], f"{label} provenance")
+    require_closed_keys(provenance, f"{label} provenance", _DEBT_PROVENANCE_KEYS)
+    require_commit(provenance["commit"], f"{label} provenance commit")
+    require_text(provenance["readback_run"], f"{label} provenance readback_run")
+    require_text(provenance["admitted_by"], f"{label} provenance admitted_by")
+    if "tool" in entry:
+        tool = require_mapping(entry["tool"], f"{label} tool")
+        require_closed_keys(
+            tool, f"{label} tool", frozenset({"id"}), frozenset({"name"})
+        )
+        for key in tool:
+            require_text(tool[key], f"{label} tool {key}")
+    return dict(entry)
+
+
+def _finding_identity(
+    finding: Mapping[str, Any],
+) -> tuple[str | None, ...] | None:
+    """What a finding must share with a ledger entry: its item, rule, path, message,
+    enclosing scope and tool. One without a rule, a path or a scope has none, and
+    neither has a security finding."""
 
     enclosing = finding.get("enclosing")
     if (
         not isinstance(enclosing, Mapping)
         or "rule" not in finding
         or "path" not in finding
+        or str(finding.get("category", "")).casefold() in _SECURITY_CATEGORIES
     ):
         return None
-    return (
-        finding["item"],
-        finding["rule"],
-        finding["path"],
-        finding["message"],
-        enclosing["sha256"],
-    )
+    return _identity(finding, enclosing["sha256"])
 
 
-def _entry_identity(entry: Mapping[str, Any]) -> tuple[str, ...]:
+def _identity(record: Mapping[str, Any], enclosing: str) -> tuple[str | None, ...]:
+    tool = record.get("tool") or {}
     return (
-        entry["item"],
-        entry["rule"],
-        entry["path"],
-        entry["message"],
-        entry["enclosing_sha256"],
+        record["item"],
+        record["rule"],
+        record["path"],
+        record["message"],
+        enclosing,
+        tool.get("id"),
+        tool.get("name"),
     )
 
 
@@ -503,15 +521,34 @@ def _analyzer_findings(
     # Only a complete read is matched: without it, every finding counts, and no
     # entry is called resolved (#389, the M17 transition).
     matchable = not reasons
-    available: dict[tuple[str, ...], list[str]] = {}
-    if matchable:
-        for entry in entries:
-            available.setdefault(_entry_identity(entry), []).append(entry["id"])
+    inherited = _inherited(findings, entries) if matchable else []
+    matched = {record["ledger_entry"] for record in inherited}
+    resolved = (
+        [entry["id"] for entry in entries if entry["id"] not in matched]
+        if matchable
+        else []
+    )
+    unresolved = len(findings) - len(inherited)
+    if unresolved:
+        plural = "" if unresolved == 1 else "s"
+        reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
+    return _criterion("M17", reasons), findings, inherited, resolved
+
+
+def _inherited(
+    findings: list[dict[str, Any]], entries: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """Each finding matched to its own entry of the same identity, in order: an
+    entry absorbs one finding, so a repeated finding beyond it still counts."""
+
+    available: dict[tuple[str | None, ...], list[str]] = {}
+    for entry in entries:
+        identity = _identity(entry, entry["enclosing_sha256"])
+        available.setdefault(identity, []).append(entry["id"])
     inherited: list[dict[str, str]] = []
-    unresolved = 0
     for finding in findings:
-        identity = _finding_identity(finding)
-        ids = available.get(identity) if identity is not None else None
+        key = _finding_identity(finding)
+        ids = available.get(key) if key is not None else None
         if ids:
             inherited.append(
                 {
@@ -520,18 +557,7 @@ def _analyzer_findings(
                     "ledger_entry": ids.pop(0),
                 }
             )
-        else:
-            unresolved += 1
-    matched = {record["ledger_entry"] for record in inherited}
-    resolved = (
-        [entry["id"] for entry in entries if entry["id"] not in matched]
-        if matchable
-        else []
-    )
-    if unresolved:
-        plural = "" if unresolved == 1 else "s"
-        reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
-    return _criterion("M17", reasons), findings, inherited, resolved
+    return inherited
 
 
 def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:

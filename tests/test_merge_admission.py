@@ -1162,6 +1162,7 @@ def _debt_entry(**changes: Any) -> dict[str, Any]:
         "path": "tools/x.py",
         "message": "`f` has a cyclomatic complexity of 16",
         "enclosing_sha256": _SCOPE,
+        "tool": {"id": "python"},
         "aspect": "complexity",
         "provenance": {
             "commit": "d" * 40,
@@ -1180,6 +1181,7 @@ def _debt_finding(**changes: Any) -> dict[str, Any]:
         "message": "`f` has a cyclomatic complexity of 16",
         "rule": "PY-R1000",
         "path": "tools/x.py",
+        "tool": {"id": "python"},
         "enclosing": {"kind": "function", "name": "f", "sha256": _SCOPE},
     }
     finding.update(changes)
@@ -1222,6 +1224,10 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 _debt_finding(message="`f` has a cyclomatic complexity of 17"),
             ),
             ("a changed scope", _debt_finding(enclosing=other_scope)),
+            # The analyzer's identity at the entry's proof (PAO P2, 6614901388).
+            ("another tool", _debt_finding(tool={"id": "mypy"})),
+            ("a named tool", _debt_finding(tool={"id": "python", "name": "Python"})),
+            ("no tool", {k: v for k, v in _debt_finding().items() if k != "tool"}),
             (
                 "no scope",
                 {k: v for k, v in _debt_finding().items() if k != "enclosing"},
@@ -1234,6 +1240,34 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 )
                 self.assertEqual([], verdict["for_approval"]["inherited_findings"])
                 self.assertEqual(["debt-1"], verdict["for_approval"]["resolved_debt"])
+
+    def test_an_entry_without_a_tool_matches_only_a_finding_without_one(self) -> None:
+        entry = {k: v for k, v in _debt_entry().items() if k != "tool"}
+        finding = {k: v for k, v in _debt_finding().items() if k != "tool"}
+        self.assertEqual({}, _failed(self._verdict([finding], [entry])))
+        self.assertEqual(
+            {"M17": ["1 unresolved analyzer finding"]},
+            _failed(self._verdict([_debt_finding()], [entry])),
+        )
+
+    def test_a_security_finding_is_never_inherited(self) -> None:
+        """Whatever its entry says (PAO 6614901388): each provider's own security
+        category, in any case, is repaired, never ledgered."""
+        for category in ("SECURITY", "Security", "VULNERABILITY", "SECURITY_HOTSPOT"):
+            with self.subTest(category):
+                verdict = self._verdict(
+                    [_debt_finding(category=category)], [_debt_entry()]
+                )
+                self.assertEqual(
+                    {"M17": ["1 unresolved analyzer finding"]}, _failed(verdict)
+                )
+                self.assertEqual([], verdict["for_approval"]["inherited_findings"])
+        self.assertEqual(
+            {},
+            _failed(
+                self._verdict([_debt_finding(category="PERFORMANCE")], [_debt_entry()])
+            ),
+        )
 
     def test_an_entry_absorbs_one_finding(self) -> None:
         verdict = self._verdict(
@@ -1297,6 +1331,13 @@ class DebtLedgerM17Tests(unittest.TestCase):
                         {**entry, "enclosing_sha256": "C" * 64},
                     ),
                     ("an unknown aspect", {**entry, "aspect": "taste"}),
+                    ("a tool that is not an object", {**entry, "tool": "python"}),
+                    ("a tool without its id", {**entry, "tool": {"name": "Python"}}),
+                    (
+                        "a tool with an unknown field",
+                        {**entry, "tool": {"id": "py", "x": "y"}},
+                    ),
+                    ("a tool that is null", {**entry, "tool": None}),
                     ("a security finding", {**entry, "aspect": "security"}),
                     (
                         "a commit that is not exact",
