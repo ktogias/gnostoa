@@ -196,6 +196,109 @@ def _codacy_issue(issue_id: str, line: int) -> dict[str, Any]:
     }
 
 
+class EnclosingScopeTests(unittest.TestCase):
+    """A finding's enclosing scope: the content identity by which M17's debt ledger
+    matches a finding, whatever its line number (#389, 6614964854 and 6615072518)."""
+
+    SOURCE = (
+        "import os\n"
+        "\n"
+        "\n"
+        "@decorator\n"
+        "def outer(x):\n"
+        "    def inner():\n"
+        "        return x\n"
+        "    return inner\n"
+        "\n"
+        "\n"
+        "class Box:\n"
+        "    def get(self):\n"
+        "        return 1\n"
+    )
+
+    def _digest(self, first: int, last: int) -> str:
+        lines = self.SOURCE.splitlines()
+        return hashlib.sha256("\n".join(lines[first - 1 : last]).encode()).hexdigest()
+
+    def test_the_smallest_enclosing_function_or_class_holds_the_line(self) -> None:
+        """Its lines, decorators included, are what is hashed."""
+
+        cases = {
+            4: ("function", "outer", 4, 8),
+            5: ("function", "outer", 4, 8),
+            7: ("function", "inner", 6, 7),
+            11: ("class", "Box", 11, 13),
+            13: ("function", "get", 12, 13),
+        }
+        for line, (kind, name, first, last) in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(
+                    {"kind": kind, "name": name, "sha256": self._digest(first, last)},
+                    analyzer_readback.enclosing_scope(self.SOURCE, line),
+                )
+
+    def test_a_line_outside_any_scope_or_unparsable_source_has_none(self) -> None:
+        for source, line in (
+            (self.SOURCE, 1),
+            (self.SOURCE, 9),
+            (self.SOURCE, 0),
+            (self.SOURCE, 99),
+            ("def broken(:\n", 1),
+        ):
+            with self.subTest(line=line, source=source[:12]):
+                self.assertIsNone(analyzer_readback.enclosing_scope(source, line))
+
+    def test_a_finding_keeps_a_closed_enclosing_scope(self) -> None:
+        scope = {"kind": "function", "name": "outer", "sha256": "a" * 64}
+        finding = analyzer_readback.normalize_finding(
+            {"id": "f", "message": "m", "enclosing": scope}
+        )
+        self.assertEqual(scope, finding["enclosing"])
+        for bad in (
+            {**scope, "kind": "module"},
+            {**scope, "sha256": "A" * 64},
+            {**scope, "sha256": "a" * 63},
+            {**scope, "extra": "x"},
+            {"kind": "function", "name": "outer"},
+            {**scope, "name": ""},
+            "outer",
+        ):
+            with (
+                self.subTest(bad=bad),
+                self.assertRaises(analyzer_readback.AnalyzerReadbackError),
+            ):
+                analyzer_readback.normalize_finding(
+                    {"id": "f", "message": "m", "enclosing": bad}
+                )
+
+    def test_a_readback_with_an_enclosing_scope_rebuilds_exactly(self) -> None:
+        document = analyzer_readback.build_readback(
+            provider="synthetic-analyzer",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=9,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run-9",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="COMPLETE_SCAN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record=analyzer_readback.coverage("COMPLETE", pages=1, count=1),
+            findings=[
+                {
+                    "id": "provider-1",
+                    "message": "an issue",
+                    "path": "a.py",
+                    "enclosing": {"kind": "class", "name": "Box", "sha256": "b" * 64},
+                }
+            ],
+        )
+        self.assertEqual(document, analyzer_readback.parse_readback(document))
+        self.assertEqual("Box", document["findings"][0]["enclosing"]["name"])
+
+
 class AnalyzerReadbackModelTests(unittest.TestCase):
     def test_finding_rejects_reversed_same_line_columns(self) -> None:
         with self.assertRaisesRegex(
