@@ -973,10 +973,23 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
             return real(path)
 
         def run(
-            command: list[str], **options: object
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
         ) -> tuple[int | None, str | None, bool]:
             order.append("launch")
-            return self._fake_run(command, **options)
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
 
         self.versions = dict(PINS)
         with (

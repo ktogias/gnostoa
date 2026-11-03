@@ -16,12 +16,15 @@ import tempfile
 import threading
 import time
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import IO, Any
 from unittest.mock import MagicMock, Mock, patch
 
 from tools.quality_evidence import (
+    DiagnosticLimits,
     QualityEvidenceError,
+    _ProducerResult,
 )
 
 _DIAGNOSTIC_SAMPLE = (
@@ -163,7 +166,7 @@ class _RaisingRead:
     """A stream whose read raises `error`. The real stream's descriptor, its checks
     and its closing are kept."""
 
-    def __init__(self, stream, error: type[BaseException]) -> None:
+    def __init__(self, stream: IO[bytes], error: type[BaseException]) -> None:
         self.stream = stream
         self.error = error
 
@@ -290,7 +293,7 @@ class _DiagnosticFixture(unittest.TestCase):
         """A side effect that answers through `real` once, then raises `failure`."""
         calls: list[int] = []
 
-        def answer(*args, **kwargs):
+        def answer(*args: object, **kwargs: object) -> object:
             calls.append(1)
             if len(calls) > 1:
                 raise failure
@@ -303,7 +306,9 @@ class _DiagnosticFixture(unittest.TestCase):
         return self._git("rev-parse", "HEAD")
 
     @staticmethod
-    def _find(inventory: dict, tool: str, rule, path: str, line: int) -> list[dict]:
+    def _find(
+        inventory: dict[str, Any], tool: str, rule: str | None, path: str, line: int
+    ) -> list[dict[str, Any]]:
         return [
             f
             for f in inventory["findings"]
@@ -314,7 +319,7 @@ class _DiagnosticFixture(unittest.TestCase):
         ]
 
     @staticmethod
-    def _read(path: Path) -> dict:
+    def _read(path: Path) -> dict[str, Any]:
         return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
@@ -332,7 +337,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
     def setUp(self) -> None:
         super().setUp()
-        self.mypy_records: dict[str, list[dict]] = {
+        self.mypy_records: dict[str, list[dict[str, Any]]] = {
             "tests/test_sample.py": [
                 self._mypy(
                     "tests/test_sample.py",
@@ -392,7 +397,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         code: str | None,
         message: str,
         severity: str = "error",
-    ) -> dict:
+    ) -> dict[str, Any]:
         return {
             "file": path,
             "line": line,
@@ -405,7 +410,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "severity": severity,
         }
 
-    def _ruff(self, path: str, line: int, column: int, code: str, message: str) -> dict:
+    def _ruff(
+        self, path: str, line: int, column: int, code: str, message: str
+    ) -> dict[str, Any]:
         return {
             "cell": None,
             "code": code,
@@ -417,7 +424,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "url": None,
         }
 
-    def _source_root(self, cwd) -> Path:
+    def _source_root(self, cwd: Path) -> Path:
         """The root the producers ran in: the run's staged copy of the frozen tree,
         `<output>/<run>/source`, never the checkout (#389 F3 S2 B); or the fixture's
         root, for a producer a test runs on it directly."""
@@ -429,16 +436,25 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             raise AssertionError(f"a producer ran outside a staged source: {cwd}")
         return output / relative.parts[0] / relative.parts[1]
 
-    def _group(self, cwd) -> str:
+    def _group(self, cwd: Path) -> str:
         """A producer's working directory, relative to the root it analyzed."""
         return Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
 
-    def _staged_text(self, text: str, cwd) -> str:
+    def _staged_text(self, text: str, cwd: Path) -> str:
         """`text` as a producer run in `cwd` writes it: its absolute names under the
         staged source it read, never the checkout (#389 F3 S2 B)."""
         return text.replace(str(self.root.resolve()), str(self._source_root(cwd)))
 
-    def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
+    def _fake_run(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        environment: dict[str, str],
+        report: Path,
+        deadline: float,
+        limits: DiagnosticLimits,
+    ) -> tuple[int | None, str | None, bool]:
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
             version = self.versions.get(command[3], "1.0.0")
@@ -478,7 +494,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
 
-    def _ruff_answer(self, command: list[str]) -> list:
+    def _ruff_answer(self, command: list[str]) -> list[dict[str, Any]]:
         """The records the fake Ruff reports for `command`: every record a test holds,
         for the report-parsing and budget tests, unless `ruff_as_ruff` makes it answer
         as Ruff does, with only its selected rules on the files it was given (#389
@@ -490,7 +506,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         given = set(command[command.index("--") + 1 :])
         root = self.root.resolve()
 
-        def reported(record) -> bool:
+        def reported(record: object) -> bool:
             if not isinstance(record, dict):
                 return True
             code, name = record.get("code"), record.get("filename")
@@ -533,15 +549,23 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             "gnostoa-producer-environment-observation/v2",
         ]
 
-    def _restored_environment(self):
+    def _restored_environment(
+        self,
+    ) -> Callable[..., tuple[int | None, str | None, bool]]:
         """A launcher whose environment is A, becomes B while mypy runs, and is A
         again after Ruff, before the last observation: the case equal endpoints
         cannot see (PAO 6347682576; cubic on #452)."""
-        # Unannotated, as in the fixture's other untyped helpers: an annotation in
-        # an untyped body is a mypy note the inventory acquires.
-        installed = {"now": ()}
+        installed: dict[str, tuple[str, ...]] = {"now": ()}
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if command == self._observation_command():
                 report.write_text(self._observation(installed["now"]), encoding="utf-8")
                 return 0, None, False
@@ -583,13 +607,13 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             sort_keys=True,
         )
 
-    def _inventory(self, **options) -> dict:
+    def _inventory(self, **options: object) -> dict[str, Any]:
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
             path = self.collect(self.root, self.output, **options)
         self.run_directory = Path(path).parent
         return self._read(path)
 
-    def _tracked_fifo(self):
+    def _tracked_fifo(self) -> Callable[[], None]:
         """Replace tools/sample.py with a FIFO. Opening one waits for a writer, so a
         thread becomes that writer after two seconds unless the returned `done` is
         called first: a regression is slow and fails instead of hanging (CodeAnt on
@@ -619,7 +643,13 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
         return done
 
-    def _read_raises(self, error: type[BaseException], path: str):
+    def _read_raises(
+        self, error: type[BaseException], path: str
+    ) -> tuple[
+        contextlib.AbstractContextManager[object],
+        contextlib.AbstractContextManager[object],
+        list[_RaisingRead],
+    ]:
         """Patches making the metric's existing stream read raise `error` for `path`
         alone, and the streams they replaced: the boundary is exercised by injection,
         never by exhausting memory (the Router's L2, 6228117951 on #436)."""
@@ -632,22 +662,33 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         streams: list[_RaisingRead] = []
         real_open, real_fdopen = os.open, os.fdopen
 
-        def matches(name, flags) -> bool:
+        def matches(name: str | os.PathLike[str], flags: int) -> bool:
             if flags & (os.O_WRONLY | os.O_RDWR):
                 return False
             real = os.path.realpath(name)
             return real == target or (real.startswith(output) and real.endswith(staged))
 
-        def opening(name, flags, *args, **kwargs):
-            descriptor = real_open(name, flags, *args, **kwargs)
+        def opening(
+            name: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = real_open(name, flags, mode, dir_fd=dir_fd)
             if matches(name, flags):
                 failing.add(descriptor)
             else:
                 failing.discard(descriptor)
             return descriptor
 
-        def wrapping(descriptor, *args, **kwargs):
-            stream = real_fdopen(descriptor, *args, **kwargs)
+        def wrapping(
+            descriptor: int,
+            mode: str = "r",
+            buffering: int = -1,
+            encoding: str | None = None,
+        ) -> IO[Any] | _RaisingRead:
+            stream = real_fdopen(descriptor, mode, buffering, encoding=encoding)
             if descriptor not in failing:
                 return stream
             failing.discard(descriptor)
@@ -669,15 +710,23 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         real_open = os.open
         roots = [os.path.realpath(self.root)]
 
-        def opening(name, flags, *args, **kwargs):
+        def opening(
+            name: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             path = os.path.realpath(name)
             for root in roots[1:]:
                 if path.startswith(root + os.sep) and path.endswith(".py"):
                     opened.append(os.path.relpath(path, root))
-            return real_open(name, flags, *args, **kwargs)
+            return real_open(name, flags, mode, dir_fd=dir_fd)
 
-        def measuring(*, spec):
-            def metric(root, *args, **kwargs):
+        def measuring(*, spec: Callable[..., object]) -> MagicMock:
+            def metric(
+                root: str | os.PathLike[str], *args: object, **kwargs: object
+            ) -> object:
                 roots.append(os.path.realpath(root))
                 try:
                     return spec(root, *args, **kwargs)
@@ -687,7 +736,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             return MagicMock(side_effect=metric)
 
         @contextlib.contextmanager
-        def spying():
+        def spying() -> Iterator[None]:
             with (
                 patch.object(self.module.os, "open", side_effect=opening),
                 patch.object(
@@ -698,18 +747,45 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
         return spying(), opened
 
-    def _with_a_real_main_mypy(self, script: str):
+    def _with_a_real_main_mypy(
+        self, script: str
+    ) -> contextlib.AbstractContextManager[object]:
         """A patch of _bounded_run under which the main mypy group runs `script` in a
         real child, through the real runner; every other producer is the fake. The
         real runner is the original the patch hands its new_callable (spec=True)."""
 
-        def delegate(*, spec):
-            def run(command, **options):
-                cwd = Path(options["cwd"]).resolve()
-                main = cwd == self._source_root(cwd)
+        def delegate(
+            *, spec: Callable[..., tuple[int | None, str | None, bool]]
+        ) -> MagicMock:
+            def run(
+                command: list[str],
+                *,
+                cwd: Path,
+                environment: dict[str, str],
+                report: Path,
+                deadline: float,
+                limits: DiagnosticLimits,
+            ) -> tuple[int | None, str | None, bool]:
+                resolved = Path(cwd).resolve()
+                main = resolved == self._source_root(resolved)
                 if main and "mypy" in command and "--version" not in command:
-                    return spec([sys.executable, "-I", "-c", script], **options)
-                return self._fake_run(command, **options)
+                    command = [sys.executable, "-I", "-c", script]
+                    return spec(
+                        command,
+                        cwd=cwd,
+                        environment=environment,
+                        report=report,
+                        deadline=deadline,
+                        limits=limits,
+                    )
+                return self._fake_run(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    report=report,
+                    deadline=deadline,
+                    limits=limits,
+                )
 
             return MagicMock(side_effect=run)
 
@@ -736,8 +812,18 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         (where / ".gnostoa-source-files").write_bytes(b"tools/sample.py\0")
         return where
 
-    def _collect_spied(self, root: Path, output: Path, **options):
-        def quiet(command, *, cwd, environment, report, deadline, limits):
+    def _collect_spied(
+        self, root: Path, output: Path, **options: object
+    ) -> tuple[dict[str, Any], Mock, Mock]:
+        def quiet(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             # A root outside the fixture's repository: the version answer, no findings.
             if "--version" in command:
                 report.write_text(f"{command[3]} 1.0.0\n", encoding="utf-8")
@@ -763,7 +849,7 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             path = self.collect(root, output, **options)
         return self._read(path), state, comparison
 
-    def _refused_spied(self, root: Path, **options):
+    def _refused_spied(self, root: Path, **options: object) -> tuple[str, Mock, Mock]:
         state = _v1_subject_spy()
         with (
             patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
@@ -779,7 +865,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             self.collect(root, self.output, **options)
         return str(raised.exception), state, comparison
 
-    def _ruff_alone(self, records, max_findings: int):
+    def _ruff_alone(
+        self, records: list[dict[str, Any]], max_findings: int
+    ) -> tuple[_ProducerResult, Path]:
         """`_run_ruff` alone, over the fake producer's `records`, under `max_findings`."""
         self.ruff_records = records
         run = Path(tempfile.mkdtemp(prefix="ruff-run-", dir=self.directory.name))
@@ -801,14 +889,22 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             )
         return result, run
 
-    def _late_by(self, stage: str):
+    def _late_by(
+        self, stage: str
+    ) -> tuple[
+        contextlib.AbstractContextManager[object],
+        contextlib.AbstractContextManager[object],
+        contextlib.AbstractContextManager[object],
+    ]:
         """A clock that passes the deadline during `stage`: the inventory document's
         serialization, or the creation of its output handle (the Router's T1), seen
         at the exclusive open of the inventory's name that creates it."""
         clock = [1000.0]
-        real_dumps, real_open = json.dumps, os.open
+        # The real dumps, as the typed stdlib callable the double forwards to.
+        real_dumps: Callable[..., str] = json.dumps
+        real_open = os.open
 
-        def dumps(value, *args, **kwargs):
+        def dumps(value: object, *args: object, **kwargs: object) -> str:
             if (
                 stage == "serialization"
                 and isinstance(value, dict)
@@ -817,14 +913,20 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
                 clock[0] = 10_000.0
             return real_dumps(value, *args, **kwargs)
 
-        def opening(name, flags, *args, **kwargs):
+        def opening(
+            name: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             if (
                 stage == "output"
                 and flags & os.O_CREAT
                 and os.path.basename(name) == self.module.DIAGNOSTIC_INVENTORY
             ):
                 clock[0] = 10_000.0
-            return real_open(name, flags, *args, **kwargs)
+            return real_open(name, flags, mode, dir_fd=dir_fd)
 
         return (
             patch.object(self.module.time, "monotonic", side_effect=lambda: clock[0]),
@@ -853,25 +955,27 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             encoding="utf-8"
         )
 
-    def _report_read_raises(self, pattern: str, error: OSError):
+    def _report_read_raises(
+        self, pattern: str, error: OSError
+    ) -> contextlib.AbstractContextManager[object]:
         """A patch making the read of the one report whose name matches `pattern`
         raise `error`."""
-        original = Path.read_text
+        original: Callable[..., str] = Path.read_text
 
-        def reading(path, *args, **kwargs):
+        def reading(path: Path, *args: object, **kwargs: object) -> str:
             if path.match(pattern):
                 raise error
             return original(path, *args, **kwargs)
 
         return patch.object(Path, "read_text", autospec=True, side_effect=reading)
 
-    def _reasons(self, inventory: dict) -> dict[str, str]:
+    def _reasons(self, inventory: dict[str, Any]) -> dict[str, str]:
         return {
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
 
     @contextlib.contextmanager
-    def _watched_work(self):
+    def _watched_work(self) -> Iterator[dict[str, Mock]]:
         """Spies, by name, on each piece of work a diagnostic collection does, where
         v2 does it: the producers, the scope owner's metadata check (`subject`), the
         exact-tree owner's enumeration (`scope`) and staging (`stage`), which run their
@@ -935,14 +1039,16 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "one change")
 
-    def _uncompared(self, base: str, reader=None) -> dict:
+    def _uncompared(
+        self, base: str, reader: Callable[..., str] | None = None
+    ) -> dict[str, Any]:
         """Collect against `base` and require the comparison's named gap: no diff
         read, no comparison published, every finding kept with in_diff null. Each
         real function is the original its patch hands its new_callable (spec=True)."""
         comparing: list[bool] = []
 
-        def annotation(*, spec):
-            def annotating(*args, **kwargs):
+        def annotation(*, spec: Callable[..., object]) -> MagicMock:
+            def annotating(*args: object, **kwargs: object) -> object:
                 comparing.append(True)
                 try:
                     return spec(*args, **kwargs)
@@ -951,10 +1057,12 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
             return MagicMock(side_effect=annotating)
 
-        def comparison(*, spec):
+        def comparison(*, spec: Callable[..., str]) -> MagicMock:
             chosen = reader or spec
 
-            def comparison_only(root, deadline, *arguments, **options):
+            def comparison_only(
+                root: Path, deadline: float, *arguments: str, **options: int
+            ) -> str:
                 # The reader under test answers the comparison's reads alone, while
                 # the comparison runs; the freeze's reads of the subject's own commit
                 # and tree stay real, whatever they name (#389 F3 S2 B; Amazon Q on
