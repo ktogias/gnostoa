@@ -4318,15 +4318,22 @@ def _admitted(
     declaration: dict[str, Any],
     bundle: dict[str, Any],
     change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     """The merge decision on one head under `declaration`, with `bundle` as its
     analyzer readback, the gate green, and the body's class `change_class` if given:
     the evidence and the failed criteria. Module-level, so each class's tests call
-    it without reaching into another's private member (#461's own inventory)."""
+    it without reaching into another's private member (#461's own inventory). A
+    `ledger` is the protected target's analyzer debt ledger (#389)."""
     with tempfile.TemporaryDirectory() as directory:
         project = _project(Path(directory))
         path = project / "policy" / "assurance-evidence.yaml"
         path.write_text(yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8")
+        if ledger is not None:
+            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
+                yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8"
+            )
         # The gate passed on the exact head, so every check item is
         # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
         gate = {

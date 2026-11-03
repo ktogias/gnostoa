@@ -390,12 +390,18 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
 
 
 def _debt_entries(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """The protected target's debt ledger entries, each closed and typed, or none
-    without a ledger (#389, the M17 transition). A security finding is refused."""
-
     if "analyzer_debt" not in evidence:
         return []
-    record = require_mapping(evidence["analyzer_debt"], "analyzer_debt")
+    return parse_analyzer_debt(evidence["analyzer_debt"])
+
+
+def parse_analyzer_debt(value: object) -> list[dict[str, Any]]:
+    """The protected target's debt ledger as the evidence carries it: its entries,
+    each closed and typed, or none without a ledger (#389, the M17 transition). A
+    security finding is refused. Merge evidence checks a loaded ledger with this
+    too, so the two never disagree on an entry."""
+
+    record = require_mapping(value, "analyzer_debt")
     require_closed_keys(record, "analyzer_debt", _DEBT_KEYS)
     if record["coverage"] not in _DEBT_COVERAGES:
         raise AssuranceCompletenessError(

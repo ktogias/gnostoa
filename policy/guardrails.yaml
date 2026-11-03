@@ -1029,6 +1029,10 @@ guardrails:
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_line_and_reason_are_carried_and_typed
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_an_unjustified_suppression_is_denied_at_its_line
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_a_justified_suppression_does_not_discharge_a_finding
+      - tests/test_merge_evidence_suppressions.py::DebtLedgerTests.test_the_ledger_is_a_closed_versioned_declaration
+      - tests/test_merge_evidence_suppressions.py::DebtLedgerTests.test_a_missing_ledger_is_none_and_the_repository_s_ships_empty
+      - tests/test_merge_evidence_suppressions.py::DebtLedgerTests.test_the_command_reads_the_ledger_from_the_project_root_only
+      - tests/test_merge_evidence_suppressions.py::DebtLedgerTests.test_an_inherited_finding_meets_m17_end_to_end
       - tests/test_merge_evidence_suppressions.py::GuardrailRegistrationTests.test_every_test_in_this_module_is_registered_in_its_guardrail
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_a_missing_readback_gives_its_item_no_receipt
       - tests/test_merge_evidence_github.py::AnalyzerReceiptTests.test_an_unknown_repeated_or_invalid_readback_fails_the_run
