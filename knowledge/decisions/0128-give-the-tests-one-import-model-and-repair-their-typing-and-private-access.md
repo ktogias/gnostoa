@@ -187,3 +187,26 @@ This text amends the first published version (6,773 bytes, SHA-256
    No assertion is removed, and SLF001 stays at 0. Calls into
    `tests/quality_evidence_fixtures.py`, which this PR does not change, stay untyped until that
    path is admitted.
+8. **The analyzers' other rules on the touched files:** outside the two held files, the repairs follow
+   one remedy per rule, as the readback measured them:
+   - **Nested `with` pairs** become one `with`, outer items first.
+   - **Helpers that never read `self`** are static methods. A test method stays one, because unittest
+     cannot select a static test by its id.
+   - **Attributes a test class reassigns outside `__init__`** are declared at class level, without a value.
+   - **A bare `next()`** takes a default and fails explicitly. A stand-in's `__next__` raises
+     `StopIteration` itself.
+   - **A partial executable path** is resolved with `shutil.which` over the search path `subprocess` uses.
+   - **An `assertRaises` block** keeps one call that can raise. Any other call moves just before the
+     block, inside the same contexts.
+   - **A stand-in's unused positional parameter** takes a `_` prefix. A keyword-only one keeps its name.
+
+   **Retained, and still counted by M17:**
+   - `PYL-R0201` on that test method (1).
+   - `PYL-W0613` on the keyword-only `timeout` parameters (2).
+   - `PTC-W0046` (5) and SonarCloud's `python:S5899` (7): fixture classes that subclass
+     `unittest.TestCase` without tests. PAO defers the mixin restructuring that would clear them to a
+     change of its own after this PR (PAO 6602993309).
+   - Codacy's subprocess audit (2 Bandit, 3 Semgrep). No code form clears it together with `B607`
+     on every host that runs the suite. A bare name returns `B607`. A literal `/usr/bin` path fails where a
+     binary lives elsewhere, such as Homebrew on macOS. Its patterns on `tests/` are a provider-side
+     decision for the owner (#389 6598155432).
