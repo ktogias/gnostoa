@@ -471,11 +471,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             stderr=b"",
         )
         with mock.patch.object(outer, "_run_docker", return_value=forbidden_listeners):
+            verify_daemon_control_plane = _original(
+                outer, "_verify_daemon_control_plane"
+            )
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "unexpectedly exposes TCP control plane on 2375, 2376",
             ):
-                _original(outer, "_verify_daemon_control_plane")(
+                verify_daemon_control_plane(
                     "gnostoa-r2a-daemon-test", Path("/tmp/config")
                 )
 
@@ -485,11 +488,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             stderr=b"synthetic inspection failure",
         )
         with mock.patch.object(outer, "_run_docker", return_value=inspection_failure):
+            verify_daemon_control_plane = _original(
+                outer, "_verify_daemon_control_plane"
+            )
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "cannot inspect isolated Docker daemon listening sockets",
             ):
-                _original(outer, "_verify_daemon_control_plane")(
+                verify_daemon_control_plane(
                     "gnostoa-r2a-daemon-test", Path("/tmp/config")
                 )
 
@@ -504,13 +510,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         with mock.patch.object(
             outer, "_checked_output", return_value=b"malformed-volume-reply\n"
         ):
+            volume_create = _original(outer, "_volume_create")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "malformed isolated-volume identity",
             ):
-                _original(outer, "_volume_create")(
-                    volume_name, config_dir, owned_volumes
-                )
+                volume_create(volume_name, config_dir, owned_volumes)
         self.assertEqual([volume_name], owned_volumes)
 
         owned_containers: list[str] = []
@@ -518,13 +523,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         with mock.patch.object(
             outer, "_checked_output", return_value=b"malformed-container-reply\n"
         ):
+            container_create = _original(outer, "_container_create")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "malformed isolated-container identity",
             ):
-                _original(outer, "_container_create")(
-                    [], container_name, config_dir, owned_containers
-                )
+                container_create([], container_name, config_dir, owned_containers)
         self.assertEqual([container_name], owned_containers)
 
     def test_cleanup_retries_transient_container_failure(self) -> None:
@@ -571,11 +575,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 return_value="synthetic cleanup failure",
             ),
         ):
+            initialize_tmp_volume = _original(outer, "_initialize_tmp_volume")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "synthetic cleanup failure",
             ):
-                _original(outer, "_initialize_tmp_volume")(
+                initialize_tmp_volume(
                     tmp_volume="gnostoa-r2a-tmp-test",
                     config_dir=Path("/tmp/config"),
                     owned_containers=owned,
@@ -645,11 +650,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         for invalid_payload in invalid_payloads:
             raw = (outer.canonical_json(invalid_payload) + "\n").encode("utf-8")
             with self.subTest(invalid_payload=invalid_payload):
+                decode_outer_result = _original(outer, "_decode_outer_result")
                 with self.assertRaisesRegex(
                     outer.PriorEffectiveOuterUnavailable,
                     "error envelope is malformed",
                 ):
-                    _original(outer, "_decode_outer_result")(2, raw)
+                    decode_outer_result(2, raw)
 
     def test_hypothetically_admitted_tmp_setup_failure_returns_canonical_tool_error(
         self,

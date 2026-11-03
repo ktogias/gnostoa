@@ -2377,6 +2377,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         1
                     ]
                 )
+                diagnostic_git = _original(self.module, "_diagnostic_git")
                 with (
                     patch.object(
                         self.module.bounded_process, "drain", return_value=outcome
@@ -2384,9 +2385,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                     patch.object(self.module, "_reap", reap),
                     self.assertRaises(raised) as caught,
                 ):
-                    _original(self.module, "_diagnostic_git")(
-                        self.root, deadline, "rev-parse", "HEAD", cap=4096
-                    )
+                    diagnostic_git(self.root, deadline, "rev-parse", "HEAD", cap=4096)
                 self.assertEqual(1, reap.call_count)
                 if label == "deadline":
                     self.assertEqual("git", caught.exception.cmd)
@@ -2397,14 +2396,13 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         with self.subTest("an unavailable output, failed reap"):
             deadline = time.monotonic() + 30
             process = SimpleNamespace(stdout=None, returncode=None)
+            diagnostic_git = _original(self.module, "_diagnostic_git")
             with (
                 patch("tools.quality_evidence.subprocess.Popen", return_value=process),
                 patch.object(self.module, "_reap", Mock(return_value=failed)),
                 self.assertRaises(refused) as caught,
             ):
-                _original(self.module, "_diagnostic_git")(
-                    self.root, deadline, "rev-parse", "HEAD", cap=4096
-                )
+                diagnostic_git(self.root, deadline, "rev-parse", "HEAD", cap=4096)
             self.assertEqual(
                 f"the comparison's Git output is unavailable; {failed}",
                 str(caught.exception),
@@ -2432,6 +2430,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 raise interrupt
 
             deadline = time.monotonic() + 30
+            diagnostic_git = _original(self.module, "_diagnostic_git")
             with (
                 patch.object(
                     candidate_prepare, "_git_executable", return_value=str(slow)
@@ -2442,9 +2441,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 patch.object(self.module.bounded_process, "reap", reap),
                 self.assertRaises(type(interrupt)) as raised,
             ):
-                _original(self.module, "_diagnostic_git")(
-                    self.root, deadline, "rev-parse", "HEAD", cap=4096
-                )
+                diagnostic_git(self.root, deadline, "rev-parse", "HEAD", cap=4096)
             return raised.exception, seen["process"]
 
         for kind in (KeyboardInterrupt, SystemExit):
@@ -2473,14 +2470,16 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 _original(self.module, "_diagnostic_git")(
                     self.root, deadline, "rev-parse", "HEAD"
                 )
+                diagnostic_git = _original(self.module, "_diagnostic_git")
                 with self.assertRaises(subprocess.CalledProcessError):
-                    _original(self.module, "_diagnostic_git")(
+                    diagnostic_git(
                         self.root, deadline, "rev-parse", "--verify", "no-such-ref"
                     )
             self.assertEqual(0, reap.call_count)
         with self.subTest("a failed spawn reaps nothing"):
             reap = Mock(side_effect=real_reap)
             deadline = time.monotonic() + 30
+            diagnostic_git = _original(self.module, "_diagnostic_git")
             with (
                 patch.object(self.module.bounded_process, "reap", reap),
                 patch(
@@ -2489,9 +2488,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 ),
                 self.assertRaises(FileNotFoundError),
             ):
-                _original(self.module, "_diagnostic_git")(
-                    self.root, deadline, "rev-parse", "HEAD"
-                )
+                diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
             self.assertEqual(0, reap.call_count)
         with self.subTest("an interrupted comparison writes no inventory"):
             reap = Mock(side_effect=real_reap)
@@ -2548,12 +2545,11 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             self.root, deadline, "rev-parse", "HEAD", cap=41
         )
         self.assertEqual(head + "\n", answer)
+        diagnostic_git = _original(self.module, "_diagnostic_git")
         with self.assertRaisesRegex(
             ValueError, "the comparison's Git output exceeds max_report_bytes"
         ):
-            _original(self.module, "_diagnostic_git")(
-                self.root, deadline, "rev-parse", "HEAD", cap=40
-            )
+            diagnostic_git(self.root, deadline, "rev-parse", "HEAD", cap=40)
 
     def test_a_spent_budget_spawns_no_git_and_a_failed_read_is_its_exit(self) -> None:
         # The Router's G1: past the deadline no Git starts, and a non-zero exit stays
@@ -2563,14 +2559,14 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             "tools.quality_evidence.subprocess.Popen",
             side_effect=AssertionError("Git started past the deadline"),
         ):
+            diagnostic_git = _original(self.module, "_diagnostic_git")
             with self.assertRaisesRegex(
                 subprocess.SubprocessError, "deadline had passed"
             ):
-                _original(self.module, "_diagnostic_git")(
-                    self.root, spent, "rev-parse", "HEAD", cap=4096
-                )
+                diagnostic_git(self.root, spent, "rev-parse", "HEAD", cap=4096)
+        diagnostic_git = _original(self.module, "_diagnostic_git")
         with self.assertRaises(subprocess.CalledProcessError):
-            _original(self.module, "_diagnostic_git")(
+            diagnostic_git(
                 self.root,
                 deadline,
                 "rev-parse",
@@ -2595,6 +2591,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             with self.subTest(cap=cap):
                 spy = Mock(side_effect=real)
                 deadline = time.monotonic() + 30
+                diff_scope = _original(self.module, "_diff_scope")
                 with (
                     patch.object(self.module, "_diagnostic_git", spy),
                     self.assertRaisesRegex(
@@ -2602,7 +2599,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         "the comparison's Git output exceeds max_report_bytes",
                     ),
                 ):
-                    _original(self.module, "_diff_scope")(
+                    diff_scope(
                         self.root, self.base, deadline, cap=cap, head=self._head()
                     )
                 verbs = [call.args[2] for call in spy.call_args_list]
@@ -2866,8 +2863,9 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             gaps=[],
         )
         deadline = time.monotonic() + 30
+        publish = _original(self.module, "_publish")
         with self.assertRaises(FileExistsError):
-            _original(self.module, "_publish")(run, deadline, **arguments)
+            publish(run, deadline, **arguments)
         self.assertEqual(b"not ours\n", existing.read_bytes())
         existing.unlink()
         real = _original(self.module, "_new_file")
@@ -2882,6 +2880,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             stream.write = write
             return stream
 
+        publish = _original(self.module, "_publish")
         with (
             patch.object(self.module, "_new_file", side_effect=partial),
             patch.object(
@@ -2889,7 +2888,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ),
             self.assertRaises(OSError) as raised,
         ):
-            _original(self.module, "_publish")(run, deadline, **arguments)
+            publish(run, deadline, **arguments)
         self.assertEqual(errno.ENOSPC, raised.exception.errno)
         notes = getattr(raised.exception, "__notes__", [])
         self.assertEqual(1, len(notes), notes)
@@ -3892,8 +3891,10 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         owner = importlib.import_module("tools.exact_tree")
         with patch.dict(owner.__dict__):
             del owner.__dict__["_GIT_ENV"]
-            with self.assertRaises(_original(self.module, "_ComparisonUnavailable")):
-                _original(self.module, "_no_fetch_policy")()
+            comparison_unavailable = _original(self.module, "_ComparisonUnavailable")
+            no_fetch_policy = _original(self.module, "_no_fetch_policy")
+            with self.assertRaises(comparison_unavailable):
+                no_fetch_policy()
         self.assertEqual(
             {"GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1"},
             _original(self.module, "_no_fetch_policy")(),
@@ -4435,6 +4436,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
         # S5778).
         spent = time.monotonic() - 1.0
         head = self._head()
+        diff_scope = _original(self.module, "_diff_scope")
         with (
             patch(
                 "tools.quality_evidence.subprocess.run",
@@ -4442,9 +4444,7 @@ class DiagnosticInventoryEndToEndTests(_DiagnosticFixture):
             ),
             self.assertRaisesRegex(subprocess.SubprocessError, "deadline had passed"),
         ):
-            _original(self.module, "_diff_scope")(
-                self.root, self.base, spent, head=head
-            )
+            diff_scope(self.root, self.base, spent, head=head)
 
     def test_a_spent_budget_reads_no_subject(self) -> None:
         with (

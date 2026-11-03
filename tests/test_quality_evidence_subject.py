@@ -2205,8 +2205,10 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual(6553 * 64 - 1, sum(1 for _ in lines))
         self.assertEqual([], chunks)
         endless = [b"x" * 65536] * 64
+        record_lines = _original(observer, "_record_lines")
+        record_stream = record_lines(endless)
         with self.assertRaises(csv.Error):
-            next(_original(observer, "_record_lines")(endless))
+            next(record_stream)
         self.assertGreater(len(endless), 40)
         # CodeAnt on #453: a line whose end falls in the chunk that takes it past the
         # bound is refused before it is joined; one at the bound, its newline

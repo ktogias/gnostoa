@@ -303,8 +303,9 @@ class SecretBaselineTests(unittest.TestCase):
         process.poll.return_value = None
         process.wait.side_effect = subprocess.TimeoutExpired(["scanner"], 1)
 
+        terminate_and_reap = _original(security_scan, "_terminate_and_reap")
         with self.assertRaisesRegex(SecurityScanError, "could not be reaped"):
-            _original(security_scan, "_terminate_and_reap")(process)
+            terminate_and_reap(process)
 
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
@@ -348,8 +349,9 @@ class SecretBaselineTests(unittest.TestCase):
                     ),
                 ),
             ):
+                run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                 with self.assertRaises(SecurityScanError) as raised:
-                    _original(security_scan, "_run_bounded_scan")(
+                    run_bounded_scan(
                         ["scanner"],
                         cwd=Path("."),
                         timeout=1,
@@ -902,8 +904,9 @@ class SecretBaselineTests(unittest.TestCase):
                 script = f"import sys; sys.{stream}.buffer.write(b'x' * 65)"
                 with self.subTest(stream=stream):
                     with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
+                        run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                         with self.assertRaisesRegex(SecurityScanError, expected):
-                            _original(security_scan, "_run_bounded_scan")(
+                            run_bounded_scan(
                                 [sys.executable, "-c", script],
                                 cwd=Path(directory),
                                 timeout=5,
@@ -1352,7 +1355,8 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 )
         (process,) = self.started
         self.assertIsNotNone(process.poll(), "the child was left running")
-        assert process.stdout is not None and process.stderr is not None
+        if process.stdout is None or process.stderr is None:
+            self.fail("the child must have both pipes")
         self.assertTrue(process.stdout.closed and process.stderr.closed)
 
     def test_a_nonzero_exit_is_returned_not_raised(self) -> None:
@@ -1392,7 +1396,8 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
             with self.assertRaises(SecurityScanError):
                 self._scan("print('too long')")
         for process in self.started:
-            assert process.stdout is not None and process.stderr is not None
+            if process.stdout is None or process.stderr is None:
+                self.fail("the child must have both pipes")
             self.assertTrue(process.stdout.closed and process.stderr.closed)
             self.assertIsNotNone(process.poll())
 

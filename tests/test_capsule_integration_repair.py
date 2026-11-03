@@ -434,7 +434,10 @@ class RelayImageBindingTests(CapsuleFixture):
         payload = result.task("T1").as_json()
         execution = payload["execution_profile"]
         qualification = payload["qualification_profiles"]
-        assert isinstance(execution, dict) and isinstance(qualification, dict)
+        if not isinstance(execution, dict) or not isinstance(qualification, dict):
+            self.fail(
+                "the lock's execution and qualification profiles must be mappings"
+            )
         self.assertEqual(execution["runtime"]["relay_image"], RELAY_DIGEST)
         # The qualification profiles never carry one.
         for profile in qualification.values():

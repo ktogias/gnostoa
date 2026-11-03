@@ -352,8 +352,9 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "https://api.github.com:not-a-port/repos/ktogias/gnostoa",
         ):
             with self.subTest(url=url):
+                validate_api_url = _original(adapter, "_validate_api_url")
                 with self.assertRaises(adapter.ProviderReadError):
-                    _original(adapter, "_validate_api_url")(url)
+                    validate_api_url(url)
 
     def test_github_redirect_handler_rejects_escape_from_admitted_origin(self) -> None:
         fixtures = _fixtures()

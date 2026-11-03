@@ -150,3 +150,13 @@ This text amends the first published version (6,773 bytes, SHA-256
 4. **#221's digest:** that version left out `tests/test_tools.py`. Its `_PROTECTED_JOB_STEPS_SHA256`
    pins the python-compatibility job's steps, so the step change changes that job's digest. The owner
    admitted that one line (source `digest-admission`).
+5. **The analyzers' readback on the published head:** the remedy's own lines held two shapes that
+   SonarCloud and DeepSource flag:
+   - **Inside `assertRaises`.** Point 4's `_original(module, "_name")(...)` put a second call there.
+     In 35 blocks, the lookup now sits just above the `with`, where it returns the same object, so
+     each block keeps `main`'s one invocation. One generator is created there as well; creating it
+     runs none of its body.
+   - **The typing narrowings.** 5 were written as composite `assert`s and are now
+     `if … : self.fail(…)`. That narrows the same way, and also holds under `python -O`.
+
+   Across 10 files, no lookup crosses a patch of the same name.

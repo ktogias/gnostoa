@@ -169,6 +169,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     selector = mock.Mock()
                     selector.get_map.return_value = {10: True}
                     selector.select.side_effect = error
+                    run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                     with (
                         tempfile.TemporaryDirectory() as directory,
                         mock.patch(
@@ -179,9 +180,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         mock.patch("selectors.DefaultSelector", return_value=selector),
                         self.assertRaises(security_scan.SecurityScanError) as raised,
                     ):
-                        _original(security_scan, "_run_bounded_scan")(
-                            ["fixture"], cwd=Path(directory), timeout=5
-                        )
+                        run_bounded_scan(["fixture"], cwd=Path(directory), timeout=5)
                     self.assertIn(symbol, str(raised.exception))
                     self.assertNotIn(PRIVATE, str(raised.exception))
                     self.assertLess(len(str(raised.exception)), 256)
@@ -229,11 +228,14 @@ class ReviewFollowupTests(unittest.TestCase):
         self.assertIn("EACCES", str(read_error.exception))
         self.assertNotIn(PRIVATE, str(read_error.exception))
 
+        copy_candidate_to_snapshot = _original(
+            security_scan, "_copy_candidate_to_snapshot"
+        )
         with (
             mock.patch.object(security_scan.os, "dup", side_effect=error),
             self.assertRaises(security_scan.SecurityScanError) as snapshot_error,
         ):
-            _original(security_scan, "_copy_candidate_to_snapshot")(
+            copy_candidate_to_snapshot(
                 10,
                 Path("."),
                 Path("tracked.txt"),
@@ -362,6 +364,9 @@ class ReviewFollowupTests(unittest.TestCase):
                             )
 
                     try:
+                        copy_candidate_to_snapshot = _original(
+                            security_scan, "_copy_candidate_to_snapshot"
+                        )
                         with (
                             mock.patch.object(
                                 security_scan,
@@ -377,7 +382,7 @@ class ReviewFollowupTests(unittest.TestCase):
                                 security_scan.SecurityScanError
                             ) as raised,
                         ):
-                            _original(security_scan, "_copy_candidate_to_snapshot")(
+                            copy_candidate_to_snapshot(
                                 root_descriptor,
                                 snapshot,
                                 Path("tracked.txt"),
@@ -448,6 +453,9 @@ class ReviewFollowupTests(unittest.TestCase):
                     return None
 
                 try:
+                    copy_candidate_to_snapshot = _original(
+                        security_scan, "_copy_candidate_to_snapshot"
+                    )
                     with (
                         mock.patch.object(
                             security_scan,
@@ -456,7 +464,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         ),
                         self.assertRaises(security_scan.SecurityScanError) as raised,
                     ):
-                        _original(security_scan, "_copy_candidate_to_snapshot")(
+                        copy_candidate_to_snapshot(
                             root_descriptor,
                             snapshot,
                             Path("nested/tracked.txt"),
@@ -864,6 +872,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     if runner == "docker"
                     else security_scan.SecurityScanError
                 )
+                run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                 with (
                     mock.patch("subprocess.Popen", return_value=process),
                     mock.patch("selectors.DefaultSelector", return_value=selector),
@@ -885,9 +894,7 @@ class ReviewFollowupTests(unittest.TestCase):
                             input_bytes=b"payload",
                         )
                     else:
-                        _original(security_scan, "_run_bounded_scan")(
-                            ["fixture"], cwd=Path(directory), timeout=10
-                        )
+                        run_bounded_scan(["fixture"], cwd=Path(directory), timeout=10)
 
                 message = str(raised.exception)
                 self.assertIn("unexpected MemoryError", message)

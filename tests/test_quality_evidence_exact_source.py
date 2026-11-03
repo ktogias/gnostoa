@@ -411,10 +411,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     def test_a_diagnostic_read_fetches_no_missing_object(self) -> None:
         marker = Path(self.directory.name) / "was fetched"
         _promisor(self.root, self._git, marker)
+        diagnostic_git = _original(self.module, "_diagnostic_git")
         with self.assertRaises(subprocess.CalledProcessError):
-            _original(self.module, "_diagnostic_git")(
-                self.root, time.monotonic() + 60, "cat-file", "-p", "1" * 40
-            )
+            diagnostic_git(self.root, time.monotonic() + 60, "cat-file", "-p", "1" * 40)
         self.assertFalse(marker.exists())
 
     # The whole chain, with a base to compare: staging, enumeration and the
@@ -607,8 +606,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             with self.subTest(label):
                 started, spawning = self._spawns()
                 with patch.dict(_original(owner, "_GIT_ENV"), change), spawning:
+                    diagnostic_git = _original(self.module, "_diagnostic_git")
                     with self.assertRaises((OSError, ValueError)) as raised:
-                        _original(self.module, "_diagnostic_git")(
+                        diagnostic_git(
                             self.root, time.monotonic() + 60, "rev-parse", "HEAD"
                         )
                 self.assertIn("no-fetch policy", str(raised.exception))
@@ -616,8 +616,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         with self.subTest("the owner cannot be imported"):
             started, spawning = self._spawns()
             with patch.dict(sys.modules, {"tools.exact_tree": None}), spawning:
+                diagnostic_git = _original(self.module, "_diagnostic_git")
                 with self.assertRaises((OSError, ValueError)) as raised:
-                    _original(self.module, "_diagnostic_git")(
+                    diagnostic_git(
                         self.root, time.monotonic() + 60, "rev-parse", "HEAD"
                     )
             self.assertIn("no-fetch policy", str(raised.exception))

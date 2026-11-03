@@ -185,13 +185,14 @@ class ReviewOuterContainmentTests(unittest.TestCase):
                     [*value, "2.0"] if isinstance(value, list) else value + "-changed"
                 )
                 with self.subTest(field=field):
+                    require_transport_compatible_consumer = _original(
+                        review_outer, "_require_transport_compatible_consumer"
+                    )
                     with self.assertRaisesRegex(
                         review_outer.PriorEffectiveOuterUnavailable,
                         "transport is not admitted",
                     ):
-                        _original(
-                            review_outer, "_require_transport_compatible_consumer"
-                        )(changed)
+                        require_transport_compatible_consumer(changed)
 
     def test_hypothetical_catalog_entry_does_not_bypass_image_proof(self) -> None:
         protected = ProtectedMainDocument("c" * 40, _consumer_authority())
@@ -377,20 +378,20 @@ class ContainmentSmokeTests(unittest.TestCase):
             (2, _unavailable_bytes() + b" "),
         ):
             with self.subTest(code=code, raw=raw):
+                assert_contained_result = _original(smoke, "_assert_contained_result")
                 with self.assertRaisesRegex(
                     RuntimeError, "exact transport containment"
                 ):
-                    _original(smoke, "_assert_contained_result")(code, raw)
+                    assert_contained_result(code, raw)
         _original(smoke, "_assert_contained_result")(2, _unavailable_bytes())
 
     def test_smoke_fails_if_real_route_attempts_outer_execution(self) -> None:
         smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         protected = ProtectedMainDocument("c" * 40, _historical_p2b_authority())
         with mock.patch.object(review_outer, "_require_transport_compatible_consumer"):
+            exercise_containment = _original(smoke, "_exercise_containment")
             with self.assertRaisesRegex(AssertionError, "outer temporary resource"):
-                _original(smoke, "_exercise_containment")(
-                    protected, _current_advisory_input()
-                )
+                exercise_containment(protected, _current_advisory_input())
 
 
 class MergeSubjectSecurityTests(unittest.TestCase):

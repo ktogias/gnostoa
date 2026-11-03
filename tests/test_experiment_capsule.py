@@ -93,7 +93,8 @@ class D1PreloadTests(CapsuleFixture):
                 f"{field} must not change when only a mechanical preload is declared",
             )
         harness_a, harness_b = a.task("T1").harness, b.task("T1").harness
-        assert harness_a is not None and harness_b is not None
+        if harness_a is None or harness_b is None:
+            self.fail("both preparations must stage a harness")
         self.assertNotEqual(harness_a.identity, harness_b.identity)
 
 
@@ -527,7 +528,8 @@ class EndToEndReadinessTests(CapsuleFixture):
         self.assertIsNotNone(result.lock_path)
         payload = compiler.lock_module.load(result.lock_path)
         experiment, launch = payload["experiment"], payload["launch"]
-        assert isinstance(experiment, dict) and isinstance(launch, dict)
+        if not isinstance(experiment, dict) or not isinstance(launch, dict):
+            self.fail("the lock's experiment and launch must be mappings")
         self.assertEqual(experiment["id"], "E1")
         self.assertIn("executor", launch)
         self.assertIn("resources", launch)
