@@ -317,7 +317,7 @@ class SecretBaselineTests(unittest.TestCase):
         started: dict[str, subprocess.Popen[bytes]] = {}
 
         def start_process(
-            command: list[str],
+            _command: list[str],
             *,
             stdin: int | None = None,
             stdout: int | None = None,
@@ -587,7 +587,7 @@ class SecretBaselineTests(unittest.TestCase):
             observed_snapshot: Path | None = None
 
             def run_from_snapshot(
-                command: list[str],
+                _command: list[str],
                 *,
                 cwd: Path,
                 timeout: int,
@@ -1134,10 +1134,20 @@ class ProviderSecurityGateTests(unittest.TestCase):
         workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
         route_steps = workflow["jobs"]["extended-route"]["steps"]
         route_script = next(
-            step["run"]
-            for step in route_steps
-            if step.get("name") == "Classify extended verification applicability"
+            (
+                (
+                    step["run"]
+                    for step in route_steps
+                    if step.get("name")
+                    == "Classify extended verification applicability"
+                )
+            ),
+            None,
         )
+        if route_script is None:
+            self.fail(
+                "the workflow must hold the 'Classify extended verification applicability' step"
+            )
         cases = (
             ("pull_request", "", "comparison base unavailable"),
             ("pull_request", "0" * 40, "comparison base unavailable"),
@@ -1190,7 +1200,7 @@ class ProviderSecurityGateTests(unittest.TestCase):
                     }
                 )
                 completed = subprocess.run(
-                    ["bash", "-c", route_script],
+                    ["/usr/bin/bash", "-c", route_script],
                     cwd=ROOT,
                     env=environment,
                     check=False,
@@ -1215,10 +1225,20 @@ class ProviderSecurityGateTests(unittest.TestCase):
         workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
         route_steps = workflow["jobs"]["extended-route"]["steps"]
         route_script = next(
-            step["run"]
-            for step in route_steps
-            if step.get("name") == "Classify extended verification applicability"
+            (
+                (
+                    step["run"]
+                    for step in route_steps
+                    if step.get("name")
+                    == "Classify extended verification applicability"
+                )
+            ),
+            None,
         )
+        if route_script is None:
+            self.fail(
+                "the workflow must hold the 'Classify extended verification applicability' step"
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -1272,7 +1292,7 @@ class ProviderSecurityGateTests(unittest.TestCase):
             )
 
             completed = subprocess.run(
-                ["bash", "-c", route_script],
+                ["/usr/bin/bash", "-c", route_script],
                 cwd=temporary,
                 env=environment,
                 check=False,
@@ -1369,7 +1389,9 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
                 timeout=30,
             )
-        (process,) = self.started
+        if len(self.started) != 1:
+            self.fail(f"one child must have started, not {len(self.started)}")
+        process = self.started[0]
         self.assertIsNotNone(process.poll(), "the child was left running")
         if process.stdout is None or process.stderr is None:
             self.fail("the child must have both pipes")

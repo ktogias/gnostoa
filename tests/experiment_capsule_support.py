@@ -18,7 +18,7 @@ IMAGE_A = "sha256:" + "a" * 64
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["/usr/bin/git", "-C", str(repo), *args],
         check=True,
         capture_output=True,
         text=True,

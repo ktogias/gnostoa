@@ -581,7 +581,10 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         inventory = self._collect(base=self.base)
         (run,) = self._secrets_runs(inventory)
         identity = self.output.glob(f"diagnostic-*/{run['report']['path']}")
-        document = json.loads(next(identity).read_text(encoding="utf-8"))
+        report = next(identity, None)
+        if report is None:
+            self.fail("the secrets run's report must be in the output")
+        document = json.loads(report.read_text(encoding="utf-8"))
         protected = _REVIEWED_BASELINE
         self.assertEqual(
             {
@@ -676,7 +679,11 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: the comparison was read only when a Python path reached past FULL.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-python"] = {"exclude": ["tools/", "tests/"]}
-        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell = next(
+            ((f for f in profile["families"] if f["id"] == "shell-lint")), None
+        )
+        if shell is None:
+            self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-python", full=None)
         self._change("ci/tool", "echo $1", "echo $2")
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
@@ -696,10 +703,17 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         )
         inventory = self._collect(base=self.base)
         command = next(
-            c
-            for c, _cwd, _env in self._commands_of("shellcheck")
-            if "--shell=sh" not in c
+            (
+                (
+                    c
+                    for c, _cwd, _env in self._commands_of("shellcheck")
+                    if "--shell=sh" not in c
+                )
+            ),
+            None,
         )
+        if command is None:
+            self.fail("a shellcheck command without --shell=sh must have run")
         self.assertIn("ci/lib.bash", command)
         self.assertIn("ci/lib.ksh", command)
         self.assertNotIn("ci/lib.zsh", command)
@@ -791,7 +805,11 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: only what the family's scopes select can downgrade its row.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-tests"] = {"exclude": ["tests/"]}
-        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell = next(
+            ((f for f in profile["families"] if f["id"] == "shell-lint")), None
+        )
+        if shell is None:
+            self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-tests", full="no-tests")
         self._commit({"tests/tool.zsh": "echo $1\n"})
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]

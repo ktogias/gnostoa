@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
+import importlib
 import os
 import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
 import tempfile
@@ -137,14 +137,14 @@ class ExactTreeFixture(unittest.TestCase):
         """A stand-in for the owner's Git child: it hands `output` to the child's sink
         when it has one, as the real drain does, and returns it otherwise."""
 
-        def git(repo: Path, args: list[str], **kwargs: Any) -> bytes:
+        def child(_repo: Path, _args: list[str], **kwargs: Any) -> bytes:
             sink = kwargs.get("sink")
             if sink is None:
                 return output
             sink(output)
             return b""
 
-        return git
+        return child
 
     @staticmethod
     def without_waiting(call: Any, fifo: Path) -> tuple[bool, list[Any]]:

@@ -1019,10 +1019,19 @@ class PriorQualificationReuseTests(CapsuleFixture):
         )
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "prior-qualification-receipt-not-current"
+            (
+                (
+                    b
+                    for b in result.blockers
+                    if b["code"] == "prior-qualification-receipt-not-current"
+                )
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold a prior-qualification-receipt-not-current blocker"
+            )
         self.assertIn("preparation_identity", str(blocker["detail"]))
 
     def test_a_receipt_without_bound_identities_is_refused(self) -> None:
@@ -1254,7 +1263,8 @@ def _local_image(reference: str = "python:3.12-slim") -> str | None:
     """The immutable id of a locally present image, or None."""
     try:
         completed = subprocess.run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
+            ["/usr/bin/docker", "image", "inspect", "--format", "{{.Id}}", reference],
+            check=False,
             capture_output=True,
             text=True,
             timeout=30,
@@ -1766,20 +1776,38 @@ class ScheduleCompletenessTests(CapsuleFixture):
         result = self._prepare(schedule, "duplicate")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                (
+                    b
+                    for b in result.blockers
+                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
+                )
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("duplicate scheduled runs", str(blocker["detail"]))
 
     def test_an_omitted_run_is_refused(self) -> None:
         result = self._prepare(self._complete()[:-1], "omission")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                (
+                    b
+                    for b in result.blockers
+                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
+                )
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("missing scheduled runs", str(blocker["detail"]))
 
     def test_a_repetition_outside_the_declared_range_is_refused(self) -> None:
@@ -1788,10 +1816,19 @@ class ScheduleCompletenessTests(CapsuleFixture):
         result = self._prepare(schedule, "range")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                (
+                    b
+                    for b in result.blockers
+                    if b["code"] == "assignment-schedule-not-a-complete-permutation"
+                )
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("outside 1..2", str(blocker["detail"]))
 
     def test_run_identities_are_unique_across_the_plan(self) -> None:

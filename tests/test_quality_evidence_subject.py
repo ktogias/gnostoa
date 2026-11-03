@@ -129,7 +129,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 "a dangling symlink",
                 lambda entry: entry.symlink_to(self.root / "missing"),
             ),
-            ("another kind", lambda entry: os.mkfifo(entry)),
+            ("another kind", os.mkfifo),
         ):
             with self.subTest(label):
                 package = self._package(self.root / label.replace(" ", "-"))
@@ -311,7 +311,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 )
                 self.assertNotIn("raw /host detail", json.dumps(inventory))
 
-        def spending(root: Path, *, timeout: float | None = None) -> bool:
+        def spending(_root: Path, *, timeout: float | None = None) -> bool:
             time.sleep(0.4)
             return True
 
@@ -2303,7 +2303,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observer = importlib.import_module("tools.python_environment_observation")
         chunks = [b"mm/a.py,,\n" * 6553] * 64
         lines = _original(observer, "_record_lines")(chunks)
-        self.assertEqual("mm/a.py,,\n", next(lines))
+        self.assertEqual("mm/a.py,,\n", next(lines, None))
         self.assertEqual(63, len(chunks))
         self.assertEqual(6553 * 64 - 1, sum(1 for _ in lines))
         self.assertEqual([], chunks)
@@ -2324,9 +2324,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 lines = _original(observer, "_record_lines")(chunks)
                 if refused:
                     with self.assertRaises(csv.Error):
-                        next(lines)
+                        next(lines, None)
                 else:
-                    self.assertEqual(length, len(next(lines)))
+                    line = next(lines, None)
+                    if line is None:
+                        self.fail("lines must hold a line")
+                    self.assertEqual(length, len(line))
 
     def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
         # Router 6364506650 (B): the composed caps admit a matching in-root payload of

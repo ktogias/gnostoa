@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Self
 from unittest.mock import patch
 
 from tests.exact_tree_reuse_support import _open_descriptors
@@ -218,7 +218,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         def mutating(
             root: Path, paths: list[str], *args: object, **kwargs: object
         ) -> object:
-            with open(Path(root) / "tools" / "sample.py", "a", encoding="utf-8") as f:
+            with (Path(root) / "tools" / "sample.py").open("a", encoding="utf-8") as f:
                 f.write("\n# changed\n")
             return real(root, paths, *args, **kwargs)
 
@@ -399,7 +399,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self.assertTrue(self._complexity(inventory, self.lines["branchy"]))
         past = self.module.DiagnosticLimits(max_tree_files=total - 1)
         inventory = self._read(self.collect(self.root, self.output, limits=past))
-        self.assertEqual([], [f for f in inventory["findings"]])
+        self.assertEqual([], list(inventory["findings"]))
         self.assertIn("cap-files", inventory["coverage"]["reason"])
 
     # A filter driver the repository configures never runs during collection. The
@@ -960,20 +960,23 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             def __init__(self, fd: int) -> None:
                 self._real = real_scandir(fd)
 
-            def __enter__(self) -> Listing:
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(self, *_exc: object) -> None:
                 self._real.close()
 
-            def __iter__(self) -> Listing:
+            def __iter__(self) -> Self:
                 return self
 
             def __next__(self) -> Entry:
                 advances.append(1)
                 if spend_on == "next":
                     clock[0] = 10.0
-                return Entry(next(self._real))
+                entry = next(self._real, None)
+                if entry is None:
+                    raise StopIteration
+                return Entry(entry)
 
         def opening(*args: object, **kwargs: object) -> int:
             dispatched.append("open")
