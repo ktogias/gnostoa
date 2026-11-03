@@ -29,6 +29,8 @@ from tests.quality_evidence_fixtures import (
     _fixture_git_env,
 )
 from tests.quality_evidence_profile_support import _original
+from tools.exact_tree import Limits
+from tools.quality_evidence import DiagnosticLimits
 
 
 def _promisor(root: Path, run_git: Callable[..., str], marker: Path) -> tuple[str, str]:
@@ -94,7 +96,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             self.files["tools/sample.py"] + _EXTRA_COMPLEX, "def extra"
         )
 
-    def _complexity(self, inventory: dict, line: int) -> list[dict]:
+    def _complexity(self, inventory: dict[str, Any], line: int) -> list[dict[str, Any]]:
         return self._find(inventory, "complexity", "cc", "tools/sample.py", line)
 
     # A dirty, uncommitted edit to a tracked file is not the named source.
@@ -172,7 +174,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self._git("commit", "-q", "-am", "the frozen commit")
         real = _original(self.module, "_run_complexity")
 
-        def moving(*args, **kwargs):
+        def moving(*args: object, **kwargs: object) -> object:
             (self.root / "tests" / "test_sample.py").write_text(
                 self.files["tests/test_sample.py"] + "\n# later\n", encoding="utf-8"
             )
@@ -195,7 +197,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         self._git("commit", "-q", "-am", "the frozen change")
         real = _original(self.module, "_run_complexity")
 
-        def reverting(*args, **kwargs):
+        def reverting(*args: object, **kwargs: object) -> object:
             (self.root / "tools" / "sample.py").write_text(
                 self.files["tools/sample.py"] + "\n# later\n", encoding="utf-8"
             )
@@ -213,7 +215,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     def test_a_changed_staged_source_is_refused(self) -> None:
         real = _original(self.module, "_run_complexity")
 
-        def mutating(root, paths, *args, **kwargs):
+        def mutating(
+            root: Path, paths: list[str], *args: object, **kwargs: object
+        ) -> object:
             with open(Path(root) / "tools" / "sample.py", "a", encoding="utf-8") as f:
                 f.write("\n# changed\n")
             return real(root, paths, *args, **kwargs)
@@ -273,7 +277,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     def test_a_special_entry_left_in_the_staged_source_is_refused(self) -> None:
         real = _original(self.module, "_run_complexity")
 
-        def leaving(root, paths, *args, **kwargs):
+        def leaving(
+            root: Path, paths: list[str], *args: object, **kwargs: object
+        ) -> object:
             os.mkfifo(Path(root) / "tools" / "pipe")
             return real(root, paths, *args, **kwargs)
 
@@ -327,7 +333,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         bound = 12
         real = _original(self.module, "_run_complexity")
 
-        def growing(root, paths, *args, **kwargs):
+        def growing(
+            root: Path, paths: list[str], *args: object, **kwargs: object
+        ) -> object:
             for n in range(6):
                 (Path(root) / f"grown-{n}.py").write_text("", encoding="utf-8")
             return real(root, paths, *args, **kwargs)
@@ -349,15 +357,20 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     # budget of the owner's.
     def test_staging_shares_the_collectors_deadline(self) -> None:
         owner = importlib.import_module("tools.exact_tree")
-        real, seen = owner.materialize, []
+        real = owner.materialize
+        seen: list[Limits] = []
 
-        def staging(*args, **kwargs):
-            seen.append(kwargs["limits"])
-            return real(*args, **kwargs)
+        def staging(
+            repo: Path, tree: str, destination: Path, *, limits: Limits
+        ) -> object:
+            seen.append(limits)
+            return real(repo, tree, destination, limits=limits)
 
         reader, deadlines = _original(self.module, "_diagnostic_git"), []
 
-        def reading(root, deadline, *arguments, **options):
+        def reading(
+            root: Path, deadline: float, *arguments: str, **options: int
+        ) -> str:
             deadlines.append(deadline)
             return reader(root, deadline, *arguments, **options)
 
@@ -458,20 +471,20 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     def _spawns(self) -> tuple[list[list[str]], Any]:
         """Every child started under the patch, by its argv."""
         started: list[list[str]] = []
-        real = subprocess.Popen
+        real: Callable[..., object] = subprocess.Popen
 
-        def recording(argv, *args, **kwargs):
+        def recording(argv: list[str], *args: object, **kwargs: object) -> object:
             started.append([str(part) for part in argv])
             return real(argv, *args, **kwargs)
 
         return started, patch("subprocess.Popen", side_effect=recording)
 
     @staticmethod
-    def _python(inventory: dict) -> list[str]:
+    def _python(inventory: dict[str, Any]) -> list[str]:
         return inventory["scope"]["full"]["expected"]
 
     @staticmethod
-    def _unanalyzed(inventory: dict) -> list[str]:
+    def _unanalyzed(inventory: dict[str, Any]) -> list[str]:
         return [u["path"] for u in inventory["scope"]["full"]["unanalyzed"]]
 
     def _tracked_python(self) -> list[str]:
@@ -574,10 +587,10 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         real, called = owner.tree_paths, []
         started, spawning = self._spawns()
 
-        def spending(*args, **kwargs):
-            answer = real(*args, **kwargs)
+        def spending(repo: Path, tree: str, *, limits: Limits) -> object:
+            answer = real(repo, tree, limits=limits)
             called.append(len(started))
-            while time.monotonic() <= kwargs["limits"].deadline:
+            while time.monotonic() <= limits.deadline:
                 time.sleep(0.05)
             return answer
 
@@ -674,10 +687,10 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             "unobservable after": ("the staged source could not be observed again", 2),
         }
 
-        def observer(label: str, calls: list[int]):
+        def observer(label: str, calls: list[int]) -> Callable[..., object]:
             """The identity read for one case, counting its calls in `calls`."""
 
-            def observing(*args, **kwargs):
+            def observing(*args: object, **kwargs: object) -> object:
                 calls.append(1)
                 if label == "differs":
                     return "0" * 40
@@ -718,12 +731,22 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 self.assertIs(failure, raised.exception)
                 self.assertEqual([], list(self.output.glob("*/source")))
 
-    def _producers_ending(self, before: float):
+    def _producers_ending(
+        self, before: float
+    ) -> contextlib.AbstractContextManager[object]:
         """A patch under which the producers run, then return `before` seconds before
         the inventory's deadline, or after it when negative."""
         real = _original(self.module, "_run_producers")
 
-        def ending(staged, run, expected, limits, gaps, deadline, *plan):
+        def ending(
+            staged: Path,
+            run: Path,
+            expected: list[str],
+            limits: DiagnosticLimits,
+            gaps: list[str],
+            deadline: float,
+            *plan: object,
+        ) -> object:
             result = real(staged, run, expected, limits, gaps, deadline, *plan)
             while time.monotonic() < deadline - before:
                 time.sleep(0.02)
@@ -777,9 +800,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     ]:
         """A patch counting every directory read, and the list it counts into."""
         reads: list[int] = []
-        real = os.scandir
+        real: Callable[..., object] = os.scandir
 
-        def counting(*args, **kwargs):
+        def counting(*args: object, **kwargs: object) -> object:
             reads.append(1)
             return real(*args, **kwargs)
 
@@ -791,9 +814,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._deep(13)
         counting, reads = self._counting_reads()
         opens: list[int] = []
-        real_open = os.open
+        real_open: Callable[..., int] = os.open
 
-        def opening(*args, **kwargs):
+        def opening(*args: object, **kwargs: object) -> int:
             opens.append(1)
             return real_open(*args, **kwargs)
 
@@ -811,9 +834,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         top = self._deep(13)
         clock = [0.0]
         reads: list[int] = []
-        real = os.scandir
+        real: Callable[..., object] = os.scandir
 
-        def spending(*args, **kwargs):
+        def spending(*args: object, **kwargs: object) -> object:
             reads.append(1)
             clock[0] = 10.0
             return real(*args, **kwargs)
@@ -828,13 +851,20 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         self.assertIn("deadline", retained or "")
         self.assertTrue(top.joinpath(*(f"d{n}" for n in range(13)), "leaf.py").exists())
 
-    def _spending(self, name: str, after: int):
+    def _spending(
+        self, name: str, after: int
+    ) -> tuple[
+        contextlib.AbstractContextManager[object],
+        contextlib.AbstractContextManager[object],
+        list[int],
+    ]:
         """Patches under which the `after`-th call of `os.<name>` spends the budget of a
         removal whose deadline is 5.0, and the list of those calls."""
-        clock, calls = [0.0], []
+        clock: list[float] = [0.0]
+        calls: list[int] = []
         real = getattr(os, name)
 
-        def spending(*args, **kwargs):
+        def spending(*args: object, **kwargs: object) -> object:
             calls.append(1)
             if len(calls) == after:
                 clock[0] = 10.0
@@ -897,7 +927,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             (top / f"f{n}.py").write_text("VALUE = 1\n", encoding="utf-8")
         return top
 
-    def _listing(self, *, spend_on: str):
+    def _listing(
+        self, *, spend_on: str
+    ) -> tuple[contextlib.ExitStack[bool | None], list[int], list[str]]:
         """Patches under which each directory listing counts its advances and spends
         the budget of a removal whose deadline is 5.0: on its first advance (`next`),
         on its first entry's type read (`type`) or on the first unlink (`unlink`); with
@@ -906,7 +938,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         clock: list[float] = [0.0]
         advances: list[int] = []
         dispatched: list[str] = []
-        real_scandir, real_open, real_unlink = os.scandir, os.open, os.unlink
+        real_scandir = os.scandir
+        real_open: Callable[..., int] = os.open
+        real_unlink: Callable[..., None] = os.unlink
 
         class Entry:
             def __init__(self, entry: os.DirEntry[str]) -> None:
@@ -938,11 +972,11 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                     clock[0] = 10.0
                 return Entry(next(self._real))
 
-        def opening(*args, **kwargs):
+        def opening(*args: object, **kwargs: object) -> int:
             dispatched.append("open")
             return real_open(*args, **kwargs)
 
-        def unlinking(*args, **kwargs):
+        def unlinking(*args: object, **kwargs: object) -> None:
             dispatched.append("unlink")
             if spend_on == "unlink":
                 clock[0] = 10.0
@@ -1050,7 +1084,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         empty.mkdir()
         self.assertIsNone(self._bounded(empty, 0))
         self.assertFalse(empty.exists())
-        shapes = {
+        shapes: dict[str, tuple[Callable[[], Path], int]] = {
             "wide": (lambda: self._flat(5), 5),
             "deep": (lambda: self._deep(4, name="chain"), 5),
         }
@@ -1124,9 +1158,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     # A slow removal stops at the deadline, rather than running on past it.
     def test_a_slow_removal_stops_at_the_deadline(self) -> None:
         limits = self.module.DiagnosticLimits(timeout_seconds=4.0)
-        unlink = os.unlink
+        unlink: Callable[..., None] = os.unlink
 
-        def slow(*args, **kwargs):
+        def slow(*args: object, **kwargs: object) -> None:
             time.sleep(0.4)
             return unlink(*args, **kwargs)
 
@@ -1150,7 +1184,13 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         ):
             with self.subTest(label):
 
-                def answering(root, deadline, *arguments, _answer=answer, **options):
+                def answering(
+                    root: Path,
+                    deadline: float,
+                    *arguments: str,
+                    _answer: Callable[[str], str] = answer,
+                    **options: int,
+                ) -> str:
                     return _answer(real(root, deadline, *arguments, **options))
 
                 with patch.object(
@@ -1236,7 +1276,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         real = _original(self.module, "_diagnostic_git")
         moved: list[int] = []
 
-        def moving(root, deadline, *arguments, **kwargs):
+        def moving(root: Path, deadline: float, *arguments: str, **kwargs: int) -> str:
             answer = real(root, deadline, *arguments, **kwargs)
             if not moved and "rev-parse" in arguments:
                 (self.root / "tools" / "sample.py").write_text(
