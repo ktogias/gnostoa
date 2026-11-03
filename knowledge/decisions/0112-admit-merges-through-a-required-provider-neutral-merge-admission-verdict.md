@@ -421,7 +421,9 @@ provider-neutral public change-governance contract of
     listed finding counts, a suppressed one included, with no waiver: a justified
     suppression discharges none (1b.3b-4). So does a finding from a partial
     source, or from one no claim needed: a met claim never erases a finding. The
-    verdict lists the findings for the approval.
+    verdict lists the findings for the approval. A finding that matches an entry
+    of the protected target's analyzer debt ledger exactly is listed as inherited
+    and does not count (Decision 0129); the ledger ships empty.
   - **M13 and M15 read the exact comparison** against two declarations of the
     protected target (1b.3b-4, the owner's sequence admission, #325 6113092417,
     with the contract 6112833932). The declarations are

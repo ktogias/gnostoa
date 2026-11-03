@@ -128,6 +128,7 @@ inherited, copied or loaded by adopting projects.
 - [Repair the typing of seventeen test modules, the closure's first group](decisions/0123-repair-the-typing-of-seventeen-test-modules.md)
 - [Bound three capsule functions by one extraction each](decisions/0126-bound-three-capsule-functions-by-one-extraction-each.md)
 - [Bound the spec's control parser and the handoff's source walk](decisions/0127-bound-the-spec-control-parser-and-the-handoff-walk.md)
+- [Match inherited analyzer debt against a protected ledger, inactive until the owner approves an entry](decisions/0129-match-inherited-analyzer-debt-against-a-protected-ledger.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

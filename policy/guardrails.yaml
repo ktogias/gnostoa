@@ -736,6 +736,7 @@ guardrails:
       - tools/check_change_policy.py
       - tools/knowledge_common.py
       - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+      - knowledge/decisions/0129-match-inherited-analyzer-debt-against-a-protected-ledger.md
     tests:
       - tests/test_merge_admission.py::CommandTests.test_a_failing_exit_predicate_is_a_failed_run
       - tests/test_merge_admission.py::CommandTests.test_allow_exits_zero_and_deny_exits_one
@@ -843,6 +844,7 @@ guardrails:
       - policy/merge-required-checks.yaml
       - policy/merge-suppression-markers.yaml
       - policy/merge-trust-roots.yaml
+      - policy/analyzer-debt-ledger.yaml
       - tools/cli.py
       - ci/review_github_current_state.py
       - tools/github_rest.py
