@@ -1985,7 +1985,12 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             ("a directory", [_file_reply()], False),
             ("a symlink", _file_reply(type="symlink"), False),
             ("another encoding", _file_reply(encoding="none"), False),
-            ("past the file bound", _file_reply(size=_SCOPE_FILE_BYTES + 1), False),
+            # A real file one byte past the bound, so only the bound refuses it.
+            (
+                "past the file bound",
+                _file_reply(_sized(_SCOPE_FILE_BYTES + 1)),
+                False,
+            ),
             ("a size that is not a number", _file_reply(size="5"), False),
             # cubic on #480: the decoded bytes must be the declared size, which the
             # bounds were spent on.
