@@ -544,7 +544,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 report_path: Path | None = None,
                 baseline_path: Path | None = None,
                 tracked_paths: list[Path] | None = None,
-            ) -> object:
+            ) -> SecretScanResult:
                 self.assertEqual(root.resolve(), repository_root.resolve())
                 self.assertIn(
                     baseline_path,
@@ -724,7 +724,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 report_path: Path | None = None,
                 baseline_path: Path | None = None,
                 tracked_paths: list[Path] | None = None,
-            ) -> object:
+            ) -> SecretScanResult:
                 self.assertEqual(root.resolve(), repository_root.resolve())
                 self.assertIn(
                     baseline_path,
