@@ -83,15 +83,18 @@ comment, and so it marks the DIFF read `PARTIAL`.
    class. It has three fields:
    - `kind`, `function` or `class`;
    - its `name`;
-   - `sha256`, the SHA-256 of its exact lines, decorators included.
+   - `sha256`, the SHA-256 of its exact lines, decorators included. The lines are
+     Python's own, split only at a line feed, a carriage return or both, and hashed with
+     their endings, so a Unicode line separator inside a literal stays in its line.
 
    The readback's normalizer keeps it as a closed record, so a readback that carries it
    rebuilds exactly. Where the scope comes from:
    - The bundle step of the authenticated readback computes it (`collect_bundle`, source
      `addendum`).
-   - The step reads each Python finding's file at the exact head through GitHub's contents
-     API. The file is read as data: nothing in the head runs or selects a tool.
-   - The read is bounded: 64 files, 1 MiB each, and 8 MiB in all.
+   - The step reads each Python finding's file (`.py` or `.pyi`) at the exact head through
+     GitHub's contents API. The file is read as data: nothing in the head runs or selects a
+     tool. It is read and parsed once for all its findings.
+   - The read is bounded: 64 requests, 1 MiB each, and 8 MiB in all.
    - In these cases a finding gets no scope, and it is never matched:
      - the read fails;
      - the file is not a file, is over a bound, or is not UTF-8;
@@ -146,7 +149,9 @@ comment, and so it marks the DIFF read `PARTIAL`.
      - the comment has no path, line or stated title;
      - the full read is of another run, head or provider, or is not complete.
    - **A finding the full run still lists** reaches M17 through that run.
-   - This drops the resolved-thread half of the check (source `addendum`).
+   - Unlike the packet's first form, it does not also require the comment's review thread to
+     be resolved: the readback does not read thread state, and reading it would be a new
+     acquisition (source `addendum`).
 6. **Not activated.** The ledger ships empty. An entry is added only by a pull request on
    protected `main` that the owner approves. Each entry carries its proof:
    - a BOUND, COMPLETE authenticated readback listed it;

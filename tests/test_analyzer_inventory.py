@@ -22,6 +22,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import quote
 
 import yaml
 
@@ -1283,7 +1284,7 @@ class InventoryBundleTests(_InventoryReadbackFixture):
                 ):
                     if finding.get("path", "").endswith(".py") and "range" in finding:
                         github.answers[
-                            f"{root}/contents/{finding['path']}?ref={head}"
+                            f"{root}/contents/{quote(finding['path'])}?ref={head}"
                         ] = runner.RunnerError("Not Found")
                 bundle = runner.collect_bundle(
                     github,

@@ -1002,12 +1002,17 @@ def _read_full_run(
     )
 
 
-def _comment_title(body: str) -> str:
+def _stated_title(body: str) -> str | None:
+    """The title a comment states, or None when it states none or an empty one."""
     match = _H3_AFTER_PICTURE.search(body)
     if match is None:
-        return "DeepSource issue"
+        return None
     text = html.unescape(_TAG.sub("", match.group("title"))).strip()
-    return " ".join(text.split()) or "DeepSource issue"
+    return " ".join(text.split()) or None
+
+
+def _comment_title(body: str) -> str:
+    return _stated_title(body) or "DeepSource issue"
 
 
 def _trusted_github_status(value: Mapping[str, Any]) -> bool:
@@ -1168,12 +1173,9 @@ def _comment_findings(
             continue
         finding = _comment_finding(comment, body, marker.group("id"))
         if comment.get("original_commit_id") != requested_head:
-            # Its message only when the comment states its title, so a fallback
-            # never shows it gone from the head (#389).
-            titled = _H3_AFTER_PICTURE.search(body) is not None
-            carried_forward.append(
-                {**finding, "message": finding["message"] if titled else None}
-            )
+            # Its message only when the comment states a title, so a fallback never
+            # shows it gone from the head (#389; cubic on #480).
+            carried_forward.append({**finding, "message": _stated_title(body)})
             continue
         findings.append(finding)
     return findings, carried_forward

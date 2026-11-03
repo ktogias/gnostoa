@@ -27,9 +27,9 @@ from tools.analyzer_readback import (
     build_readback,
     canonical_json,
     coverage,
-    enclosing_scope,
     normalize_repository,
     parse_readback,
+    scope_reader,
 )
 
 BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
@@ -553,41 +553,57 @@ def _head_source(
     if not isinstance(content, str) or not budget.admit(size):
         return None
     try:
-        return base64.b64decode(content).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
+        # GitHub wraps the base64 in lines; any other character is refused, not
+        # dropped (cubic on #480).
+        return base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
+    except ValueError:  # binascii.Error and UnicodeDecodeError are both ValueErrors
         return None
+
+
+_ScopeReaders = dict[str, Callable[[int], dict[str, str] | None] | None]
+
+
+def _finding_scope(
+    finding: Mapping[str, Any],
+    readers: _ScopeReaders,
+    source_of: Callable[[str], str | None],
+) -> dict[str, str] | None:
+    """A Python finding's enclosing scope, its file read and parsed at most once
+    into `readers`; None for any other finding, or one already scoped."""
+
+    path = finding.get("path")
+    line = (finding.get("range") or {}).get("start_line")
+    if (
+        "enclosing" in finding
+        or not isinstance(path, str)
+        or not path.endswith((".py", ".pyi"))
+        or not isinstance(line, int)
+    ):
+        return None
+    if path not in readers:
+        source = source_of(path)
+        readers[path] = None if source is None else scope_reader(source)
+    reader = readers[path]
+    return None if reader is None else reader(line)
 
 
 def _with_enclosing(
     readbacks: list[dict[str, Any]], source_of: Callable[[str], str | None]
 ) -> list[dict[str, Any]]:
     """Each readback, its Python findings given their enclosing scopes: each file is
-    read once, and a readback is rebuilt through its own contract only when one of
-    its findings gained a scope."""
+    read and parsed once, and a readback is rebuilt through its own contract only
+    when one of its findings gained a scope."""
 
-    sources: dict[str, str | None] = {}
+    readers: _ScopeReaders = {}
     result = []
     for readback in readbacks:
         findings, changed = [], False
         for finding in readback["findings"]:
-            path = finding.get("path")
-            line = (finding.get("range") or {}).get("start_line")
-            scope = None
-            if (
-                "enclosing" not in finding
-                and isinstance(path, str)
-                and path.endswith(".py")
-                and isinstance(line, int)
-            ):
-                if path not in sources:
-                    sources[path] = source_of(path)
-                source = sources[path]
-                scope = None if source is None else enclosing_scope(source, line)
-            if scope is None:
-                findings.append(finding)
-            else:
-                findings.append({**finding, "enclosing": scope})
-                changed = True
+            scope = _finding_scope(finding, readers, source_of)
+            findings.append(
+                finding if scope is None else {**finding, "enclosing": scope}
+            )
+            changed = changed or scope is not None
         result.append(
             parse_readback({**readback, "findings": findings}) if changed else readback
         )

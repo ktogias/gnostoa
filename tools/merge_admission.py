@@ -16,13 +16,12 @@ protected branch's rules (Decision 0110).
 from __future__ import annotations
 
 import argparse
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from . import assurance_completeness as completeness
-from .analyzer_readback import AnalyzerReadbackError, normalize_finding
+from .analyzer_readback import SHA256_DIGEST, AnalyzerReadbackError, normalize_finding
 from .assurance_completeness import (
     AssuranceCompletenessError,
     parse_change_class,
@@ -95,7 +94,6 @@ _DEBT_ASPECTS = frozenset(
         "typing",
     }
 )
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
 _CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
@@ -403,7 +401,11 @@ def parse_analyzer_debt(value: object) -> list[dict[str, Any]]:
 
     record = require_mapping(value, "analyzer_debt")
     require_closed_keys(record, "analyzer_debt", _DEBT_KEYS)
-    if record["coverage"] not in _DEBT_COVERAGES:
+    # Text first: a JSON array or object is unhashable in the membership test.
+    if (
+        require_text(record["coverage"], "analyzer_debt coverage")
+        not in _DEBT_COVERAGES
+    ):
         raise AssuranceCompletenessError(
             f"analyzer_debt coverage {record['coverage']!r} is unknown"
         )
@@ -428,11 +430,11 @@ def _debt_entry(item: object, label: str) -> dict[str, Any]:
     for key in ("id", "item", "rule", "path", "message"):
         require_text(entry[key], f"{label} {key}")
     digest = entry["enclosing_sha256"]
-    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+    if not isinstance(digest, str) or SHA256_DIGEST.fullmatch(digest) is None:
         raise AssuranceCompletenessError(
             f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
         )
-    if entry["aspect"] == "security":
+    if require_text(entry["aspect"], f"{label} aspect") == "security":
         raise AssuranceCompletenessError(
             f"{label} is a security finding, which is never inherited debt"
         )
@@ -491,7 +493,10 @@ def _analyzer_findings(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, str]], list[str]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
-    pass (the owner's rule, #407 6096770145 and 6101607240).
+    pass (the owner's rule, #407 6096770145 and 6101607240). The one exception is a
+    finding that matches an entry of the protected target's debt ledger exactly, on
+    a complete read: it stays listed, as inherited, and does not count (#389,
+    Decision 0129).
 
     Under a 1.1 declaration the read is complete when the claims are:
     `claims_status` is the status of the completeness verdict this admission

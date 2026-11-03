@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import contextlib
 import hashlib
@@ -1857,6 +1858,10 @@ def _file_reply(source: str = _SCOPE_SOURCE, **changes: Any) -> dict[str, Any]:
     }
 
 
+def _wrapped(text: str, width: int = 60) -> list[str]:
+    return [text[index : index + width] for index in range(0, len(text), width)]
+
+
 def _head_comment(identity: str, path: str, line: int) -> dict[str, Any]:
     """A DeepSource comment made on the head, so the DIFF read lists its finding."""
     return {
@@ -1942,6 +1947,30 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         # Each Python file is read once, at the exact head; no other file is.
         self.assertEqual(sorted([spaced, failing]), sorted(read))
 
+    def test_each_file_is_parsed_once_for_all_its_findings(self) -> None:
+        """Revix on #480: the scopes of a file's findings come from one parse."""
+        url = _contents_url("a.py")
+        with patch.object(ast, "parse", wraps=ast.parse) as parse:
+            findings, read = self._scoped(
+                [_head_comment("def", "a.py", 4), _head_comment("body", "a.py", 5)],
+                {url: _file_reply()},
+            )
+        self.assertEqual(1, parse.call_count)
+        self.assertEqual([url], read)
+        self.assertEqual(findings["def"]["enclosing"], findings["body"]["enclosing"])
+
+    def test_a_stub_file_is_python_too(self) -> None:
+        """CodeAnt on #480: a finding in a `.pyi` stub gets its scope."""
+        url = _contents_url("a.pyi")
+        findings, read = self._scoped(
+            [_head_comment("stub", "a.pyi", 5)], {url: _file_reply()}
+        )
+        self.assertEqual(
+            analyzer_readback.enclosing_scope(_SCOPE_SOURCE, 5),
+            findings["stub"]["enclosing"],
+        )
+        self.assertEqual([url], read)
+
     def test_only_a_bounded_utf8_file_is_read(self) -> None:
         url = _contents_url("a.py")
         for name, reply, scoped in (
@@ -1952,7 +1981,13 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             ("past the file bound", _file_reply(size=_SCOPE_FILE_BYTES + 1), False),
             ("a size that is not a number", _file_reply(size="5"), False),
             ("not UTF-8", _file_reply(content="//79"), False),
-            ("not base64", _file_reply(content="@"), False),
+            # cubic on #480: a character outside base64 is refused, not dropped.
+            ("not base64", _file_reply(content="!" + _file_reply()["content"]), False),
+            (
+                "wrapped as GitHub sends it",
+                _file_reply(content="\n".join(_wrapped(_file_reply()["content"]))),
+                True,
+            ),
         ):
             with self.subTest(name):
                 findings, read = self._scoped(

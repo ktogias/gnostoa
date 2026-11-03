@@ -1154,7 +1154,8 @@ class ClaimsM17Tests(unittest.TestCase):
 _SCOPE = "c" * 64
 
 
-def _debt_entry(**changes: Any) -> dict[str, Any]:
+def debt_entry(**changes: Any) -> dict[str, Any]:
+    """A ledger entry for `debt_finding`'s finding, shared with the evidence tests."""
     entry: dict[str, Any] = {
         "id": "debt-1",
         "item": "deepsource-full",
@@ -1174,7 +1175,8 @@ def _debt_entry(**changes: Any) -> dict[str, Any]:
     return entry
 
 
-def _debt_finding(**changes: Any) -> dict[str, Any]:
+def debt_finding(**changes: Any) -> dict[str, Any]:
+    """A listed finding with its enclosing scope, shared with the evidence tests."""
     finding: dict[str, Any] = {
         "item": "deepsource-full",
         "id": "issue-1",
@@ -1193,8 +1195,9 @@ class DebtLedgerM17Tests(unittest.TestCase):
     matches an entry exactly, by its item, rule, path, message and enclosing scope,
     is inherited debt, listed but not unresolved; anything else counts as before."""
 
+    @staticmethod
     def _verdict(
-        self, findings: list[dict[str, Any]], entries: list[dict[str, Any]]
+        findings: list[dict[str, Any]], entries: list[dict[str, Any]]
     ) -> dict[str, Any]:
         evidence = _evidence()
         evidence["analyzer_findings"] = {"coverage": "COMPLETE", "findings": findings}
@@ -1202,11 +1205,9 @@ class DebtLedgerM17Tests(unittest.TestCase):
         return _claims_verdict(evidence)
 
     def test_a_finding_matching_an_entry_is_inherited_and_still_listed(self) -> None:
-        verdict = self._verdict([_debt_finding()], [_debt_entry()])
+        verdict = self._verdict([debt_finding()], [debt_entry()])
         self.assertEqual({}, _failed(verdict))
-        self.assertEqual(
-            [_debt_finding()], verdict["for_approval"]["analyzer_findings"]
-        )
+        self.assertEqual([debt_finding()], verdict["for_approval"]["analyzer_findings"])
         self.assertEqual(
             [{"item": "deepsource-full", "id": "issue-1", "ledger_entry": "debt-1"}],
             verdict["for_approval"]["inherited_findings"],
@@ -1216,29 +1217,29 @@ class DebtLedgerM17Tests(unittest.TestCase):
     def test_any_other_identity_is_unresolved_and_the_entry_resolved(self) -> None:
         other_scope = {"kind": "function", "name": "f", "sha256": "e" * 64}
         for name, finding in (
-            ("another item", _debt_finding(item="codacy")),
-            ("another rule", _debt_finding(rule="PY-R1001")),
-            ("another path", _debt_finding(path="tools/y.py")),
+            ("another item", debt_finding(item="codacy")),
+            ("another rule", debt_finding(rule="PY-R1001")),
+            ("another path", debt_finding(path="tools/y.py")),
             (
                 "a worse measure",
-                _debt_finding(message="`f` has a cyclomatic complexity of 17"),
+                debt_finding(message="`f` has a cyclomatic complexity of 17"),
             ),
-            ("a changed scope", _debt_finding(enclosing=other_scope)),
+            ("a changed scope", debt_finding(enclosing=other_scope)),
             # The analyzer's identity at the entry's proof (PAO P2, 6614901388).
-            ("another tool", _debt_finding(tool={"id": "mypy"})),
-            ("a named tool", _debt_finding(tool={"id": "python", "name": "Python"})),
-            ("no tool", {k: v for k, v in _debt_finding().items() if k != "tool"}),
+            ("another tool", debt_finding(tool={"id": "mypy"})),
+            ("a named tool", debt_finding(tool={"id": "python", "name": "Python"})),
+            ("no tool", {k: v for k, v in debt_finding().items() if k != "tool"}),
             (
                 "no scope",
-                {k: v for k, v in _debt_finding().items() if k != "enclosing"},
+                {k: v for k, v in debt_finding().items() if k != "enclosing"},
             ),
             (
                 "a scope but no rule",
-                {k: v for k, v in _debt_finding().items() if k != "rule"},
+                {k: v for k, v in debt_finding().items() if k != "rule"},
             ),
         ):
             with self.subTest(name):
-                verdict = self._verdict([finding], [_debt_entry()])
+                verdict = self._verdict([finding], [debt_entry()])
                 self.assertEqual(
                     {"M17": ["1 unresolved analyzer finding"]}, _failed(verdict)
                 )
@@ -1246,12 +1247,12 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 self.assertEqual(["debt-1"], verdict["for_approval"]["resolved_debt"])
 
     def test_an_entry_without_a_tool_matches_only_a_finding_without_one(self) -> None:
-        entry = {k: v for k, v in _debt_entry().items() if k != "tool"}
-        finding = {k: v for k, v in _debt_finding().items() if k != "tool"}
+        entry = {k: v for k, v in debt_entry().items() if k != "tool"}
+        finding = {k: v for k, v in debt_finding().items() if k != "tool"}
         self.assertEqual({}, _failed(self._verdict([finding], [entry])))
         self.assertEqual(
             {"M17": ["1 unresolved analyzer finding"]},
-            _failed(self._verdict([_debt_finding()], [entry])),
+            _failed(self._verdict([debt_finding()], [entry])),
         )
 
     def test_a_security_finding_is_never_inherited(self) -> None:
@@ -1260,7 +1261,7 @@ class DebtLedgerM17Tests(unittest.TestCase):
         for category in ("SECURITY", "Security", "VULNERABILITY", "SECURITY_HOTSPOT"):
             with self.subTest(category):
                 verdict = self._verdict(
-                    [_debt_finding(category=category)], [_debt_entry()]
+                    [debt_finding(category=category)], [debt_entry()]
                 )
                 self.assertEqual(
                     {"M17": ["1 unresolved analyzer finding"]}, _failed(verdict)
@@ -1269,13 +1270,13 @@ class DebtLedgerM17Tests(unittest.TestCase):
         self.assertEqual(
             {},
             _failed(
-                self._verdict([_debt_finding(category="PERFORMANCE")], [_debt_entry()])
+                self._verdict([debt_finding(category="PERFORMANCE")], [debt_entry()])
             ),
         )
 
     def test_an_entry_absorbs_one_finding(self) -> None:
         verdict = self._verdict(
-            [_debt_finding(), _debt_finding(id="issue-2")], [_debt_entry()]
+            [debt_finding(), debt_finding(id="issue-2")], [debt_entry()]
         )
         self.assertEqual({"M17": ["1 unresolved analyzer finding"]}, _failed(verdict))
         self.assertEqual(1, len(verdict["for_approval"]["inherited_findings"]))
@@ -1284,9 +1285,9 @@ class DebtLedgerM17Tests(unittest.TestCase):
         evidence = _evidence()
         evidence["analyzer_findings"] = {
             "coverage": "COMPLETE",
-            "findings": [_debt_finding()],
+            "findings": [debt_finding()],
         }
-        evidence["analyzer_debt"] = {"coverage": "COMPLETE", "entries": [_debt_entry()]}
+        evidence["analyzer_debt"] = {"coverage": "COMPLETE", "entries": [debt_entry()]}
         evidence["receipts"] = [_receipt(evidence["subject"], ["fast"])]
         verdict = _claims_verdict(evidence)
         self.assertIn("1 unresolved analyzer finding", _failed(verdict)["M17"])
@@ -1304,7 +1305,7 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 evidence = _evidence()
                 evidence["analyzer_findings"] = {
                     "coverage": "COMPLETE",
-                    "findings": [_debt_finding()],
+                    "findings": [debt_finding()],
                 }
                 if debt is not None:
                     evidence["analyzer_debt"] = debt
@@ -1314,10 +1315,12 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 )
 
     def test_the_analyzer_debt_has_a_closed_contract(self) -> None:
-        entry = _debt_entry()
+        entry = debt_entry()
         for name, debt in (
             ("an unknown field", {"coverage": "COMPLETE", "entries": [], "x": 1}),
             ("an unknown coverage", {"coverage": "PARTIAL", "entries": []}),
+            # Claude and cubic on #480: refused, not an unhashable TypeError.
+            ("a coverage that is not text", {"coverage": ["COMPLETE"], "entries": []}),
             (
                 "entries without a ledger",
                 {"coverage": "UNAVAILABLE", "entries": [entry]},
@@ -1337,6 +1340,7 @@ class DebtLedgerM17Tests(unittest.TestCase):
                         {**entry, "enclosing_sha256": "C" * 64},
                     ),
                     ("an unknown aspect", {**entry, "aspect": "taste"}),
+                    ("an aspect that is not text", {**entry, "aspect": ["complexity"]}),
                     ("a tool that is not an object", {**entry, "tool": "python"}),
                     ("a tool without its id", {**entry, "tool": {"name": "Python"}}),
                     (
@@ -1368,12 +1372,12 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 {"coverage": "COMPLETE", "entries": [entry, entry]},
             ),
         ):
+            evidence = _evidence()
+            evidence["analyzer_debt"] = debt
             with (
                 self.subTest(name),
                 self.assertRaises(assurance_completeness.AssuranceCompletenessError),
             ):
-                evidence = _evidence()
-                evidence["analyzer_debt"] = debt
                 _claims_verdict(evidence)
 
     def test_a_finding_s_enclosing_scope_is_closed(self) -> None:
@@ -1384,15 +1388,15 @@ class DebtLedgerM17Tests(unittest.TestCase):
             ("a digest that is not one", {**scope, "sha256": "x"}),
             ("not an object", "f"),
         ):
+            evidence = _evidence()
+            evidence["analyzer_findings"] = {
+                "coverage": "COMPLETE",
+                "findings": [debt_finding(enclosing=value)],
+            }
             with (
                 self.subTest(name),
                 self.assertRaises(assurance_completeness.AssuranceCompletenessError),
             ):
-                evidence = _evidence()
-                evidence["analyzer_findings"] = {
-                    "coverage": "COMPLETE",
-                    "findings": [_debt_finding(enclosing=value)],
-                }
                 _claims_verdict(evidence)
 
 

@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import yaml
 
-from tests.test_merge_admission import _debt_entry, _debt_finding
+from tests.test_merge_admission import debt_entry, debt_finding
 from tests.test_review_reconcile_l1 import (
     adapter_fixture,
     complete_replies_fixture,
@@ -4515,7 +4515,7 @@ LEDGER_DOCUMENT: dict[str, Any] = {
     "schema_version": "1.0",
     "id": "example.analyzer-debt-ledger",
     "version": "0.1.0",
-    "entries": [_debt_entry()],
+    "entries": [debt_entry()],
 }
 
 
@@ -4539,7 +4539,7 @@ class DebtLedgerTests(unittest.TestCase):
 
     def test_the_ledger_is_a_closed_versioned_declaration(self) -> None:
         self.assertEqual(
-            [_debt_entry()], merge_evidence_github.parse_debt_ledger(LEDGER_DOCUMENT)
+            [debt_entry()], merge_evidence_github.parse_debt_ledger(LEDGER_DOCUMENT)
         )
         self.assertEqual(
             [],
@@ -4552,9 +4552,9 @@ class DebtLedgerTests(unittest.TestCase):
             ("entries that are not a list", {"entries": {}}),
             (
                 "an entry the verdict refuses",
-                {"entries": [_debt_entry(aspect="security")]},
+                {"entries": [debt_entry(aspect="security")]},
             ),
-            ("two entries with one id", {"entries": [_debt_entry(), _debt_entry()]}),
+            ("two entries with one id", {"entries": [debt_entry(), debt_entry()]}),
         ):
             with self.subTest(name), self.assertRaises(_LEDGER_ERRORS):
                 merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, **change})
@@ -4619,7 +4619,7 @@ class DebtLedgerTests(unittest.TestCase):
             {"coverage": "UNAVAILABLE", "entries": []}, bootstrap["analyzer_debt"]
         )
         self.assertEqual(
-            {"coverage": "COMPLETE", "entries": [_debt_entry()]},
+            {"coverage": "COMPLETE", "entries": [debt_entry()]},
             protected["analyzer_debt"],
         )
         self.assertEqual(
@@ -4630,11 +4630,11 @@ class DebtLedgerTests(unittest.TestCase):
         """Through `evidence_for` and `merge_admission.evaluate`: the finding keeps
         its enclosing scope in the evidence, and the protected ledger's entry for
         it means M17 does not fail on it. Any other scope, or no ledger, does."""
-        raw = {k: v for k, v in _debt_finding().items() if k != "item"}
+        raw = {k: v for k, v in debt_finding().items() if k != "item"}
         bundle = _complete_bundle(raw)
         changed = {
             **LEDGER_DOCUMENT,
-            "entries": [_debt_entry(enclosing_sha256="e" * 64)],
+            "entries": [debt_entry(enclosing_sha256="e" * 64)],
         }
         for name, ledger, m17 in (
             ("the entry", LEDGER_DOCUMENT, None),
@@ -4646,7 +4646,7 @@ class DebtLedgerTests(unittest.TestCase):
                     _section_c_declaration(), bundle, "critical", ledger=ledger
                 )
                 [listed] = evidence["analyzer_findings"]["findings"]
-                self.assertEqual(_debt_finding()["enclosing"], listed["enclosing"])
+                self.assertEqual(debt_finding()["enclosing"], listed["enclosing"])
                 self.assertNotIn("M2-M8", failed)
                 self.assertEqual(m17, failed.get("M17"))
 

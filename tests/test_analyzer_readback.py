@@ -217,8 +217,9 @@ class EnclosingScopeTests(unittest.TestCase):
     )
 
     def _digest(self, first: int, last: int) -> str:
-        lines = self.SOURCE.splitlines()
-        return hashlib.sha256("\n".join(lines[first - 1 : last]).encode()).hexdigest()
+        """The SHA-256 of the scope's exact lines, each with its own ending."""
+        lines = self.SOURCE.splitlines(keepends=True)
+        return hashlib.sha256("".join(lines[first - 1 : last]).encode()).hexdigest()
 
     def test_the_smallest_enclosing_function_or_class_holds_the_line(self) -> None:
         """Its lines, decorators included, are what is hashed."""
@@ -236,6 +237,39 @@ class EnclosingScopeTests(unittest.TestCase):
                     {"kind": kind, "name": name, "sha256": self._digest(first, last)},
                     analyzer_readback.enclosing_scope(self.SOURCE, line),
                 )
+
+    def test_a_scope_is_hashed_by_python_s_own_lines(self) -> None:
+        """Codex on #480: a Unicode line separator inside a literal is no line end
+        for Python, so it cannot cut the scope short; a lone carriage return is."""
+        first = "def f():\n    return 'a\u2028b'\n"
+        second = "def f():\n    return 'a\u2028c'\n"
+        one = analyzer_readback.enclosing_scope(first, 2)
+        two = analyzer_readback.enclosing_scope(second, 2)
+        assert one is not None and two is not None
+        self.assertNotEqual(one["sha256"], two["sha256"])
+        self.assertEqual(hashlib.sha256(first.encode()).hexdigest(), one["sha256"])
+        self.assertEqual(
+            {
+                "kind": "function",
+                "name": "f",
+                "sha256": hashlib.sha256(b"def f():\r    return 2\r").hexdigest(),
+            },
+            analyzer_readback.enclosing_scope("x = 1\rdef f():\r    return 2\r", 3),
+        )
+
+    def test_an_async_function_and_a_leading_bom_have_their_scopes(self) -> None:
+        """cubic on #480: an `async def` is a function, and a UTF-8 BOM, which
+        Python reads past, does not stop the parse."""
+        source = "import os\n\n\nasync def fetch():\n    return 1\n"
+        expected = {
+            "kind": "function",
+            "name": "fetch",
+            "sha256": hashlib.sha256(b"async def fetch():\n    return 1\n").hexdigest(),
+        }
+        self.assertEqual(expected, analyzer_readback.enclosing_scope(source, 5))
+        self.assertEqual(
+            expected, analyzer_readback.enclosing_scope("\ufeff" + source, 5)
+        )
 
     def test_a_line_outside_any_scope_or_unparsable_source_has_none(self) -> None:
         for source, line in (
@@ -1817,6 +1851,10 @@ class CarriedForwardTests(unittest.TestCase):
             findings=[],
         )
         untitled = {**_CARRIED, "body": "<!-- DeepSource: id=carried -->"}
+        empty_title = {
+            **_CARRIED,
+            "body": "<!-- DeepSource: id=carried -->\n<h3><picture></picture> </h3>",
+        }
         for name, given, comments in (
             ("no full read", None, None),
             (
@@ -1832,6 +1870,8 @@ class CarriedForwardTests(unittest.TestCase):
             ("a comment without a line", full, [{**_CARRIED, "line": None}]),
             ("a comment without a path", full, [{**_CARRIED, "path": ""}]),
             ("a comment without a title", full, [untitled]),
+            # cubic on #480: an empty title is no stated title.
+            ("a comment with an empty title", full, [empty_title]),
         ):
             with self.subTest(name):
                 document = self._diff(given, comments)
