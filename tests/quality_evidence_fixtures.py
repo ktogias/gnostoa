@@ -687,8 +687,21 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             mode: str = "r",
             buffering: int = -1,
             encoding: str | None = None,
+            errors: str | None = None,
+            newline: str | None = None,
+            closefd: bool = True,
+            opener: Callable[[str, int], int] | None = None,
         ) -> IO[Any] | _RaisingRead:
-            stream = real_fdopen(descriptor, mode, buffering, encoding=encoding)
+            stream = real_fdopen(
+                descriptor,
+                mode,
+                buffering,
+                encoding,
+                errors=errors,
+                newline=newline,
+                closefd=closefd,
+                opener=opener,
+            )
             if descriptor not in failing:
                 return stream
             failing.discard(descriptor)
