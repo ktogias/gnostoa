@@ -9,7 +9,7 @@ from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, qualification
 from tools.capsule.identity import digest_of
-from tools.capsule.spec import load_spec
+from tools.capsule.spec import ExperimentSpec, load_spec
 
 IMAGE = "sha256:" + "a" * 64
 
@@ -42,7 +42,7 @@ class ConsumptionFixture(CapsuleFixture):
         )
         self.payload = payload
 
-    def _spec(self, receipt: Path | None = None):
+    def _spec(self, receipt: Path | None = None) -> ExperimentSpec:
         payload = json.loads(json.dumps(self.payload))
         if receipt is not None:
             payload["tasks"][0]["prior_qualification"] = {"receipt": str(receipt)}
@@ -51,10 +51,10 @@ class ConsumptionFixture(CapsuleFixture):
     def prepare(
         self,
         *,
-        authority=None,
+        authority: authority_module.PreflightAuthority | None = None,
         receipt: Path | None = None,
         qualification_backend: str = qualification.LOCAL_PYTHON,
-    ):
+    ) -> compiler.PrepareResult:
         return compiler.prepare(
             self._spec(receipt),
             self.workspace,
@@ -72,7 +72,7 @@ class ConsumptionFixture(CapsuleFixture):
             preflight_candidate_sha256=candidate,
         )
 
-    def prior_receipt(self, observed) -> Path:
+    def prior_receipt(self, observed: compiler.PrepareResult) -> Path:
         task = observed.task("T1")
         spec = self._spec()
         bound = {

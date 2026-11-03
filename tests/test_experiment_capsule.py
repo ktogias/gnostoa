@@ -12,6 +12,7 @@ import json
 import subprocess
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from tests.experiment_capsule_support import IMAGE_A, CapsuleFixture, git
@@ -256,7 +257,7 @@ class D4SemanticPrequalificationTests(CapsuleFixture):
         )
         return repo, git(repo, "rev-parse", "HEAD")
 
-    def _spec_with_control(self, repo: Path, base: str, literal: str) -> dict:
+    def _spec_with_control(self, repo: Path, base: str, literal: str) -> dict[str, Any]:
         (self.root / "oracle.py").write_text(
             "def test_discriminates():\n"
             "    assert render() == 'Basic'\n\n"
@@ -324,7 +325,7 @@ class D4SemanticPrequalificationTests(CapsuleFixture):
 class CertificateTests(CapsuleFixture):
     """D0: reuse an exact, current capability certificate instead of requalifying."""
 
-    def _certificate(self, *, max_bytes: int) -> dict:
+    def _certificate(self, *, max_bytes: int) -> dict[str, Any]:
         return {
             "schema": "gnostoa-capability-certificate/v1",
             "capability": "sealed-sink",
@@ -388,7 +389,7 @@ class CertificateTests(CapsuleFixture):
 class StageResumeTests(CapsuleFixture):
     """Preparation resumes from retained artifacts and invalidates downstream on change."""
 
-    def _prepare(self, spec: dict) -> compiler.PrepareResult:
+    def _prepare(self, spec: dict[str, Any]) -> compiler.PrepareResult:
         return compiler.prepare(
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
@@ -501,7 +502,7 @@ class OfflineTests(CapsuleFixture):
 class EndToEndReadinessTests(CapsuleFixture):
     """Readiness requires a completed receipt for every required stage."""
 
-    def _pipeline_spec(self) -> tuple[dict, str]:
+    def _pipeline_spec(self) -> tuple[dict[str, Any], str]:
         repo = self.make_repo(
             "subject", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -529,6 +530,8 @@ class EndToEndReadinessTests(CapsuleFixture):
                 stage, result.stage_receipts(), f"{stage} needs a completed receipt"
             )
         self.assertIsNotNone(result.lock_path)
+        if result.lock_path is None:
+            self.fail("the readiness pipeline must write a lock")
         payload = compiler.lock_module.load(result.lock_path)
         experiment, launch = payload["experiment"], payload["launch"]
         if not isinstance(experiment, dict) or not isinstance(launch, dict):
@@ -582,6 +585,8 @@ class EndToEndReadinessTests(CapsuleFixture):
             "base-reference-qualification-failed", [b["code"] for b in result.blockers]
         )
         receipt = result.task("T1").qualification
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
 
 
@@ -927,7 +932,7 @@ class ExecutionBoundaryTests(CapsuleFixture):
 class PriorQualificationReuseTests(CapsuleFixture):
     """D0: an already-valid, identity-bound qualification is reused, not rerun."""
 
-    def _qualified(self) -> tuple[dict, compiler.PrepareResult]:
+    def _qualified(self) -> tuple[dict[str, Any], compiler.PrepareResult]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -1305,6 +1310,8 @@ class OciQualificationTests(CapsuleFixture):
         # python:3.12-slim carries no pytest, so this must classify as infrastructure
         # rather than be mistaken for a behavioural outcome.
         self.assertIsNotNone(receipt)
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         self.assertEqual(receipt.backend, "oci")
         self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
 
@@ -1553,6 +1560,8 @@ class RunPlanTests(CapsuleFixture):
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
 
         # Fresh workspace: only the lock and the bound store may be consulted.
+        if result.lock_path is None:
+            self.fail("a ready preparation must write a lock")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "fresh", dry_run=True
         )
@@ -1648,6 +1657,8 @@ class PreparedExecutionCapsuleTests(CapsuleFixture):
             execution_artifacts, "the generated artifact must be an execution artifact"
         )
 
+        if result.lock_path is None:
+            self.fail("a ready preparation must write a lock")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
@@ -1685,7 +1696,7 @@ class ContainmentDirectionTests(CapsuleFixture):
 class ScheduleCompletenessTests(CapsuleFixture):
     """A frozen order must also be exactly the preregistered set of runs."""
 
-    def _spec_with_schedule(self, schedule: list[dict]) -> dict:
+    def _spec_with_schedule(self, schedule: list[dict[str, Any]]) -> dict[str, Any]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -1716,14 +1727,16 @@ class ScheduleCompletenessTests(CapsuleFixture):
         }
         return spec
 
-    def _prepare(self, schedule: list[dict], name: str) -> compiler.PrepareResult:
+    def _prepare(
+        self, schedule: list[dict[str, Any]], name: str
+    ) -> compiler.PrepareResult:
         return self.prepare_authorized(
             load_spec(self.write_spec(self._spec_with_schedule(schedule))),
             self.workspace / name,
         )
 
     @staticmethod
-    def _complete() -> list[dict]:
+    def _complete() -> list[dict[str, Any]]:
         return [
             {"task": "T1", "repetition": repetition, "arm": arm}
             for repetition in (1, 2)

@@ -11,7 +11,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler
@@ -126,7 +128,7 @@ class OracleStagingRuleTests(unittest.TestCase):
 class OracleStagingCompilerTests(CapsuleFixture):
     """Defect 1, compiler level: staging preserves bytes and binds identity."""
 
-    def _spec_with_oracle_named(self, oracle_name: str) -> tuple[dict, Path]:
+    def _spec_with_oracle_named(self, oracle_name: str) -> tuple[dict[str, Any], Path]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -202,7 +204,9 @@ class OracleStagingCompilerTests(CapsuleFixture):
 class OracleStagingOccupancyTests(CapsuleFixture):
     """The reserved staging path is never followed, replaced or copied through."""
 
-    def _spec_with_occupant(self, make_occupant) -> dict:
+    def _spec_with_occupant(
+        self, make_occupant: Callable[[Path, str], None]
+    ) -> dict[str, Any]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -302,6 +306,8 @@ class OracleStagingOciTests(CapsuleFixture):
         )
         receipt = result.task("T1").qualification
         self.assertIsNotNone(receipt)
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         # The whole point: this must be a real behavioural classification, not the
         # INFRASTRUCTURE collection failure the original basename produced.
         self.assertNotEqual(receipt.base.classification, "INFRASTRUCTURE")
@@ -315,7 +321,7 @@ class RelayImageBindingTests(CapsuleFixture):
 
     def _restricted_spec(
         self, repo: Path, base: str, ref: str, **runtime: object
-    ) -> dict:
+    ) -> dict[str, Any]:
         runtime_block: dict[str, object] = {"image": IMAGE_A}
         runtime_block.update(runtime)
         spec = self.base_spec(repo, base, ref, runtime=runtime_block)

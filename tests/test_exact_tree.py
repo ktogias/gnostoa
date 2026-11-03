@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -149,11 +150,12 @@ class VerifyTrackedTests(ExactTreeFixture):
     def test_a_changed_or_missing_tracked_path_is_refused(self) -> None:
         tree = self.commit({"a.txt": b"a\n", "d/b.txt": b"b\n"})
         owner = _owner()
-        for label, damage in (
+        damages: tuple[tuple[str, Callable[[Path], object]], ...] = (
             ("changed", lambda root: (root / "a.txt").write_bytes(b"x\n")),
             ("missing", lambda root: (root / "d" / "b.txt").unlink()),
             ("mode", lambda root: (root / "a.txt").chmod(0o755)),
-        ):
+        )
+        for label, damage in damages:
             with self.subTest(damage=label):
                 root = self.root / label
                 owner.materialize(self.repo, tree, root, limits=self.limits())

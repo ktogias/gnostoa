@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _DiagnosticInventoryFixture
+from tools.quality_evidence import DiagnosticLimits
 
 _SC_NATIVE = {
     "file": "tool",
@@ -24,7 +25,7 @@ _SC_NATIVE = {
 }
 
 
-def _sourced(line: int) -> dict:
+def _sourced(line: int) -> dict[str, object]:
     """ShellCheck's own record of a source it does not follow."""
     message = "Not following: ./lib.sh was not specified as input (see shellcheck -x)."
     return dict(_SC_NATIVE, line=line, endLine=line, code=1091, message=message)
@@ -74,7 +75,9 @@ _WORKFLOW = (
 _GITLAB = "job:\n  script:\n    - echo $FOO\n"
 
 
-def _shellcheck_answer(command, status, body):
+def _shellcheck_answer(
+    command: list[str], status: int | None, body: dict[str, Any]
+) -> tuple[int | None, dict[str, Any]]:
     """ShellCheck's answer to `command`: each comment names the file it was given, the first one here, and an
     `--include` keeps its own codes alone, exiting 0 when none is left (measured on the pinned 0.11.0, #389 round 12)."""
     given = command[command.index("--") + 1] if "--" in command else command[-1]
@@ -177,13 +180,22 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             "actionlint": (1, [_AL_NATIVE]),
         }
 
-    def _tool(self, command) -> str | None:
+    def _tool(self, command: list[str]) -> str | None:
         for name in ("shellcheck", "hadolint", "actionlint"):
             if Path(command[0]).name == name:
                 return name
         return None
 
-    def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
+    def _fake_run(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        environment: dict[str, str],
+        report: Path,
+        deadline: float,
+        limits: DiagnosticLimits,
+    ) -> tuple[int | None, str | None, bool]:
         name = self._tool(command)
         if name is None:
             return super()._fake_run(
@@ -215,7 +227,9 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
         )
         return status, None, False
 
-    def _collect(self, profile=None, **options) -> dict:
+    def _collect(
+        self, profile: dict[str, Any] | None = None, **options: object
+    ) -> dict[str, Any]:
         # The pinned tools are found under the protected tool root only; `create=True`, because on protected main
         # there is none yet, so the collection reaches the profile's own contract before anything else.
         with (
@@ -228,7 +242,7 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             )
         return self._read(path)
 
-    def _rows(self, inventory: dict) -> dict[str, dict]:
+    def _rows(self, inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {row["family"]: row for row in inventory.get("families", [])}
 
     def _change(self, path: str, old: str, new: str) -> None:
@@ -246,7 +260,7 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             if Path(c[0][0]).name == name and not {"--version", "-version"} & set(c[0])
         ]
 
-    def _findings(self, inventory: dict, tool: str) -> list[dict]:
+    def _findings(self, inventory: dict[str, Any], tool: str) -> list[dict[str, Any]]:
         return [f for f in inventory["findings"] if f["tool"]["id"] == tool]
 
     def _commit(self, files: dict[str, str]) -> None:

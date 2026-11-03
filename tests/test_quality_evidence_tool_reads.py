@@ -9,6 +9,7 @@ import os
 import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_profile_support import _original
@@ -87,7 +88,7 @@ class SecretsNegativeTests(_ToolFamilyFixture):
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "keyword")
 
-        def found(inventory: dict) -> list[int]:
+        def found(inventory: dict[str, Any]) -> list[int]:
             return [
                 f["range"]["start_line"]
                 for f in self._findings(inventory, "secrets")

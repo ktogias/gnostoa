@@ -1478,7 +1478,9 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         # a batch that select returns after the deadline is still read, so a cap
         # crossing in it is reported as the cap, not as a timeout.
         class Late(selectors.DefaultSelector):
-            def select(self, timeout: float | None = None) -> list:
+            def select(
+                self, timeout: float | None = None
+            ) -> list[tuple[selectors.SelectorKey, int]]:
                 # Bounded, so that a mutated deadline cannot hold the test.
                 time.sleep(min(max(0.0, (timeout or 0.0) + 0.3), 2.0))
                 return super().select(5)

@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.machinery
 import importlib.util
 import json
 import os
 import platform
 import shlex
 import time
+import types
 import unittest
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ from tests.quality_evidence_tool_families_support import (
     _sourced,
     _ToolFamilyFixture,
 )
+from tools.quality_evidence import DiagnosticLimits
 
 # The repository's protected reviewed baseline, which the producer tree's secrets family holds the scan to.
 _REVIEWED_BASELINE = Path(__file__).resolve().parent.parent / ".secrets.baseline"
@@ -436,17 +439,19 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         # Amazon Q on #470: the pinned module's name must be a detect-secrets plugin class before it is made.
         original = importlib.util.spec_from_file_location
 
-        def no_class(name, location):
+        def no_class(
+            name: str, location: str | os.PathLike[str]
+        ) -> importlib.machinery.ModuleSpec:
             spec = original(name, location)
             assert spec is not None
             assert spec.loader is not None
             load = spec.loader.exec_module
 
-            def exec_module(module):
+            def exec_module(module: types.ModuleType) -> None:
                 load(module)
-                module.GnostoaAssignmentDetector = lambda: None
+                vars(module)["GnostoaAssignmentDetector"] = lambda: None
 
-            spec.loader.exec_module = exec_module
+            vars(spec.loader)["exec_module"] = exec_module
             return spec
 
         with patch("importlib.util.spec_from_file_location", side_effect=no_class):
@@ -461,11 +466,13 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         # Amazon Q on #470: any import-time failure of the protected plugin fails the scan closed, named.
         original = importlib.util.spec_from_file_location
 
-        def failing_spec(name, location):
+        def failing_spec(
+            name: str, location: str | os.PathLike[str]
+        ) -> importlib.machinery.ModuleSpec:
             spec = original(name, location)
             assert spec is not None
             assert spec.loader is not None
-            spec.loader.exec_module = lambda module: (_ for _ in ()).throw(
+            vars(spec.loader)["exec_module"] = lambda module: (_ for _ in ()).throw(
                 ImportError("x")
             )
             return spec
@@ -524,7 +531,7 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         ]
         self.assertEqual([3], [f["range"]["start_line"] for f in found])
 
-    def _secrets_runs(self, inventory: dict) -> list[dict]:
+    def _secrets_runs(self, inventory: dict[str, Any]) -> list[dict[str, Any]]:
         return [r for r in inventory["producers"] if r["producer"] == "secrets"]
 
     def test_the_secrets_run_names_the_scanner_version_it_was_held_to(self) -> None:
@@ -542,13 +549,13 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         protected = _REVIEWED_BASELINE
         reviewed = json.loads(protected.read_text(encoding="utf-8"))
 
-        def other_version(document: dict) -> None:
+        def other_version(document: dict[str, Any]) -> None:
             document["version"] = "0.0.1"
 
-        def one_plugin_fewer(document: dict) -> None:
+        def one_plugin_fewer(document: dict[str, Any]) -> None:
             document["plugins_used"] = document["plugins_used"][1:]
 
-        def one_filter_fewer(document: dict) -> None:
+        def one_filter_fewer(document: dict[str, Any]) -> None:
             document["filters_used"] = document["filters_used"][1:]
 
         for change in (other_version, one_plugin_fewer, one_filter_fewer):
@@ -591,7 +598,7 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         outside.write_text("kept", encoding="utf-8")
         scoped = _original(self.module, "_scoped_baseline")
 
-        def planting(run, paths):
+        def planting(run: Path, paths: list[str]) -> Path:
             (run / "diagnostic-secrets-identity.json").symlink_to(outside)
             return scoped(run, paths)
 
@@ -1005,10 +1012,16 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # published with every other family's findings.
         real_open = os.open
 
-        def no_copy(path, flags, *args, **kwargs):
+        def no_copy(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             if flags & os.O_CREAT and "tools-shell-lint" in str(path):
                 raise OSError(28, "ENOSPC")
-            return real_open(path, flags, *args, **kwargs)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
 
         with patch("tools.quality_evidence.os.open", side_effect=no_copy):
             row = self._rows(self._collect(base=self.base))["shell-lint"]
@@ -1023,8 +1036,19 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
         verify = _original(self.module, "_version_gap")
 
-        def then_replace(*args, **kwargs):
-            gap = verify(*args, **kwargs)
+        def then_replace(
+            tool: Path,
+            name: str,
+            run: Path,
+            limits: DiagnosticLimits,
+            deadline: float,
+            pinned: str,
+            *,
+            family: str,
+        ) -> str | None:
+            gap: str | None = verify(
+                tool, name, run, limits, deadline, pinned, family=family
+            )
             (self.tool_root / "shellcheck").write_bytes(b"#!replaced\n")
             return gap
 
@@ -1037,10 +1061,25 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Revix on #470: a version call that fails or times out is not a version that differs from the pin.
         fake = self._fake_run
 
-        def failing(command, **options):
+        def failing(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if "--version" in command:
                 return None, "the inventory deadline passed", False
-            return fake(command, **options)
+            return fake(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
 
         with patch.object(self, "_fake_run", new=failing):
             row = self._rows(self._collect(base=self.base))["shell-lint"]

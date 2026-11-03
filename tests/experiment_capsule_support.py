@@ -7,9 +7,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
-from tools.capsule import compiler
+from tools.capsule import compiler, qualification
 from tools.capsule.authority import LaunchAuthority, PreflightAuthority
+from tools.capsule.spec import ExperimentSpec
 
 IMAGE_A = "sha256:" + "a" * 64
 
@@ -63,12 +65,14 @@ class CapsuleFixture(unittest.TestCase):
         git(repo, "commit", "-q", "-m", message)
         return git(repo, "rev-parse", "HEAD")
 
-    def write_spec(self, payload: dict) -> Path:
+    def write_spec(self, payload: dict[str, Any]) -> Path:
         path = self.root / "experiment.json"
         path.write_text(json.dumps(payload, indent=2))
         return path
 
-    def base_spec(self, repo: Path, base: str, ref: str, **task: object) -> dict:
+    def base_spec(
+        self, repo: Path, base: str, ref: str, **task: object
+    ) -> dict[str, Any]:
         entry: dict[str, object] = {
             "id": "T1",
             "adapter": "python-pytest",
@@ -140,7 +144,14 @@ class CapsuleFixture(unittest.TestCase):
             preflight_candidate_sha256=candidate or "",
         )
 
-    def prepare_authorized(self, spec, workspace, *, experiment_id="E1", **kwargs):
+    def prepare_authorized(
+        self,
+        spec: ExperimentSpec,
+        workspace: str | Path,
+        *,
+        experiment_id: str = "E1",
+        qualification_backend: str = qualification.LOCAL_PYTHON,
+    ) -> compiler.PrepareResult:
         """Observe the prepared candidate, authorise that exact one, then run it.
 
         This is the operational sequence itself, not a shortcut around it: an
@@ -148,7 +159,12 @@ class CapsuleFixture(unittest.TestCase):
         digest, and the unchanged candidate is re-prepared under it. prepare is
         idempotent, so the second call reuses the retained stages.
         """
-        observed = compiler.prepare(spec, workspace, offline=True, **kwargs)
+        observed = compiler.prepare(
+            spec,
+            workspace,
+            offline=True,
+            qualification_backend=qualification_backend,
+        )
         return compiler.prepare(
             spec,
             workspace,
@@ -157,5 +173,5 @@ class CapsuleFixture(unittest.TestCase):
                 experiment_id=experiment_id,
                 candidate=observed.preflight_candidate_sha256,
             ),
-            **kwargs,
+            qualification_backend=qualification_backend,
         )
