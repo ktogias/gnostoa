@@ -102,8 +102,16 @@ def _diagnostic_line(text: str, needle: str, after: str | None = None) -> int:
     start = 0
     lines = text.splitlines()
     if after is not None:
-        start = next(i for i, line in enumerate(lines) if after in line)
-    return next(i for i, line in enumerate(lines) if i >= start and needle in line) + 1
+        found = next((i for i, line in enumerate(lines) if after in line), None)
+        if found is None:
+            raise AssertionError(f"no line holds {after!r}")
+        start = found
+    index = next(
+        (i for i, line in enumerate(lines) if i >= start and needle in line), None
+    )
+    if index is None:
+        raise AssertionError(f"no line from {start + 1} holds {needle!r}")
+    return index + 1
 
 
 # The Router's I3 on #436 (6210989878): without a bounded check of the index, no
@@ -335,6 +343,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     faked at `_bounded_run` with their real report formats, their records, and the
     collection and spies through them."""
 
+    # The directory of the last collection `_inventory` ran.
+    run_directory: Path
+
     def setUp(self) -> None:
         super().setUp()
         self.mypy_records: dict[str, list[dict[str, Any]]] = {
@@ -457,42 +468,61 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
     ) -> tuple[int | None, str | None, bool]:
         self.commands.append((list(command), Path(cwd), dict(environment)))
         if "--version" in command:
-            version = self.versions.get(command[3], "1.0.0")
-            if version is None:
-                return 1, "exited 1", False
-            report.write_text(f"{command[3]} {version}\n", encoding="utf-8")
-            return 0, None, False
+            return self._fake_version(command, report)
         if "mypy" in command:
-            prefix = Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
-            prefix = "" if prefix == "." else prefix + "/"
-            if self.mypy_text is not None and not prefix:
-                report.write_text(self.mypy_text, encoding="utf-8")
-                return self.mypy_exit.get(".", 1), None, False
-            files = command[command.index("--") + 1 :]
-            lines = [
-                json.dumps({**r, "file": r["file"][len(prefix) :]})
-                for f in files
-                for r in self.mypy_records.get(prefix + f, [])
-            ]
-            report.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
-            status = self.mypy_exit.get(prefix or ".", 1 if lines else 0)
-            return status, None if status in (0, 1) else f"exited {status}", False
+            return self._fake_mypy(command, cwd, report)
         if "ruff" in command:
-            records = self._ruff_answer(command)
-            text = self.ruff_text if self.ruff_text is not None else json.dumps(records)
-            # Ruff names the files it read absolutely, under the staged source the
-            # producers ran in, never the checkout (#389 F3 S2 B).
-            report.write_text(self._staged_text(text, cwd), encoding="utf-8")
-            if self.ruff_exit is None:
-                # Ruff's own status: 1 only when it reports a diagnostic (_ruff_gap).
-                return (1 if records else 0), None, False
-            return self.ruff_exit, None, False
+            return self._fake_ruff(command, cwd, report)
         if command == self._observation_command():
             # The producers' environment observation (#389 F3 S2-C): one fixed
             # installed set, unless a test answers the observation itself.
             report.write_text(self._observation(), encoding="utf-8")
             return 0, None, False
         raise AssertionError(f"unexpected producer: {command}")
+
+    def _fake_version(
+        self, command: list[str], report: Path
+    ) -> tuple[int | None, str | None, bool]:
+        """A producer's `--version`: its recorded version, or exit 1 when it has none."""
+        version = self.versions.get(command[3], "1.0.0")
+        if version is None:
+            return 1, "exited 1", False
+        report.write_text(f"{command[3]} {version}\n", encoding="utf-8")
+        return 0, None, False
+
+    def _fake_mypy(
+        self, command: list[str], cwd: Path, report: Path
+    ) -> tuple[int | None, str | None, bool]:
+        """mypy's run: the records held for the files it was given, under the root it
+        ran in, or the whole report a test holds for the source root."""
+        prefix = Path(cwd).resolve().relative_to(self._source_root(cwd)).as_posix()
+        prefix = "" if prefix == "." else prefix + "/"
+        if self.mypy_text is not None and not prefix:
+            report.write_text(self.mypy_text, encoding="utf-8")
+            return self.mypy_exit.get(".", 1), None, False
+        files = command[command.index("--") + 1 :]
+        lines = [
+            json.dumps({**r, "file": r["file"][len(prefix) :]})
+            for f in files
+            for r in self.mypy_records.get(prefix + f, [])
+        ]
+        report.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        status = self.mypy_exit.get(prefix or ".", 1 if lines else 0)
+        return status, None if status in (0, 1) else f"exited {status}", False
+
+    def _fake_ruff(
+        self, command: list[str], cwd: Path, report: Path
+    ) -> tuple[int | None, str | None, bool]:
+        """Ruff's run: its records, or the whole report a test holds, with its status."""
+        records = self._ruff_answer(command)
+        text = self.ruff_text if self.ruff_text is not None else json.dumps(records)
+        # Ruff names the files it read absolutely, under the staged source the
+        # producers ran in, never the checkout (#389 F3 S2 B).
+        report.write_text(self._staged_text(text, cwd), encoding="utf-8")
+        if self.ruff_exit is None:
+            # Ruff's own status: 1 only when it reports a diagnostic (_ruff_gap).
+            return (1 if records else 0), None, False
+        return self.ruff_exit, None, False
 
     def _ruff_answer(self, command: list[str]) -> list[dict[str, Any]]:
         """The records the fake Ruff reports for `command`: every record a test holds,
@@ -818,7 +848,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
         )
         return script, first
 
-    def _package(self, where: Path) -> Path:
+    @staticmethod
+    def _package(where: Path) -> Path:
         """A packaged root: the scope owner's manifest, and no `.git` of its own."""
         (where / "tools").mkdir(parents=True)
         (where / "tools" / "sample.py").write_text("def f(x):\n    return x\n")
@@ -968,8 +999,9 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
             encoding="utf-8"
         )
 
+    @staticmethod
     def _report_read_raises(
-        self, pattern: str, error: OSError
+        pattern: str, error: OSError
     ) -> contextlib.AbstractContextManager[object]:
         """A patch making the read of the one report whose name matches `pattern`
         raise `error`."""
@@ -982,7 +1014,8 @@ class _DiagnosticInventoryFixture(_DiagnosticFixture):
 
         return patch.object(Path, "read_text", autospec=True, side_effect=reading)
 
-    def _reasons(self, inventory: dict[str, Any]) -> dict[str, str]:
+    @staticmethod
+    def _reasons(inventory: dict[str, Any]) -> dict[str, str]:
         return {
             u["path"]: u["reason"] for u in inventory["scope"]["full"]["unanalyzed"]
         }
