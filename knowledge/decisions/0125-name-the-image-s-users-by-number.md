@@ -303,13 +303,14 @@ remedy, and its permanent characterization test, `tests/test_quality_evidence_lo
     tracked workflow must also read as `BaseLoader` reads it.
   - That check reads each workflow by `yaml.BaseLoader(text).get_single_data()`, the loader call
     `yaml.load` makes. Written out, it is not the call form Bandit's B506 matches; on the 17 tracked
-    workflows and the 77 documents it equals `yaml.load`'s result. `yaml.safe_load` differs on all
-    17 workflows: `on:` becomes the key `True`.
+    workflows, and on the 77 documents of the comparison below, it equals `yaml.load`'s result.
+    `yaml.safe_load` differs on all 17 workflows: `on:` becomes the key `True`.
   - It passed on the parent before the edit. Two mutants of the old loader, `first` off by one and a
     literal's `step` set to 0, each fail it.
 - **The evidence:**
-  - Both implementations give identical results on 77 documents: 57 tracked YAML
-    files and 20 edge cases, 7 of them refused.
+  - Run offline, both implementations give identical results on 77 documents: the repository's
+    57 tracked YAML files, a wider set than the reader's 17 workflows, and 20 edge cases, 7 of them
+    refused.
   - The `test_quality_evidence*` modules run 461 tests, OK; they ran 458 on the parent.
   - After the remedy, mypy reports nothing at that line.
 - **The falsifier's result:** DeepSource's complete exact-head run at `b003c5fd` lists no `TYP-028`
