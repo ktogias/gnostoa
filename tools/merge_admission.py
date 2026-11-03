@@ -16,6 +16,7 @@ protected branch's rules (Decision 0110).
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,38 @@ _EVIDENCE_KEYS = frozenset(
         "receipts",
     }
 )
+# The protected target's debt ledger (#389, the M17 transition): optional, so an older
+# input stays valid, and without it M17 is what it was.
+_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_debt"})
+_DEBT_KEYS = frozenset({"coverage", "entries"})
+_DEBT_COVERAGES = frozenset({"COMPLETE", "UNAVAILABLE"})
+_DEBT_ENTRY_KEYS = frozenset(
+    {
+        "id",
+        "item",
+        "rule",
+        "path",
+        "message",
+        "enclosing_sha256",
+        "aspect",
+        "provenance",
+    }
+)
+_DEBT_PROVENANCE_KEYS = frozenset({"commit", "readback_run", "admitted_by"})
+# The aspects an entry may name. A security finding is never inherited debt: it is
+# repaired (PAO 6614901388 on #389).
+_DEBT_ASPECTS = frozenset(
+    {
+        "complexity",
+        "correctness",
+        "documentation",
+        "maintainability",
+        "performance",
+        "style",
+        "typing",
+    }
+)
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
 _CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
@@ -79,7 +112,17 @@ _SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
 _FINDING_KEYS = frozenset({"item", "id", "message"})
 _FINDING_OPTIONAL_KEYS = frozenset(
-    {"rule", "severity", "category", "path", "state", "native_ref", "tool", "range"}
+    {
+        "rule",
+        "severity",
+        "category",
+        "path",
+        "state",
+        "native_ref",
+        "tool",
+        "range",
+        "enclosing",
+    }
 )
 
 
@@ -340,9 +383,88 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
     return _criterion("M15", reasons), paths
 
 
+def _debt_entries(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The protected target's debt ledger entries, each closed and typed, or none
+    without a ledger (#389, the M17 transition). A security finding is refused."""
+
+    if "analyzer_debt" not in evidence:
+        return []
+    record = require_mapping(evidence["analyzer_debt"], "analyzer_debt")
+    require_closed_keys(record, "analyzer_debt", _DEBT_KEYS)
+    if record["coverage"] not in _DEBT_COVERAGES:
+        raise AssuranceCompletenessError(
+            f"analyzer_debt coverage {record['coverage']!r} is unknown"
+        )
+    entries = record["entries"]
+    if not isinstance(entries, list):
+        raise AssuranceCompletenessError("analyzer_debt entries must be a list")
+    if record["coverage"] == "UNAVAILABLE" and entries:
+        raise AssuranceCompletenessError("analyzer_debt has entries but no ledger")
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(entries):
+        label = f"analyzer_debt entry {index}"
+        entry = require_mapping(item, label)
+        require_closed_keys(entry, label, _DEBT_ENTRY_KEYS)
+        for key in ("id", "item", "rule", "path", "message"):
+            require_text(entry[key], f"{label} {key}")
+        digest = entry["enclosing_sha256"]
+        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+            raise AssuranceCompletenessError(
+                f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
+            )
+        if entry["aspect"] == "security":
+            raise AssuranceCompletenessError(
+                f"{label} is a security finding, which is never inherited debt"
+            )
+        if entry["aspect"] not in _DEBT_ASPECTS:
+            raise AssuranceCompletenessError(
+                f"{label} aspect {entry['aspect']!r} is unknown"
+            )
+        provenance = require_mapping(entry["provenance"], f"{label} provenance")
+        require_closed_keys(provenance, f"{label} provenance", _DEBT_PROVENANCE_KEYS)
+        require_commit(provenance["commit"], f"{label} provenance commit")
+        require_text(provenance["readback_run"], f"{label} provenance readback_run")
+        require_text(provenance["admitted_by"], f"{label} provenance admitted_by")
+        result.append(dict(entry))
+    require_unique_texts(
+        [e["id"] for e in result], "analyzer_debt entry ids", allow_empty=True
+    )
+    return result
+
+
+def _finding_identity(finding: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """What a finding must share with a ledger entry: its item, rule, path, message
+    and enclosing scope. One without a rule, a path or a scope has none."""
+
+    enclosing = finding.get("enclosing")
+    if (
+        not isinstance(enclosing, Mapping)
+        or "rule" not in finding
+        or "path" not in finding
+    ):
+        return None
+    return (
+        finding["item"],
+        finding["rule"],
+        finding["path"],
+        finding["message"],
+        enclosing["sha256"],
+    )
+
+
+def _entry_identity(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    return (
+        entry["item"],
+        entry["rule"],
+        entry["path"],
+        entry["message"],
+        entry["enclosing_sha256"],
+    )
+
+
 def _analyzer_findings(
     evidence: Mapping[str, Any], claims_status: str | None
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, str]], list[str]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
     pass (the owner's rule, #407 6096770145 and 6101607240).
@@ -377,10 +499,39 @@ def _analyzer_findings(
             "analyzer finding coverage follows the required evidence, which is "
             f"{claims_status}"
         )
-    if findings:
-        plural = "" if len(findings) == 1 else "s"
-        reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
-    return _criterion("M17", reasons), findings
+    entries = _debt_entries(evidence)
+    # Only a complete read is matched: without it, every finding counts, and no
+    # entry is called resolved (#389, the M17 transition).
+    matchable = not reasons
+    available: dict[tuple[str, ...], list[str]] = {}
+    if matchable:
+        for entry in entries:
+            available.setdefault(_entry_identity(entry), []).append(entry["id"])
+    inherited: list[dict[str, str]] = []
+    unresolved = 0
+    for finding in findings:
+        identity = _finding_identity(finding)
+        ids = available.get(identity) if identity is not None else None
+        if ids:
+            inherited.append(
+                {
+                    "item": finding["item"],
+                    "id": finding["id"],
+                    "ledger_entry": ids.pop(0),
+                }
+            )
+        else:
+            unresolved += 1
+    matched = {record["ledger_entry"] for record in inherited}
+    resolved = (
+        [entry["id"] for entry in entries if entry["id"] not in matched]
+        if matchable
+        else []
+    )
+    if unresolved:
+        plural = "" if unresolved == 1 else "s"
+        reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
+    return _criterion("M17", reasons), findings, inherited, resolved
 
 
 def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
@@ -506,7 +657,7 @@ def evaluate(
     """Admit or deny the change the evidence describes."""
 
     document = require_mapping(evidence, "evidence")
-    require_closed_keys(document, "evidence", _EVIDENCE_KEYS)
+    require_closed_keys(document, "evidence", _EVIDENCE_KEYS, _EVIDENCE_OPTIONAL_KEYS)
     subject = parse_subject(document["subject"], "subject")
     head = subject["head_commit"]
     change_class = parse_change_class(document["change_class"])
@@ -537,7 +688,7 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
-    analyzer_criterion, analyzer_findings = _analyzer_findings(
+    analyzer_criterion, analyzer_findings, inherited, resolved = _analyzer_findings(
         document,
         evidence_verdict["status"]
         if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
@@ -573,6 +724,8 @@ def evaluate(
             "suppressions": justified,
             "trust_root_changes": trust_roots,
             "analyzer_findings": analyzer_findings,
+            "inherited_findings": inherited,
+            "resolved_debt": resolved,
         },
     }
 
