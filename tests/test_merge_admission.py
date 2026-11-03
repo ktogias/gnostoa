@@ -1232,6 +1232,10 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 "no scope",
                 {k: v for k, v in _debt_finding().items() if k != "enclosing"},
             ),
+            (
+                "a scope but no rule",
+                {k: v for k, v in _debt_finding().items() if k != "rule"},
+            ),
         ):
             with self.subTest(name):
                 verdict = self._verdict([finding], [_debt_entry()])
@@ -1287,6 +1291,8 @@ class DebtLedgerM17Tests(unittest.TestCase):
         verdict = _claims_verdict(evidence)
         self.assertIn("1 unresolved analyzer finding", _failed(verdict)["M17"])
         self.assertEqual([], verdict["for_approval"]["inherited_findings"])
+        # And no entry is called resolved on a read that is not complete.
+        self.assertEqual([], verdict["for_approval"]["resolved_debt"])
 
     def test_without_a_ledger_m17_is_as_it_was(self) -> None:
         for name, debt in (
@@ -1338,6 +1344,11 @@ class DebtLedgerM17Tests(unittest.TestCase):
                         {**entry, "tool": {"id": "py", "x": "y"}},
                     ),
                     ("a tool that is null", {**entry, "tool": None}),
+                    ("a tool with an empty id", {**entry, "tool": {"id": ""}}),
+                    (
+                        "a tool name that is not text",
+                        {**entry, "tool": {"id": "python", "name": 7}},
+                    ),
                     ("a security finding", {**entry, "aspect": "security"}),
                     (
                         "a commit that is not exact",

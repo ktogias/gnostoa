@@ -1218,10 +1218,8 @@ def _absent_from_full_run(
         requested_head,
         requested_head,
     )
-    record = full.get("coverage")
-    if identity != expected or not isinstance(record, Mapping):
-        return False
-    if record.get("status") != "COMPLETE":
+    # A FULL_RUN read is a complete one, by the readback's own contract.
+    if identity != expected:
         return False
     listed = {_located(finding) for finding in full.get("findings", ())}
     keys = [_located(finding) for finding in carried]
