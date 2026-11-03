@@ -213,3 +213,16 @@ This text amends the first published version (6,773 bytes, SHA-256
      on every host that runs the suite. A bare name returns `B607`. A literal `/usr/bin` path fails where a
      binary lives elsewhere, such as Homebrew on macOS. Its patterns on `tests/` are a provider-side
      decision for the owner (#389 6598155432).
+9. **The shared fixtures' typing:** correction 8 held `tests/quality_evidence_fixtures.py` until
+   its admission. The owner admitted typing-only repairs there and at its call sites (#389
+   6606320054). They use correction 7's means:
+   - **The fakes** of `_bounded_run`, `os.open`, `os.fdopen` and `_diagnostic_git` declare those
+     interfaces and forward by name.
+   - **Pass-through spies** into untyped reals take and return `object`.
+   - **The typed stdlib reals** that a double forwards to are held as `Callable[..., T]`.
+   - **JSON documents** are `dict[str, Any]`.
+
+   The strict reproduction finds 50 errors in the module before and 0 after, and 19
+   in its callers in this PR before and 0 after. One caller needed a repair: a launcher
+   double now declares `_bounded_run`'s interface. Test ids, discovery and outcomes are unchanged.
+   The fixture hierarchy is not changed: its mixin form stays with PAO's deferral (correction 8).
