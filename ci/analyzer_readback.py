@@ -617,7 +617,8 @@ def collect_bundle(
     statuses = _statuses(github, repository, requested)
     checks = _check_runs(github, repository, requested)
     comments = _review_comments(github, repository, pull_number)
-    diff_local = analyzer_deepsource.diff_local_from_github(
+    diff_local_from = functools.partial(
+        analyzer_deepsource.diff_local_from_github,
         repository=repository,
         pull_number=pull_number,
         requested_head=requested,
@@ -626,6 +627,7 @@ def collect_bundle(
         comments=_deepsource_comments(comments),
         observed_at=observed,
     )
+    diff_local = diff_local_from()
 
     run_uid = diff_local.get("analysis_id")
     if deepsource is None:
@@ -673,6 +675,14 @@ def collect_bundle(
             run_uid=run_uid,
             observed_at=observed,
         )
+
+    if (
+        diff_local["coverage"].get("reason") == "CARRIED_FORWARD_COMMENTS_EXCLUDED"
+        and full["coverage"]["status"] == "COMPLETE"
+    ):
+        # The same run's full read may show each carried-forward comment's
+        # finding gone from the head (#389, addendum 6615072518).
+        diff_local = diff_local_from(full=full)
 
     if codacy is None:
         codacy_readback = _unavailable_readback(

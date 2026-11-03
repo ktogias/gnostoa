@@ -1001,6 +1001,67 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             "CARRIED_FORWARD_COMMENTS_EXCLUDED", diff["coverage"]["reason"]
         )
 
+    def test_the_bundle_settles_a_carried_forward_comment_by_the_full_run(
+        self,
+    ) -> None:
+        """#389 (addendum 6615072518): the same run's complete full read lists no
+        finding at the carried-forward comment's path, line and message, so the
+        DIFF read is complete, and says why."""
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {
+                    "check_runs": [
+                        {
+                            "name": "DeepSource: Python",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "details_url": (
+                                "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                                f"{RUN_UID}/python/"
+                            ),
+                            "app": {"slug": "deepsource-io"},
+                        }
+                    ]
+                },
+                urls["comments"]: [
+                    {
+                        "body": (
+                            "<!-- DeepSource: id=carried -->\n"
+                            "<h3><picture></picture>finding</h3>"
+                        ),
+                        "path": "tools/example.py",
+                        "line": 7,
+                        "commit_id": HEAD,
+                        "original_commit_id": OTHER,
+                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    }
+                ],
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=_deepsource_fake(),
+            codacy=_CodacyReader(),
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
+        diff = readbacks["deepsource-github/v1"]
+        self.assertEqual("COMPLETE", diff["coverage"]["status"])
+        self.assertEqual(1, diff["native"]["carried_forward_comments_excluded"])
+        self.assertEqual(
+            1, diff["native"]["carried_forward_comments_absent_from_full_run"]
+        )
+        recorded = json.loads(canonical_json(bundle))
+        self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
+
     def test_check_run_can_supply_deepsource_run_association(self) -> None:
         urls = _github_urls()
         github = _GitHubFake(
