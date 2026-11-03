@@ -226,3 +226,19 @@ This text amends the first published version (6,773 bytes, SHA-256
    in its callers in this PR before and 0 after. One caller needed a repair: a launcher
    double now declares `_bounded_run`'s interface. Test ids, discovery and outcomes are unchanged.
    The fixture hierarchy is not changed: its mixin form stays with PAO's deferral (correction 8).
+10. **The shared fixtures' own findings:** once the file was touched, DeepSource listed its own
+    debt there. The owner admitted correction 8's remedies for it and one extraction (#389
+    6612057593, option A of 6610362790):
+    - **`run_directory`** is declared at class level, without a value.
+    - **Three helpers that never read `self`**, `_package`, `_report_read_raises` and `_reasons`, are
+      static methods.
+    - **`_diagnostic_line`'s two `next()` calls** take a default and fail explicitly. This changes
+      one failure's kind: a missing match is a test failure, not `StopIteration`.
+    - **`_fake_run`'s producer branches** move to `_fake_version`, `_fake_mypy` and `_fake_ruff`, in
+      the same class. It dispatches to them in the same order, with the same arguments. By the
+      protected metric it is 5, from 18, and the helpers are 2, 10 and 4.
+
+    The 541 test ids of the touched modules are unchanged, and each loads singly.
+    **Retained, and still counted by M17:** the four keyword-only parameters of a `_bounded_run`
+    double, which keep their names (correction 8), and the two fixture bases' `PTC-W0046`, under
+    PAO's deferral.
