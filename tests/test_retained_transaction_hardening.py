@@ -523,10 +523,11 @@ class LockIdentityTests(CompletedWorkspaceFixture):
             }
         ).encode()
         state = json.dumps({"lock_sha256": "e" * 64}).encode()
+        transaction_id = retained_commit.new_transaction_id()
         with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
             retained_commit.stage(
                 self.workspace,
-                transaction_id=retained_commit.new_transaction_id(),
+                transaction_id=transaction_id,
                 base_identity=None,
                 candidate_sha256=None,
                 authority_sha256=None,
@@ -538,10 +539,11 @@ class LockIdentityTests(CompletedWorkspaceFixture):
         self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
 
     def test_a_staged_lock_without_its_identity_is_refused(self) -> None:
+        transaction_id = retained_commit.new_transaction_id()
         with self.assertRaises(retained_commit.RetainedTransactionError):
             retained_commit.stage(
                 self.workspace,
-                transaction_id=retained_commit.new_transaction_id(),
+                transaction_id=transaction_id,
                 base_identity=None,
                 candidate_sha256=None,
                 authority_sha256=None,

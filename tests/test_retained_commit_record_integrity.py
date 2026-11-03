@@ -124,8 +124,9 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
                 retained_commit, "_write_atomic", side_effect=crash_before_recording
             ),
         ):
+            authority = self.consumption_authority(candidate)
             with self.assertRaises(RuntimeError):
-                self.prepare(authority=self.consumption_authority(candidate))
+                self.prepare(authority=authority)
 
         self.assertNotEqual(
             (self.workspace / "experiment-state.json").read_text(),

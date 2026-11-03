@@ -154,8 +154,9 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         assert candidate is not None
         with self.patched_effect():
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.consumption_authority(candidate))
+                    self.prepare(authority=authority)
 
         self.tamper_reservation(transaction_id=str(escaped))
         with self.assertRaises(retained_commit.RetainedTransactionError):
@@ -180,8 +181,9 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         assert candidate is not None
         with self.patched_effect():
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.consumption_authority(candidate))
+                    self.prepare(authority=authority)
 
         relative = "../../outside-the-workspace/traversed"
         self.tamper_reservation(transaction_id=relative)
@@ -207,8 +209,9 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
                     )
                 except retained_commit.RetainedTransactionError:
                     continue
-                self.assertTrue(
-                    self.workspace.resolve() in directory.resolve().parents,
+                self.assertIn(
+                    self.workspace.resolve(),
+                    directory.resolve().parents,
                     f"{identifier!r} resolved to {directory} outside the workspace",
                 )
 
@@ -311,8 +314,9 @@ class RecoveryBindingTests(ContainmentFixture):
             # Dies before any canonical file moves, so what recovery does next is
             # visible in the canonical state rather than already applied.
             with self.crash_writing(retained_commit.LEDGER_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.consumption_authority(candidate))
+                    self.prepare(authority=authority)
 
             reservation = retained_commit.read_reservation(self.workspace)
             self.assertIsNotNone(reservation)

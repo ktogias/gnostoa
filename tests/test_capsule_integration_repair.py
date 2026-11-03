@@ -389,8 +389,9 @@ class RelayImageBindingTests(CapsuleFixture):
         spec = self._restricted_spec(
             repo, base, ref, relay_image="registry/relay:latest"
         )
+        written = self.write_spec(spec)
         with self.assertRaises(SpecError):
-            load_spec(self.write_spec(spec))
+            load_spec(written)
 
     def test_relay_image_is_bound_into_the_frozen_identity(self) -> None:
         repo, base, ref = self._subject()

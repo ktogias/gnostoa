@@ -71,13 +71,14 @@ class ClaimNameContainmentTests(ConsumptionFixture):
             )
 
     def _refused(self, candidate: str) -> None:
+        authority = self._authority(candidate)
         with self.assertRaises(effect_claim.EffectClaimError) as raised:
             effect_claim.claim_fresh_candidate(
                 self.workspace,
                 experiment_id="E1",
                 scope=authority_module.BASE_REFERENCE_QUALIFICATION,
                 candidate_sha256=candidate,
-                authority=self._authority(candidate),
+                authority=authority,
                 candidate_tasks=_TASKS,
             )
         self.assertEqual(raised.exception.code, effect_claim.INVALID_CLAIM)
@@ -167,13 +168,14 @@ class ClaimNameContainmentTests(ConsumptionFixture):
             )
         self.assertIn("stage ledger", reading.exception.detail)
 
+        authority = self._authority(candidate)
         with self.assertRaises(effect_claim.EffectClaimError) as raised:
             effect_claim.claim_fresh_candidate(
                 self.workspace,
                 experiment_id="E1",
                 scope=authority_module.BASE_REFERENCE_QUALIFICATION,
                 candidate_sha256=candidate,
-                authority=self._authority(candidate),
+                authority=authority,
                 candidate_tasks=_TASKS,
             )
         self.assertEqual(raised.exception.code, effect_claim.ALREADY_CONSUMED)

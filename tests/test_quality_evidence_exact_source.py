@@ -427,8 +427,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         marker = Path(self.directory.name) / "was fetched"
         _promisor(self.root, self._git, marker)
         diagnostic_git = _original(self.module, "_diagnostic_git")
+        deadline = time.monotonic() + 60
         with self.assertRaises(subprocess.CalledProcessError):
-            diagnostic_git(self.root, time.monotonic() + 60, "cat-file", "-p", "1" * 40)
+            diagnostic_git(self.root, deadline, "cat-file", "-p", "1" * 40)
         self.assertFalse(marker.exists())
 
     # The whole chain, with a base to compare: staging, enumeration and the
@@ -623,20 +624,18 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 started, spawning = self._spawns()
                 with patch.dict(_original(owner, "_GIT_ENV"), change), spawning:
                     diagnostic_git = _original(self.module, "_diagnostic_git")
+                    deadline = time.monotonic() + 60
                     with self.assertRaises((OSError, ValueError)) as raised:
-                        diagnostic_git(
-                            self.root, time.monotonic() + 60, "rev-parse", "HEAD"
-                        )
+                        diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
                 self.assertIn("no-fetch policy", str(raised.exception))
                 self.assertEqual([], started)
         with self.subTest("the owner cannot be imported"):
             started, spawning = self._spawns()
             with patch.dict(sys.modules, {"tools.exact_tree": None}), spawning:
                 diagnostic_git = _original(self.module, "_diagnostic_git")
+                deadline = time.monotonic() + 60
                 with self.assertRaises((OSError, ValueError)) as raised:
-                    diagnostic_git(
-                        self.root, time.monotonic() + 60, "rev-parse", "HEAD"
-                    )
+                    diagnostic_git(self.root, deadline, "rev-parse", "HEAD")
             self.assertIn("no-fetch policy", str(raised.exception))
             self.assertEqual([], started)
         self.assertEqual("", _original(owner, "_GIT_ENV")["GIT_ALLOW_PROTOCOL"])

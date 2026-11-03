@@ -1930,13 +1930,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ),
             ("the fixture launcher", self._fake_run),
         ):
+            deadline = time.monotonic() + 60
             with self.subTest(name), self.assertRaises(AssertionError):
                 launcher(
                     wrong,
                     cwd=self.root,
                     environment={},
                     report=report,
-                    deadline=time.monotonic() + 60,
+                    deadline=deadline,
                     limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                 )
 
@@ -1953,13 +1954,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ):
             with self.subTest(name), patch.object(self.module, *moved):
                 command = _original(self.module, "_environment_command")()
+                run = self._environment(("fixture-1.0",))
+                deadline = time.monotonic() + 60
                 with self.assertRaises(AssertionError):
-                    self._environment(("fixture-1.0",))(
+                    run(
                         command,
                         cwd=self.root,
                         environment={},
                         report=report,
-                        deadline=time.monotonic() + 60,
+                        deadline=deadline,
                         limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                     )
 

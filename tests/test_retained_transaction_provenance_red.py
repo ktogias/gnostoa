@@ -190,8 +190,9 @@ class PublicationIntentBindingTests(ProvenanceFixture):
 
         with self.patched_effect():
             with self.die_before_the_first_canonical_write():
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.consumption_authority(candidate))
+                    self.prepare(authority=authority)
 
         transaction = retained_commit.read_publication_intent(self.workspace)
         self.assertIsNotNone(transaction)
