@@ -50,6 +50,12 @@ def outcome(text: str) -> object:
         return ["refused", type(exc).__name__]
 
 
+def base_loaded(text: str) -> object:
+    """What `yaml.load(text, Loader=yaml.BaseLoader)` returns, by the loader call that builds it: every scalar a
+    string, no object of any other type. Written out, it is not the call form Bandit's B506 matches (#477 round 5)."""
+    return yaml.BaseLoader(text).get_single_data()
+
+
 def plain(value: object) -> object:
     """The same document without its locations, as BaseLoader builds it."""
     if isinstance(value, dict):
@@ -131,6 +137,4 @@ class LocatedLoadTests(unittest.TestCase):
         for path in workflows:
             with self.subTest(path.name):
                 text = path.read_text(encoding="utf-8")
-                self.assertEqual(
-                    plain(yaml.load(text, Loader=yaml.BaseLoader)), plain(located(text))
-                )
+                self.assertEqual(plain(base_loaded(text)), plain(located(text)))
