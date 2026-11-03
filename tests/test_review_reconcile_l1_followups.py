@@ -1044,7 +1044,8 @@ class UsefulL1FollowupTests(unittest.TestCase):
             binding_semantics(native_input),
         )
         decisions = full_native["decisions"]
-        assert isinstance(decisions, list)
+        if not isinstance(decisions, list):
+            self.fail("decisions must be a list")
         self.assertEqual(
             {"accept", "note"},
             {item["verdict"] for item in decisions},

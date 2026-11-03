@@ -976,7 +976,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
             self.fail("qualification must be set")
         stale = dict(qualification.as_json())
         bound = stale["bound"]
-        assert isinstance(bound, dict)
+        if not isinstance(bound, dict):
+            self.fail("bound must be a dict")
         stale["bound"] = {**bound, "base_tree": "0" * 40}
         receipt_path = self.root / "stale.json"
         receipt_path.write_text(json.dumps(stale, indent=2))
@@ -1000,7 +1001,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
             self.fail("qualification must be set")
         stale = dict(qualification.as_json())
         bound = stale["bound"]
-        assert isinstance(bound, dict)
+        if not isinstance(bound, dict):
+            self.fail("bound must be a dict")
         stale["bound"] = {**bound, "preparation_identity": "other-preparation"}
         receipt_path = self.root / "prep.json"
         receipt_path.write_text(json.dumps(stale, indent=2))

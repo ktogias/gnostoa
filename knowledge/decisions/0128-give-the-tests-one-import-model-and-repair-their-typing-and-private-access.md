@@ -163,7 +163,7 @@ This text amends the first published version (6,773 bytes, SHA-256
 6. **The full readback on round 2's head:** DeepSource's full run listed four findings on the
    remedy's own lines. The same shapes are repaired wherever the remedy wrote them; moved code is left
    verbatim (PAO 6593155958):
-   - **The narrowings.** 66 single narrowing `assert`s are `if … : self.fail(…)`, as in
+   - **The narrowings.** 69 single narrowing `assert`s are `if … : self.fail(…)`, as in
      correction 5.
    - **`next()` without a default.** 6 take the first run with a default and fail if
      there is none. One, inside `assertRaises(csv.Error)`, gets a default, so an empty stream fails the
