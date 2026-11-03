@@ -2314,7 +2314,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                     raise OSError(28, "No space left on device")
                 return real_write(chunk)
 
-            stream.write = write
+            vars(stream)["write"] = write
             return stream
 
         def unexpected_sink(path: Path) -> BinaryIO:

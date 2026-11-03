@@ -478,7 +478,8 @@ class RoundTwoTests(ExactTreeFixture):
         )
 
     # E: hashing is bounded by the deadline and by the size it recorded.
-    def file_reads(self, path: Path, extra: int) -> tuple[Any, list[int]]:
+    @staticmethod
+    def file_reads(path: Path, extra: int) -> tuple[Any, list[int]]:
         """An os.read that, for `path` only, never reaches EOF for `extra` more reads."""
         inode = os.stat(path).st_ino
         real_read = os.read

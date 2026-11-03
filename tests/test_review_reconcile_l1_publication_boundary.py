@@ -54,8 +54,8 @@ _CURRENT_PR = {
 class L1PublicationAndSnapshotBoundaryTests(unittest.TestCase):
     """Behaviour that no other test pinned, each through L1's public functions."""
 
+    @staticmethod
     def _snapshot_with(
-        self,
         mutate: Callable[[dict[str, Any]], None] | None = None,
         *,
         failing: frozenset[str] = frozenset(),
@@ -134,8 +134,8 @@ class L1PublicationAndSnapshotBoundaryTests(unittest.TestCase):
             with self.subTest(source=mutate.__name__):
                 self.assertEqual(expected, self._snapshot_with(mutate)["observed_at"])
 
+    @staticmethod
     def _decision(
-        self,
         subject: dict[str, Any],
         existing: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
@@ -192,8 +192,9 @@ class L1PublicationAndSnapshotBoundaryTests(unittest.TestCase):
             ),
         )
 
+    @staticmethod
     def _publish(
-        self, protected_main_revision: str | None, state: tuple[str, str]
+        protected_main_revision: str | None, state: tuple[str, str]
     ) -> tuple[dict[str, Any], Any, Any]:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()

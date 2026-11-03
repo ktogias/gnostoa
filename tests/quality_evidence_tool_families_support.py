@@ -180,7 +180,8 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             "actionlint": (1, [_AL_NATIVE]),
         }
 
-    def _tool(self, command: list[str]) -> str | None:
+    @staticmethod
+    def _tool(command: list[str]) -> str | None:
         for name in ("shellcheck", "hadolint", "actionlint"):
             if Path(command[0]).name == name:
                 return name
@@ -242,7 +243,8 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             )
         return self._read(path)
 
-    def _rows(self, inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    @staticmethod
+    def _rows(inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {row["family"]: row for row in inventory.get("families", [])}
 
     def _change(self, path: str, old: str, new: str) -> None:
@@ -260,7 +262,8 @@ class _ToolFamilyFixture(_DiagnosticInventoryFixture):
             if Path(c[0][0]).name == name and not {"--version", "-version"} & set(c[0])
         ]
 
-    def _findings(self, inventory: dict[str, Any], tool: str) -> list[dict[str, Any]]:
+    @staticmethod
+    def _findings(inventory: dict[str, Any], tool: str) -> list[dict[str, Any]]:
         return [f for f in inventory["findings"] if f["tool"]["id"] == tool]
 
     def _commit(self, files: dict[str, str]) -> None:

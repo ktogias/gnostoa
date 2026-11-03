@@ -83,7 +83,8 @@ class ExactTreeFixture(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", "c")
         return git(self.repo, "rev-parse", "HEAD^{tree}")
 
-    def limits(self, **overrides: Any) -> Limits:
+    @staticmethod
+    def limits(**overrides: Any) -> Limits:
         values: dict[str, Any] = {
             "deadline": time.monotonic() + 60,
             "max_files": 1_000,
@@ -131,7 +132,8 @@ class ExactTreeFixture(unittest.TestCase):
 
         return build(entries)
 
-    def feeding(self, output: bytes) -> Any:
+    @staticmethod
+    def feeding(output: bytes) -> Any:
         """A stand-in for the owner's Git child: it hands `output` to the child's sink
         when it has one, as the real drain does, and returns it otherwise."""
 
@@ -144,7 +146,8 @@ class ExactTreeFixture(unittest.TestCase):
 
         return git
 
-    def without_waiting(self, call: Any, fifo: Path) -> tuple[bool, list[Any]]:
+    @staticmethod
+    def without_waiting(call: Any, fifo: Path) -> tuple[bool, list[Any]]:
         """Run `call` in a thread: whether it waited on `fifo` past 5 s, and its result
         or refusal code. A writer's open releases a reader that waits."""
         outcome: list[Any] = []

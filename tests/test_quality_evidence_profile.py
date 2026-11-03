@@ -179,6 +179,13 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
     """The protected route's inventory: collected with no profile argument, so that
     the producer tree's own profile governs. The fake Ruff answers as Ruff does."""
 
+    mypy_exit: dict[str, int]
+    mypy_records: dict[str, list[dict[str, Any]]]
+    ruff_as_ruff: bool
+    ruff_exit: int | None
+    run_directory: Path
+    versions: dict[str, str | None]
+
     def setUp(self) -> None:
         super().setUp()
         self.ruff_exit, self.ruff_as_ruff = None, True
@@ -227,7 +234,8 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
                 given |= {prefix + f for f in _files(command)}
         return given
 
-    def _rows(self, inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    @staticmethod
+    def _rows(inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
         rows = inventory.get("families", [])
         return {row["family"]: row for row in rows}
 
@@ -1156,9 +1164,9 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         with (
             patch.object(self.module, "_PRODUCER_TREE", producer),
             patch.object(self.module, "_PROFILE", link),
+            self.assertRaises(self.module.QualityEvidenceError),
         ):
-            with self.assertRaises(self.module.QualityEvidenceError):
-                self.module.load_diagnostic_profile()
+            self.module.load_diagnostic_profile()
 
     def test_a_missing_protected_profile_is_refused_before_anything_runs(self) -> None:
         # An installed wheel ships the collector without policy/, as every policy file
@@ -1166,9 +1174,11 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         absent = (
             _original(self.module, "_PRODUCER_TREE") / "policy" / "absent-profile.yaml"
         )
-        with patch.object(self.module, "_PROFILE", absent):
-            with self.assertRaises(self.module.QualityEvidenceError):
-                self.module.collect_diagnostic_inventory(self.root, self.output)
+        with (
+            patch.object(self.module, "_PROFILE", absent),
+            self.assertRaises(self.module.QualityEvidenceError),
+        ):
+            self.module.collect_diagnostic_inventory(self.root, self.output)
         self.assertEqual([], self.commands)
         self.assertFalse(self.output.exists() and any(self.output.iterdir()))
 
@@ -1179,9 +1189,11 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         second = Path(self.directory.name) / "loop-b.yaml"
         first.symlink_to(second)
         second.symlink_to(first)
-        with patch.object(self.module, "_PROFILE", first):
-            with self.assertRaises(self.module.QualityEvidenceError) as raised:
-                self.module.load_diagnostic_profile()
+        with (
+            patch.object(self.module, "_PROFILE", first),
+            self.assertRaises(self.module.QualityEvidenceError) as raised,
+        ):
+            self.module.load_diagnostic_profile()
         # The refusal names the failure by its type, never a path or the text it
         # carries (Revix's sanitized-error-diagnostics on #459).
         self.assertNotIn(self.directory.name, str(raised.exception))

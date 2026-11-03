@@ -56,7 +56,8 @@ class CapsuleFixture(unittest.TestCase):
         git(repo, "commit", "-q", "-m", "base")
         return repo
 
-    def commit(self, repo: Path, files: dict[str, str], message: str) -> str:
+    @staticmethod
+    def commit(repo: Path, files: dict[str, str], message: str) -> str:
         for rel, text in files.items():
             target = repo / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -119,8 +120,8 @@ class CapsuleFixture(unittest.TestCase):
             "tasks": [entry],
         }
 
+    @staticmethod
     def launch_authority(
-        self,
         lock_sha256: str,
         *,
         experiment_id: str = "E1",
@@ -134,8 +135,9 @@ class CapsuleFixture(unittest.TestCase):
             max_runs=max_runs,
         )
 
+    @staticmethod
     def authority(
-        self, experiment_id: str = "E1", candidate: str | None = None
+        experiment_id: str = "E1", candidate: str | None = None
     ) -> PreflightAuthority:
         return PreflightAuthority(
             id="auth-1",

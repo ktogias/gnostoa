@@ -38,6 +38,9 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
     """The subject the inventory binds, and the Git metadata it reads to bind it,
     with the producers faked at `_bounded_run`."""
 
+    mypy_records: dict[str, list[dict[str, Any]]]
+    ruff_records: list[dict[str, Any]]
+
     def test_a_root_without_its_own_git_is_not_bound_to_an_enclosing_checkout(
         self,
     ) -> None:
@@ -676,6 +679,10 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     field identical (#389 F3 S2-C, the C6 probe in 6347549109). The producers stay
     faked at `_bounded_run`; anything they launch besides a version read, mypy and
     Ruff is the environment's isolated identity read, answered by `installed`."""
+
+    mypy_records: dict[str, list[dict[str, Any]]]
+    observed_bytes: int
+    run_directory: Path
 
     def _environment(
         self, *installed: tuple[str, ...] | None
@@ -1507,7 +1514,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             def fileno(self) -> int:
                 return self.stream.fileno()
 
-            def read(self, size: int) -> bytes:
+            @staticmethod
+            def read(size: int) -> bytes:
                 raise OSError(errno.EIO, "a read that fails mid-file")
 
         observation = _original(observer, "_Observation")(

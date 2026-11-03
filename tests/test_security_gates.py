@@ -484,12 +484,14 @@ class SecretBaselineTests(unittest.TestCase):
                 b"",
             )
 
-            with mock.patch(
-                "tools.security_scan._run_bounded_scan",
-                return_value=completed,
+            with (
+                mock.patch(
+                    "tools.security_scan._run_bounded_scan",
+                    return_value=completed,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "invalid JSON"),
             ):
-                with self.assertRaisesRegex(SecurityScanError, "invalid JSON"):
-                    scan_tracked_tree(root, tracked_paths=[Path("tracked.txt")])
+                scan_tracked_tree(root, tracked_paths=[Path("tracked.txt")])
 
     def test_scanner_output_uses_strict_closed_json_decoder(self) -> None:
         baseline = _report({})
@@ -553,15 +555,17 @@ class SecretBaselineTests(unittest.TestCase):
                         stdout,
                         b"",
                     )
-                    with mock.patch(
-                        "tools.security_scan._run_bounded_scan",
-                        return_value=completed,
+                    with (
+                        mock.patch(
+                            "tools.security_scan._run_bounded_scan",
+                            return_value=completed,
+                        ),
+                        self.assertRaisesRegex(SecurityScanError, pattern),
                     ):
-                        with self.assertRaisesRegex(SecurityScanError, pattern):
-                            scan_tracked_tree(
-                                root,
-                                tracked_paths=[Path("tracked.txt")],
-                            )
+                        scan_tracked_tree(
+                            root,
+                            tracked_paths=[Path("tracked.txt")],
+                        )
 
     def test_scanner_reads_an_immutable_private_snapshot(self) -> None:
         baseline = _report({})
@@ -626,12 +630,12 @@ class SecretBaselineTests(unittest.TestCase):
                     create=True,
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot file size"),
-            ):
-                with _immutable_candidate_snapshot(
+                _immutable_candidate_snapshot(
                     root,
                     [Path("first.txt")],
-                ):
-                    pass
+                ),
+            ):
+                pass
 
             with (
                 mock.patch.object(
@@ -647,12 +651,12 @@ class SecretBaselineTests(unittest.TestCase):
                     create=True,
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot total size"),
-            ):
-                with _immutable_candidate_snapshot(
+                _immutable_candidate_snapshot(
                     root,
                     [Path("first.txt"), Path("second.txt")],
-                ):
-                    pass
+                ),
+            ):
+                pass
 
     def test_snapshot_acquisition_has_its_own_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -667,12 +671,12 @@ class SecretBaselineTests(unittest.TestCase):
                     create=True,
                 ),
                 self.assertRaisesRegex(SecurityScanError, "snapshot timed out"),
-            ):
-                with _immutable_candidate_snapshot(
+                _immutable_candidate_snapshot(
                     root,
                     [Path("tracked.txt")],
-                ):
-                    pass
+                ),
+            ):
+                pass
 
     def test_ancestor_replacement_during_copy_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -704,12 +708,12 @@ class SecretBaselineTests(unittest.TestCase):
                     "tools.security_scan.os.read", side_effect=swap_parent_then_read
                 ),
                 self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
-            ):
-                with _immutable_candidate_snapshot(
+                _immutable_candidate_snapshot(
                     root,
                     [Path("nested/tracked.txt")],
-                ):
-                    pass
+                ),
+            ):
+                pass
 
             self.assertTrue(swapped)
 
@@ -735,12 +739,12 @@ class SecretBaselineTests(unittest.TestCase):
                     side_effect=change_after_first_read,
                 ),
                 self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
-            ):
-                with _immutable_candidate_snapshot(
+                _immutable_candidate_snapshot(
                     root,
                     [Path("tracked.txt")],
-                ):
-                    pass
+                ),
+            ):
+                pass
 
             self.assertTrue(changed)
 
@@ -809,15 +813,17 @@ class SecretBaselineTests(unittest.TestCase):
     def test_candidate_scope_errors_are_reported_as_security_scan_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch(
-                "tools.security_scan.candidate_paths",
-                side_effect=RepositoryScopeError("candidate enumeration failed"),
-            ):
-                with self.assertRaisesRegex(
+            with (
+                mock.patch(
+                    "tools.security_scan.candidate_paths",
+                    side_effect=RepositoryScopeError("candidate enumeration failed"),
+                ),
+                self.assertRaisesRegex(
                     SecurityScanError,
                     "cannot enumerate tracked-tree candidates",
-                ):
-                    scan_tracked_tree(root)
+                ),
+            ):
+                scan_tracked_tree(root)
 
     def test_canonical_scan_refuses_an_untracked_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -859,9 +865,11 @@ class SecretBaselineTests(unittest.TestCase):
                 (Path("directory"), "not a regular file"),
                 (Path("missing.txt"), "cannot inspect candidate path"),
             ):
-                with self.subTest(candidate=candidate):
-                    with self.assertRaisesRegex(SecurityScanError, expected):
-                        scan_tracked_tree(root, tracked_paths=[candidate])
+                with (
+                    self.subTest(candidate=candidate),
+                    self.assertRaisesRegex(SecurityScanError, expected),
+                ):
+                    scan_tracked_tree(root, tracked_paths=[candidate])
 
     def test_protected_baseline_file_identity_is_bound(self) -> None:
         relative = Path(PROTECTED_BASELINE_PATH)
@@ -884,16 +892,18 @@ class SecretBaselineTests(unittest.TestCase):
             )
             expected = hashlib.sha256(approved).hexdigest()
 
-            with mock.patch.dict(
-                _PROTECTED_BASELINE_FILE_SHA256,
-                {relative.as_posix(): expected},
-                clear=True,
-            ):
-                with self.assertRaisesRegex(
+            with (
+                mock.patch.dict(
+                    _PROTECTED_BASELINE_FILE_SHA256,
+                    {relative.as_posix(): expected},
+                    clear=True,
+                ),
+                self.assertRaisesRegex(
                     SecurityScanError,
                     "protected baseline file identity changed",
-                ):
-                    scan_tracked_tree(root, tracked_paths=[relative])
+                ),
+            ):
+                scan_tracked_tree(root, tracked_paths=[relative])
 
     def test_scanner_output_is_bounded_while_it_is_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -902,15 +912,17 @@ class SecretBaselineTests(unittest.TestCase):
                 ("stderr", "diagnostics exceeds the bound"),
             ):
                 script = f"import sys; sys.{stream}.buffer.write(b'x' * 65)"
-                with self.subTest(stream=stream):
-                    with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
-                        run_bounded_scan = _original(security_scan, "_run_bounded_scan")
-                        with self.assertRaisesRegex(SecurityScanError, expected):
-                            run_bounded_scan(
-                                [sys.executable, "-c", script],
-                                cwd=Path(directory),
-                                timeout=5,
-                            )
+                with (
+                    self.subTest(stream=stream),
+                    mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+                ):
+                    run_bounded_scan = _original(security_scan, "_run_bounded_scan")
+                    with self.assertRaisesRegex(SecurityScanError, expected):
+                        run_bounded_scan(
+                            [sys.executable, "-c", script],
+                            cwd=Path(directory),
+                            timeout=5,
+                        )
 
     def test_baseline_input_is_bounded_and_invalid_utf8_is_normalized(self) -> None:
         bounded_stream = mock.MagicMock()
@@ -919,9 +931,9 @@ class SecretBaselineTests(unittest.TestCase):
         with (
             mock.patch.object(Path, "open", return_value=bounded_stream),
             mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+            self.assertRaisesRegex(SecurityScanError, "exceeds the bounded size"),
         ):
-            with self.assertRaisesRegex(SecurityScanError, "exceeds the bounded size"):
-                _read_document(Path("baseline.json"), "baseline")
+            _read_document(Path("baseline.json"), "baseline")
         bounded_stream.read.assert_called_once_with(65)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -999,9 +1011,11 @@ class ExtendedRoutingTests(unittest.TestCase):
             "bad\npath",
             "bad\tpath",
         ):
-            with self.subTest(path=path):
-                with self.assertRaisesRegex(ValueError, "unsafe"):
-                    route_extended("pull_request", (path,))
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(ValueError, "unsafe"),
+            ):
+                route_extended("pull_request", (path,))
 
 
 class ProviderSecurityGateTests(unittest.TestCase):
@@ -1137,65 +1151,65 @@ class ProviderSecurityGateTests(unittest.TestCase):
         )
 
         for event, base_sha, reason in cases:
-            with self.subTest(event=event, base_sha=base_sha or "missing"):
-                with tempfile.TemporaryDirectory() as directory:
-                    temporary = Path(directory)
-                    fake_bin = temporary / "bin"
-                    fake_bin.mkdir()
-                    router_marker = temporary / "candidate-router-invoked"
-                    fake_python = fake_bin / "python"
-                    fake_python.write_text(
-                        '#!/bin/sh\n: > "${ROUTER_MARKER}"\nexit 97\n',
-                        encoding="utf-8",
-                    )
-                    fake_python.chmod(0o700)
-                    fake_git = fake_bin / "git"
-                    fake_git.write_text(
-                        "#!/bin/sh\n"
-                        'case "${1:-}" in\n'
-                        "  cat-file) exit 1 ;;\n"
-                        "  ls-files) exit 0 ;;\n"
-                        "  *) exit 98 ;;\n"
-                        "esac\n",
-                        encoding="utf-8",
-                    )
-                    fake_git.chmod(0o700)
-                    output = temporary / "github-output"
-                    environment = os.environ.copy()
-                    environment.update(
-                        {
-                            "BASE_SHA": base_sha,
-                            "GITHUB_EVENT_NAME": event,
-                            "GITHUB_OUTPUT": str(output),
-                            "GITHUB_REF": "refs/pull/278/head",
-                            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
-                            "ROUTER_MARKER": str(router_marker),
-                            "RUNNER_TEMP": str(temporary),
-                        }
-                    )
-
-                    completed = subprocess.run(
-                        ["bash", "-c", route_script],
-                        cwd=ROOT,
-                        env=environment,
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                    )
-
-                    self.assertEqual(0, completed.returncode, completed.stderr)
-                    self.assertFalse(router_marker.exists())
-                    self.assertEqual(
-                        {
-                            "decision": "RUN",
-                            "run_extended": "true",
-                            "reason": reason,
-                        },
-                        dict(
-                            line.split("=", maxsplit=1)
-                            for line in output.read_text(encoding="utf-8").splitlines()
-                        ),
-                    )
+            with (
+                self.subTest(event=event, base_sha=base_sha or "missing"),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                temporary = Path(directory)
+                fake_bin = temporary / "bin"
+                fake_bin.mkdir()
+                router_marker = temporary / "candidate-router-invoked"
+                fake_python = fake_bin / "python"
+                fake_python.write_text(
+                    '#!/bin/sh\n: > "${ROUTER_MARKER}"\nexit 97\n',
+                    encoding="utf-8",
+                )
+                fake_python.chmod(0o700)
+                fake_git = fake_bin / "git"
+                fake_git.write_text(
+                    "#!/bin/sh\n"
+                    'case "${1:-}" in\n'
+                    "  cat-file) exit 1 ;;\n"
+                    "  ls-files) exit 0 ;;\n"
+                    "  *) exit 98 ;;\n"
+                    "esac\n",
+                    encoding="utf-8",
+                )
+                fake_git.chmod(0o700)
+                output = temporary / "github-output"
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "BASE_SHA": base_sha,
+                        "GITHUB_EVENT_NAME": event,
+                        "GITHUB_OUTPUT": str(output),
+                        "GITHUB_REF": "refs/pull/278/head",
+                        "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                        "ROUTER_MARKER": str(router_marker),
+                        "RUNNER_TEMP": str(temporary),
+                    }
+                )
+                completed = subprocess.run(
+                    ["bash", "-c", route_script],
+                    cwd=ROOT,
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertFalse(router_marker.exists())
+                self.assertEqual(
+                    {
+                        "decision": "RUN",
+                        "run_extended": "true",
+                        "reason": reason,
+                    },
+                    dict(
+                        line.split("=", maxsplit=1)
+                        for line in output.read_text(encoding="utf-8").splitlines()
+                    ),
+                )
 
     def test_valid_base_uses_isolated_trusted_router_source(self) -> None:
         workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
@@ -1345,14 +1359,16 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         )
 
     def test_endless_output_stops_at_the_cap_and_reaps_the_child(self) -> None:
-        with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
-            with self.assertRaisesRegex(
+        with (
+            mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+            self.assertRaisesRegex(
                 SecurityScanError, "^tracked-tree secret scan report exceeds the bound$"
-            ):
-                self._scan(
-                    "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
-                    timeout=30,
-                )
+            ),
+        ):
+            self._scan(
+                "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
+                timeout=30,
+            )
         (process,) = self.started
         self.assertIsNotNone(process.poll(), "the child was left running")
         if process.stdout is None or process.stderr is None:
@@ -1379,11 +1395,11 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
             mock.patch.object(
                 security_scan, "_terminate_and_reap", side_effect=failed_reap
             ),
+            self.assertRaises(SecurityScanError) as raised,
         ):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan(
-                    "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); time.sleep(30)"
-                )
+            self._scan(
+                "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); time.sleep(30)"
+            )
         self.assertEqual(
             "tracked-tree secret scan report exceeds the bound; "
             "tracked-tree secret scan child could not be reaped within the bound",
@@ -1392,9 +1408,11 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
 
     def test_both_pipes_are_closed_after_success_and_after_failure(self) -> None:
         self._scan("print('ok')")
-        with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 1):
-            with self.assertRaises(SecurityScanError):
-                self._scan("print('too long')")
+        with (
+            mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 1),
+            self.assertRaises(SecurityScanError),
+        ):
+            self._scan("print('too long')")
         for process in self.started:
             if process.stdout is None or process.stderr is None:
                 self.fail("the child must have both pipes")
@@ -1403,11 +1421,13 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
 
     def test_an_unexpected_failure_is_named_by_type_and_reaps_the_child(self) -> None:
         # The global selectors module: the patch target survives the runner's move.
-        with mock.patch.object(
-            selectors, "DefaultSelector", side_effect=RuntimeError("secret detail")
+        with (
+            mock.patch.object(
+                selectors, "DefaultSelector", side_effect=RuntimeError("secret detail")
+            ),
+            self.assertRaises(SecurityScanError) as raised,
         ):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan("import time; time.sleep(30)", timeout=30)
+            self._scan("import time; time.sleep(30)", timeout=30)
         self.assertEqual(
             "tracked-tree secret scan failed (unexpected RuntimeError)",
             str(raised.exception),
@@ -1419,15 +1439,19 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         # A selector that cannot register, and then cannot close: the unexpected
         # failure stays primary, and the close failure follows it as secondary.
         class Failing:
-            def register(self, *args: object) -> None:
+            @staticmethod
+            def register(*args: object) -> None:
                 raise RuntimeError("secret detail")
 
-            def close(self) -> None:
+            @staticmethod
+            def close() -> None:
                 raise OSError("cannot close")
 
-        with mock.patch.object(selectors, "DefaultSelector", Failing):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan("import time; time.sleep(30)", timeout=30)
+        with (
+            mock.patch.object(selectors, "DefaultSelector", Failing),
+            self.assertRaises(SecurityScanError) as raised,
+        ):
+            self._scan("import time; time.sleep(30)", timeout=30)
         self.assertEqual(
             "tracked-tree secret scan failed (unexpected RuntimeError); "
             "tracked-tree secret scan selector could not be closed",
@@ -1443,9 +1467,11 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 super().close()
                 raise OSError("cannot close")
 
-        with mock.patch.object(selectors, "DefaultSelector", CloseFails):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan("print('ok')")
+        with (
+            mock.patch.object(selectors, "DefaultSelector", CloseFails),
+            self.assertRaises(SecurityScanError) as raised,
+        ):
+            self._scan("print('ok')")
         self.assertEqual(
             "tracked-tree secret scan process finalization failed; "
             "tracked-tree secret scan selector could not be closed",
@@ -1463,9 +1489,11 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
                 super().close()
                 raise OSError("cannot close")
 
-        with mock.patch.object(selectors, "DefaultSelector", CloseFails):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan("import time; time.sleep(30)", timeout=1)
+        with (
+            mock.patch.object(selectors, "DefaultSelector", CloseFails),
+            self.assertRaises(SecurityScanError) as raised,
+        ):
+            self._scan("import time; time.sleep(30)", timeout=1)
         self.assertEqual(
             "tracked-tree secret scan timed out; "
             "tracked-tree secret scan selector could not be closed",
@@ -1488,28 +1516,30 @@ class BoundedScanRunnerCharacterizationTests(unittest.TestCase):
         with (
             mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
             mock.patch.object(selectors, "DefaultSelector", Late),
-        ):
-            with self.assertRaisesRegex(
+            self.assertRaisesRegex(
                 SecurityScanError, "^tracked-tree secret scan report exceeds the bound$"
-            ):
-                self._scan(
-                    "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); "
-                    "time.sleep(30)",
-                    timeout=1,
-                )
+            ),
+        ):
+            self._scan(
+                "import sys, time; sys.stdout.write('x' * 65); sys.stdout.flush(); "
+                "time.sleep(30)",
+                timeout=1,
+            )
         self.assertIsNotNone(self.started[0].poll())
 
     def test_an_outcome_without_its_field_is_never_called_a_timeout(self) -> None:
         # Amazon Q on #437: a cap without the crossing stream's name fell through to
         # the timeout arm. An outcome that breaks the owner's contract is named as
         # such, and the child is still reaped.
-        with mock.patch.object(
-            security_scan.bounded_process,
-            "drain",
-            return_value=security_scan.bounded_process.Drained("cap"),
+        with (
+            mock.patch.object(
+                security_scan.bounded_process,
+                "drain",
+                return_value=security_scan.bounded_process.Drained("cap"),
+            ),
+            self.assertRaises(SecurityScanError) as raised,
         ):
-            with self.assertRaises(SecurityScanError) as raised:
-                self._scan("import time; time.sleep(30)", timeout=30)
+            self._scan("import time; time.sleep(30)", timeout=30)
         self.assertEqual(
             "tracked-tree secret scan failed (unexpected drain outcome cap)",
             str(raised.exception),

@@ -531,7 +531,8 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         ]
         self.assertEqual([3], [f["range"]["start_line"] for f in found])
 
-    def _secrets_runs(self, inventory: dict[str, Any]) -> list[dict[str, Any]]:
+    @staticmethod
+    def _secrets_runs(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         return [r for r in inventory["producers"] if r["producer"] == "secrets"]
 
     def test_the_secrets_run_names_the_scanner_version_it_was_held_to(self) -> None:
@@ -611,6 +612,8 @@ class SecretsFamilyTests(_ToolFamilyFixture):
 class RoundTwoContractTests(_ToolFamilyFixture):
     """The contract #470's review rounds found missing (#389 H-PYSEC-2). Its own class, since the secrets
     tests skip without detect-secrets and these must run wherever the suite does."""
+
+    tool_root: Path
 
     def test_a_run_with_no_status_and_no_gap_is_never_clean(self) -> None:
         # Amazon Q on #470.

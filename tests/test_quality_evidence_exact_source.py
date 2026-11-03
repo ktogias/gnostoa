@@ -222,9 +222,11 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                 f.write("\n# changed\n")
             return real(root, paths, *args, **kwargs)
 
-        with patch.object(self.module, "_run_complexity", side_effect=mutating):
-            with self.assertRaises(self.module.QualityEvidenceError) as raised:
-                self.collect(self.root, self.output)
+        with (
+            patch.object(self.module, "_run_complexity", side_effect=mutating),
+            self.assertRaises(self.module.QualityEvidenceError) as raised,
+        ):
+            self.collect(self.root, self.output)
         self.assertIn("staged source", str(raised.exception))
         (run,) = self.output.glob("diagnostic-*")
         self.assertIn(f"the raw reports are in {run}", str(raised.exception))
@@ -468,7 +470,8 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         for name in self._TREE_LIMITS:
             self.assertIn(name, names)
 
-    def _spawns(self) -> tuple[list[list[str]], Any]:
+    @staticmethod
+    def _spawns() -> tuple[list[list[str]], Any]:
         """Every child started under the patch, by its argv."""
         started: list[list[str]] = []
         real: Callable[..., object] = subprocess.Popen

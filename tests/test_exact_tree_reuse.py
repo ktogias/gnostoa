@@ -56,7 +56,8 @@ class RoundFiveTests(ExactTreeFixture):
     def open_descriptors(self) -> int:
         return _open_descriptors(self)
 
-    def plant(self, destination: Path, name: str, pointed: Path | str) -> None:
+    @staticmethod
+    def plant(destination: Path, name: str, pointed: Path | str) -> None:
         """An untracked link a run left behind, relative to where it sits."""
         link = destination / name
         link.parent.mkdir(parents=True, exist_ok=True)
@@ -459,8 +460,9 @@ class RoundTwelveReuseTests(ExactTreeFixture):
         self.assertEqual(b"b\n", (destination / "b.txt").read_bytes())
         self.reuse(other, destination)()
 
+    @staticmethod
     def swapping(
-        self, destination: Path, into: Path, aside: Path, after: str = "_bound_tree"
+        destination: Path, into: Path, aside: Path, after: str = "_bound_tree"
     ) -> Any:
         """The owner's `after`, swapping `into` for `destination` once it has run."""
         real = getattr(_owner(), after)
