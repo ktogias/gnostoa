@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def located(text: str) -> object:
     """The step reader's located document, through the module's one loading seam."""
-    return yaml.load(text, Loader=vars(quality_evidence)["_located_loader"]())
+    return vars(quality_evidence)["_located_load"](text)
 
 
 def shape(value: object, seen: dict[int, int]) -> object:
