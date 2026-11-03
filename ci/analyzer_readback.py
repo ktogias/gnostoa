@@ -555,7 +555,9 @@ def _head_source(
     try:
         # GitHub wraps the base64 in lines; any other character is refused, not
         # dropped (cubic on #480).
-        return base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
+        raw = base64.b64decode("".join(content.split()), validate=True)
+        # The bounds were spent on the declared size, so the bytes must be it.
+        return raw.decode("utf-8") if len(raw) == size else None
     except ValueError:  # binascii.Error and UnicodeDecodeError are both ValueErrors
         return None
 

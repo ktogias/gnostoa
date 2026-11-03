@@ -97,7 +97,8 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - The read is bounded: 64 requests, 1 MiB each, and 8 MiB in all.
    - In these cases a finding gets no scope, and it is never matched:
      - the read fails;
-     - the file is not a file, is over a bound, or is not UTF-8;
+     - the file is not a file, is over a bound, is not valid base64, has other than its
+       declared size, or is not UTF-8;
      - the file does not parse;
      - the finding is at module level, or in another language.
 2. **The ledger.** It is `policy/analyzer-debt-ledger.yaml`. Merge evidence reads it from the
@@ -143,8 +144,10 @@ comment, and so it marks the DIFF read `PARTIAL`.
 5. **The carried-forward comment.** Such a comment is still excluded from DeepSource's DIFF
    read.
    - **When the read is complete:** the same run's full read of the exact head is
-     `COMPLETE`, and it lists no finding at the comment's path, line and stated title. Then
-     the read records the comment in its native record, as absent from the full run.
+     `COMPLETE`. It lists no finding at the comment's path and line, whatever its message,
+     and none in that file with the comment's stated title, at any line. So neither a
+     reworded title nor a drifted line hides a finding. Then the read records the comment
+     in its native record, as absent from the full run.
    - **When it stays `PARTIAL`:**
      - the comment has no path, line or stated title;
      - the full read is of another run, head or provider, or is not complete.

@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -1193,11 +1193,13 @@ def _absent_from_full_run(
     requested_head: str,
     run_id: str,
 ) -> bool:
-    """Whether the same run's complete full read of the exact head lists none of
-    the carried-forward comments' findings, each at its path, line and message
-    (#389, addendum 6615072518). A comment without a path, a line or a message is
-    never shown gone, and a finding the full run still lists reaches M17 through
-    it."""
+    """Whether the same run's complete full read of the exact head shows each of
+    the carried-forward comments' findings gone (#389, addendum 6615072518): it
+    lists no finding at the comment's path and line, whatever its message, and none
+    in that file with the comment's title, at any line, so neither a reworded title
+    nor a drifted line hides one (Revix on #480). A comment without a path, a line
+    or a title is never shown gone, and a finding the full run still lists reaches
+    M17 through it."""
 
     if full is None:
         return False
@@ -1223,9 +1225,24 @@ def _absent_from_full_run(
     # A FULL_RUN read is a complete one, by the readback's own contract.
     if identity != expected:
         return False
-    listed = {_located(finding) for finding in full.get("findings", ())}
-    keys = [_located(finding) for finding in carried]
-    return all(None not in key and key not in listed for key in keys)
+    return not any(_still_listed(carried, full.get("findings", ())))
+
+
+def _still_listed(
+    carried: Sequence[Mapping[str, Any]], findings: Iterable[Mapping[str, Any]]
+) -> Iterator[bool]:
+    """For each carried-forward finding, whether the full read may still list it."""
+
+    listed = [_located(finding) for finding in findings]
+    at_line = {(path, line) for path, line, _ in listed}
+    titled = {(path, message) for path, _, message in listed}
+    for finding in carried:
+        path, line, title = _located(finding)
+        yield (
+            None in (path, line, title)
+            or (path, line) in at_line
+            or (path, title) in titled
+        )
 
 
 def _diff_local_from_github(

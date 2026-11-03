@@ -245,7 +245,8 @@ class EnclosingScopeTests(unittest.TestCase):
         second = "def f():\n    return 'a\u2028c'\n"
         one = analyzer_readback.enclosing_scope(first, 2)
         two = analyzer_readback.enclosing_scope(second, 2)
-        assert one is not None and two is not None
+        if one is None or two is None:
+            self.fail("each function has its scope")
         self.assertNotEqual(one["sha256"], two["sha256"])
         self.assertEqual(hashlib.sha256(first.encode()).hexdigest(), one["sha256"])
         self.assertEqual(
@@ -1861,6 +1862,23 @@ class CarriedForwardTests(unittest.TestCase):
                 "the full run lists it",
                 _full_read(_full_finding("i-9", 9, "A finding")),
                 None,
+            ),
+            # Revix on #480: a title and a full-run message could diverge, and a
+            # line could drift, so either alone keeps the read partial.
+            (
+                "the full run lists another message at its line",
+                _full_read(_full_finding("i-9", 9, "Another wording")),
+                None,
+            ),
+            (
+                "the full run lists its title at another line",
+                _full_read(_full_finding("i-9", 12, "A finding")),
+                None,
+            ),
+            (
+                "one of two comments still listed",
+                _full_read(_full_finding("i-9", 9, "A finding")),
+                [_CARRIED, {**_CARRIED, "line": 20, "path": "tools/other.py"}],
             ),
             ("a full read not complete", unfinished, None),
             ("another run's full read", {**full, "analysis_id": "other-run"}, None),

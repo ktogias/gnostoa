@@ -1858,6 +1858,12 @@ def _file_reply(source: str = _SCOPE_SOURCE, **changes: Any) -> dict[str, Any]:
     }
 
 
+def _sized(size: int) -> str:
+    """`_SCOPE_SOURCE`, padded by a trailing comment to exactly `size` bytes."""
+    padding = size - len(_SCOPE_SOURCE) - 2
+    return _SCOPE_SOURCE + "#" + "x" * padding + "\n"
+
+
 def _wrapped(text: str, width: int = 60) -> list[str]:
     return [text[index : index + width] for index in range(0, len(text), width)]
 
@@ -1974,12 +1980,17 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
     def test_only_a_bounded_utf8_file_is_read(self) -> None:
         url = _contents_url("a.py")
         for name, reply, scoped in (
-            ("a file at its bound", _file_reply(size=_SCOPE_FILE_BYTES), True),
+            ("a file at its declared size", _file_reply(), True),
+            ("a file at the file bound", _file_reply(_sized(_SCOPE_FILE_BYTES)), True),
             ("a directory", [_file_reply()], False),
             ("a symlink", _file_reply(type="symlink"), False),
             ("another encoding", _file_reply(encoding="none"), False),
             ("past the file bound", _file_reply(size=_SCOPE_FILE_BYTES + 1), False),
             ("a size that is not a number", _file_reply(size="5"), False),
+            # cubic on #480: the decoded bytes must be the declared size, which the
+            # bounds were spent on.
+            ("more bytes than declared", _file_reply(size=3), False),
+            ("fewer bytes than declared", _file_reply(size=_SCOPE_FILE_BYTES), False),
             ("not UTF-8", _file_reply(content="//79"), False),
             # cubic on #480: a character outside base64 is refused, not dropped.
             ("not base64", _file_reply(content="!" + _file_reply()["content"]), False),
@@ -2011,7 +2022,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         findings, read = self._scoped(
             [_head_comment(path, path, 5) for path in paths],
             {
-                _contents_url(path): _file_reply(size=_SCOPE_FILE_BYTES)
+                _contents_url(path): _file_reply(_sized(_SCOPE_FILE_BYTES))
                 for path in paths
             },
         )
