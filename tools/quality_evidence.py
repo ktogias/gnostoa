@@ -3405,43 +3405,48 @@ def _located_load(text: str) -> Any:
             )
         active.add(id(node))
         try:
-            value = make(node)
+            value = _located_value(node, build)
         finally:
             active.discard(id(node))
         built[id(node)] = value
         return value
 
-    def make(node: yaml.Node) -> object:
-        if isinstance(node, yaml.ScalarNode):
-            scalar = _Located(node.value)
-            literal = node.style == "|"
-            scalar.first, scalar.step = node.start_mark.line + 1 + literal, int(literal)
-            return scalar
-        if isinstance(node, yaml.SequenceNode):
-            return [build(child) for child in node.value]
-        if isinstance(node, yaml.MappingNode):
-            mapping: dict[object, object] = {}
-            for key_node, value_node in node.value:
-                key = build(key_node)
-                try:
-                    hash(key)
-                except TypeError as exc:
-                    raise yaml.constructor.ConstructorError(
-                        "while constructing a mapping",
-                        node.start_mark,
-                        "found unhashable key",
-                        key_node.start_mark,
-                    ) from exc
-                mapping[key] = build(value_node)
-            return mapping
-        raise yaml.constructor.ConstructorError(
-            None,
-            None,
-            f"could not determine a constructor for {node.tag}",
-            node.start_mark,
-        )
-
     return build(root)
+
+
+def _located_value(node: Any, build: Callable[[Any], object]) -> object:
+    """One composed node as BaseConstructor builds it, each child through `build`: a scalar a `_Located`, a sequence a
+    list, a mapping a dict whose keys must hash."""
+    import yaml
+
+    if isinstance(node, yaml.ScalarNode):
+        scalar = _Located(node.value)
+        literal = node.style == "|"
+        scalar.first, scalar.step = node.start_mark.line + 1 + literal, int(literal)
+        return scalar
+    if isinstance(node, yaml.SequenceNode):
+        return [build(child) for child in node.value]
+    if isinstance(node, yaml.MappingNode):
+        mapping: dict[object, object] = {}
+        for key_node, value_node in node.value:
+            key = build(key_node)
+            try:
+                hash(key)
+            except TypeError as exc:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found unhashable key",
+                    key_node.start_mark,
+                ) from exc
+            mapping[key] = build(value_node)
+        return mapping
+    raise yaml.constructor.ConstructorError(
+        None,
+        None,
+        f"could not determine a constructor for {node.tag}",
+        node.start_mark,
+    )
 
 
 def _masked(text: str) -> str:
