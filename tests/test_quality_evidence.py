@@ -3259,6 +3259,15 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 "mypy:main unparsable mypy report", unanalyzed["tools/sample.py"]
             )
 
+    @staticmethod
+    def _sample_complexity(inventory: dict[str, Any]) -> list[tuple[int, int, object]]:
+        """The complexity findings of tools/sample.py: each one's range and value, sorted."""
+        return sorted(
+            (f["range"]["start_line"], f["range"]["end_line"], f["native"]["value"])
+            for f in inventory["findings"]
+            if f["tool"]["id"] == "complexity" and f["path"] == "tools/sample.py"
+        )
+
     def test_the_metric_parses_with_the_analyzers_declared_grammar(self) -> None:
         # Codex on #436: the metric parsed with the host's grammar while mypy and ruff
         # target Python 3.11, so a tracked file in 3.12 syntax had complexity findings
@@ -3270,14 +3279,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             "tools/alias.py": "type Number = int\n",
         }
 
-        def measured(inventory: dict[str, Any]) -> list[tuple[int, int, object]]:
-            return sorted(
-                (f["range"]["start_line"], f["range"]["end_line"], f["native"]["value"])
-                for f in inventory["findings"]
-                if f["tool"]["id"] == "complexity" and f["path"] == "tools/sample.py"
-            )
-
-        before = measured(self._inventory())
+        before = self._sample_complexity(self._inventory())
         shutil.rmtree(self.output, ignore_errors=True)
         self.commands.clear()
         for path, source in sources.items():
@@ -3296,7 +3298,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         # The later 3.11 file is analyzed, its counts and ranges unchanged.
         self.assertNotIn("tools/sample.py", unanalyzed)
         self.assertTrue(before)
-        self.assertEqual(before, measured(inventory))
+        self.assertEqual(before, self._sample_complexity(inventory))
         # One declared target: mypy's and ruff's arguments are the same bytes.
         commands = [command for command, _cwd, _env in self.commands]
         mypy = [c for c in commands if "mypy" in c and "--version" not in c]
