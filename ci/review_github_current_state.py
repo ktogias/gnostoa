@@ -107,6 +107,11 @@ query ClosingIssues(
 """
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
+# A comparison file's patch arrives whole inside one comparison response, which the
+# client already refuses past _MAX_RESPONSE_BYTES, so that budget is its bound: the
+# 65,536-byte bound of comments and messages would cut a patch GitHub returned whole
+# (#389, M13; Decision 0086).
+_MAX_PATCH_BYTES = _MAX_RESPONSE_BYTES
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
 # GitHub lists at most 300 files on a comparison, so a list that reaches it may be
@@ -590,13 +595,13 @@ def _comment_author(value: Any) -> str:
     return login if isinstance(login, str) and login else "UNAVAILABLE"
 
 
-def _bounded_body(value: Any) -> tuple[str, bool]:
+def _bounded_body(value: Any, limit: int = _MAX_BODY_BYTES) -> tuple[str, bool]:
     if not isinstance(value, str):
         return "", False
     raw = value.encode("utf-8")
-    if len(raw) <= _MAX_BODY_BYTES:
+    if len(raw) <= limit:
         return value, False
-    bounded = raw[:_MAX_BODY_BYTES].decode("utf-8", errors="ignore")
+    bounded = raw[:limit].decode("utf-8", errors="ignore")
     return bounded, True
 
 
@@ -1146,7 +1151,7 @@ def _normalize_file(value: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
             raise ProviderReadError("file.patch must be a string")
         if raw:
-            patch, truncated = _bounded_body(raw)
+            patch, truncated = _bounded_body(raw, limit=_MAX_PATCH_BYTES)
     additions = None
     if "additions" in item:
         additions = item["additions"]
