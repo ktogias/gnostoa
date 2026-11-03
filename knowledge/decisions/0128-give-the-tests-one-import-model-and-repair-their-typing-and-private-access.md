@@ -170,3 +170,20 @@ This text amends the first published version (6,773 bytes, SHA-256
      assertion instead of escaping it.
    - **The two typing-repair defs.** `_environment` declares the launcher it returns, and
      `_counting_reads`, which never reads `self`, is a static method.
+7. **DeepSource's full run, typing:** its `TYP` findings on the touched files are repaired under
+   N1a's rules (no cast, no `type: ignore`, no `Any` added to pass a check). They were reproduced
+   locally with mypy's strict-def/call/generics flags, which match its count of missing
+   annotations exactly. The means:
+   - **A test double declares the interface it replaces,** and forwards what it read from `*args`
+     or `**options` by name.
+   - **A pass-through spy into the module under test,** which is untyped at runtime, takes and
+     returns `object`, since `mock.patch` installs it as a side effect. A typed stdlib target is
+     held as `Callable[..., T]`.
+   - **JSON documents** are `dict[str, Any]`, as production declares them.
+   - **A value a typed call now returns as Optional** is narrowed with `self.fail`. An existing
+     `assertIsNotNone` stays.
+   - **A test that monkeypatches** a module's or an object's attribute writes it through `vars()`.
+
+   No assertion is removed, and SLF001 stays at 0. Calls into
+   `tests/quality_evidence_fixtures.py`, which this PR does not change, stay untyped until that
+   path is admitted.
