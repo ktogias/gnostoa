@@ -1351,7 +1351,12 @@ class DebtLedgerM17Tests(unittest.TestCase):
             "coverage": "COMPLETE",
             "findings": [debt_finding()],
         }
-        evidence["analyzer_debt"] = {"coverage": "COMPLETE", "entries": [debt_entry()]}
+        # The second entry's finding is gone, so a complete read would resolve it.
+        gone = debt_entry(id="debt-2", path="tools/gone.py")
+        evidence["analyzer_debt"] = {
+            "coverage": "COMPLETE",
+            "entries": [debt_entry(), gone],
+        }
         evidence["receipts"] = [_receipt(evidence["subject"], ["fast"])]
         verdict = _claims_verdict(evidence)
         self.assertIn("1 unresolved analyzer finding", _failed(verdict)["M17"])
