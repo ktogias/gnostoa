@@ -1232,6 +1232,7 @@ class AnalyzerRetirementTests(unittest.TestCase):
             ),
             ("no decision", [{"provider": "deepsource"}]),
             ("an empty provider", [{"provider": "", "decision": "0130"}]),
+            ("an empty decision", [{"provider": "deepsource", "decision": " "}]),
             (
                 "a repeated provider",
                 [{"provider": "deepsource", "decision": "0130"}] * 2,
