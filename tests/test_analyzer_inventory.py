@@ -308,10 +308,14 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
         threshold = configured({"reported_above": 15})
         self.assertEqual(threshold, configured({"reported_above": 15}))
         self.assertNotEqual(threshold, configured({"reported_above": 16}))
+
         # An unproved producer is left out: by its version, its environment, or a
         # record unlike the launch the inventory declares for it (Revix on #480).
+        def without(entry: dict[str, Any], *keys: str) -> dict[str, Any]:
+            return {k: v for k, v in entry.items() if k not in keys}
+
         for name, unproved in (
-            ("no version", {k: v for k, v in mypy.items() if k != "version"}),
+            ("no version", without(mypy, "version")),
             (
                 "an environment that changed",
                 {
@@ -319,10 +323,7 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                     "environment_observation": {**equal, "status": "endpoints_differ"},
                 },
             ),
-            (
-                "an environment not observed",
-                {k: v for k, v in mypy.items() if k != "environment_observation"},
-            ),
+            ("an environment not observed", without(mypy, "environment_observation")),
             (
                 "no environment digest",
                 {**mypy, "environment_observation": {**equal, "after": {}}},
@@ -338,26 +339,17 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                 "no interpreter",
                 {
                     **mypy,
-                    "environment_observation": {
-                        k: v for k, v in equal.items() if k != "interpreter"
-                    },
+                    "environment_observation": without(equal, "interpreter"),
                 },
             ),
-            (
-                "a launched producer without its argv",
-                {k: v for k, v in mypy.items() if k != "argv"},
-            ),
+            ("a launched producer without its argv", without(mypy, "argv")),
             (
                 "a launched producer recorded as in process",
-                {
-                    k: v
-                    for k, v in mypy.items()
-                    if k not in {"argv", "environment_observation"}
-                },
+                without(mypy, "argv", "environment_observation"),
             ),
             (
                 "a launched argv without the file list's separator",
-                {**mypy, "argv": [a for a in mypy["argv"] if a != "--"]},
+                {**mypy, "argv": [*mypy["argv"][:4], "a.py"]},
             ),
             (
                 "a process producer the inventory observes no environment for",
