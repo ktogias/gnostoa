@@ -425,7 +425,8 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      - the seal names the exact head;
      - every required check succeeded, by its latest run;
      - every other check run and status is green, and a green one carries no
-       annotation or analyzer finding;
+       annotation or analyzer finding. A retired provider's statuses and check runs
+       are not read: DeepSource's, such as `DeepSource: Python` (Decision 0130);
      - every review thread is resolved, read through every page;
      - no closing keyword is in what the squash merge will carry, nor in the PR's
        description. The check writes the PR's title and body, as it read them, to two

@@ -1552,6 +1552,20 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             ],
         )
 
+    def test_the_pre_merge_check_reads_no_retired_provider_s_status(self) -> None:
+        # Otherwise DeepSource's red status would still gate every merge through the
+        # normal merge's pre-merge check (Decision 0130).
+        runbook = " ".join(
+            (ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "A retired provider's statuses and check runs are not read: "
+            "DeepSource's, such as `DeepSource: Python` (Decision 0130)",
+            runbook,
+        )
+
 
 class _SonarCloudReader:
     """SonarCloud for the runner's tests: the head analysed, no issue. Every read

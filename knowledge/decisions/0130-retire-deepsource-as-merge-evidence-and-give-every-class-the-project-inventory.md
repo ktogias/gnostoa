@@ -142,8 +142,9 @@ qualified remedy (sources `owner-scope`, `owner-target`).
 ## Consequences
 
 - **Every class is admitted on Codacy, SonarCloud, CodeQL, the required checks and the
-  project inventory.** DeepSource's status may still appear on a pull request; nothing
-  reads it.
+  project inventory.** DeepSource's status may still appear on a pull request. Neither
+  the verdict nor the normal merge's pre-merge check reads it, as the runbook
+  (`operate-the-merge-gate.md`, step 5) now says.
 - **The project inventory's findings deny every class,** as M17 has always counted every
   finding obtained, and so will the four families' once they are active.
 - **Rollback:** reverting this change restores the declaration, the acquisition and the
