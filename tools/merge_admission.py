@@ -546,7 +546,7 @@ def _analyzer_findings(
     # entry is called resolved (#389, the M17 transition).
     matchable = not reasons
     inherited = _inherited(findings, entries) if matchable else []
-    matched = {record["ledger_entry"] for record in inherited}
+    matched = {found["ledger_entry"] for found in inherited}
     resolved = (
         [entry["id"] for entry in entries if entry["id"] not in matched]
         if matchable
