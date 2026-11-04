@@ -94,8 +94,10 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - The step reads each Python finding's file (`.py` or `.pyi`) at the exact head through
      GitHub's contents API. The file is read as data: nothing in the head runs or selects a
      tool. It is read and parsed once for all its findings.
-   - The read is bounded: 64 requests, 1 MiB each, and 8 MiB in all. Content longer than
-     its declared size is refused before it is decoded, so the bounds hold for the work done.
+   - The read is bounded: 64 requests, 1 MiB each, and 8 MiB in all. Content whose encoded
+     length is not the one its declared size implies is refused before it is decoded, so no
+     more than one base64 block past the declared size is ever decoded; the decoded bytes
+     must then be exactly the declared size.
    - In these cases a finding gets no scope, and it is never matched:
      - the read fails;
      - the file is not a file, is over a bound, is not valid base64, has other than its
