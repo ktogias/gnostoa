@@ -702,7 +702,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_the_bundle_schema_is_the_reader_s(self) -> None:
         self.assertEqual(analyzer_readback.BUNDLE_SCHEMA, runner.BUNDLE_SCHEMA)
 
-    def test_review_comment_pages_fit_bound_and_retain_all_comments(self) -> None:
+    def test_review_comment_pages_fit_bound_and_count_every_comment(self) -> None:
         endpoint = "https://api.github.com/repos/ktogias/gnostoa/pulls/312/comments"
         total_comments = 234
         # The runner's own bound on one response, as its client reads under it.
@@ -756,7 +756,8 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
 
         client = _BoundedReviewCommentPages()
         # The bundle's GitHub projection counts every comment, read in bounded pages.
-        # DeepSource's retired DIFF read, their only consumer, is gone (Decision 0130).
+        # DeepSource's retired DIFF read, which kept each comment, is gone (Decision
+        # 0130): the count is what the bundle keeps, so every page is read once, in order.
         bundle = runner.collect_bundle(
             client,
             repository="ktogias/gnostoa",
@@ -772,7 +773,10 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         pages = [
             url for url in client.calls if urlsplit(url).path == urlsplit(endpoint).path
         ]
-        self.assertEqual(5, len(pages))
+        self.assertEqual(
+            ["1", "2", "3", "4", "5"],
+            [parse_qs(urlsplit(url).query).get("page", ["1"])[0] for url in pages],
+        )
         self.assertTrue(
             all(parse_qs(urlsplit(url).query)["per_page"] == ["50"] for url in pages)
         )
