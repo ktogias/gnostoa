@@ -240,20 +240,20 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
         blocking."""
         head = self._changed_head()
         record = self._inventory(base=self.base, expected_revision=head)
-        equal = {
+        equal: dict[str, Any] = {
             "status": "endpoints_equal",
             "interpreter": {"executable": "/usr/local/bin/python"},
             "before": {"sha256": "a" * 64},
             "after": {"sha256": "a" * 64},
         }
-        mypy = {
+        mypy: dict[str, Any] = {
             "producer": "mypy",
             "invocation": "mypy:main",
             "version": "2.3.0",
             "argv": ["/usr/local/bin/python", "-I", "-m", "mypy", "--", "a.py"],
             "environment_observation": equal,
         }
-        complexity = {
+        complexity: dict[str, Any] = {
             "producer": "complexity",
             "invocation": "complexity",
             "version": "cyclomatic-n-1/v1",
