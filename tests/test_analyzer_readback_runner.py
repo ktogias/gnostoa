@@ -1546,6 +1546,7 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             ],
         )
 
+
 class _SonarCloudReader:
     """SonarCloud for the runner's tests: the head analysed, no issue. Every read
     is logged in ``events``, beside the GitHub reads, so their order shows."""
