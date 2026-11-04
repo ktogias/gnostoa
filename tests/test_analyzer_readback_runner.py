@@ -32,6 +32,7 @@ OTHER = "b" * 40
 OBSERVED = "2026-09-23T14:00:00Z"
 # SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
 SONAR_ENV = "SONAR_TOKEN"
+CODACY_ENV = "CODACY_API_TOKEN"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
@@ -658,14 +659,13 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 urls["sonar_checks"]: {"total_count": 1, "check_runs": [sonar_check]},
             }
         )
-        token_name = "CODACY_API_TOKEN"
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "readback.json"
             stderr, stdout = io.StringIO(), io.StringIO()
             with (
                 patch.dict(
                     os.environ,
-                    {token_name: "synthetic-optional-credential\n"},
+                    {CODACY_ENV: "synthetic-optional-credential\n"},
                     clear=True,
                 ),
                 patch.object(
