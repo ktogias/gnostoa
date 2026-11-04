@@ -546,12 +546,7 @@ def _analyzer_findings(
     # entry is called resolved (#389, the M17 transition).
     matchable = not reasons
     inherited = _inherited(findings, entries) if matchable else []
-    matched = {found["ledger_entry"] for found in inherited}
-    resolved = (
-        [entry["id"] for entry in entries if entry["id"] not in matched]
-        if matchable
-        else []
-    )
+    resolved = _resolved(entries, findings, inherited) if matchable else []
     unresolved = len(findings) - len(inherited)
     if unresolved:
         plural = "" if unresolved == 1 else "s"
@@ -582,6 +577,31 @@ def _inherited(
                 }
             )
     return inherited
+
+
+def _resolved(
+    entries: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    inherited: list[dict[str, str]],
+) -> list[str]:
+    """The entries no finding answers to any more: unmatched, with no unmatched
+    finding left at their item, rule and path. An entry whose finding changed in
+    place, by its measure, scope, analyzer, severity or configuration, is not
+    resolved, since that finding still counts (Revix on #480)."""
+
+    matched = {found["ledger_entry"] for found in inherited}
+    absorbed = {(found["item"], found["id"]) for found in inherited}
+    remaining = {
+        (finding["item"], finding.get("rule"), finding.get("path"))
+        for finding in findings
+        if (finding["item"], finding["id"]) not in absorbed
+    }
+    return [
+        entry["id"]
+        for entry in entries
+        if entry["id"] not in matched
+        and (entry["item"], entry["rule"], entry["path"]) not in remaining
+    ]
 
 
 def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:

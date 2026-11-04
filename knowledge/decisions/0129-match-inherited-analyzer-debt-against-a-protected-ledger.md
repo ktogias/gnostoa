@@ -163,7 +163,9 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - Nothing is matched unless M17's read is complete. Under a 1.1 declaration that is the
      completeness verdict; under 1.0 it is the findings' own coverage. Otherwise every
      finding counts, and no entry is called resolved.
-   - An entry that matches no finding is listed under `resolved_debt`, with no effect.
+   - An entry is listed under `resolved_debt` when it matches no finding and no
+     unmatched finding is left at its item, rule and path. An entry whose finding changed
+     in place is not listed: that finding still counts. Either listing has no effect.
 4. **The regression rule.** A finding's identity includes the content of its enclosing
    function or class. So a change anywhere in that scope unmatches every finding in it, on
    changed and unchanged lines alike.

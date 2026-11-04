@@ -1224,8 +1224,20 @@ class DebtLedgerM17Tests(unittest.TestCase):
         )
         self.assertEqual([], verdict["for_approval"]["resolved_debt"])
 
-    def test_any_other_identity_is_unresolved_and_the_entry_resolved(self) -> None:
+    def test_any_other_identity_is_unresolved_and_only_a_finding_gone_resolves(
+        self,
+    ) -> None:
+        """An entry is resolved only when no unmatched finding is left at its item,
+        rule and path: one whose finding changed in place is not, since that finding
+        still counts (Revix on #480)."""
         other_scope = {"kind": "function", "name": "f", "sha256": "e" * 64}
+        # The finding moved away from the entry's item, rule or path.
+        moved_away = {
+            "another item",
+            "another rule",
+            "another path",
+            "a scope but no rule",
+        }
         for name, finding in (
             ("another item", debt_finding(item="codacy")),
             ("another rule", debt_finding(rule="PY-R1001")),
@@ -1270,7 +1282,20 @@ class DebtLedgerM17Tests(unittest.TestCase):
                     {"M17": ["1 unresolved analyzer finding"]}, _failed(verdict)
                 )
                 self.assertEqual([], verdict["for_approval"]["inherited_findings"])
-                self.assertEqual(["debt-1"], verdict["for_approval"]["resolved_debt"])
+                self.assertEqual(
+                    ["debt-1"] if name in moved_away else [],
+                    verdict["for_approval"]["resolved_debt"],
+                )
+
+    def test_a_matched_finding_leaves_another_entry_at_its_path_resolved(self) -> None:
+        """A finding one entry absorbed does not answer for a second entry at the same
+        item, rule and path whose own finding is gone (Revix on #480)."""
+        second = debt_entry(
+            id="debt-2", message="`f` has a cyclomatic complexity of 18"
+        )
+        verdict = self._verdict([debt_finding()], [debt_entry(), second])
+        self.assertEqual({}, _failed(verdict))
+        self.assertEqual(["debt-2"], verdict["for_approval"]["resolved_debt"])
 
     def test_an_entry_without_a_tool_matches_only_a_finding_without_one(self) -> None:
         entry = {k: v for k, v in debt_entry().items() if k != "tool"}

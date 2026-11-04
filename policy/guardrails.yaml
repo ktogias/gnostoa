@@ -798,7 +798,8 @@ guardrails:
       - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_holds_when_a_claim_is_not_met_under_1_1
       - tests/test_merge_admission.py::ClaimsM17Tests.test_m17_keeps_its_1_0_rule
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_finding_matching_an_entry_is_inherited_and_still_listed
-      - tests/test_merge_admission.py::DebtLedgerM17Tests.test_any_other_identity_is_unresolved_and_the_entry_resolved
+      - tests/test_merge_admission.py::DebtLedgerM17Tests.test_any_other_identity_is_unresolved_and_only_a_finding_gone_resolves
+      - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_matched_finding_leaves_another_entry_at_its_path_resolved
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_entry_without_a_tool_matches_only_a_finding_without_one
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_entry_recorded_without_severity_needs_a_finding_without_one
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_security_finding_is_never_inherited
