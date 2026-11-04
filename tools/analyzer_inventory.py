@@ -149,12 +149,14 @@ def _invocation_identity(
     record: Mapping[str, Any], own_settings: object
 ) -> dict[str, Any] | None:
     """One invocation's version, settings and environment, or None when unproved.
-    Which producers run as processes is the inventory's own launch declaration, the
-    one its source binding reads, never a record's shape (Revix on #480). A launched
-    producer's settings are its argv before `--`, where its file list starts, and its
-    environment must be observed equal before and after it. An in-process producer
-    launches nothing, so its record carries neither, and its settings are its own
-    configuration, such as complexity's."""
+    Which producers are launched with an observed environment is the inventory's own
+    declaration, the one its source binding reads, never a record's shape (Revix and
+    cubic on #480). Such a producer's settings are its argv before the `--` its
+    builder puts before the file list, and its environment must be observed equal
+    before and after it. Any other producer is proved only in process: it launches
+    nothing, so its record carries neither an argv nor an observation, and its
+    settings are its own configuration, such as complexity's. Another process
+    producer, such as shellcheck, is unproved."""
 
     version = record.get("version")
     if not isinstance(version, str) or not version:
@@ -175,9 +177,10 @@ def _invocation_identity(
         observed is None
         or not isinstance(argv, list)
         or not all(isinstance(a, str) for a in argv)
+        or "--" not in argv
     ):
         return None
-    identity["settings"] = argv[: argv.index("--")] if "--" in argv else argv
+    identity["settings"] = argv[: argv.index("--")]
     identity["environment"] = observed
     return identity
 

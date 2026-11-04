@@ -142,16 +142,18 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - **A producer's effective identity** is the inventory adapter's
      `native.producers` entry: a digest over each of its invocations' version, settings
      and environment, from the inventory's own provenance.
-     - Which producers run as processes is the inventory's own launch declaration, the
-       one its source binding reads, never a record's shape.
-     - A launched producer's settings are its argv before `--`, where its file list
-       starts, so the files it read do not change it. An in-process producer's settings
-       are its own configuration, such as complexity's.
+     - Which producers are launched with an observed environment, mypy and Ruff today,
+       is the inventory's own declaration, the one its source binding reads, never a
+       record's shape. Any other producer is proved only in process, such as
+       complexity; another process producer, such as shellcheck, is unproved.
+     - A launched producer's settings are its argv before the `--` its builder puts
+       before the file list, so the files it read do not change it. An in-process
+       producer's settings are its own configuration, such as complexity's.
      - The environment is the observation's interpreter and its after digest.
      - A producer is left out when any invocation lacks a version; when, launched, it
-       lacks its argv, its interpreter or its digest, or was not observed with its
-       environment equal before and after it; or when, in process, its record carries an
-       argv or an observation.
+       lacks its argv, that separator, its interpreter or its digest, or was not
+       observed with its environment equal before and after it; or when, in process,
+       its record carries an argv or an observation.
      So a new tool version, setting or environment unmatches each of its findings.
    - An entry absorbs one finding.
    - These findings never match:

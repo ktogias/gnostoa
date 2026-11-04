@@ -355,6 +355,14 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                     if k not in {"argv", "environment_observation"}
                 },
             ),
+            (
+                "a launched argv without the file list's separator",
+                {**mypy, "argv": [a for a in mypy["argv"] if a != "--"]},
+            ),
+            (
+                "a process producer the inventory observes no environment for",
+                {**mypy, "producer": "shellcheck", "invocation": "shellcheck"},
+            ),
             ("an in-process producer with an argv", {**complexity, "argv": ["c"]}),
             (
                 "an in-process producer with an observation",
