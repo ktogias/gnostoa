@@ -658,13 +658,14 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 urls["sonar_checks"]: {"total_count": 1, "check_runs": [sonar_check]},
             }
         )
+        token_name = "CODACY_API_TOKEN"
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "readback.json"
             stderr, stdout = io.StringIO(), io.StringIO()
             with (
                 patch.dict(
                     os.environ,
-                    {"CODACY_API_TOKEN": "synthetic-optional-credential\n"},
+                    {token_name: "synthetic-optional-credential\n"},
                     clear=True,
                 ),
                 patch.object(
@@ -1521,15 +1522,16 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
         )
 
     def test_a_deepsource_reader_is_refused_as_retired(self) -> None:
+        github, reader = self._github(), cast(Any, _deepsource_fake())
         with self.assertRaisesRegex(
             runner.RunnerError, "DeepSource is retired as merge evidence"
         ):
             runner.collect_bundle(
-                self._github(),
+                github,
                 repository="ktogias/gnostoa",
                 pull_number=312,
                 requested_head=HEAD,
-                deepsource=cast(Any, _deepsource_fake()),
+                deepsource=reader,
                 codacy=None,
                 sonarcloud=None,
                 observed_at=OBSERVED,
