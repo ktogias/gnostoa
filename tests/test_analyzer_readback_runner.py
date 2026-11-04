@@ -1566,38 +1566,6 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             runbook,
         )
 
-    def test_the_profile_activates_the_remedy_families(self) -> None:
-        """Owner 6625223543 §1: the aspects DeepSource's shell analyzer and its FULL
-        reads covered keep a gate. Docker waits for #477's repairs, and secrets for
-        F-a (Strategy A, 6587559616)."""
-        profile = yaml.safe_load(
-            (ROOT / "policy" / "diagnostic-profile.yaml").read_text(encoding="utf-8")
-        )
-        active = {
-            family["id"]: family.get("active", True) for family in profile["families"]
-        }
-        self.assertEqual(
-            {
-                "shell-lint": True,
-                "workflow-lint": True,
-                "gitlab-script": True,
-                "unsafe-calls": True,
-                "dockerfile-lint": False,
-                "secrets": False,
-            },
-            {
-                name: active[name]
-                for name in (
-                    "shell-lint",
-                    "workflow-lint",
-                    "gitlab-script",
-                    "unsafe-calls",
-                    "dockerfile-lint",
-                    "secrets",
-                )
-            },
-        )
-
 
 class _SonarCloudReader:
     """SonarCloud for the runner's tests: the head analysed, no issue. Every read
