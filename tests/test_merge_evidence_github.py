@@ -4681,8 +4681,15 @@ class DebtLedgerTests(unittest.TestCase):
                 unresolved,
             ),
             (
+                # The entry pins the identity a non-digest profile would give, so only
+                # the digest check refuses it.
                 "a profile that is no digest",
-                ledger,
+                {
+                    **ledger,
+                    "entries": [
+                        {**entry, "configuration": "gnostoa-inventory-fake/v1@latest"}
+                    ],
+                },
                 _complete_bundle(inventory_full=(raw,), profile="latest"),
                 unresolved,
             ),
