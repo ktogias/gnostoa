@@ -1,7 +1,7 @@
 ---
 type: Decision
-title: Match inherited analyzer debt against a protected ledger, inactive until the owner approves an entry
-description: "The M17 transition of #389's closure: a finding that matches an entry of the protected target's analyzer debt ledger exactly, by its item, rule, path, message, analyzer identity and the content of its enclosing function or class, is listed as inherited and does not count. Any other finding counts as before. The ledger ships empty, so no finding is inherited until the owner approves an entry. A carried-forward DeepSource comment no longer degrades the DIFF read when the same run's complete full read shows its finding gone."
+title: Match inherited analyzer debt against a protected ledger that ships empty, and settle carried-forward comments by the full run
+description: "The M17 transition of #389's closure: a finding that matches an entry of the protected target's analyzer debt ledger exactly, by its item, rule, path, message, severity, run-bound configuration identity, analyzer identity and the content of its enclosing function or class, is listed as inherited and does not count. Any other finding counts as before. The ledger ships empty, so no finding is inherited until the owner approves an entry, and only a finding whose readback states a run-bound configuration, today the project inventory's, can match one. Unlike the ledger, the carried-forward rule takes effect when this lands: a carried-forward DeepSource comment no longer degrades the DIFF read when the same run's complete full read shows its finding gone."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -47,7 +47,7 @@ x-project-knowledge:
       target: /decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md
 ---
 
-# Match inherited analyzer debt against a protected ledger, inactive until the owner approves an entry
+# Match inherited analyzer debt against a protected ledger that ships empty, and settle carried-forward comments by the full run
 
 ## Context
 
@@ -112,6 +112,10 @@ comment, and so it marks the DIFF read `PARTIAL`.
      - an `id`;
      - the finding's `item`, `rule`, `path` and `message`, as the readback lists them;
      - `enclosing_sha256`;
+     - the finding's `severity` at its proof, as text, or an explicit `null` for a
+       provider that states none (owner [6620829215](https://github.com/ktogias/gnostoa/issues/389#issuecomment-6620829215) §1);
+     - its `configuration`: the run-bound configuration identity the finding was proved
+       under (§2);
      - an `aspect`;
      - when the finding names one, the analyzer's `tool`;
      - its `provenance`: the protected commit it was proved on, the readback run that
@@ -124,8 +128,12 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - A change to the ledger is under `/policy/`, a trust root (M15). The owner approves it.
 3. **M17.** A finding that matches an entry exactly is inherited. It stays listed among the
    analyzer findings, and among `inherited_findings` with its entry's id, and it does not
-   count. "Exactly" means the same item, rule, path, message, enclosing scope content, tool
-   id and tool name.
+   count. "Exactly" means the same item, rule, path, message, enclosing scope content,
+   severity, configuration identity, tool id and tool name.
+   - **The configuration identity** comes from the finding's own readback. Merge evidence
+     derives it, as the readback's adapter and the protected profile digest its run was
+     bound to, only when the readback states one (`native.profile`, with `source_binding`
+     `BOUND`). A finding whose readback states none never matches.
    - An entry absorbs one finding.
    - These findings never match:
      - one in a provider's security category (`security`, `vulnerability` or
@@ -141,8 +149,13 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - **The measure.** The message carries the measure, such as a complexity. So a worse
      measure does not match. A better one does not match either, until the entry is updated.
      This is stricter than the packet's "a measure no worse" (source `packet`).
+   - **The severity.** Compared exactly, so a raised, lowered, new or dropped severity
+     unmatches. A raised severity with the same message and scope is the case the owner
+     named.
    - **The analyzer.** A change in the analyzer's identity matches nothing (PAO's P2,
-     source `pao`).
+     source `pao`). Neither does a change in its run-bound configuration, nor a finding
+     whose readback states no configuration at all: an unknown configuration is not a
+     comparable one.
    - **The read.** A stale, partial or unbound read matches nothing.
 5. **The carried-forward comment.** Such a comment is still excluded from DeepSource's DIFF
    read.
@@ -158,7 +171,9 @@ comment, and so it marks the DIFF read `PARTIAL`.
    - Unlike the packet's first form, it does not also require the comment's review thread to
      be resolved: the readback does not read thread state, and reading it would be a new
      acquisition (source `addendum`).
-6. **Not activated.** The ledger ships empty. An entry is added only by a pull request on
+6. **The ledger is not activated; the carried-forward rule is.** The ledger ships empty, so
+   no finding is inherited until the owner approves an entry. Item 5 is not gated by the
+   ledger: it takes effect when this lands. An entry is added only by a pull request on
    protected `main` that the owner approves. Each entry carries its proof:
    - a BOUND, COMPLETE authenticated readback listed it;
    - its scope was byte-identical on that protected commit;
@@ -166,10 +181,16 @@ comment, and so it marks the DIFF read `PARTIAL`.
 
 ## Limits
 
-- **Configuration drift is not fully visible.** For DeepSource, the analyzer's configuration
-  and version are provider-side. The readback shows only the finding's tool, so drift that
-  keeps the tool's identity is not seen. This is a declared limit, not a proof.
-- **SonarCloud's findings name no tool,** so their entries carry none.
+- **Only configuration-bound findings can be inherited.** Today that is only the project
+  inventory, whose readbacks state their protected profile's digest, bound to their run.
+  DeepSource, Codacy and SonarCloud findings never match.
+  - **DeepSource:** its API exposes no run's own configuration or analyzer version; its
+    capability discovery is `CURRENT_NOT_RUN_BOUND`.
+  - **Codacy and SonarCloud:** their readbacks name no configuration.
+  - Each can become matchable only when its adapter states a run-bound configuration
+    identity, which is a change of its own.
+- **A finding of a provider that states no severity** matches only an entry recorded with
+  `null`, so a severity that appears unmatches it.
 - **A reworded message unmatches.** A provider that rewords a message unmatches its entries,
   and the finding counts until the entry is updated.
 - **A failed head read counts.** When the head read fails, for example by a rate limit, the

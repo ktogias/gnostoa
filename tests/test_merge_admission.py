@@ -1152,6 +1152,9 @@ class ClaimsM17Tests(unittest.TestCase):
 # A finding's enclosing scope on the head, and the ledger entry that proved it on
 # protected main (#389, the M17 transition).
 _SCOPE = "c" * 64
+# A readback's run-bound configuration identity, as merge evidence derives it (owner
+# 6620829215 §2): its adapter and its protected profile's digest.
+CONFIGURATION = "gnostoa-inventory-fake/v1@sha256:" + "b" * 64
 
 
 def debt_entry(**changes: Any) -> dict[str, Any]:
@@ -1164,6 +1167,8 @@ def debt_entry(**changes: Any) -> dict[str, Any]:
         "message": "`f` has a cyclomatic complexity of 16",
         "enclosing_sha256": _SCOPE,
         "tool": {"id": "python"},
+        "severity": "MINOR",
+        "configuration": CONFIGURATION,
         "aspect": "complexity",
         "provenance": {
             "commit": "d" * 40,
@@ -1184,6 +1189,8 @@ def debt_finding(**changes: Any) -> dict[str, Any]:
         "rule": "PY-R1000",
         "path": "tools/x.py",
         "tool": {"id": "python"},
+        "severity": "MINOR",
+        "configuration": CONFIGURATION,
         "enclosing": {"kind": "function", "name": "f", "sha256": _SCOPE},
     }
     finding.update(changes)
@@ -1229,6 +1236,22 @@ class DebtLedgerM17Tests(unittest.TestCase):
             ("another tool", debt_finding(tool={"id": "mypy"})),
             ("a named tool", debt_finding(tool={"id": "python", "name": "Python"})),
             ("no tool", {k: v for k, v in debt_finding().items() if k != "tool"}),
+            # Owner 6620829215 §1: the baseline severity, exactly.
+            ("a raised severity", debt_finding(severity="CRITICAL")),
+            ("a lowered severity", debt_finding(severity="INFO")),
+            (
+                "no severity",
+                {k: v for k, v in debt_finding().items() if k != "severity"},
+            ),
+            # §2: the run-bound configuration identity, exactly.
+            (
+                "another configuration",
+                debt_finding(configuration=CONFIGURATION[:-1] + "c"),
+            ),
+            (
+                "no configuration",
+                {k: v for k, v in debt_finding().items() if k != "configuration"},
+            ),
             (
                 "no scope",
                 {k: v for k, v in debt_finding().items() if k != "enclosing"},
@@ -1249,6 +1272,19 @@ class DebtLedgerM17Tests(unittest.TestCase):
     def test_an_entry_without_a_tool_matches_only_a_finding_without_one(self) -> None:
         entry = {k: v for k, v in debt_entry().items() if k != "tool"}
         finding = {k: v for k, v in debt_finding().items() if k != "tool"}
+        self.assertEqual({}, _failed(self._verdict([finding], [entry])))
+        self.assertEqual(
+            {"M17": ["1 unresolved analyzer finding"]},
+            _failed(self._verdict([debt_finding()], [entry])),
+        )
+
+    def test_an_entry_recorded_without_severity_needs_a_finding_without_one(
+        self,
+    ) -> None:
+        """A provider that states no severity: an explicit null matches only a
+        finding without one, so a severity that appears unmatches it."""
+        entry = debt_entry(severity=None)
+        finding = {k: v for k, v in debt_finding().items() if k != "severity"}
         self.assertEqual({}, _failed(self._verdict([finding], [entry])))
         self.assertEqual(
             {"M17": ["1 unresolved analyzer finding"]},
@@ -1348,6 +1384,18 @@ class DebtLedgerM17Tests(unittest.TestCase):
                         {**entry, "tool": {"id": "py", "x": "y"}},
                     ),
                     ("a tool that is null", {**entry, "tool": None}),
+                    (
+                        "an entry missing its severity",
+                        {k: v for k, v in entry.items() if k != "severity"},
+                    ),
+                    ("a severity that is not text", {**entry, "severity": 7}),
+                    ("an empty severity", {**entry, "severity": ""}),
+                    (
+                        "an entry missing its configuration",
+                        {k: v for k, v in entry.items() if k != "configuration"},
+                    ),
+                    ("an empty configuration", {**entry, "configuration": ""}),
+                    ("a configuration that is null", {**entry, "configuration": None}),
                     ("a tool with an empty id", {**entry, "tool": {"id": ""}}),
                     (
                         "a tool name that is not text",
@@ -1374,6 +1422,19 @@ class DebtLedgerM17Tests(unittest.TestCase):
         ):
             evidence = _evidence()
             evidence["analyzer_debt"] = debt
+            with (
+                self.subTest(name),
+                self.assertRaises(assurance_completeness.AssuranceCompletenessError),
+            ):
+                _claims_verdict(evidence)
+
+    def test_a_finding_s_configuration_is_text(self) -> None:
+        for name, value in (("empty", ""), ("not text", 7), ("null", None)):
+            evidence = _evidence()
+            evidence["analyzer_findings"] = {
+                "coverage": "COMPLETE",
+                "findings": [debt_finding(configuration=value)],
+            }
             with (
                 self.subTest(name),
                 self.assertRaises(assurance_completeness.AssuranceCompletenessError),

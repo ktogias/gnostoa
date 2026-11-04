@@ -1741,6 +1741,26 @@ def evidence_from_snapshot(
     }
 
 
+# A run-bound configuration identity: a protected profile's digest.
+_PROFILE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _configuration(readback: Mapping[str, Any]) -> str | None:
+    """The run-bound configuration identity a readback states, its adapter with the
+    protected profile its run was bound to, or None (owner 6620829215 §2). Today
+    only the project inventory states one; DeepSource's API exposes no run's own
+    configuration, and Codacy's and SonarCloud's readbacks name none. A finding
+    without one can match no ledger entry."""
+
+    native = readback.get("native")
+    if not isinstance(native, Mapping) or native.get("source_binding") != "BOUND":
+        return None
+    profile = native.get("profile")
+    if not isinstance(profile, str) or _PROFILE_DIGEST.fullmatch(profile) is None:
+        return None
+    return f"{readback['adapter']}@{profile}"
+
+
 def _analyzer_debt(debt_ledger: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
     """The protected target's debt ledger as evidence: UNAVAILABLE without one."""
 
@@ -1814,6 +1834,7 @@ def _analyzer_evidence(
         return receipts, {"coverage": "INCOMPLETE", "findings": []}
     receipts, findings = [], []
     for (requirement, item), readback in readbacks.items():
+        configuration = _configuration(readback)
         receipts.append(
             _analyzer_receipt(
                 subject,
@@ -1826,6 +1847,8 @@ def _analyzer_evidence(
         for finding in readback["findings"]:
             entry = {"item": item, "id": finding["id"], "message": finding["message"]}
             entry.update({k: finding[k] for k in _FINDING_FIELDS if k in finding})
+            if configuration is not None:
+                entry["configuration"] = configuration
             findings.append(entry)
     complete = len(readbacks) == len(_ANALYZER_ITEMS) and all(
         r["status"] == "COMPLETE" for r in receipts

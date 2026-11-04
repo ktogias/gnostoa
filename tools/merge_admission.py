@@ -70,6 +70,11 @@ _DEBT_ENTRY_KEYS = frozenset(
         "path",
         "message",
         "enclosing_sha256",
+        # The baseline severity, text or an explicit null, matched exactly (owner
+        # 6620829215 §1), and the run-bound configuration identity it was proved
+        # under (§2).
+        "severity",
+        "configuration",
         "aspect",
         "provenance",
     }
@@ -126,6 +131,8 @@ _FINDING_OPTIONAL_KEYS = frozenset(
         "tool",
         "range",
         "enclosing",
+        # Its readback's run-bound configuration identity, when it states one.
+        "configuration",
     }
 )
 
@@ -427,8 +434,10 @@ def parse_analyzer_debt(value: object) -> list[dict[str, Any]]:
 def _debt_entry(item: object, label: str) -> dict[str, Any]:
     entry = require_mapping(item, label)
     require_closed_keys(entry, label, _DEBT_ENTRY_KEYS, _DEBT_ENTRY_OPTIONAL_KEYS)
-    for key in ("id", "item", "rule", "path", "message"):
+    for key in ("id", "item", "rule", "path", "message", "configuration"):
         require_text(entry[key], f"{label} {key}")
+    if entry["severity"] is not None:
+        require_text(entry["severity"], f"{label} severity")
     digest = entry["enclosing_sha256"]
     if not isinstance(digest, str) or SHA256_DIGEST.fullmatch(digest) is None:
         raise AssuranceCompletenessError(
@@ -483,6 +492,10 @@ def _identity(record: Mapping[str, Any], enclosing: str) -> tuple[str | None, ..
         record["path"],
         record["message"],
         enclosing,
+        # Exactly, so a raised, lowered, new or dropped severity unmatches; and a
+        # finding without a configuration identity never meets an entry's.
+        record.get("severity"),
+        record.get("configuration"),
         tool.get("id"),
         tool.get("name"),
     )
@@ -577,7 +590,13 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
     unchanged, so there is no second schema (#417 6107601240)."""
 
     item = require_text(finding["item"], f"{label} item")
-    fields = {key: value for key, value in finding.items() if key != "item"}
+    # The evidence's own field, not the readback's: its configuration identity.
+    evidence = {"item": item}
+    if "configuration" in finding:
+        evidence["configuration"] = require_text(
+            finding["configuration"], f"{label} configuration"
+        )
+    fields = {k: v for k, v in finding.items() if k not in ("item", "configuration")}
     try:
         normalized = normalize_finding(fields)
     except AnalyzerReadbackError as exc:
@@ -586,7 +605,7 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
         raise AssuranceCompletenessError(
             f"{label} is not in the readback's normalized form"
         )
-    return {"item": item, **normalized}
+    return {**evidence, **normalized}
 
 
 def _class_requirements(

@@ -3,8 +3,10 @@
 # `knowledge merge-evidence` reads this from the protected target, never from the
 # candidate. An entry names one finding of inherited debt: its item, rule, path and
 # message as the readback lists it, the SHA-256 of its smallest enclosing function or
-# class on the protected commit it was proved on, and the analyzer's identity when
-# the finding names one. A finding that matches an entry exactly stays listed, as
+# class on the protected commit it was proved on, its severity there (or null), the
+# run-bound configuration identity it was proved under, and the analyzer's identity
+# when the finding names one. A finding whose readback states no configuration
+# identity never matches. A finding that matches an entry exactly stays listed, as
 # inherited, and M17 does not fail on it; any other finding counts. A security
 # finding is never an entry. Its texts are quoted, so YAML keeps them as written.
 # A change to it is a trust-root change (M15), approved by the owner. Without this

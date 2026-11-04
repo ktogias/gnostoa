@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import yaml
 
-from tests.test_merge_admission import debt_entry, debt_finding
+from tests.test_merge_admission import CONFIGURATION, debt_entry, debt_finding
 from tests.test_review_reconcile_l1 import (
     adapter_fixture,
     complete_replies_fixture,
@@ -348,6 +348,7 @@ def _readback(
     pull: int = 300,
     completeness: str | None = None,
     native_mode: str | None = None,
+    native: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     complete = status == "COMPLETE"
     if completeness is None:
@@ -384,6 +385,7 @@ def _readback(
         run_state="SUCCESS" if complete else "UNKNOWN",
         coverage_record=record,
         findings=findings,
+        native=native,
     )
 
 
@@ -4519,16 +4521,26 @@ LEDGER_DOCUMENT: dict[str, Any] = {
 }
 
 
-def _complete_bundle(*full: dict[str, Any]) -> dict[str, Any]:
+# The project inventory's run-bound configuration, as its adapter states it: the
+# protected profile's digest, bound to its own run (owner 6620829215 §2).
+_PROFILE = "sha256:" + "b" * 64
+
+
+def _complete_bundle(
+    *full: dict[str, Any],
+    inventory_full: tuple[dict[str, Any], ...] = (),
+    profile: str = _PROFILE,
+) -> dict[str, Any]:
     """A bound bundle whose every readback is complete, with `full` in DeepSource's
-    full run."""
+    full run and `inventory_full` in the inventory's, under `profile`."""
+    bound = {"profile": profile, "source_binding": "BOUND", "tree": "c" * 40}
     return _bundle(
         _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
         _readback("deepsource", "FULL", *full),
         _readback("codacy", "DIFF"),
         _readback(*SONAR),
-        _inventory("DIFF"),
-        _inventory("FULL"),
+        _inventory("DIFF", native=bound),
+        _inventory("FULL", *inventory_full, native=bound),
     )
 
 
@@ -4627,23 +4639,51 @@ class DebtLedgerTests(unittest.TestCase):
         )
 
     def test_an_inherited_finding_meets_m17_end_to_end(self) -> None:
-        """Through `evidence_for` and `merge_admission.evaluate`: the finding keeps
-        its enclosing scope in the evidence, and the protected ledger's entry for
-        it means M17 does not fail on it. Any other scope, or no ledger, does."""
-        raw = {k: v for k, v in debt_finding().items() if k != "item"}
-        bundle = _complete_bundle(raw)
-        changed = {
-            **LEDGER_DOCUMENT,
-            "entries": [debt_entry(enclosing_sha256="e" * 64)],
+        """Through `evidence_for` and `merge_admission.evaluate`: an inventory finding
+        under its run-bound profile keeps its scope and configuration in the
+        evidence, and the protected ledger's entry for it means M17 does not fail on
+        it. Another scope, a raised severity (owner 6620829215 §1), another profile,
+        a provider that states no configuration (§2), or no ledger, does."""
+        raw = {
+            k: v
+            for k, v in debt_finding().items()
+            if k not in ("item", "configuration")
         }
-        for name, ledger, m17 in (
-            ("the entry", LEDGER_DOCUMENT, None),
-            ("another scope", changed, ["1 unresolved analyzer finding"]),
-            ("no ledger", None, ["1 unresolved analyzer finding"]),
+        entry = debt_entry(item="project-full", configuration=CONFIGURATION)
+        ledger = {**LEDGER_DOCUMENT, "entries": [entry]}
+        inventory = _complete_bundle(inventory_full=(raw,))
+        unresolved = ["1 unresolved analyzer finding"]
+        for name, given, bundle, m17 in (
+            ("the entry", ledger, inventory, None),
+            (
+                "another scope",
+                {**ledger, "entries": [{**entry, "enclosing_sha256": "e" * 64}]},
+                inventory,
+                unresolved,
+            ),
+            (
+                "a raised severity",
+                ledger,
+                _complete_bundle(inventory_full=({**raw, "severity": "CRITICAL"},)),
+                unresolved,
+            ),
+            (
+                "another profile",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), profile="sha256:" + "d" * 64),
+                unresolved,
+            ),
+            (
+                "a provider that states no configuration",
+                {**ledger, "entries": [{**entry, "item": "deepsource-full"}]},
+                _complete_bundle(raw),
+                unresolved,
+            ),
+            ("no ledger", None, inventory, unresolved),
         ):
             with self.subTest(name):
                 evidence, failed = _admitted(
-                    _section_c_declaration(), bundle, "critical", ledger=ledger
+                    _section_c_declaration(), bundle, "critical", ledger=given
                 )
                 [listed] = evidence["analyzer_findings"]["findings"]
                 self.assertEqual(debt_finding()["enclosing"], listed["enclosing"])
