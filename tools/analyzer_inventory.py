@@ -18,8 +18,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .analyzer_readback import AnalyzerReadbackError, build_readback, coverage
-from .quality_evidence import DIAGNOSTIC_SCHEMA
+from .analyzer_readback import (
+    SHA256_DIGEST,
+    AnalyzerReadbackError,
+    build_readback,
+    coverage,
+)
+from .quality_evidence import _LAUNCHED_PRODUCERS, DIAGNOSTIC_SCHEMA
 from .review_model import canonical_digest
 
 PROVIDER = "gnostoa-inventory"
@@ -143,10 +148,13 @@ def _producer_identities(inventory: Mapping[str, Any]) -> dict[str, str]:
 def _invocation_identity(
     record: Mapping[str, Any], own_settings: object
 ) -> dict[str, Any] | None:
-    """One invocation's version, settings and environment, or None when unproved. A
-    launched producer's settings are its argv before `--`, which is its file list,
-    and its environment must be observed equal before and after it; an in-process
-    producer's settings are its own configuration, such as complexity's."""
+    """One invocation's version, settings and environment, or None when unproved.
+    Which producers run as processes is the inventory's own launch declaration, the
+    one its source binding reads, never a record's shape (Revix on #480). A launched
+    producer's settings are its argv before `--`, where its file list starts, and its
+    environment must be observed equal before and after it. An in-process producer
+    launches nothing, so its record carries neither, and its settings are its own
+    configuration, such as complexity's."""
 
     version = record.get("version")
     if not isinstance(version, str) or not version:
@@ -156,24 +164,43 @@ def _invocation_identity(
         "version": version,
     }
     argv = record.get("argv")
-    if argv is None:
+    environment = record.get("environment_observation")
+    if record["producer"] not in _LAUNCHED_PRODUCERS:
+        if argv is not None or environment is not None:
+            return None
         identity["settings"] = own_settings
         return identity
-    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+    observed = _observed_environment(environment)
+    if (
+        observed is None
+        or not isinstance(argv, list)
+        or not all(isinstance(a, str) for a in argv)
+    ):
         return None
-    environment = record.get("environment_observation")
+    identity["settings"] = argv[: argv.index("--")] if "--" in argv else argv
+    identity["environment"] = observed
+    return identity
+
+
+def _observed_environment(environment: object) -> dict[str, Any] | None:
+    """A launched run's environment, observed equal at both ends: its interpreter and
+    its after observation's digest. None when the observation, its interpreter or a
+    digest is missing (Revix and cubic on #480)."""
     if (
         not isinstance(environment, Mapping)
         or environment.get("status") != "endpoints_equal"
     ):
         return None
+    interpreter = environment.get("interpreter")
     after = environment.get("after")
-    identity["settings"] = argv[: argv.index("--")] if "--" in argv else argv
-    identity["environment"] = {
-        "interpreter": environment.get("interpreter"),
-        "after": after.get("sha256") if isinstance(after, Mapping) else None,
-    }
-    return identity
+    digest = after.get("sha256") if isinstance(after, Mapping) else None
+    if (
+        not isinstance(interpreter, Mapping)
+        or not isinstance(digest, str)
+        or SHA256_DIGEST.fullmatch(digest) is None
+    ):
+        return None
+    return {"interpreter": interpreter, "after": digest}
 
 
 def _readback(

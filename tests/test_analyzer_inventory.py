@@ -259,8 +259,10 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
             "version": "cyclomatic-n-1/v1",
         }
 
-        def producers(*entries: dict[str, Any]) -> dict[str, str]:
-            readbacks = self._readbacks({**record, "producers": list(entries)}, head)
+        def producers(*entries: dict[str, Any], **extra: Any) -> dict[str, str]:
+            readbacks = self._readbacks(
+                {**record, **extra, "producers": list(entries)}, head
+            )
             self.assertEqual(readbacks[0]["native"], readbacks[1]["native"])
             return dict(readbacks[0]["native"]["producers"])
 
@@ -295,7 +297,19 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                 self.assertEqual(
                     same, producers(changed, complexity)["mypy"] == base["mypy"]
                 )
-        # An unproved producer is left out.
+
+        # An in-process producer's settings are its own configuration (cubic on #480).
+        def configured(settings: dict[str, Any]) -> str:
+            configuration = {**record["configuration"], "complexity": settings}
+            return producers(mypy, complexity, configuration=configuration)[
+                "complexity"
+            ]
+
+        threshold = configured({"reported_above": 15})
+        self.assertEqual(threshold, configured({"reported_above": 15}))
+        self.assertNotEqual(threshold, configured({"reported_above": 16}))
+        # An unproved producer is left out: by its version, its environment, or a
+        # record unlike the launch the inventory declares for it (Revix on #480).
         for name, unproved in (
             ("no version", {k: v for k, v in mypy.items() if k != "version"}),
             (
@@ -309,9 +323,47 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                 "an environment not observed",
                 {k: v for k, v in mypy.items() if k != "environment_observation"},
             ),
+            (
+                "no environment digest",
+                {**mypy, "environment_observation": {**equal, "after": {}}},
+            ),
+            (
+                "an environment digest that is no digest",
+                {
+                    **mypy,
+                    "environment_observation": {**equal, "after": {"sha256": "A" * 64}},
+                },
+            ),
+            (
+                "no interpreter",
+                {
+                    **mypy,
+                    "environment_observation": {
+                        k: v for k, v in equal.items() if k != "interpreter"
+                    },
+                },
+            ),
+            (
+                "a launched producer without its argv",
+                {k: v for k, v in mypy.items() if k != "argv"},
+            ),
+            (
+                "a launched producer recorded as in process",
+                {
+                    k: v
+                    for k, v in mypy.items()
+                    if k not in {"argv", "environment_observation"}
+                },
+            ),
+            ("an in-process producer with an argv", {**complexity, "argv": ["c"]}),
+            (
+                "an in-process producer with an observation",
+                {**complexity, "environment_observation": equal},
+            ),
         ):
             with self.subTest(name):
-                self.assertNotIn("mypy", producers(unproved, complexity))
+                other = mypy if unproved["producer"] == "complexity" else complexity
+                self.assertNotIn(unproved["producer"], producers(unproved, other))
         # One unproved invocation leaves its whole producer out.
         second = {**mypy, "invocation": "mypy:fixtures", "version": None}
         self.assertNotIn("mypy", producers(mypy, second, complexity))

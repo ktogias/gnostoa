@@ -141,12 +141,18 @@ comment, and so it marks the DIFF read `PARTIAL`.
      producer, never matches.
    - **A producer's effective identity** is the inventory adapter's
      `native.producers` entry: a digest over each of its invocations' version, settings
-     and environment, from the inventory's own provenance. The settings are a launched
-     producer's argv before `--`, its file list, or an in-process producer's own
-     configuration, such as complexity's. The environment is the observation's interpreter
-     and digest. A producer is left out when any invocation lacks a version, or, launched
-     as a process, was not observed with its environment equal before and after it. So a
-     new tool version, setting or environment unmatches each of its findings.
+     and environment, from the inventory's own provenance.
+     - Which producers run as processes is the inventory's own launch declaration, the
+       one its source binding reads, never a record's shape.
+     - A launched producer's settings are its argv before `--`, where its file list
+       starts, so the files it read do not change it. An in-process producer's settings
+       are its own configuration, such as complexity's.
+     - The environment is the observation's interpreter and its after digest.
+     - A producer is left out when any invocation lacks a version; when, launched, it
+       lacks its argv, its interpreter or its digest, or was not observed with its
+       environment equal before and after it; or when, in process, its record carries an
+       argv or an observation.
+     So a new tool version, setting or environment unmatches each of its findings.
    - An entry absorbs one finding.
    - These findings never match:
      - one in a provider's security category (`security`, `vulnerability` or
@@ -227,10 +233,10 @@ comment, and so it marks the DIFF read `PARTIAL`.
 
 ## Consequences
 
-- **With the empty ledger, every verdict keeps its outcome.** The verdict also lists
-  `inherited_findings` and `resolved_debt`, both empty, and the evidence carries
-  `analyzer_debt`.
-- **The carried-forward rule takes effect when this lands,** because the readback runs
-  `main`'s adapter.
+- **With the empty ledger, the matching changes no verdict:** no finding is inherited.
+  The verdict also lists `inherited_findings` and `resolved_debt`, both empty, and the
+  evidence carries `analyzer_debt`.
+- **The carried-forward rule does change verdicts when this lands,** because the
+  readback runs `main`'s adapter: a DIFF read that it settles is no longer `PARTIAL`.
 - **Each pull request's inherited findings** become an owner's decision, entry by entry, in
   a ledger pull request. A finding that a change makes worse, or adds, still denies.

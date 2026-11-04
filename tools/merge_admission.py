@@ -470,8 +470,8 @@ def _finding_identity(
     finding: Mapping[str, Any],
 ) -> tuple[str | None, ...] | None:
     """What a finding must share with a ledger entry: its item, rule, path, message,
-    enclosing scope and tool. One without a rule, a path or a scope has none, and
-    neither has a security finding."""
+    enclosing scope, severity, configuration identity and tool. One without a rule, a
+    path or a scope has none, and neither has a security finding."""
 
     enclosing = finding.get("enclosing")
     if (
