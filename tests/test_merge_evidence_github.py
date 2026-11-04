@@ -4530,10 +4530,11 @@ def _complete_bundle(
     *full: dict[str, Any],
     inventory_full: tuple[dict[str, Any], ...] = (),
     profile: str = _PROFILE,
+    binding: str = "BOUND",
 ) -> dict[str, Any]:
     """A bound bundle whose every readback is complete, with `full` in DeepSource's
     full run and `inventory_full` in the inventory's, under `profile`."""
-    bound = {"profile": profile, "source_binding": "BOUND", "tree": "c" * 40}
+    bound = {"profile": profile, "source_binding": binding, "tree": "c" * 40}
     return _bundle(
         _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
         _readback("deepsource", "FULL", *full),
@@ -4671,6 +4672,18 @@ class DebtLedgerTests(unittest.TestCase):
                 "another profile",
                 ledger,
                 _complete_bundle(inventory_full=(raw,), profile="sha256:" + "d" * 64),
+                unresolved,
+            ),
+            (
+                "a profile not bound to its run",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), binding="UNBOUND"),
+                unresolved,
+            ),
+            (
+                "a profile that is no digest",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), profile="latest"),
                 unresolved,
             ),
             (
