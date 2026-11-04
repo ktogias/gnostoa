@@ -2009,6 +2009,13 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             # bounds were spent on.
             ("more bytes than declared", _file_reply(size=3), False),
             ("fewer bytes than declared", _file_reply(size=_SCOPE_FILE_BYTES), False),
+            # One byte more than declared, in the same base64 block, so the encoded
+            # length matches and only the decoded size refuses it.
+            (
+                "one byte more than declared",
+                _file_reply(size=len(_SCOPE_SOURCE) - 1),
+                False,
+            ),
             # cubic on #480: its true size, so only the UTF-8 decoding refuses it.
             ("not UTF-8", _file_reply(content="//79", size=3), False),
             # cubic on #480: a character outside base64 is refused, not dropped.
