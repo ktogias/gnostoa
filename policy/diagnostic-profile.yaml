@@ -10,9 +10,9 @@
 # losses, except protected access's FULL scope: the owner's N (#389 6405282317) accepts
 # its loss. PLR6301 and SIM117 are not selected.
 #
-# v2 (#389 H-PYSEC-2; Decision 0122; owner admission 6508582845) adds the pinned tool families and
-# the unsafe-calls family, each `active: false`: none is planned, run or rowed in production until
-# a separate activation decision, so every effective obligation is unchanged. Their executables are
+# v2 (#389 H-PYSEC-2; Decision 0122; owner admission 6508582845) added the pinned tool families and
+# the unsafe-calls family, each `active: false` until a separate activation decision, which is
+# below for four of them; an inactive family is not planned, run or rowed. Their executables are
 # the official release ones, pinned per machine by the SHA-256 of the executable itself; the
 # inventory runs one only from its protected tool root and only after its bytes match.
 #

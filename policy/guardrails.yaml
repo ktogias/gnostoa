@@ -1342,7 +1342,7 @@ guardrails:
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: knowledge/decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md#decision
+    guidance: knowledge/decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md#decision
     implementation:
       - tools/quality_evidence.py#_check_version
       - tools/quality_evidence.py#_active_families

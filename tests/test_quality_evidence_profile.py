@@ -326,7 +326,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         inventory = self._protected(base=self.base)
         selected = set().union(*(_select(c) for c in self._producer_commands("ruff")))
         # Unsafe-calls' rules run on the same producer since its activation.
-        unsafe = next(f for f in PROTECTED["families"] if f["id"] == "unsafe-calls")
+        unsafe = {f["id"]: f for f in PROTECTED["families"]}["unsafe-calls"]
         self.assertEqual({"SLF001", "S106", *unsafe["select"]}, selected)
         self.assertEqual(
             [],
