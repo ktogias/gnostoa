@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,20 @@ orientation = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(orientation)
 
 NOW = "2026-09-11T13:00:00Z"
+
+
+def _original(module: object, name: str) -> Any:
+    """`module`'s own `name`, as unittest.mock hands an original to new_callable under spec=True, so no private
+    attribute is named (the fixtures' own pattern, #389 6480056885)."""
+    found: list[object] = []
+
+    def kept(*, spec: object) -> object:
+        found.append(spec)
+        return spec
+
+    with patch.object(module, name, spec=True, new_callable=kept):
+        pass
+    return found[0]
 
 
 def _fact(identity: str, text: str) -> dict[str, object]:
@@ -53,10 +69,10 @@ def _snapshot(root: Path) -> dict[str, object]:
             "proposed": [_fact("proposed", "A generic projection capability.")],
             "current": [_fact("current", "D14-O1 is selected.")],
             "next_action": _fact("next", "Review the exact candidate."),
-            "proposed_successor": {
-                **_fact("successor", "Evaluate a later slice."),
-                "admission_state": "proposed",
-            },
+            "proposed_successor": dict(
+                _fact("successor", "Evaluate a later slice."),
+                admission_state="proposed",
+            ),
             "blockers": [],
             "constraints": [_fact("constraint", "No provider write-back.")],
             "return_to_adoption": _fact("return", "Use actual launch gates."),
@@ -170,14 +186,17 @@ class OrientationGitGuardTests(unittest.TestCase):
             with patch.object(
                 orientation.subprocess, "run", return_value=completed
             ) as run:
-                value = orientation._git_output(root, "rev-parse", "HEAD")
+                value = _original(orientation, "_git_output")(root, "rev-parse", "HEAD")
         self.assertEqual("a" * 40, value)
         command = run.call_args.args[0]
         kwargs = run.call_args.kwargs
         self.assertIsInstance(command, list)
+        # The trusted absolute git, never the caller's PATH (#389 B1).
         self.assertEqual(
             [
-                "git",
+                shutil.which(
+                    "git", path="/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+                ),
                 "-c",
                 f"safe.directory={root}",
                 "-C",

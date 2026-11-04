@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -197,6 +199,19 @@ def _within_root(root: Path, locator: str) -> Path:
     return target
 
 
+# AGENTS.md's trusted executable lookup, tools/trusted_path.py's. This self-only task
+# imports no tools/ module, so the lookup is stated here; tests pin it to the leaf's
+# (#389 B1).
+_TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+
+def _trusted_git() -> str:
+    found = shutil.which("git", path=_TRUSTED_PATH)
+    if found is None or not os.path.isabs(found):
+        raise FileNotFoundError(errno.ENOENT, "not on the trusted lookup", "git")
+    return found
+
+
 def _git_environment() -> dict[str, str]:
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -210,7 +225,7 @@ def _git_output(root: Path, *args: str) -> str:
     try:
         result = subprocess.run(
             [
-                "git",
+                _trusted_git(),
                 "-c",
                 f"safe.directory={root}",
                 "-C",
