@@ -545,8 +545,9 @@ def _analyzer_findings(
     # Only a complete read is matched: without it, every finding counts, and no
     # entry is called resolved (#389, the M17 transition).
     matchable = not reasons
-    inherited = _inherited(findings, entries) if matchable else []
-    resolved = _resolved(entries, findings, inherited) if matchable else []
+    absorbed = _inherited(findings, entries) if matchable else {}
+    inherited = list(absorbed.values())
+    resolved = _resolved(entries, findings, absorbed) if matchable else []
     unresolved = len(findings) - len(inherited)
     if unresolved:
         plural = "" if unresolved == 1 else "s"
@@ -556,45 +557,44 @@ def _analyzer_findings(
 
 def _inherited(
     findings: list[dict[str, Any]], entries: list[dict[str, Any]]
-) -> list[dict[str, str]]:
-    """Each finding matched to its own entry of the same identity, in order: an
-    entry absorbs one finding, so a repeated finding beyond it still counts."""
+) -> dict[int, dict[str, str]]:
+    """Each finding matched to its own entry of the same identity, in order, by its
+    position among the findings: an entry absorbs one finding, so a repeated
+    finding beyond it still counts, and ids may repeat (cubic on #480)."""
 
     available: dict[tuple[str | None, ...], list[str]] = {}
     for entry in entries:
         identity = _identity(entry, entry["enclosing_sha256"])
         available.setdefault(identity, []).append(entry["id"])
-    inherited: list[dict[str, str]] = []
-    for finding in findings:
+    inherited: dict[int, dict[str, str]] = {}
+    for position, finding in enumerate(findings):
         key = _finding_identity(finding)
         ids = available.get(key) if key is not None else None
         if ids:
-            inherited.append(
-                {
-                    "item": finding["item"],
-                    "id": finding["id"],
-                    "ledger_entry": ids.pop(0),
-                }
-            )
+            inherited[position] = {
+                "item": finding["item"],
+                "id": finding["id"],
+                "ledger_entry": ids.pop(0),
+            }
     return inherited
 
 
 def _resolved(
     entries: list[dict[str, Any]],
     findings: list[dict[str, Any]],
-    inherited: list[dict[str, str]],
+    absorbed: Mapping[int, Mapping[str, str]],
 ) -> list[str]:
     """The entries no finding answers to any more: unmatched, with no unmatched
     finding left at their item, rule and path. An entry whose finding changed in
     place, by its measure, scope, analyzer, severity or configuration, is not
-    resolved, since that finding still counts (Revix on #480)."""
+    resolved, since that finding still counts (Revix on #480). Only the findings at
+    the positions an entry absorbed are set aside, since ids may repeat (cubic)."""
 
-    matched = {found["ledger_entry"] for found in inherited}
-    absorbed = {(found["item"], found["id"]) for found in inherited}
+    matched = {found["ledger_entry"] for found in absorbed.values()}
     remaining = {
         (finding["item"], finding.get("rule"), finding.get("path"))
-        for finding in findings
-        if (finding["item"], finding["id"]) not in absorbed
+        for position, finding in enumerate(findings)
+        if position not in absorbed
     }
     return [
         entry["id"]

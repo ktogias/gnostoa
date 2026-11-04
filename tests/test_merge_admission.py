@@ -1297,6 +1297,24 @@ class DebtLedgerM17Tests(unittest.TestCase):
         self.assertEqual({}, _failed(verdict))
         self.assertEqual(["debt-2"], verdict["for_approval"]["resolved_debt"])
 
+    def test_a_repeated_finding_id_still_keeps_another_entry_unresolved(self) -> None:
+        """Ids may repeat, so only the very finding an entry absorbed is set aside: a
+        second finding with that id, at another entry's item, rule and path, still
+        keeps that entry unresolved (cubic on #480)."""
+        moved = debt_finding(path="tools/y.py")
+        second = debt_entry(
+            id="debt-2",
+            path="tools/y.py",
+            message="`f` has a cyclomatic complexity of 18",
+        )
+        verdict = self._verdict([debt_finding(), moved], [debt_entry(), second])
+        self.assertEqual({"M17": ["1 unresolved analyzer finding"]}, _failed(verdict))
+        self.assertEqual(
+            [{"item": "deepsource-full", "id": "issue-1", "ledger_entry": "debt-1"}],
+            verdict["for_approval"]["inherited_findings"],
+        )
+        self.assertEqual([], verdict["for_approval"]["resolved_debt"])
+
     def test_an_entry_without_a_tool_matches_only_a_finding_without_one(self) -> None:
         entry = {k: v for k, v in debt_entry().items() if k != "tool"}
         finding = {k: v for k, v in debt_finding().items() if k != "tool"}
