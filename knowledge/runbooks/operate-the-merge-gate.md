@@ -412,10 +412,10 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      findings obtained from any source, a partial one or one no claim needed
      included. With its singleton claims (#389 F2), an applicable claim is met when
      its one item is `COMPLETE`:
-     - **NORMAL:** Codacy, SonarCloud, and the project's own inventory, DIFF and
-       FULL (#389 A0-MP1). DeepSource's readbacks are not NORMAL's, and their
-       findings still deny if obtained.
-     - **Every other class:** DeepSource's DIFF and FULL, Codacy and SonarCloud.
+     - **Every merging class:** Codacy, SonarCloud, and the project's own inventory,
+       DIFF and FULL (#389 A0-MP1; Decision 0130). DeepSource is retired as merge
+       evidence: the readback acquires nothing from it, and a bundle that still
+       carries its readback is refused as retired.
 
      A degraded source is reported as it is, never as clean. A candidate's own
      declaration never governs its own merge.
