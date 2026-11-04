@@ -552,10 +552,15 @@ def _head_source(
         return None
     if not isinstance(content, str) or not budget.admit(size):
         return None
+    # GitHub wraps the base64 in lines. Only the encoded length the declared size
+    # implies is ever decoded, so the bounds hold for the work done, not only for
+    # the answer (Claude on #480).
+    encoded = "".join(content.split())
+    if len(encoded) != 4 * ((size + 2) // 3):
+        return None
     try:
-        # GitHub wraps the base64 in lines; any other character is refused, not
-        # dropped (cubic on #480).
-        raw = base64.b64decode("".join(content.split()), validate=True)
+        # Any character outside base64 is refused, not dropped (cubic on #480).
+        raw = base64.b64decode(encoded, validate=True)
         # The bounds were spent on the declared size, so the bytes must be it.
         return raw.decode("utf-8") if len(raw) == size else None
     except ValueError:  # binascii.Error and UnicodeDecodeError are both ValueErrors

@@ -1222,8 +1222,12 @@ def _absent_from_full_run(
         requested_head,
         requested_head,
     )
-    # A FULL_RUN read is a complete one, by the readback's own contract.
-    if identity != expected:
+    # A FULL_RUN read is complete by the readback's own contract; checked here too,
+    # so no caller is trusted for it (Revix on #480).
+    record = full.get("coverage")
+    if identity != expected or not isinstance(record, Mapping):
+        return False
+    if record.get("status") != "COMPLETE":
         return False
     return not any(_still_listed(carried, full.get("findings", ())))
 

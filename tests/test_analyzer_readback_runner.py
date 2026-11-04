@@ -1977,6 +1977,19 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         )
         self.assertEqual([url], read)
 
+    def test_content_past_the_declared_size_is_never_decoded(self) -> None:
+        """Claude part 3 on #480: the bounds hold for the work done, not only for
+        the answer, so content longer than its declared size is refused undecoded."""
+        url = _contents_url("a.py")
+        reply = _file_reply(_sized(64 * 1024), size=10)
+        with patch.object(base64, "b64decode", wraps=base64.b64decode) as decode:
+            findings, read = self._scoped(
+                [_head_comment("in-f", "a.py", 5)], {url: reply}
+            )
+        self.assertNotIn("enclosing", findings["in-f"])
+        self.assertEqual([url], read)
+        self.assertEqual(0, decode.call_count)
+
     def test_only_a_bounded_utf8_file_is_read(self) -> None:
         url = _contents_url("a.py")
         for name, reply, scoped in (
@@ -1996,7 +2009,8 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             # bounds were spent on.
             ("more bytes than declared", _file_reply(size=3), False),
             ("fewer bytes than declared", _file_reply(size=_SCOPE_FILE_BYTES), False),
-            ("not UTF-8", _file_reply(content="//79"), False),
+            # cubic on #480: its true size, so only the UTF-8 decoding refuses it.
+            ("not UTF-8", _file_reply(content="//79", size=3), False),
             # cubic on #480: a character outside base64 is refused, not dropped.
             ("not base64", _file_reply(content="!" + _file_reply()["content"]), False),
             (

@@ -1884,6 +1884,12 @@ class CarriedForwardTests(unittest.TestCase):
             ("another run's full read", {**full, "analysis_id": "other-run"}, None),
             ("another head's full read", {**full, "observed_head": OTHER_HEAD}, None),
             ("another provider's read", {**full, "provider": "codacy"}, None),
+            # Revix on #480: checked here, not left to the caller.
+            (
+                "a full read whose coverage is not complete",
+                {**full, "coverage": {**full["coverage"], "status": "PARTIAL"}},
+                None,
+            ),
             ("a diff read for the full one", self._diff(None, []), None),
             ("a comment without a line", full, [{**_CARRIED, "line": None}]),
             ("a comment without a path", full, [{**_CARRIED, "path": ""}]),
