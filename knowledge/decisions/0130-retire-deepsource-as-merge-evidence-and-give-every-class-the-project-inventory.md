@@ -84,8 +84,9 @@ qualified remedy (sources `owner-scope`, `owner-target`).
    - Merge evidence keeps a protected table of retired providers, each with its Decision:
      `deepsource`, 0130. A bound or unbound bundle that carries a retired provider's
      readback is refused as retired, never read as an unknown readback.
-   - The evidence names each retired provider (`analyzer_retired`), and the verdict lists
-     them for the approver (`retired_analyzers`), through a closed contract.
+   - The evidence always names the retired providers (`analyzer_retired`, possibly none),
+     and the verdict requires that record and lists it for the approver
+     (`retired_analyzers`), through a closed contract.
 3. **No acquisition.** The readback makes no DeepSource read: neither the diff projection
    from GitHub's statuses and comments, nor the full GraphQL read. Its `deepsource` keyword
    survives only as `None`, and a reader handed to it is refused. The workflows no longer
@@ -108,8 +109,9 @@ qualified remedy (sources `owner-scope`, `owner-target`).
 
 - **Python bug risk, anti-pattern and performance over the whole tree** have no qualified
   replacement: Codacy and SonarCloud read changed code only, with their own catalogues.
-  This is not a clone of a vendor catalogue (source `owner-target`); it is the owner's
-  decision in the exit.
+  This is not a clone of a vendor catalogue (source `owner-target`). No remedy is planned
+  here; accepting the gap, or asking for a qualified producer, is the owner's decision in
+  the exit.
 - **Shell, workflow and full-tree unsafe-call correctness** have no gate between this
   change and the activation that follows it.
 - **Dockerfile correctness** has no gate until #477's repairs and dockerfile-lint's
@@ -120,7 +122,8 @@ qualified remedy (sources `owner-scope`, `owner-target`).
   PAO accepts as a trusted lookup for the interval (source `pao`); their repair, reusing
   `tools/exact_tree.py`'s trusted path, follows the exit.
 - **The deepsource failure domain is lost.** The domains are github (checks, CodeQL and
-  the project inventory), codacy and sonarcloud.
+  the project inventory), codacy and sonarcloud. No replacement domain is planned: one needs
+  another qualified provider, a change of its own.
 - **DeepSource's inherited findings** are no longer acquired. That neither disposes of
   them nor proves a replacement; the design record reconciles them by aspect (source
   `design`).

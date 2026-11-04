@@ -54,11 +54,12 @@ _EVIDENCE_KEYS = frozenset(
         "suppressions",
         "trust_root_changes",
         "analyzer_findings",
+        # The providers retired as merge evidence, each with its Decision, possibly
+        # none: required, so a producer that forgot retirement is refused (Decision 0130).
+        "analyzer_retired",
         "receipts",
     }
 )
-# The providers the evidence retires as merge evidence (Decision 0130).
-_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_retired"})
 _RETIRED_KEYS = frozenset({"provider", "decision"})
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
@@ -509,8 +510,8 @@ def evaluate(
     """Admit or deny the change the evidence describes."""
 
     document = require_mapping(evidence, "evidence")
-    require_closed_keys(document, "evidence", _EVIDENCE_KEYS, _EVIDENCE_OPTIONAL_KEYS)
-    retired = _retired_analyzers(document.get("analyzer_retired", []))
+    require_closed_keys(document, "evidence", _EVIDENCE_KEYS)
+    retired = _retired_analyzers(document["analyzer_retired"])
     subject = parse_subject(document["subject"], "subject")
     head = subject["head_commit"]
     change_class = parse_change_class(document["change_class"])

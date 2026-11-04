@@ -119,6 +119,7 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         "closing_references": {"coverage": "COMPLETE", "found": []},
         "suppressions": {"coverage": "COMPLETE", "found": []},
         "trust_root_changes": {"coverage": "COMPLETE", "paths": []},
+        "analyzer_retired": [{"provider": "deepsource", "decision": "0130"}],
         "analyzer_findings": {"coverage": "COMPLETE", "findings": []},
         "receipts": [_receipt(exact, ["fast", "smoke"])],
     }
@@ -1245,6 +1246,18 @@ class AnalyzerRetirementTests(unittest.TestCase):
                     assurance_completeness.AssuranceCompletenessError
                 ):
                     _claims_verdict(evidence)
+        # And the record is required, though it may name none.
+        evidence = _evidence()
+        del evidence["analyzer_retired"]
+        with self.assertRaisesRegex(
+            assurance_completeness.AssuranceCompletenessError, "analyzer_retired"
+        ):
+            _claims_verdict(evidence)
+        evidence = _evidence()
+        evidence["analyzer_retired"] = []
+        self.assertEqual(
+            [], _claims_verdict(evidence)["for_approval"]["retired_analyzers"]
+        )
 
 
 class GnostoaDecisionParityTests(unittest.TestCase):

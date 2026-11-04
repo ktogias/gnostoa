@@ -1708,8 +1708,8 @@ def evidence_from_snapshot(
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
         "analyzer_retired": [
-            {"provider": provider, "decision": decision}
-            for provider, decision in sorted(_RETIRED_ANALYZERS.items())
+            {"provider": name, "decision": decision}
+            for name, decision in sorted(_RETIRED_ANALYZERS.items())
         ],
         # The check items' receipts (1b.3b-1), SonarCloud's gate among them, and
         # the readback items' (1b.3b-2), SonarCloud's inventory among them (1b.3c).

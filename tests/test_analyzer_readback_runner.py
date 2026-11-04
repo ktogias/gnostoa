@@ -1529,7 +1529,7 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
                 repository="ktogias/gnostoa",
                 pull_number=312,
                 requested_head=HEAD,
-                deepsource=_deepsource_fake(),
+                deepsource=cast(Any, _deepsource_fake()),
                 codacy=None,
                 sonarcloud=None,
                 observed_at=OBSERVED,

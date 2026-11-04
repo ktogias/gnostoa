@@ -432,7 +432,7 @@ def collect_bundle(
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
-    deepsource: object = None,
+    deepsource: None = None,
 ) -> dict[str, Any]:
     # DeepSource is retired as merge evidence (Decision 0130): nothing is read from
     # it, and a reader handed in is refused, so retirement is never an unavailable
