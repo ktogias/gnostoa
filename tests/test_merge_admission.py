@@ -1152,9 +1152,12 @@ class ClaimsM17Tests(unittest.TestCase):
 # A finding's enclosing scope on the head, and the ledger entry that proved it on
 # protected main (#389, the M17 transition).
 _SCOPE = "c" * 64
-# A readback's run-bound configuration identity, as merge evidence derives it (owner
-# 6620829215 §2): its adapter and its protected profile's digest.
-CONFIGURATION = "gnostoa-inventory-fake/v1@sha256:" + "b" * 64
+# A finding's run-bound configuration identity, as merge evidence derives it (owner
+# 6620829215 §2, 6621293483 §1): its readback's adapter and protected profile digest,
+# and its own producer's effective identity.
+CONFIGURATION = (
+    "gnostoa-inventory-fake/v1@sha256:" + "b" * 64 + "/python@sha256:" + "e" * 64
+)
 
 
 def debt_entry(**changes: Any) -> dict[str, Any]:

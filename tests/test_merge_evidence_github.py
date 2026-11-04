@@ -4524,6 +4524,9 @@ LEDGER_DOCUMENT: dict[str, Any] = {
 # The project inventory's run-bound configuration, as its adapter states it: the
 # protected profile's digest, bound to its own run (owner 6620829215 §2).
 _PROFILE = "sha256:" + "b" * 64
+# The finding's own producer's effective identity, as the inventory adapter states it
+# (owner 6621293483 §1).
+_PRODUCER = "sha256:" + "e" * 64
 
 
 def _complete_bundle(
@@ -4531,10 +4534,16 @@ def _complete_bundle(
     inventory_full: tuple[dict[str, Any], ...] = (),
     profile: str = _PROFILE,
     binding: str = "BOUND",
+    producers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """A bound bundle whose every readback is complete, with `full` in DeepSource's
     full run and `inventory_full` in the inventory's, under `profile`."""
-    bound = {"profile": profile, "source_binding": binding, "tree": "c" * 40}
+    bound = {
+        "profile": profile,
+        "source_binding": binding,
+        "tree": "c" * 40,
+        "producers": {"python": _PRODUCER} if producers is None else dict(producers),
+    }
     return _bundle(
         _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
         _readback("deepsource", "FULL", *full),
@@ -4652,6 +4661,10 @@ class DebtLedgerTests(unittest.TestCase):
         }
         entry = debt_entry(item="project-full", configuration=CONFIGURATION)
         ledger = {**LEDGER_DOCUMENT, "entries": [entry]}
+        # The identity merge evidence derives: adapter, profile, producer.
+        self.assertEqual(
+            f"gnostoa-inventory-fake/v1@{_PROFILE}/python@{_PRODUCER}", CONFIGURATION
+        )
         inventory = _complete_bundle(inventory_full=(raw,))
         unresolved = ["1 unresolved analyzer finding"]
         for name, given, bundle, m17 in (
@@ -4687,10 +4700,42 @@ class DebtLedgerTests(unittest.TestCase):
                 {
                     **ledger,
                     "entries": [
-                        {**entry, "configuration": "gnostoa-inventory-fake/v1@latest"}
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@latest/python@{_PRODUCER}",
+                        }
                     ],
                 },
                 _complete_bundle(inventory_full=(raw,), profile="latest"),
+                unresolved,
+            ),
+            # Owner 6621293483 §1: the finding's own producer, proved and the same.
+            (
+                "another producer version",
+                ledger,
+                _complete_bundle(
+                    inventory_full=(raw,), producers={"python": "sha256:" + "f" * 64}
+                ),
+                unresolved,
+            ),
+            (
+                "an unproved producer",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), producers={}),
+                unresolved,
+            ),
+            (
+                "a producer identity that is no digest",
+                {
+                    **ledger,
+                    "entries": [
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@{_PROFILE}/python@abc",
+                        }
+                    ],
+                },
+                _complete_bundle(inventory_full=(raw,), producers={"python": "abc"}),
                 unresolved,
             ),
             (

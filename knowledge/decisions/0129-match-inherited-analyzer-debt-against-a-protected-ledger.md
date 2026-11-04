@@ -131,9 +131,22 @@ comment, and so it marks the DIFF read `PARTIAL`.
    count. "Exactly" means the same item, rule, path, message, enclosing scope content,
    severity, configuration identity, tool id and tool name.
    - **The configuration identity** comes from the finding's own readback. Merge evidence
-     derives it, as the readback's adapter and the protected profile digest its run was
-     bound to, only when the readback states one (`native.profile`, with `source_binding`
-     `BOUND`). A finding whose readback states none never matches.
+     derives it from three parts, and only when the readback states all of them:
+     - the readback's adapter;
+     - the protected profile digest its run was bound to (`native.profile`, with
+       `source_binding` `BOUND`);
+     - the effective identity of the finding's own producer, named by its `tool.id`
+       (owner [6621293483](https://github.com/ktogias/gnostoa/issues/389#issuecomment-6621293483) §1).
+     A finding whose readback states none of these, or no proved identity for its
+     producer, never matches.
+   - **A producer's effective identity** is the inventory adapter's
+     `native.producers` entry: a digest over each of its invocations' version, settings
+     and environment, from the inventory's own provenance. The settings are a launched
+     producer's argv before `--`, its file list, or an in-process producer's own
+     configuration, such as complexity's. The environment is the observation's interpreter
+     and digest. A producer is left out when any invocation lacks a version, or, launched
+     as a process, was not observed with its environment equal before and after it. So a
+     new tool version, setting or environment unmatches each of its findings.
    - An entry absorbs one finding.
    - These findings never match:
      - one in a provider's security category (`security`, `vulnerability` or
@@ -182,8 +195,9 @@ comment, and so it marks the DIFF read `PARTIAL`.
 ## Limits
 
 - **Only configuration-bound findings can be inherited.** Today that is only the project
-  inventory, whose readbacks state their protected profile's digest, bound to their run.
-  DeepSource, Codacy and SonarCloud findings never match.
+  inventory, whose readbacks state their protected profile's digest, bound to their run,
+  and each proved producer's effective identity. DeepSource, Codacy and SonarCloud
+  findings never match.
   - **DeepSource:** its API exposes no run's own configuration or analyzer version; its
     capability discovery is `CURRENT_NOT_RUN_BOUND`.
   - **Codacy and SonarCloud:** their readbacks name no configuration.

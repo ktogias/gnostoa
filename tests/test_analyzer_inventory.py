@@ -232,6 +232,90 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                 )
                 self.assertEqual("UNVERIFIED", readback["native"]["source_binding"])
 
+    def test_the_readbacks_state_each_proved_producer_s_identity(self) -> None:
+        """Owner 6621293483 §1: each producer's effective identity, over its
+        invocations' version, settings (the argv before `--`) and environment, so a
+        change in any changes it; one whose version is missing or whose environment
+        is not observed equal at both ends is left out, so its findings stay
+        blocking."""
+        head = self._changed_head()
+        record = self._inventory(base=self.base, expected_revision=head)
+        equal = {
+            "status": "endpoints_equal",
+            "interpreter": {"executable": "/usr/local/bin/python"},
+            "before": {"sha256": "a" * 64},
+            "after": {"sha256": "a" * 64},
+        }
+        mypy = {
+            "producer": "mypy",
+            "invocation": "mypy:main",
+            "version": "2.3.0",
+            "argv": ["/usr/local/bin/python", "-I", "-m", "mypy", "--", "a.py"],
+            "environment_observation": equal,
+        }
+        complexity = {
+            "producer": "complexity",
+            "invocation": "complexity",
+            "version": "cyclomatic-n-1/v1",
+        }
+
+        def producers(*entries: dict[str, Any]) -> dict[str, str]:
+            readbacks = self._readbacks({**record, "producers": list(entries)}, head)
+            self.assertEqual(readbacks[0]["native"], readbacks[1]["native"])
+            return dict(readbacks[0]["native"]["producers"])
+
+        base = producers(mypy, complexity)
+        self.assertEqual({"mypy", "complexity"}, set(base))
+        for digest in base.values():
+            self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        # A version, a setting or the environment changes the identity; the file
+        # list after `--` does not.
+        for name, changed, same in (
+            ("another version", {**mypy, "version": "2.4.0"}, False),
+            (
+                "another setting",
+                {**mypy, "argv": [*mypy["argv"][:4], "--strict", "--", "a.py"]},
+                False,
+            ),
+            (
+                "another environment",
+                {
+                    **mypy,
+                    "environment_observation": {
+                        **equal,
+                        "after": {"sha256": "b" * 64},
+                        "before": {"sha256": "b" * 64},
+                    },
+                },
+                False,
+            ),
+            ("other files", {**mypy, "argv": [*mypy["argv"][:5], "b.py"]}, True),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    same, producers(changed, complexity)["mypy"] == base["mypy"]
+                )
+        # An unproved producer is left out.
+        for name, unproved in (
+            ("no version", {k: v for k, v in mypy.items() if k != "version"}),
+            (
+                "an environment that changed",
+                {
+                    **mypy,
+                    "environment_observation": {**equal, "status": "endpoints_differ"},
+                },
+            ),
+            (
+                "an environment not observed",
+                {k: v for k, v in mypy.items() if k != "environment_observation"},
+            ),
+        ):
+            with self.subTest(name):
+                self.assertNotIn("mypy", producers(unproved, complexity))
+        # One unproved invocation leaves its whole producer out.
+        second = {**mypy, "invocation": "mypy:fixtures", "version": None}
+        self.assertNotIn("mypy", producers(mypy, second, complexity))
+
     def test_a_record_of_another_schema_is_refused(self) -> None:
         head = self._changed_head()
         record = self._inventory(base=self.base, expected_revision=head)

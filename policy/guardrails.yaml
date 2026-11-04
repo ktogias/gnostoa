@@ -1541,6 +1541,7 @@ guardrails:
       - .github/workflows/analyzer-readback.yml
     tests:
       - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_every_obtained_finding_is_in_exactly_one_readback
+      - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_the_readbacks_state_each_proved_producer_s_identity
       - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_a_readback_never_claims_more_than_the_composite
       - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_a_complete_composite_gives_complete_readbacks_of_their_own_kind
       - tests/test_analyzer_inventory.py::InventoryReadbackTests.test_without_a_comparison_every_finding_is_the_full_readback_s
