@@ -1338,11 +1338,11 @@ guardrails:
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs
   - id: pinned-tool-families
-    title: The inventory's pinned tool and secrets families run only their pinned executables, from the protected tool root, with the protected configuration, name every directive, pragma, source and unsupported input as a gap, and stay inactive until a separate activation
+    title: The inventory's pinned tool and secrets families run only their pinned executables, from the protected tool root, with the protected configuration, name every directive, pragma, source and unsupported input as a gap; shell-lint, workflow-lint, gitlab-script and unsafe-calls are active (Decision 0130 item 4), and dockerfile-lint and secrets stay inactive until a separate activation
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: knowledge/decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md#decision
+    guidance: knowledge/decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md#decision
     implementation:
       - tools/quality_evidence.py#_check_version
       - tools/quality_evidence.py#_active_families
@@ -1396,7 +1396,7 @@ guardrails:
       - policy/diagnostic-profile.yaml
     tests:
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_v2_profile_admits_the_pinned_tool_families
-      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_protected_profile_declares_every_new_family_inactive
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_protected_profile_activates_four_families_and_keeps_two_inactive
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_an_inactive_family_runs_nothing
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_a_tool_whose_digest_differs_from_its_pin_is_a_gap_and_never_runs
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_a_family_names_why_its_targets_went_unanalyzed
