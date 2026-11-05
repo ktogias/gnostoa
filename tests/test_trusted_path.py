@@ -178,7 +178,8 @@ class SitesStartTheTrustedGitTests(unittest.TestCase):
 
 
 class PinnedCopiesTests(unittest.TestCase):
-    """The single-file authorities state the lookup themselves; each copy must stay the leaf's."""
+    """The single-file authorities run without the tools/ package, so a lookup they later state must be a pinned
+    copy, never an import of the leaf; this pins that they import no tools/ module (Revix on #483)."""
 
     def test_the_single_file_authorities_import_no_tools_module(self) -> None:
         for relative in SINGLE_FILE:
