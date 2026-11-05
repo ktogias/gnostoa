@@ -3908,6 +3908,22 @@ def _admitted(
     the evidence and the failed criteria. Module-level, so each class's tests call
     it without reaching into another's private member (#461's own inventory). A
     `ledger` is the protected target's analyzer debt ledger (#389)."""
+    evidence, verdict = _decision(declaration, bundle, change_class, ledger=ledger)
+    failed = {
+        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
+    }
+    return evidence, failed
+
+
+def _decision(
+    declaration: dict[str, Any],
+    bundle: dict[str, Any] | None,
+    change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`_admitted`'s evidence and its whole verdict, every criterion and what it
+    carries for approval (Claude on #480)."""
     with tempfile.TemporaryDirectory() as directory:
         project = _project(Path(directory))
         path = project / "policy" / "assurance-evidence.yaml"
@@ -3937,10 +3953,7 @@ def _admitted(
     verdict = merge_admission.evaluate(
         evidence, declaration=loaded, change_policy=_policy()
     )
-    failed = {
-        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
-    }
-    return evidence, failed
+    return evidence, verdict
 
 
 class DeepSourceRetirementTests(unittest.TestCase):
@@ -4583,8 +4596,9 @@ class EmptyLedgerAdmissionTests(unittest.TestCase):
 
     def test_the_shipped_ledger_changes_no_verdict(self) -> None:
         """Against no ledger at all, under which M17 is what it was before the ledger
-        (`DebtLedgerM17Tests.test_without_a_ledger_m17_is_as_it_was`): every
-        criterion's verdict and reasons are the same."""
+        (`DebtLedgerM17Tests.test_without_a_ledger_m17_is_as_it_was`): the whole
+        verdict is the same, every criterion's status and reasons and everything it
+        carries for approval (Claude on #480), while the shipped ledger is read."""
         for name, bundle in (
             ("complete, finding nothing", _complete_bundle()),
             (
@@ -4603,9 +4617,18 @@ class EmptyLedgerAdmissionTests(unittest.TestCase):
         ):
             for change_class in self._CLASSES:
                 with self.subTest(name, change_class=change_class):
-                    _, shipped = self._admit(bundle, change_class)
-                    _, without = _admitted(
+                    self._admit(bundle, change_class)
+                    read, shipped = _decision(
+                        _section_c_declaration(),
+                        bundle,
+                        change_class,
+                        ledger=_shipped_ledger(),
+                    )
+                    _, without = _decision(
                         _section_c_declaration(), bundle, change_class
+                    )
+                    self.assertEqual(
+                        {"coverage": "COMPLETE", "entries": []}, read["analyzer_debt"]
                     )
                     self.assertEqual(without, shipped)
 
