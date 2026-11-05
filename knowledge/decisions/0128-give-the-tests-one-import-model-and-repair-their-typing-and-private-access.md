@@ -31,6 +31,9 @@ sources:
   - id: digest-admission
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6591116903
     title: "The owner's admission of the python-compatibility job's protected digest line in tests/test_tools.py"
+  - id: exit
+    resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
+    title: The DeepSource exit, which retires DeepSource as merge evidence
   - id: characterization
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6589390794
     title: "The shell-sequence helper's characterization, measured before its extraction"
@@ -242,3 +245,8 @@ This text amends the first published version (6,773 bytes, SHA-256
     **Retained, and still counted by M17:** the four keyword-only parameters of a `_bounded_run`
     double, which keep their names (correction 8), and the two fixture bases' `PTC-W0046`, under
     PAO's deferral.
+11. **On `main` `650bdd62`, after Decision 0130** (source `exit`): DeepSource is retired as merge
+    evidence, so the DeepSource findings that corrections 8 and 10 retain no longer count under M17.
+    Those are `PYL-R0201`, `PYL-W0613` and `PTC-W0046`. They stay retained on the same bases. What
+    M17 still counts from those lists is SonarCloud's `python:S5899` (7) and Codacy's subprocess
+    audit (5).
