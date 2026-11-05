@@ -1739,8 +1739,14 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
                 ),
                 False,
             ),
-            # cubic on #480: a character outside base64 is refused, not dropped.
-            ("not base64", _file_reply(content="!" + _file_reply()["content"]), False),
+            # cubic on #480: a character outside base64 is refused, not dropped. It
+            # replaces one, so the encoded length is the declared size's and the
+            # decoding is reached (Revix on #480).
+            (
+                "not base64",
+                _file_reply(content="!" + _file_reply()["content"][1:]),
+                False,
+            ),
             (
                 "wrapped as GitHub sends it",
                 _file_reply(content="\n".join(_wrapped(_file_reply()["content"]))),
