@@ -4227,13 +4227,13 @@ class ProjectRiskActivationTests(unittest.TestCase):
 
 def _admitted(
     declaration: dict[str, Any],
-    bundle: dict[str, Any],
+    bundle: dict[str, Any] | None,
     change_class: str | None = None,
     *,
     ledger: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
-    """The merge decision on one head under `declaration`, with `bundle` as its
-    analyzer readback, the gate green, and the body's class `change_class` if given:
+    """The merge decision on one head under `declaration`, with `bundle`, if any, as
+    its analyzer readback, the gate green, and the body's class `change_class` if given:
     the evidence and the failed criteria. Module-level, so each class's tests call
     it without reaching into another's private member (#461's own inventory). A
     `ledger` is the protected target's analyzer debt ledger (#389)."""
@@ -4543,15 +4543,18 @@ _PRODUCER = "sha256:" + "e" * 64
 
 def _complete_bundle(
     *codacy: dict[str, Any],
+    sonarcloud: tuple[dict[str, Any], ...] = (),
+    inventory_diff: tuple[dict[str, Any], ...] = (),
     inventory_full: tuple[dict[str, Any], ...] = (),
     profile: str = _PROFILE,
     binding: str = "BOUND",
     producers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """A bound bundle of the active providers whose every readback is complete, with
-    `codacy` in Codacy's pull-request read, which states no configuration, and
-    `inventory_full` in the inventory's full run, under `profile`. DeepSource gives
-    none: it is retired as merge evidence (Decision 0130)."""
+    `codacy` in Codacy's pull-request read and `sonarcloud` in SonarCloud's, neither
+    of which states a configuration, and `inventory_diff` and `inventory_full` in
+    the inventory's two reads, under `profile`. DeepSource gives none: it is retired
+    as merge evidence (Decision 0130)."""
     bound = {
         "profile": profile,
         "source_binding": binding,
@@ -4560,8 +4563,8 @@ def _complete_bundle(
     }
     return _bundle(
         _readback("codacy", "DIFF", *codacy),
-        _readback(*SONAR),
-        _inventory("DIFF", native=bound),
+        _readback(*SONAR, *sonarcloud),
+        _inventory("DIFF", *inventory_diff, native=bound),
         _inventory("FULL", *inventory_full, native=bound),
     )
 
@@ -4766,6 +4769,174 @@ class DebtLedgerTests(unittest.TestCase):
                 self.assertEqual(debt_finding()["enclosing"], listed["enclosing"])
                 self.assertNotIn("M2-M8", failed)
                 self.assertEqual(m17, failed.get("M17"))
+
+
+def _shipped_ledger() -> dict[str, Any]:
+    """The analyzer debt ledger this repository ships, which `_admitted` puts on the
+    protected target: empty until the owner approves an entry (Decision 0129)."""
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER).read_text(encoding="utf-8")
+    )
+    return document
+
+
+# A finding a ledger entry could match: an inventory full-run finding with its
+# enclosing scope, under its run-bound profile and producer (Decision 0129).
+_MATCHABLE = {
+    k: v for k, v in debt_finding().items() if k not in ("item", "configuration")
+}
+
+
+class EmptyLedgerAdmissionTests(unittest.TestCase):
+    """The owner's checks before #480 merges (#389, 6658166252, Option B), end to end
+    through `evidence_for` and `merge_admission.evaluate` on the active providers'
+    evidence, under the ledger this repository ships, which is empty: missing or
+    incomplete required evidence still denies, and so does every obtained finding,
+    new, worsened, unmatched or security, in every class."""
+
+    _CLASSES = ("mechanical", "normal", "normative", "critical")
+
+    def _admit(
+        self, bundle: dict[str, Any] | None, change_class: str
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """The evidence and the failed criteria under the shipped ledger, which the
+        evidence must carry as read and empty, and the verdict match nothing in."""
+        declaration = _section_c_declaration()
+        evidence, failed = _admitted(
+            declaration, bundle, change_class, ledger=_shipped_ledger()
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": []}, evidence["analyzer_debt"]
+        )
+        verdict = merge_admission.evaluate(
+            evidence,
+            declaration=assurance_completeness.parse_declaration(declaration),
+            change_policy=_policy(),
+        )
+        self.assertEqual([], verdict["for_approval"]["inherited_findings"])
+        self.assertEqual([], verdict["for_approval"]["resolved_debt"])
+        return evidence, failed
+
+    def test_missing_or_incomplete_required_evidence_still_denies(self) -> None:
+        codacy, sonar = _readback("codacy", "DIFF"), _readback(*SONAR)
+        diff, full = _inventory_readbacks()
+        for name, bundle in (
+            ("no analyzer readback", None),
+            ("another head's readback", _bundle_for(head=PREVIOUS)),
+            ("no Codacy read", _bundle(sonar, diff, full)),
+            (
+                "Codacy unavailable",
+                _bundle(
+                    _readback("codacy", "DIFF", status="UNAVAILABLE"), sonar, diff, full
+                ),
+            ),
+            (
+                "SonarCloud's inventory unavailable",
+                _bundle(codacy, _readback(*SONAR, status="UNAVAILABLE"), diff, full),
+            ),
+            ("no inventory diff read", _bundle(codacy, sonar, full)),
+            ("no inventory full read", _bundle(codacy, sonar, diff)),
+            (
+                "a partial inventory diff read",
+                _bundle(codacy, sonar, _inventory_incomplete("DIFF"), full),
+            ),
+            (
+                "a partial inventory full read",
+                _bundle(codacy, sonar, diff, _inventory_incomplete("FULL")),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, failed = self._admit(bundle, change_class)
+                    self.assertIn("M2-M8", failed)
+                    self.assertIn(
+                        "analyzer finding coverage follows the required evidence, "
+                        "which is INCOMPLETE",
+                        failed.get("M17", []),
+                    )
+
+    def test_every_obtained_finding_still_denies(self) -> None:
+        worsened = {
+            **_MATCHABLE,
+            "id": "issue-worse",
+            "message": "`f` has a cyclomatic complexity of 17",
+            "severity": "MAJOR",
+        }
+        security = {**_MATCHABLE, "id": "issue-security", "category": "SECURITY"}
+        new = {**FINDING, "id": "issue-new"}
+        everything = _complete_bundle(
+            {**FINDING, "id": "issue-codacy"},
+            sonarcloud=({**FINDING, "id": "issue-sonar"},),
+            inventory_diff=(new,),
+            inventory_full=(_MATCHABLE, worsened, security),
+        )
+        for name, bundle, count in (
+            (
+                "a new finding on a changed path",
+                _complete_bundle(inventory_diff=(new,)),
+                1,
+            ),
+            ("a worsened finding", _complete_bundle(inventory_full=(worsened,)), 1),
+            # Its identity is complete, so only the empty ledger leaves it unmatched.
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+                1,
+            ),
+            ("a security finding", _complete_bundle(inventory_full=(security,)), 1),
+            ("a Codacy finding", _complete_bundle(FINDING), 1),
+            ("a SonarCloud finding", _complete_bundle(sonarcloud=(FINDING,)), 1),
+            ("all of them", everything, 6),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    evidence, failed = self._admit(bundle, change_class)
+                    listed = evidence["analyzer_findings"]["findings"]
+                    self.assertEqual(count, len(listed))
+                    self.assertNotIn("M2-M8", failed)
+                    plural = "" if count == 1 else "s"
+                    self.assertEqual(
+                        [f"{count} unresolved analyzer finding{plural}"], failed["M17"]
+                    )
+        # The finding an entry could match carries every part of its identity.
+        evidence, _ = self._admit(
+            _complete_bundle(inventory_full=(_MATCHABLE,)), "normal"
+        )
+        self.assertEqual(
+            [("project-full", CONFIGURATION, debt_finding()["enclosing"])],
+            [
+                (f["item"], f.get("configuration"), f.get("enclosing"))
+                for f in evidence["analyzer_findings"]["findings"]
+            ],
+        )
+
+    def test_the_shipped_ledger_changes_no_verdict(self) -> None:
+        """Against no ledger at all, under which M17 is what it was before the ledger
+        (`DebtLedgerM17Tests.test_without_a_ledger_m17_is_as_it_was`): every
+        criterion's verdict and reasons are the same."""
+        for name, bundle in (
+            ("complete, finding nothing", _complete_bundle()),
+            (
+                "a partial inventory full read",
+                _bundle(
+                    _readback("codacy", "DIFF"),
+                    _readback(*SONAR),
+                    _inventory("DIFF"),
+                    _inventory_incomplete("FULL"),
+                ),
+            ),
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, shipped = self._admit(bundle, change_class)
+                    _, without = _admitted(
+                        _section_c_declaration(), bundle, change_class
+                    )
+                    self.assertEqual(without, shipped)
 
 
 if __name__ == "__main__":
