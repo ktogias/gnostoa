@@ -13,7 +13,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from deepsource_fakes import (
+from tests.deepsource_fakes import (
     HEAD,
     OBSERVED,
     RUN_UID,
@@ -22,7 +22,6 @@ from deepsource_fakes import (
     issue,
     run_page,
 )
-
 from tools import analyzer_deepsource
 
 

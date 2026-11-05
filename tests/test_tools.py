@@ -162,7 +162,7 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     "policy": "b594196b030bf1cffa5b705a687d1a1887473ebc38812880ca1a4bbd0a7d5712",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "security-fast": "c9815924f74df13b2cfa955de1ee724821331525eaa9dde671c2a2fdb60ba690",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "fast": "04d8ee084f1640ddf6fa495ab7cfae88384615eee7b3e90d7e4831972b82bf78",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "python-compatibility": "73c95ccf140298e0752c7362d6fa6b3165146789e0a9286342ba10bb95c3a121",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "python-compatibility": "38855c14b8a0a35dafb23250754bdcc50cd29fd59027e7c24e33b60921f6e79e",  # pragma: allowlist secret -- reviewed workflow-structure digest
     # Decision 0103: the suite's steps are the former regression job's after its
     # assertion; the gate's one step is that assertion, with two more results.
     "regression-suite": "1b36d5d2086758692a13b9f6c4c1506f7f4d5de9575b6d68c437c0ae035609a9",  # pragma: allowlist secret -- reviewed workflow-structure digest

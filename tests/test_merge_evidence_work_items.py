@@ -19,7 +19,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from unittest.mock import patch
 
-from test_merge_evidence_github import (
+import tools
+from tests.merge_evidence_github_support import (
     API,
     BODY,
     ROOT,
@@ -29,9 +30,7 @@ from test_merge_evidence_github import (
     _replies,
     unregistered_tests,
 )
-from test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
-
-import tools
+from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
 from tools import assurance_completeness, merge_evidence_github
 
 ISSUE_407 = f"{API}/issues/407"

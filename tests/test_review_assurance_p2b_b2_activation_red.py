@@ -10,15 +10,22 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import yaml
-from test_r2a_p2b_b16_publication import _has_direct_top_level_shell_sequence
 
+from tests.quality_evidence_profile_support import _original
+from tests.r2a_p2b_b16_publication_support import _has_direct_top_level_shell_sequence
+from tests.review_assurance_p2b_b2_activation_red_support import (
+    CONSUMER_PATH,
+    ROOT,
+    _consumer_authority,
+    _current_advisory_input,
+)
 from tools import review_check, review_protected
 from tools.review_protected import ProtectedMainDocument
 
-ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAIL_PATH = ROOT / "policy" / "guardrails.yaml"
 DECISION_PATH = (
@@ -27,7 +34,6 @@ DECISION_PATH = (
     / "decisions"
     / "0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
 )
-CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"
 PROTECTED_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
 B16_PUBLIC_SURFACE_DIGEST = "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- public surface digest
@@ -48,13 +54,6 @@ _DIGEST_IMAGE = re.compile(
 )
 
 
-def _consumer_authority() -> dict[str, object]:
-    document = json.loads((ROOT / CONSUMER_PATH).read_text(encoding="utf-8"))
-    if not isinstance(document, dict):
-        raise AssertionError("protected outer-consumer authority must be an object")
-    return document
-
-
 def _historical_p2b_consumer() -> dict[str, object]:
     return {
         "role": "current_advisory_outer_consumer",
@@ -69,37 +68,7 @@ def _historical_p2b_consumer() -> dict[str, object]:
     }
 
 
-def _current_advisory_input() -> dict[str, object]:
-    return {
-        "schema_version": "1.0",
-        "subject": {
-            "repository": "https://github.com/ktogias/gnostoa",
-            "change_request": {"kind": "pull_request", "id": "p2b-b2-red"},
-            "head_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  # pragma: allowlist secret -- synthetic public test commit
-            "comparison": {
-                "kind": "merge_base",
-                "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",  # pragma: allowlist secret -- synthetic public test merge base
-            },
-            "observed_at": "2026-09-16T00:00:00Z",
-        },
-        "evaluation_context": {
-            "mode": "current_advisory",
-            "as_of": "2026-09-16T00:00:00Z",
-            "judge_relation": "prior_integrated",
-            "fixture_only": False,
-        },
-        "authority": {},
-        "acquired_judge": {},
-        "evidence_set": {
-            "observed_at": "2026-09-16T00:00:00Z",
-            "sources": [],
-            "observations": [],
-        },
-        "qualification_snapshot": {},
-    }
-
-
-def _load_outer() -> object:
+def _load_outer() -> ModuleType:
     try:
         return importlib.import_module("tools.review_outer")
     except ModuleNotFoundError as exc:
@@ -303,13 +272,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         def observe_write_text(
             path: Path,
             data: str,
-            *args: object,
-            **kwargs: object,
+            encoding: str | None = None,
+            errors: str | None = None,
+            newline: str | None = None,
         ) -> int:
             if marker in data:
                 host_payload_writes.append(path)
                 raise AssertionError("outer review payload reached a host text write")
-            return original_write_text(path, data, *args, **kwargs)
+            return original_write_text(path, data, encoding, errors, newline)
 
         def observe_write_bytes(
             path: Path,
@@ -473,7 +443,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         with mock.patch.object(
             outer, "_run_docker", return_value=no_forbidden_listener
         ) as run:
-            outer._verify_daemon_control_plane(
+            _original(outer, "_verify_daemon_control_plane")(
                 "gnostoa-r2a-daemon-test", Path("/tmp/config")
             )
         run.assert_called_once()
@@ -501,11 +471,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             stderr=b"",
         )
         with mock.patch.object(outer, "_run_docker", return_value=forbidden_listeners):
+            verify_daemon_control_plane = _original(
+                outer, "_verify_daemon_control_plane"
+            )
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "unexpectedly exposes TCP control plane on 2375, 2376",
             ):
-                outer._verify_daemon_control_plane(
+                verify_daemon_control_plane(
                     "gnostoa-r2a-daemon-test", Path("/tmp/config")
                 )
 
@@ -515,11 +488,14 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             stderr=b"synthetic inspection failure",
         )
         with mock.patch.object(outer, "_run_docker", return_value=inspection_failure):
+            verify_daemon_control_plane = _original(
+                outer, "_verify_daemon_control_plane"
+            )
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "cannot inspect isolated Docker daemon listening sockets",
             ):
-                outer._verify_daemon_control_plane(
+                verify_daemon_control_plane(
                     "gnostoa-r2a-daemon-test", Path("/tmp/config")
                 )
 
@@ -534,11 +510,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         with mock.patch.object(
             outer, "_checked_output", return_value=b"malformed-volume-reply\n"
         ):
+            volume_create = _original(outer, "_volume_create")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "malformed isolated-volume identity",
             ):
-                outer._volume_create(volume_name, config_dir, owned_volumes)
+                volume_create(volume_name, config_dir, owned_volumes)
         self.assertEqual([volume_name], owned_volumes)
 
         owned_containers: list[str] = []
@@ -546,13 +523,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         with mock.patch.object(
             outer, "_checked_output", return_value=b"malformed-container-reply\n"
         ):
+            container_create = _original(outer, "_container_create")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "malformed isolated-container identity",
             ):
-                outer._container_create(
-                    [], container_name, config_dir, owned_containers
-                )
+                container_create([], container_name, config_dir, owned_containers)
         self.assertEqual([container_name], owned_containers)
 
     def test_cleanup_retries_transient_container_failure(self) -> None:
@@ -565,7 +541,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             ) as run,
             mock.patch.object(outer.time, "sleep") as sleep,
         ):
-            issue = outer._remove_container(
+            issue = _original(outer, "_remove_container")(
                 "gnostoa-r2a-container-test", Path("/tmp/config")
             )
         self.assertIsNone(issue)
@@ -599,11 +575,12 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 return_value="synthetic cleanup failure",
             ),
         ):
+            initialize_tmp_volume = _original(outer, "_initialize_tmp_volume")
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "synthetic cleanup failure",
             ):
-                outer._initialize_tmp_volume(
+                initialize_tmp_volume(
                     tmp_volume="gnostoa-r2a-tmp-test",
                     config_dir=Path("/tmp/config"),
                     owned_containers=owned,
@@ -628,7 +605,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             }
             raw = (outer.canonical_json(payload) + "\n").encode("utf-8")
             with self.subTest(valid_code=code):
-                self.assertEqual(payload, outer._decode_outer_result(2, raw))
+                self.assertEqual(
+                    payload, _original(outer, "_decode_outer_result")(2, raw)
+                )
 
         invalid_payloads = (
             {
@@ -668,14 +647,15 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 "extra": True,
             },
         )
-        for payload in invalid_payloads:
-            raw = (outer.canonical_json(payload) + "\n").encode("utf-8")
-            with self.subTest(invalid_payload=payload):
+        for invalid_payload in invalid_payloads:
+            raw = (outer.canonical_json(invalid_payload) + "\n").encode("utf-8")
+            with self.subTest(invalid_payload=invalid_payload):
+                decode_outer_result = _original(outer, "_decode_outer_result")
                 with self.assertRaisesRegex(
                     outer.PriorEffectiveOuterUnavailable,
                     "error envelope is malformed",
                 ):
-                    outer._decode_outer_result(2, raw)
+                    decode_outer_result(2, raw)
 
     def test_hypothetically_admitted_tmp_setup_failure_returns_canonical_tool_error(
         self,

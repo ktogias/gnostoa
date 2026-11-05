@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import _calling_through
-from tests.test_quality_evidence_profile import _original
-from tests.test_quality_evidence_tool_families import (
+from tests.quality_evidence_profile_support import _original
+from tests.quality_evidence_tool_families_support import (
     _GITLAB,
     _SC_NATIVE,
     _sourced,
@@ -58,8 +58,15 @@ class GitlabReaderTests(_ToolFamilyFixture):
         )
         self._collect(base=self.base)
         command = next(
-            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
+            (
+                c
+                for c, _cwd, _env in self._commands_of("shellcheck")
+                if "--shell=sh" in c
+            ),
+            None,
         )
+        if command is None:
+            self.fail("a shellcheck --shell=sh command must have run")
         analyzed = command[command.index("--") + 1 :]
         self.assertEqual(2, len(set(analyzed)), analyzed)
 

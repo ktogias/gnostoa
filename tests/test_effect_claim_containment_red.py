@@ -28,14 +28,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import authority as authority_module
 from tools.capsule import effect_claim
 from tools.capsule.identity import digest_of
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 _TASKS = ({"id": "T1", "capsule_identity": "c" * 64, "qualification_mode": "fresh"},)
 
@@ -75,13 +71,14 @@ class ClaimNameContainmentTests(ConsumptionFixture):
             )
 
     def _refused(self, candidate: str) -> None:
+        authority = self._authority(candidate)
         with self.assertRaises(effect_claim.EffectClaimError) as raised:
             effect_claim.claim_fresh_candidate(
                 self.workspace,
                 experiment_id="E1",
                 scope=authority_module.BASE_REFERENCE_QUALIFICATION,
                 candidate_sha256=candidate,
-                authority=self._authority(candidate),
+                authority=authority,
                 candidate_tasks=_TASKS,
             )
         self.assertEqual(raised.exception.code, effect_claim.INVALID_CLAIM)
@@ -171,13 +168,14 @@ class ClaimNameContainmentTests(ConsumptionFixture):
             )
         self.assertIn("stage ledger", reading.exception.detail)
 
+        authority = self._authority(candidate)
         with self.assertRaises(effect_claim.EffectClaimError) as raised:
             effect_claim.claim_fresh_candidate(
                 self.workspace,
                 experiment_id="E1",
                 scope=authority_module.BASE_REFERENCE_QUALIFICATION,
                 candidate_sha256=candidate,
-                authority=self._authority(candidate),
+                authority=authority,
                 candidate_tasks=_TASKS,
             )
         self.assertEqual(raised.exception.code, effect_claim.ALREADY_CONSUMED)

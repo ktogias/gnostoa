@@ -31,13 +31,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, qualification, retained_commit, retained_preflight
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -88,7 +84,7 @@ class UncomparableLockRaceTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect(effects):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
@@ -177,7 +173,7 @@ class UncomparableLockRaceTests(ConsumptionFixture):
         candidate, retained = self._reach_ready(effects)
         damaged: list[str] = []
         with self.patched_effect(effects), self._damaging_seam(damaged):
-            refused = self.prepare(authority=self.authority(candidate))
+            refused = self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(effects, ["effect"], "no new effect may run")
         self.assertIn(
             "experiment-lock-conflict",

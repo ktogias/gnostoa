@@ -25,12 +25,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -91,7 +87,7 @@ class StatusCoherenceTests(StatusFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
@@ -146,7 +142,7 @@ class MandatoryRecordDigestTests(StatusFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
 
         with self.patched_effect(effects):
@@ -197,7 +193,7 @@ class MandatoryRecordDigestTests(StatusFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         with self.patched_effect(effects):
             with mock.patch.object(
                 retained_commit,
@@ -322,7 +318,7 @@ class MandatoryRecordDigestTests(StatusFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
 
         record_path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
         record = json.loads(record_path.read_text())

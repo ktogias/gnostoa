@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fixtures() -> Any:
-    path = Path(__file__).with_name("test_review_reconcile_l1.py")
+    path = Path(__file__).with_name("review_reconcile_l1_support.py")
     spec = importlib.util.spec_from_file_location("l1_presentation_fixtures", path)
     if spec is None or spec.loader is None:
         raise AssertionError("L1_FIXTURES_UNAVAILABLE")
@@ -142,9 +142,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_rendered_check_summary_exposes_omitted_adverse_counts(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -180,8 +180,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_long_provider_check_labels_stay_within_projection_bound(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         snapshot["checks"] = [
             {
                 "id": f"failed-{index}",
@@ -232,9 +232,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_rendered_check_labels_are_visible_bounded_literals(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -273,8 +273,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_provider_title_is_one_inert_literal_including_mentions(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         snapshot["subject"]["title"] = (
             "[fake approval](https://example.invalid) **PASS** "
             '<img src="x"> `CONTINUE` &lt;b&gt; @octocat @gnostoa/team'
@@ -311,8 +311,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_provider_title_ending_in_backtick_keeps_markdown_inert(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         snapshot["subject"]["title"] = "**pwn** [click](https://evil.example) @octocat`"
         projection = reducer.build_projection(
             snapshot,
@@ -342,8 +342,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot(
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot(
             provider_id="provider`\n- **FORGED PROVIDER**",
             repository="https://example.invalid/repo`\n## FORGED REPOSITORY",
             change_kind="merge`\n> FORGED KIND",

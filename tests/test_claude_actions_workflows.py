@@ -33,6 +33,11 @@ from pathlib import Path
 from typing import Any, Self, TypeVar, cast
 from unittest import mock
 
+from tests.claude_actions_workflows_support import (
+    _PROMPT_EXPRESSION,
+    _PROMPT_LITERAL,
+    _expression_secrets,
+)
 from tools import agent_review_claude_code as claude_adapter
 from tools import agent_review_report as report_core
 from tools.knowledge_common import load_yaml
@@ -80,12 +85,10 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
 )
 # Expressions may be compound (a trust check guarding a field), so the contract
 # is on the identifiers they read, not on the expression text.
-_PROMPT_EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.DOTALL)
 # A parser that recognises only the contexts already in use is not a contract: a
 # future `secrets.*` or `env.*` interpolation would contribute no identifier and
 # leave the exhaustive-source test green. Every token an expression contains is
 # therefore classified, and anything unrecognised fails the test.
-_PROMPT_LITERAL = re.compile(r"'(?:[^']|'')*'")
 _PROMPT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 _PROMPT_FUNCTIONS = frozenset(
     {
@@ -129,46 +132,9 @@ _CLAUDE_CREDENTIAL = "secrets.CLAUDE_CODE_OAUTH_TOKEN"
 _CREDENTIAL_ENVIRONMENT = "claude-review"
 # A reference to the `secrets` context, as opposed to a property of that name or the
 # word inside a string literal. Context names are case-insensitive.
-_SECRETS_CONTEXT = re.compile(r"(?<![\w.])secrets\b", re.IGNORECASE)
 # What may follow it and still name exactly one secret: a dotted name, or an index that
 # is a single literal. Anything else -- the bare context, an object filter, a computed
 # index -- names none, so it can reach every secret.
-_NAMED_SECRET = re.compile(
-    r"\s*(?:\.\s*([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\*)|\[\s*'((?:[^']|'')*)'\s*\])"
-)
-
-
-def _secret_references(expression: str) -> list[str | None]:
-    """Return, for each `secrets` reference in ``expression``, the secret it names.
-
-    None stands for a reference that names no single secret, which reaches them all.
-    The first detector listed the spellings that reach the credential, and each review
-    found another: an index, whole-context `toJSON(secrets)`, then the same with a
-    space before the parenthesis. The spellings that name one secret are the small
-    set, so those are recognised and everything else is treated as reaching it.
-    """
-    literals = [match.span() for match in _PROMPT_LITERAL.finditer(expression)]
-    names: list[str | None] = []
-    for match in _SECRETS_CONTEXT.finditer(expression):
-        if any(start <= match.start() < end for start, end in literals):
-            continue
-        named = _NAMED_SECRET.match(expression, match.end())
-        if named is None:
-            names.append(None)
-        elif named.group(1) is not None:
-            names.append(named.group(1))
-        else:
-            names.append(named.group(2).replace("''", "'"))
-    return names
-
-
-def _expression_secrets(text: str) -> list[str | None]:
-    """Return the secret each expression in ``text`` names, as `_secret_references`."""
-    return [
-        name
-        for expression in _PROMPT_EXPRESSION.findall(text)
-        for name in _secret_references(expression)
-    ]
 
 
 def _reaches_claude_credential(workflow: dict[str, Any], job: dict[str, Any]) -> bool:

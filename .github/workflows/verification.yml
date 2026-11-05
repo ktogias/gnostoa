@@ -140,20 +140,10 @@ jobs:
       - name: Run project style gate
         if: matrix.python-version == '3.12'
         run: ./ci/style --check
-      - name: Type-check experiment and review trust domains
+      # The scope pyproject.toml's [tool.mypy] declares, never a listed subset (#221).
+      - name: Type-check the declared strict scope
         if: matrix.python-version == '3.12'
-        run: |
-          python -m mypy \
-            tools/experiment_runner.py \
-            tools/experiment_handoff.py \
-            tools/experiment_packager.py \
-            tools/experiment \
-            tools/capsule \
-            tools/review_adapter_file.py \
-            tools/review_check.py \
-            tools/review_evaluate.py \
-            tools/review_model.py \
-            tools/review_policy.py
+        run: python -m mypy
       - name: Verify frozen-handoff package golden digest
         run: |
           python tests/test_experiment_packager.py \

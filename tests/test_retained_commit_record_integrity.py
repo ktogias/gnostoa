@@ -20,12 +20,9 @@ import shutil
 import unittest
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -114,7 +111,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         before = (self.workspace / "experiment-state.json").read_text()
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash_before_recording(path, payload):  # type: ignore[no-untyped-def]
             if path.name == retained_commit.COMMIT_RECORD_FILENAME:
@@ -127,8 +124,9 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
                 retained_commit, "_write_atomic", side_effect=crash_before_recording
             ),
         ):
+            authority = self.consumption_authority(candidate)
             with self.assertRaises(RuntimeError):
-                self.prepare(authority=self.authority(candidate))
+                self.prepare(authority=authority)
 
         self.assertNotEqual(
             (self.workspace / "experiment-state.json").read_text(),
@@ -175,7 +173,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
         shutil.copytree(self.workspace, old_snapshot)
 
         with _patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         winner = compiler.status(self.workspace)
         self.assertEqual(winner["status"], "READY_FOR_OWNER_REVIEW")
         winner_generation = self._committed_generation()

@@ -9,45 +9,23 @@ represent exactly (S2-MAT-01, S2-A3-01, Router 6267325366 and 6297725852).
 
 from __future__ import annotations
 
-import contextlib
 import errno
 import importlib.util
 import os
 import resource
 import stat
-import subprocess  # nosec B404 -- test-only: a literal git argv on temporary fixtures
 import sys
-import tempfile
-import threading
 import time
 import traceback
 import unittest
+from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest import mock
 
-if TYPE_CHECKING:
-    from tools.exact_tree import Limits
+from tests.exact_tree_support import _ENV, ExactTreeFixture, _owner, git
+from tests.quality_evidence_profile_support import _original
 
-_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@example.invalid",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@example.invalid",
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    # The repository's trusted executable lookup (AGENTS.md), as the owner uses it.
-    "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
-    # No automatic housekeeping in the fixture repositories: a commit otherwise spawns
-    # a detached `git maintenance run --auto`, which can still write into `.git` while
-    # a test's cleanup removes it (python-compatibility 3.12, job 119192065066).
-    "GIT_CONFIG_COUNT": "2",
-    "GIT_CONFIG_KEY_0": "gc.auto",
-    "GIT_CONFIG_VALUE_0": "0",
-    "GIT_CONFIG_KEY_1": "maintenance.auto",
-    "GIT_CONFIG_VALUE_1": "false",
-}
 # The suppression markers the Popen line must carry, built so that this module never
 # writes a marker itself: merge admission reads every marker an added line holds (M13).
 _SEMGREP_RULE = (
@@ -56,150 +34,6 @@ _SEMGREP_RULE = (
 )
 _NOSEMGREP = "no" + "semgrep: " + _SEMGREP_RULE
 _NOSEC_B603 = "#" + " nosec B603 -- "
-
-
-def git(
-    repo: Path,
-    *args: str,
-    stdin: bytes | None = None,
-    env: dict[str, str] | None = None,
-) -> str:
-    return (
-        subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
-            ["git", "-C", str(repo), *args],
-            check=True,
-            capture_output=True,
-            input=stdin,
-            env=_ENV if env is None else env,
-        )
-        .stdout.decode()
-        .strip()
-    )
-
-
-def _owner() -> ModuleType:
-    try:
-        return importlib.import_module("tools.exact_tree")
-    except ModuleNotFoundError as exc:
-        raise AssertionError("missing capability: tools.exact_tree") from exc
-
-
-class ExactTreeFixture(unittest.TestCase):
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        self.repo = self.root / "repo"
-        self.repo.mkdir()
-        git(self.repo, "init", "-q", "-b", "main")
-        self.marker = self.root / "driver-ran"
-
-    def commit(self, files: dict[str, bytes]) -> str:
-        for rel, data in files.items():
-            target = self.repo / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-q", "-m", "c")
-        return git(self.repo, "rev-parse", "HEAD^{tree}")
-
-    def limits(self, **overrides: Any) -> Limits:
-        values: dict[str, Any] = {
-            "deadline": time.monotonic() + 60,
-            "max_files": 1_000,
-            "max_bytes": 1 << 20,
-        }
-        values.update(overrides)
-        return _owner().Limits(**values)
-
-    def assertRefused(self, code: str | None, call: Any) -> Any:
-        owner = _owner()
-        with self.assertRaises(owner.ExactTreeError) as raised:
-            call()
-        if code is not None:
-            self.assertEqual(code, raised.exception.code)
-        return raised.exception
-
-    def link_tree(
-        self, links: dict[str, str], files: dict[str, bytes] | None = None
-    ) -> str:
-        """A tree of symlink entries (and files) written with mktree, nested as given."""
-        entries: dict[str, tuple[str, str]] = {}
-        for path, data in (files or {}).items():
-            entries[path] = (
-                "100644",
-                git(self.repo, "hash-object", "-w", "--stdin", stdin=data),
-            )
-        for path, target in links.items():
-            entries[path] = (
-                "120000",
-                git(self.repo, "hash-object", "-w", "--stdin", stdin=target.encode()),
-            )
-
-        def build(paths: dict[str, tuple[str, str]]) -> str:
-            lines: list[str] = []
-            subdirs: dict[str, dict[str, tuple[str, str]]] = {}
-            for path, (mode, oid) in sorted(paths.items()):
-                head, _, rest = path.partition("/")
-                if rest:
-                    subdirs.setdefault(head, {})[rest] = (mode, oid)
-                else:
-                    lines.append(f"{mode} blob {oid}\t{head}")
-            for name, sub in sorted(subdirs.items()):
-                lines.append(f"040000 tree {build(sub)}\t{name}")
-            return git(self.repo, "mktree", stdin=("\n".join(lines) + "\n").encode())
-
-        return build(entries)
-
-    def feeding(self, output: bytes) -> Any:
-        """A stand-in for the owner's Git child: it hands `output` to the child's sink
-        when it has one, as the real drain does, and returns it otherwise."""
-
-        def git(repo: Path, args: list[str], **kwargs: Any) -> bytes:
-            sink = kwargs.get("sink")
-            if sink is None:
-                return output
-            sink(output)
-            return b""
-
-        return git
-
-    def without_waiting(self, call: Any, fifo: Path) -> tuple[bool, list[Any]]:
-        """Run `call` in a thread: whether it waited on `fifo` past 5 s, and its result
-        or refusal code. A writer's open releases a reader that waits."""
-        outcome: list[Any] = []
-
-        def run() -> None:
-            try:
-                outcome.append(call())
-            except _owner().ExactTreeError as exc:
-                outcome.append(exc.code)
-
-        reader = threading.Thread(target=run, daemon=True)
-        reader.start()
-        reader.join(5)
-        waited = reader.is_alive()
-        if waited:
-            with contextlib.suppress(OSError):
-                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
-            reader.join(5)
-        return waited, outcome
-
-    def blob(self, tree: str, path: str) -> bytes:
-        return subprocess.run(  # nosec B603 B607 -- test-only: a literal git argv on temporary fixtures
-            ["git", "-C", str(self.repo), "cat-file", "blob", f"{tree}:{path}"],
-            check=True,
-            capture_output=True,
-            env=_ENV,
-        ).stdout
-
-    def arm_driver(self, pattern: str = "*") -> None:
-        command = f"sh -c 'touch {self.marker}; cat'"
-        git(self.repo, "config", "filter.probe.smudge", command)
-        git(self.repo, "config", "filter.probe.clean", command)
-        info = self.repo / ".git" / "info"
-        info.mkdir(exist_ok=True)
-        (info / "attributes").write_text(f"{pattern} filter=probe\n")
 
 
 class ExactBytesTests(ExactTreeFixture):
@@ -316,11 +150,12 @@ class VerifyTrackedTests(ExactTreeFixture):
     def test_a_changed_or_missing_tracked_path_is_refused(self) -> None:
         tree = self.commit({"a.txt": b"a\n", "d/b.txt": b"b\n"})
         owner = _owner()
-        for label, damage in (
+        damages: tuple[tuple[str, Callable[[Path], object]], ...] = (
             ("changed", lambda root: (root / "a.txt").write_bytes(b"x\n")),
             ("missing", lambda root: (root / "d" / "b.txt").unlink()),
             ("mode", lambda root: (root / "a.txt").chmod(0o755)),
-        ):
+        )
+        for label, damage in damages:
             with self.subTest(damage=label):
                 root = self.root / label
                 owner.materialize(self.repo, tree, root, limits=self.limits())
@@ -619,8 +454,10 @@ class RoundTwoTests(ExactTreeFixture):
             f"{oid} blob 1 extra\n".encode(),
         ):
             with self.subTest(header=header):
-                writer = owner._BatchWriter(
-                    self.root, [owner._Entry("100644", oid, "a.txt")], "sha1"
+                writer = _original(owner, "_BatchWriter")(
+                    self.root,
+                    [_original(owner, "_Entry")("100644", oid, "a.txt")],
+                    "sha1",
                 )
                 self.assertRefused(
                     "git-failed", lambda writer=writer, header=header: writer(header)
@@ -641,7 +478,8 @@ class RoundTwoTests(ExactTreeFixture):
         )
 
     # E: hashing is bounded by the deadline and by the size it recorded.
-    def file_reads(self, path: Path, extra: int) -> tuple[Any, list[int]]:
+    @staticmethod
+    def file_reads(path: Path, extra: int) -> tuple[Any, list[int]]:
         """An os.read that, for `path` only, never reaches EOF for `extra` more reads."""
         inode = os.stat(path).st_ino
         real_read = os.read
@@ -721,7 +559,8 @@ class RoundTwoTests(ExactTreeFixture):
     ) -> None:
         owner = _owner()
         self.assertEqual(
-            "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin", owner._GIT_ENV["PATH"]
+            "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+            _original(owner, "_GIT_ENV")["PATH"],
         )
         tree = self.commit({"a.txt": b"a\n"})
         seen: list[list[str]] = []
@@ -740,14 +579,20 @@ class RoundTwoTests(ExactTreeFixture):
         )
 
     def test_the_popen_call_carries_its_bandit_justification(self) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        if owner_file is None:
+            self.fail("owner_file must be set")
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all("nosec B603" in line for line in lines), lines)
 
     def test_no_assert_statement_guards_production_logic(self) -> None:
         import ast
 
-        tree = ast.parse(Path(_owner().__file__).read_text(encoding="utf-8"))
+        owner_file = _owner().__file__
+        if owner_file is None:
+            self.fail("owner_file must be set")
+        tree = ast.parse(Path(owner_file).read_text(encoding="utf-8"))
         asserts = [
             node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)
         ]
@@ -760,7 +605,7 @@ class RoundTwoTests(ExactTreeFixture):
         spent = self.limits(deadline=time.monotonic() - 1)
         self.assertRefused(
             "deadline",
-            lambda: owner._git(
+            lambda: _original(owner, "_git")(
                 self.repo, ["ls-tree"], limits=spent, cap=1, stdin=read_end
             ),
         )
@@ -832,7 +677,10 @@ class RoundThreeTests(ExactTreeFixture):
     def test_the_popen_call_carries_its_semgrep_justification_on_its_line(
         self,
     ) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        if owner_file is None:
+            self.fail("owner_file must be set")
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines and all(_NOSEMGREP in line for line in lines), lines)
 
@@ -885,7 +733,9 @@ class RoundThreeTests(ExactTreeFixture):
         try:
             self.assertRefused(
                 "deadline",
-                lambda: owner._observed(root_fd, "sha1", spent, frozenset()),
+                lambda: _original(owner, "_observed")(
+                    root_fd, "sha1", spent, frozenset()
+                ),
             )
         finally:
             os.close(root_fd)
@@ -895,9 +745,13 @@ class RoundThreeTests(ExactTreeFixture):
         self,
     ) -> None:
         owner = _owner()
-        self.assertEqual("0", owner._GIT_ENV.get("GIT_OPTIONAL_LOCKS"))
+        self.assertEqual("0", _original(owner, "_GIT_ENV").get("GIT_OPTIONAL_LOCKS"))
         self.assertFalse(
-            [part for part in owner._GIT_OVERRIDES if "safe.directory" in part]
+            [
+                part
+                for part in _original(owner, "_GIT_OVERRIDES")
+                if "safe.directory" in part
+            ]
         )
 
     # V: a failed bind leaves the published tree unbound, so no later reuse accepts it,
@@ -960,7 +814,10 @@ class RoundFourTests(ExactTreeFixture):
 
     # AA (M13): each suppression on the Popen line carries its reason.
     def test_the_popen_suppressions_carry_their_reason(self) -> None:
-        source = Path(_owner().__file__).read_text(encoding="utf-8").splitlines()
+        owner_file = _owner().__file__
+        if owner_file is None:
+            self.fail("owner_file must be set")
+        source = Path(owner_file).read_text(encoding="utf-8").splitlines()
         lines = [line for line in source if "subprocess.Popen(" in line]
         self.assertTrue(lines, "no Popen line")
         for line in lines:
@@ -972,7 +829,7 @@ class RoundFourTests(ExactTreeFixture):
         owner = _owner()
         for number in (errno.EMFILE, errno.ENFILE):
             with self.subTest(errno=number):
-                refusal = owner._filesystem(OSError(number, "exhausted"))
+                refusal = _original(owner, "_filesystem")(OSError(number, "exhausted"))
                 self.assertEqual("cap-descriptors", refusal.code)
 
     def test_a_sinks_own_os_error_keeps_its_meaning(self) -> None:
@@ -1052,7 +909,8 @@ class RoundSevenTests(ExactTreeFixture):
         dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         limits = self.limits()
         waited, outcome = self.without_waiting(
-            lambda: owner._blob_id_at(dir_fd, "f", 1, "sha1", limits), root / "f"
+            lambda: _original(owner, "_blob_id_at")(dir_fd, "f", 1, "sha1", limits),
+            root / "f",
         )
         os.close(dir_fd)
         self.assertFalse(waited, "the open waited on a FIFO")
@@ -1071,7 +929,7 @@ class RoundSevenTests(ExactTreeFixture):
         try:
             self.assertRefused(
                 "tree-mismatch",
-                lambda: owner._blob_id_at(dir_fd, "f", 0, "sha1", limits),
+                lambda: _original(owner, "_blob_id_at")(dir_fd, "f", 0, "sha1", limits),
             )
         finally:
             os.close(dir_fd)
@@ -1151,7 +1009,7 @@ class RoundEightTests(ExactTreeFixture):
         owner = _owner()
         tree = self.commit({"d/a.txt": b"a\n"})
         destination = self.root / "out"
-        real_write_tree = owner._write_tree
+        real_write_tree = _original(owner, "_write_tree")
         seen: list[int] = []
 
         def spy(
@@ -1175,7 +1033,7 @@ class RoundEightTests(ExactTreeFixture):
     def test_the_listing_streams_into_entries(self) -> None:
         owner = _owner()
         tree = self.commit({"a.txt": b"a\n", "d/b.txt": b"b\n"})
-        real_git = owner._git
+        real_git = _original(owner, "_git")
         calls: list[tuple[str, bool]] = []
 
         def spy(repo: Path, args: list[str], **kwargs: Any) -> Any:
@@ -1220,7 +1078,11 @@ class RoundElevenTests(ExactTreeFixture):
             ("protocol.file.allow", "always"),
         ):
             git(self.repo, "config", key, value)
-        out, limits, env = self.root / "out", self.limits(), _owner()._GIT_ENV
+        out, limits, env = (
+            self.root / "out",
+            self.limits(),
+            _original(_owner(), "_GIT_ENV"),
+        )
         kept = {k: v for k, v in env.items() if k != "GIT_NO_LAZY_FETCH"}
         with mock.patch.dict(env, kept, clear=True):
             self.assertRefused(
@@ -1237,8 +1099,13 @@ class RoundElevenTests(ExactTreeFixture):
         with mock.patch(
             "os.write", side_effect=lambda fd, data: real_write(fd, bytes(data)[:5])
         ):
-            owner._bind(destination, owner._Record("a" * 40, 1, 2))
-        self.assertEqual(owner._Record("a" * 40, 1, 2), owner._bound_tree(destination))
+            _original(owner, "_bind")(
+                destination, _original(owner, "_Record")("a" * 40, 1, 2)
+            )
+        self.assertEqual(
+            _original(owner, "_Record")("a" * 40, 1, 2),
+            _original(owner, "_bound_tree")(destination),
+        )
 
     # AW: a link target holding a NUL cannot be written exactly.
     def test_a_link_target_with_a_nul_is_refused(self) -> None:

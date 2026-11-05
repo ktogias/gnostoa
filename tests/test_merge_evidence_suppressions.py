@@ -20,10 +20,11 @@ from typing import Any
 from unittest import mock
 
 import yaml
-from test_merge_admission import _evidence as _verdict_evidence
-from test_merge_admission import _failed as _verdict_failed
-from test_merge_admission import _verdict
-from test_merge_evidence_github import (
+
+from tests.merge_admission_support import _evidence as _verdict_evidence
+from tests.merge_admission_support import _failed as _verdict_failed
+from tests.merge_admission_support import _verdict
+from tests.merge_evidence_github_support import (
     COMPARE,
     HEAD,
     REQUIRED_CHECKS,
@@ -38,7 +39,7 @@ from test_merge_evidence_github import (
     _snapshot,
     unregistered_tests,
 )
-
+from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
 from tools import assurance_completeness, merge_evidence_github
 
 # What `knowledge merge-evidence` reports as an input error.
@@ -48,6 +49,11 @@ INPUT_ERRORS = (
 )
 EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"  # pragma: allowlist secret -- Git's empty-blob id
 BLOB = "b" * 40
+# The collector's response budget, which also bounds a comparison file's patch: a
+# patch arrives whole inside one comparison response (Decision 0086, #389).
+RESPONSE_BUDGET = 4_194_304
+# A patch past the 65,536-byte bound of comments and messages, inside that budget.
+LONG_PATCH = "@@ -0,0 +1,1 @@\n+" + "x" * 70_000
 MARKERS_DOCUMENT: dict[str, Any] = {
     "schema_version": "1.0",
     "id": "example.merge-suppression-markers",
@@ -186,8 +192,15 @@ class FileCollectionTests(unittest.TestCase):
     """L1 keeps what the comparison says about each file's added content."""
 
     def test_each_changed_file_keeps_its_additions_blob_and_patch(self) -> None:
+        """Also a patch past the 65,536-byte body bound: GitHub's comparison returns
+        it whole, and M13 reads it whole (#389 6606110648)."""
+
         patch = "@@ -1,2 +1,3 @@\n a\n+b\n c"
-        snapshot = _collected([_file("tools/x.py", patch=patch)])
+        files = [
+            _file("tools/x.py", patch=patch),
+            _file("tools/y.py", "added", patch=LONG_PATCH),
+        ]
+        snapshot = _collected(files)
         self.assertEqual(
             [
                 {
@@ -198,11 +211,21 @@ class FileCollectionTests(unittest.TestCase):
                     "blob": BLOB,
                     "patch": patch,
                     "patch_truncated": False,
-                }
+                },
+                {
+                    "path": "tools/y.py",
+                    "status": "added",
+                    "previous_path": None,
+                    "additions": 1,
+                    "blob": BLOB,
+                    "patch": LONG_PATCH,
+                    "patch_truncated": False,
+                },
             ],
             snapshot["files"],
         )
         self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+        self.assertEqual("COMPLETE", _suppressions(files)["coverage"])
 
     def test_an_omitted_or_empty_patch_is_no_hunks(self) -> None:
         """As GitHub leaves a binary's patch out (agent_review_github's rule)."""
@@ -214,11 +237,52 @@ class FileCollectionTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
 
     def test_a_long_patch_is_bounded_and_marked(self) -> None:
-        patch = "@@ -0,0 +1,1 @@\n+" + "x" * 70_000
+        """Past the response budget, a patch is cut and marked; a comparison the client
+        refuses as over that budget fails the collection, since L1 reads it first for the
+        merge base; and a commit message keeps the 65,536-byte bound of comments and
+        messages (#389 6606110648)."""
+
+        patch = "@@ -0,0 +1,1 @@\n+" + "x" * RESPONSE_BUDGET
         snapshot = _collected([_file("tools/x.py", "added", patch=patch)])
         kept = snapshot["files"][0]
         self.assertTrue(kept["patch_truncated"])
         self.assertLess(len(kept["patch"].encode("utf-8")), len(patch))
+
+        adapter = adapter_fixture()
+        # The refusal below is the client's, so this adapter's client must carry that
+        # budget (Revix on #479). The client's own refusal past it is
+        # test_github_rest.SharedGitHubClientTests.test_bodies_are_bounded's.
+        self.assertEqual(
+            RESPONSE_BUDGET, adapter.GitHubRestClient("t").policy.max_response_bytes
+        )
+        fake = paged_fake_fixture(_replies())
+        answer = fake.get
+
+        def refusing(url: str) -> tuple[Any, dict[str, str]]:
+            if url == COMPARE:
+                # What the adapter's client raises for a body past its budget.
+                raise adapter.ProviderReadError(
+                    f"provider body exceeded {RESPONSE_BUDGET} bytes for {url!r}"
+                )
+            return answer(url)
+
+        with (
+            mock.patch.object(fake, "get", side_effect=refusing),
+            self.assertRaises(adapter.ProviderReadError),
+        ):
+            adapter.collect_snapshot(
+                fake,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:41:00Z",
+                merge_evidence=True,
+            )
+
+        replies = _replies()
+        replies[COMPARE] = _comparison([_commit(HEAD, "m" * 70_000)], [])
+        message = _snapshot(replies)["commits"][0]
+        self.assertTrue(message["message_truncated"])
+        self.assertEqual(65_536, len(message["message"].encode("utf-8")))
 
     def test_a_mistyped_field_fails_the_files_source(self) -> None:
         """A present null patch is malformed, not an absence, and a count is a
@@ -451,7 +515,13 @@ class SuppressionTests(unittest.TestCase):
             ),
             (
                 "a truncated patch",
-                _file("t.py", "added", patch="@@ -0,0 +1,1 @@\n+" + "x" * 70_000),
+                _file(
+                    "t.py", "added", patch="@@ -0,0 +1,1 @@\n+" + "x" * RESPONSE_BUDGET
+                ),
+            ),
+            (
+                "a long patch with fewer added lines than the entry counts",
+                _file("t.py", "added", patch=LONG_PATCH, additions=2),
             ),
         ):
             with self.subTest(name):
