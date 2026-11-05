@@ -1456,8 +1456,8 @@ _PRODUCER_ORDER = (
     "gitlab-shellcheck",
     "secrets",
 )
-# Ruff's flake8-bandit codes, its security checks: S and digits.
-_BANDIT_CODE = re.compile(r"S[0-9]+")
+# Ruff's flake8-bandit codes, its security checks: S and ASCII digits.
+_BANDIT_CODE = re.compile(r"S\d+", re.ASCII)
 # The producers launched as processes, whose environment is observed. Public for the analyzer
 # inventory, which checks a record's producer against it; this module's own uses keep the
 # private name.

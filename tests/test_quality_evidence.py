@@ -974,6 +974,8 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             ("secrets", "Secret Keyword", "security"),
             ("ruff", "SLF001", None),
             ("ruff", "SIM117", None),
+            # S and ASCII digits only: another script's digits are no bandit code.
+            ("ruff", "S\u0661\u0660\u0666", None),
             ("mypy", "import-not-found", None),
             ("complexity", "cc", None),
         ):
