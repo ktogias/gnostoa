@@ -34,6 +34,9 @@ sources:
   - id: sweep
     resource: https://github.com/ktogias/gnostoa/pull/483#issuecomment-6654044967
     title: "Claude's part 2 on #483: the helpers' git starts the count left out"
+  - id: shell
+    resource: https://github.com/ktogias/gnostoa/pull/483#issuecomment-6654660431
+    title: "Claude's part 2 on #483: the ci/ shell scripts' git starts, outside the Python sweep"
   - id: narrowing
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6645177503
     title: "The admission packet: route (A′), measured on main 683a9be7"
@@ -60,7 +63,7 @@ x-project-knowledge:
 `tools/quality_evidence.py`'s `_git_state` started a bare `git`, so the caller's `PATH`
 chose the binary. A local run with a shim first on `PATH` returned the shim's revision
 and state (source `audit`). Decision 0130's Limits named those two calls and a repair
-through `tools/exact_tree.py`; the measured extent is 17 starts in 6 files, and that owner fails
+through `tools/exact_tree.py`; the measured extent in non-test Python is 17 starts in 6 files, and that owner fails
 #451's import constraint, which keeps `tools/exact_tree.py` out of
 `tools/quality_evidence.py`'s import (source `leaf`).
 
@@ -75,8 +78,11 @@ through `tools/exact_tree.py`; the measured extent is 17 starts in 6 files, and 
 2. **`tools/exact_tree.py` consumes it** and keeps its own error mapping.
 3. **`_git_state` starts the trusted git** for both of its reads.
 4. **Decision 0130's `BAN-B607` Limit, corrected** (sources `route-i`, `sweep`). On `main`, the
-   non-test git starts that resolve on the caller's `PATH` are 17 in 6 files, not two. They
-   were found by a sweep of every start, not by a linter:
+   non-test Python git starts that resolve on the caller's `PATH` are 17 in 6 files, not two.
+   They were found by an AST sweep of every non-test `*.py` file, not by a linter, which
+   reads each call whose argv begins with the literal `git` and each `shutil.which("git")`.
+   It does not read shell scripts, the Python embedded in them, or workflow steps
+   (source `shell`):
    - the four `S607` literals, which lose their gating reader at the exit: `_git_state` ×2,
      `repository_scope`'s `_git_result`, and orientation's `_git_output`, whose child
      environment is built from `os.environ`;
@@ -104,7 +110,10 @@ through `tools/exact_tree.py`; the measured extent is 17 starts in 6 files, and 
     admitted path (`AGENTS.md`);
   - `tools/release_smoke.py`'s `_run` git starts and `tools/adoption_check.py`'s `_git`,
     which `verification.yml`'s installed-artifact adoption smoke runs (source `sweep`);
-  - the capsule pair, which already confines its lookup through its own `env` `PATH` (B4).
+  - the capsule pair, which already confines its lookup through its own `env` `PATH` (B4);
+  - the shell scripts outside the sweep that start git with the caller's `PATH`:
+    `ci/style`, `ci/build-runtime` and `ci/x3_conformance`, as the review found
+    (source `shell`). `ci/prepare-candidate` sets its own `PATH`.
 - **Until those land,** local collector runs use the trusted `PATH` (the owner's direction).
 - **The protected `ci/merge_admission_guard.py`** keeps its own statement of the lookup.
 
@@ -120,6 +129,6 @@ through `tools/exact_tree.py`; the measured extent is 17 starts in 6 files, and 
 
 - Non-test `S607` sites fall from six (the four literals above and the capsule pair) to
   four: the capsule pair, `tools/repository_scope.py` and orientation's `_git_output`.
-- Non-test git starts on the caller's `PATH` fall from 17 in 6 files to 15 in 5.
+- Non-test Python git starts on the caller's `PATH` fall from 17 in 6 files to 15 in 5.
 - **Rollback:** reverting this change restores the bare `git` starts; nothing else depends
   on the leaf.
