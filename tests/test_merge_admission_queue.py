@@ -81,6 +81,7 @@ GUARDS = frozenset(
         "test_a_moved_head_a_moved_main_or_changed_evidence_never_coalesces",
         "test_a_shared_head_never_coalesces",
         "test_a_guarded_manual_or_scheduled_request_never_coalesces",
+        "test_a_selection_that_names_no_event_never_coalesces",
         "test_an_unreadable_record_never_coalesces",
     }
 )
@@ -813,6 +814,40 @@ class SchedulingTests(unittest.TestCase):
                         _group(declaration, first),
                     )
 
+    def test_a_newer_routine_request_replaces_the_one_waiting(self) -> None:
+        """One routine request runs and one waits: a newer one replaces the one
+        waiting, so a burst never queues more than one follow-up, and nothing that
+        runs is cancelled."""
+        scheduler = self._scheduler()
+        for name, run in (("first", 1), ("second", 2), ("third", 3)):
+            scheduler.arrive(name, _woken(run, kind="pull_request_review"))
+        self.assertEqual(
+            (["first"], ["second"], ["third"]),
+            (scheduler.started, scheduler.cancelled, scheduler.waiting()),
+        )
+
+    def test_the_sweep_a_dispatch_or_a_manual_request_never_joins_routine_work(
+        self,
+    ) -> None:
+        """The sweep has one group of its own, and a guarded dispatch or a manual
+        request a group of its own run: none waits behind a pull request's routine
+        requests, or replaces one, or another of its kind."""
+        declaration = self.declaration
+        if declaration is None:
+            raise AssertionError("merge-admission.yml declares no concurrency")
+        routine = _group(declaration, _woken(1))
+        sweeps = {_group(declaration, _scheduled(run)) for run in (2, 3)}
+        self.assertEqual(1, len(sweeps))
+        self.assertNotIn(routine, sweeps)
+        for label, request in (("dispatch", _dispatched), ("manual", _manual)):
+            with self.subTest(request=label):
+                first, second = (
+                    _group(declaration, request(4)),
+                    _group(declaration, request(5)),
+                )
+                self.assertNotEqual(first, second)
+                self.assertNotIn(first, {routine, *sweeps})
+
     def _serialized(self, first: dict[str, Any], second: dict[str, Any]) -> bool:
         declared = self.declaration
         for context in (first, second):
@@ -950,6 +985,8 @@ class SelectionTests(unittest.TestCase):
             "a success under no verdict's id": [
                 _record(self.current, external_id="overtaken:41:1")
             ],
+            # A verdict's own id, for a DENY: only a success coalesces.
+            "a verdict's DENY": [_record(self.current, conclusion="failure")],
             "none": [],
         }
         for label, runs in records.items():
@@ -1027,6 +1064,18 @@ class SelectionTests(unittest.TestCase):
                         event_name=event_name,
                     ),
                 )
+
+    def test_a_selection_that_names_no_event_never_coalesces(self) -> None:
+        """Only an event run's selection is routine: one without `--event`, the
+        sweep's, never coalesces, whatever event the runner names."""
+        self.assertEqual(
+            (0, [{"pull_number": 300, "head": HEAD}]),
+            _select(
+                self._provider(_record(self.current)),
+                "--workflow-run-pulls-json",
+                "null",
+            ),
+        )
 
     def test_an_unreadable_record_never_coalesces(self) -> None:
         """Guard: a record that cannot be read, or reads back short of its count,
