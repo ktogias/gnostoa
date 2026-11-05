@@ -1718,15 +1718,22 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
                 False,
             ),
             ("a size that is not a number", _file_reply(size="5"), False),
-            # cubic on #480: the decoded bytes must be the declared size, which the
-            # bounds were spent on.
+            # cubic on #480: the decoded bytes must be the declared size. These two
+            # are far from it, so the encoded length refuses them before any decoding,
+            # and they spend no bytes (Claude on #480).
             ("more bytes than declared", _file_reply(size=3), False),
             ("fewer bytes than declared", _file_reply(size=_SCOPE_FILE_BYTES), False),
-            # One byte more than declared, in the same base64 block, so the encoded
-            # length matches and only the decoded size refuses it.
+            # One byte more or fewer than declared, in the same base64 block, so the
+            # encoded length matches and only the decoded size, which the bounds were
+            # spent on, refuses it.
             (
                 "one byte more than declared",
                 _file_reply(size=len(_SCOPE_SOURCE) - 1),
+                False,
+            ),
+            (
+                "one byte fewer than declared",
+                _file_reply(size=len(_SCOPE_SOURCE) + 1),
                 False,
             ),
             # cubic on #480: its true size, so only the UTF-8 decoding refuses it;
