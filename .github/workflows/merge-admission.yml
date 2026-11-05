@@ -37,7 +37,17 @@ on:
 # two jobs that hold its environment.
 permissions: {}
 
-# Admissions queue, one at a time, and none is cancelled, as the readback's do.
+# Admissions are scheduled per request, and none is cancelled once it runs (#407's
+# queue correction, Decision 0133). A routine request, the trigger's or verification's
+# completed run for a pull request's event, queues by its pull request, or by its head
+# when the run names none, as a fork's does: one runs and one waits, and a newer
+# request replaces the one waiting, so a burst ends in one evaluation of the newest
+# state. The sweep has a group of its own. Every other run has a group of its own run,
+# so it never waits behind routine work nor replaces it: a guarded merge's dispatch,
+# whose nonce binds its own record (G1); a manual request; a relayed comment, whose
+# pull request only its artifact names; and a run whose every job is skipped, such as
+# a comment the trigger skipped. Publication on one head is serialized by the lock the
+# `invalidate` and `admit` jobs hold.
 #
 # Every artifact handoff names its run attempt (Codex on #426): a re-run keeps the
 # workflow run and increments the attempt, and a name cannot be reused within a run,
@@ -46,9 +56,20 @@ permissions: {}
 # relay then writes nothing for a scheduled run, or records a dispatched run's
 # failure, and the next run recovers.
 concurrency:
-  group: gnostoa-merge-admission
+  group: >-
+    ${{ (github.event_name == 'schedule' && 'gnostoa-merge-admission-sweep')
+    || (github.event_name == 'workflow_run'
+    && github.ref == 'refs/heads/main'
+    && ((github.event.workflow_run.path == '.github/workflows/merge-admission-trigger.yml'
+    && github.event.workflow_run.conclusion == 'success'
+    && contains(fromJSON('["pull_request","pull_request_review","pull_request_review_comment"]'), github.event.workflow_run.event))
+    || (github.event.workflow_run.path == '.github/workflows/verification.yml'
+    && github.event.workflow_run.event == 'pull_request'))
+    && ((github.event.workflow_run.pull_requests[0].number
+    && format('gnostoa-merge-admission-pull-{0}', github.event.workflow_run.pull_requests[0].number))
+    || format('gnostoa-merge-admission-head-{0}', github.event.workflow_run.head_sha)))
+    || format('gnostoa-merge-admission-run-{0}', github.run_id) }}
   cancel-in-progress: false
-  queue: max
 
 jobs:
   subjects:
@@ -71,10 +92,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # `actions: read` downloads the comment event the trigger relayed, from its run.
+    # The pull request's reads, its checks and statuses included, rebuild its evidence
+    # for a routine request, to compare with the App's standing record (Decision 0133).
     permissions:
       contents: read
       pull-requests: read
       actions: read
+      issues: read
+      checks: read
+      statuses: read
     outputs:
       subjects: ${{ steps.subjects.outputs.subjects }}
       nonce: ${{ steps.subjects.outputs.nonce }}
@@ -116,10 +142,18 @@ jobs:
       # (github/docs#22501), so a pull request's event also names the trigger run's
       # head, and L1 adds every open pull request there. An event run never falls
       # back to the sweep (CodeAnt on #426).
+      #
+      # A routine request selects no subject whose state the pinned App's completed
+      # success at that head already binds, so that success keeps standing (Decision
+      # 0133). The App's id is public, so it is pinned here as a literal, as the
+      # actions are by digest: `gnostoa-ma0`'s, the value its publishing jobs read
+      # from their environment, which this job never joins (PAO on #407). A stale id
+      # finds no record, and every subject is then evaluated.
       - name: Select the subjects
         id: subjects
         env:
           GH_TOKEN: ${{ github.token }}
+          GNOSTOA_MA0_APP_ID: "5302326"
           WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
@@ -173,6 +207,13 @@ jobs:
       fail-fast: false
       matrix:
         subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
+    # One publication on a head at a time, whatever woke its run: this job and
+    # `admit` share the head's lock, and every one waiting keeps its place, so none
+    # is dropped and none is cancelled (Decision 0133).
+    concurrency:
+      group: gnostoa-merge-admission-publication-${{ matrix.subject.head }}
+      cancel-in-progress: false
+      queue: max
     environment: gnostoa-ma0
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -276,6 +317,11 @@ jobs:
       fail-fast: false
       matrix:
         subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
+    # The head's publication lock, `invalidate`'s (Decision 0133).
+    concurrency:
+      group: gnostoa-merge-admission-publication-${{ matrix.subject.head }}
+      cancel-in-progress: false
+      queue: max
     environment: gnostoa-ma0
     runs-on: ubuntu-latest
     timeout-minutes: 20

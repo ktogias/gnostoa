@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import functools
 import io
 import json
 import os
@@ -763,6 +764,54 @@ class SchedulingTests(unittest.TestCase):
         for label, (first, second) in pairings.items():
             with self.subTest(pairing=label):
                 self.assertTrue(self._serialized(first, second), label)
+
+    def test_only_a_routine_request_the_selection_admits_shares_a_group(self) -> None:
+        """A run whose `subjects` job is skipped, whatever its trigger's path, event
+        or conclusion, shares no group, so it can neither wait for nor replace a
+        request that evaluates; a routine request `subjects` admits shares its pull
+        request's group, except a relayed comment, whose pull request only its
+        artifact names. No run's group is a head's publication lock."""
+        condition = str(self.workflow["jobs"]["subjects"]["if"])
+        declaration = self.declaration
+        if declaration is None:
+            raise AssertionError("merge-admission.yml declares no concurrency")
+        lock = _declaration(self.workflow["jobs"]["admit"].get("concurrency"))
+        cases: dict[str, Callable[[int], dict[str, Any]]] = {}
+        for kind in (
+            "pull_request",
+            "pull_request_review",
+            "pull_request_review_comment",
+            "issue_comment",
+        ):
+            for conclusion in ("success", "failure", "skipped", "cancelled"):
+                cases[f"trigger {kind} {conclusion}"] = functools.partial(
+                    _woken, kind=kind, conclusion=conclusion
+                )
+        for conclusion in ("success", "failure"):
+            cases[f"verification pull_request {conclusion}"] = functools.partial(
+                _woken, kind="pull_request", path=VERIFICATION, conclusion=conclusion
+            )
+        cases["verification push"] = functools.partial(
+            _woken, kind="push", pull=None, head=REVISION, path=VERIFICATION
+        )
+        cases["another workflow"] = functools.partial(
+            _woken, kind="pull_request", path=".github/workflows/other.yml"
+        )
+        for label, woken in cases.items():
+            first, second = woken(1), woken(2)
+            admitted = _truthy(_Expression(condition, first).value())
+            trigger = first["github"]["event"]["workflow_run"]
+            relayed = trigger["event"] == "issue_comment"
+            with self.subTest(case=label):
+                self.assertEqual(
+                    admitted and not relayed,
+                    _group(declaration, first) == _group(declaration, second),
+                )
+                if lock is not None:
+                    self.assertNotEqual(
+                        _group(lock, _matrix(first, 300, HEAD)),
+                        _group(declaration, first),
+                    )
 
     def _serialized(self, first: dict[str, Any], second: dict[str, Any]) -> bool:
         declared = self.declaration
