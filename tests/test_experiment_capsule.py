@@ -27,6 +27,18 @@ from tools.capsule.spec import SpecError, load_spec
 IMAGE_B = "sha256:" + "b" * 64
 
 
+def _project_root(test: unittest.TestCase, outcome: execute.ExecutionResult) -> Path:
+    """The project root of `outcome`'s first run. A missing run, or a root that is not a
+    str, fails `test`."""
+    first_run = next(iter(outcome.runs.values()), None)
+    if first_run is None:
+        test.fail("the outcome must hold a run")
+    root = first_run["project_root"]
+    if not isinstance(root, str):
+        test.fail("root must be a str")
+    return Path(root)
+
+
 class SpecContractTests(CapsuleFixture):
     def test_unknown_schema_is_rejected_rather_than_guessed(self) -> None:
         path = self.write_spec({"schema": "nope/v9", "experiment": {}, "tasks": []})
@@ -1089,13 +1101,7 @@ class LockExecutionTests(CapsuleFixture):
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        first_run = next(iter(outcome.runs.values()), None)
-        if first_run is None:
-            self.fail("outcome must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, outcome)
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
 
     # #389 F3 S2 A (S2-A3-01/02, Router 6297725852): the execution capsule is the
@@ -1117,13 +1123,7 @@ class LockExecutionTests(CapsuleFixture):
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        first_run = next(iter(outcome.runs.values()), None)
-        if first_run is None:
-            self.fail("outcome must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, outcome)
         self.assertTrue(
             (project / "src/pkg/__init__.py").is_file(),
             "the source repository's metadata dropped a tracked file",
@@ -1141,13 +1141,7 @@ class LockExecutionTests(CapsuleFixture):
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        first_run = next(iter(first.runs.values()), None)
-        if first_run is None:
-            self.fail("first must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, first)
         (project / "run-output.log").write_text("made by a previous run\n")
         again = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
@@ -1161,13 +1155,7 @@ class LockExecutionTests(CapsuleFixture):
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        first_run = next(iter(first.runs.values()), None)
-        if first_run is None:
-            self.fail("first must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, first)
         (project / "src/pkg/__init__.py").write_text("tampered = True\n")
         again = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
@@ -1196,13 +1184,7 @@ class LockExecutionTests(CapsuleFixture):
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        first_run = next(iter(outcome.runs.values()), None)
-        if first_run is None:
-            self.fail("outcome must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, outcome)
         self.assertFalse(
             (project / "conftest.py").exists(), "harness is qualification-only"
         )
@@ -1670,13 +1652,7 @@ class PreparedExecutionCapsuleTests(CapsuleFixture):
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        first_run = next(iter(outcome.runs.values()), None)
-        if first_run is None:
-            self.fail("outcome must hold a run")
-        root = first_run["project_root"]
-        if not isinstance(root, str):
-            self.fail("root must be a str")
-        project = Path(root)
+        project = _project_root(self, outcome)
         generated = project / "src/pkg/_version.py"
         self.assertTrue(
             generated.is_file(),

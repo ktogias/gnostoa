@@ -105,7 +105,9 @@ def committed_generation(fixture: ProtocolFixture) -> int | None:
     return generation
 
 
-def authorised_candidate(fixture: ProtocolFixture) -> Any:
+def authorised_candidate(
+    fixture: ProtocolFixture,
+) -> authority_module.PreflightAuthority:
     return fixture.consumption_authority(prepared_candidate(fixture))
 
 
