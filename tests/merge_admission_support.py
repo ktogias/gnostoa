@@ -112,6 +112,7 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         "closing_references": {"coverage": "COMPLETE", "found": []},
         "suppressions": {"coverage": "COMPLETE", "found": []},
         "trust_root_changes": {"coverage": "COMPLETE", "paths": []},
+        "analyzer_retired": [{"provider": "deepsource", "decision": "0130"}],
         "analyzer_findings": {"coverage": "COMPLETE", "findings": []},
         "receipts": [_receipt(exact, ["fast", "smoke"])],
     }

@@ -1,0 +1,28 @@
+"""The repository's trusted executable lookup (AGENTS.md): the one search path a tool
+starts a named executable from, never the caller's PATH (#389 B1).
+
+It imports only the standard library, so that a module importing it keeps its own
+import-time requirements. The protected ci/merge_admission_guard.py states the same lookup
+itself."""
+
+from __future__ import annotations
+
+import errno
+import os
+import shutil
+
+TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+
+def trusted_executable(name: str) -> str:
+    """The absolute path of the bare `name` on TRUSTED_PATH. It is refused as
+    FileNotFoundError when it is not there, or when `name` has a directory part, which
+    shutil.which would check as a path; each caller's own OSError handling applies."""
+    if not name or os.path.basename(name) != name:
+        raise FileNotFoundError(
+            errno.ENOENT, "not a bare name on the trusted lookup", name
+        )
+    found = shutil.which(name, path=TRUSTED_PATH)
+    if found is None or not os.path.isabs(found):
+        raise FileNotFoundError(errno.ENOENT, "not on the trusted lookup", name)
+    return found

@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import IO, Protocol
 
 from tools import bounded_process
+from tools.trusted_path import TRUSTED_PATH, trusted_executable
 
 DEFAULT_SECONDS = 600.0
 DEFAULT_MAX_FILES = 200_000
@@ -74,12 +75,10 @@ _RECORD_FORMAT = re.compile(
     + r" ([0-9a-f]{40}|[0-9a-f]{64}) (0|[1-9][0-9]{0,19}) (0|[1-9][0-9]{0,19})\n"
 )
 _RECORD_BYTES = 256
-# The repository's trusted executable lookup (AGENTS.md, ci/prepare-candidate).
-_TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 # Built here, never inherited: no caller GIT_DIR, index, config, attribute source or
 # replacement object reaches a child (S2-A3-01).
 _GIT_ENV = {
-    "PATH": _TRUSTED_PATH,
+    "PATH": TRUSTED_PATH,
     "LC_ALL": "C",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -169,10 +168,10 @@ def _filesystem(exc: OSError) -> ExactTreeError:
 
 
 def _git_executable() -> str:
-    found = shutil.which("git", path=_TRUSTED_PATH)
-    if found is None or not os.path.isabs(found):
-        raise ExactTreeError("git-failed", "git is not on the trusted lookup")
-    return found
+    try:
+        return trusted_executable("git")
+    except FileNotFoundError as exc:
+        raise ExactTreeError("git-failed", "git is not on the trusted lookup") from exc
 
 
 def _git(

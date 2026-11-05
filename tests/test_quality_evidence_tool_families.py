@@ -60,13 +60,21 @@ class ToolFamilyProfileTests(_ToolFamilyFixture):
         rows = self._rows(self._collect(base=self.base))
         self.assertEqual(set(_NEW_FAMILIES), set(rows))
 
-    def test_the_protected_profile_declares_every_new_family_inactive(self) -> None:
+    def test_the_protected_profile_activates_four_families_and_keeps_two_inactive(
+        self,
+    ) -> None:
+        """Decision 0130 item 4: the aspects DeepSource's shell analyzer and its FULL
+        reads covered keep a gate. Docker waits for #477's repairs, and secrets for
+        F-a (Strategy A, 6587559616)."""
         profile = self.module.load_diagnostic_profile()
         families = {f["id"]: f for f in profile["families"]}
+        inactive = {"dockerfile-lint", "secrets"}
         for family in _NEW_FAMILIES:
             with self.subTest(family=family):
                 self.assertIn(family, families)
-                self.assertIs(False, families[family].get("active"))
+                self.assertIs(
+                    family not in inactive, families[family].get("active", True)
+                )
         self.assertIn("tools", profile)
         for name in ("shellcheck", "hadolint", "actionlint"):
             with self.subTest(tool=name):

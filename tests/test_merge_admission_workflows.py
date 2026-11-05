@@ -146,10 +146,9 @@ READBACK_CALL = "./.github/workflows/analyzer-readback.yml"
 # workflow's environment secrets resolve to an empty string unless its caller passes
 # each by name (GitHub, "Reuse workflows", read 2026-10-13; #407 6151068319), so the
 # call forwards exactly these, each by its own name, and never `inherit` (#407
-# 6154772083).
-ANALYZER_SECRETS = frozenset(
-    {"DEEPSOURCE_API_TOKEN", "CODACY_API_TOKEN", "SONAR_TOKEN"}
-)
+# 6154772083). DeepSource's is not among them: it is retired as merge evidence
+# (Decision 0130).
+ANALYZER_SECRETS = frozenset({"CODACY_API_TOKEN", "SONAR_TOKEN"})
 
 
 def _selector(name: str) -> str:
@@ -966,7 +965,7 @@ class ReadbackCallTests(unittest.TestCase):
             ),
             "one missing": (forwarding(SONAR_TOKEN=None), callee),
             "a wrong selector": (
-                forwarding(DEEPSOURCE_API_TOKEN=_selector("CODACY_API_TOKEN")),
+                forwarding(SONAR_TOKEN=_selector("CODACY_API_TOKEN")),
                 callee,
             ),
             "an extra secret": (
@@ -986,7 +985,7 @@ class ReadbackCallTests(unittest.TestCase):
             "a requirement unset": (caller, declaring(SONAR_TOKEN={})),
             "a requirement as text": (
                 caller,
-                declaring(DEEPSOURCE_API_TOKEN={"required": "true"}),
+                declaring(CODACY_API_TOKEN={"required": "true"}),
             ),
             "an undeclared read": (caller, reading),
         }

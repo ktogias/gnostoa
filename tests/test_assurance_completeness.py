@@ -714,34 +714,21 @@ class GnostoaDeclarationTests(unittest.TestCase):
                 "verification-checks",
                 "codeql",
                 "analyzer-readback",
-                "deepsource-readback",
                 "project-risk-readback",
                 "sonarcloud",
             },
             set(requirements),
         )
         merging = sorted(CHANGE_CLASSES - {"emergency"})
-        # Every merging class collects every requirement but two: DeepSource's
-        # readbacks are every class's but NORMAL's, and the project's inventory is
-        # NORMAL's alone (#389 A0-MP1 slice 3, 6381812211 section C).
-        classes = {
-            "deepsource-readback": sorted(set(merging) - {"normal"}),
-            "project-risk-readback": ["normal"],
-        }
+        # Every merging class collects every requirement: DeepSource is retired as
+        # merge evidence, and the project's inventory is every class's (Decision 0130).
         for requirement in requirements.values():
             with self.subTest(requirement=requirement["id"]):
-                self.assertEqual(
-                    classes.get(requirement["id"], merging),
-                    sorted(requirement["applies_to"]),
-                )
+                self.assertEqual(merging, sorted(requirement["applies_to"]))
         # Every requirement's items, so none can drift to another name (cubic on
         # #408); the verification checks are bound to R-main in the merge-gate test.
         self.assertEqual(["codeql"], requirements["codeql"]["coverage"])
         self.assertEqual(["codacy"], requirements["analyzer-readback"]["coverage"])
-        self.assertEqual(
-            ["deepsource-diff", "deepsource-full"],
-            requirements["deepsource-readback"]["coverage"],
-        )
         self.assertEqual(
             ["project-diff", "project-full"],
             requirements["project-risk-readback"]["coverage"],
@@ -795,40 +782,36 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
     6157776894): green before #389 F1 and after it."""
 
     def test_today_a_vendor_that_cannot_analyse_holds_gnostoa(self) -> None:
-        """#430: DeepSource's quota was exhausted, both of its readbacks were
-        INCOMPLETE, and every other item was complete. Under section C's split
-        (#389 A0-MP1 slice 3, 6381812211), every class but NORMAL still holds;
-        NORMAL no longer collects DeepSource, so the project's own complete
-        inventory gives it its claims."""
+        """#430's DeepSource quota no longer holds any class: DeepSource is retired
+        as merge evidence, and every class is complete on its declared items
+        (Decision 0130). A vendor that is still declared still holds every class
+        when it cannot analyse, as DeepSource did then: Codacy's read INCOMPLETE,
+        every other item complete."""
         declaration = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
-        down = {
-            ("deepsource-readback", "deepsource-diff"): "INCOMPLETE",
-            ("deepsource-readback", "deepsource-full"): "INCOMPLETE",
-        }
         for change_class in MERGING_CLASSES:
             with self.subTest(change_class=change_class):
                 verdict = assurance_completeness.evaluate(
                     declaration,
                     subject=SUBJECT,
                     change_class=change_class,
+                    receipts=_live_receipts({}),
+                )
+                self.assertEqual("COMPLETE", verdict["status"])
+                self.assertNotIn(
+                    "deepsource-readback", [r["id"] for r in verdict["requirements"]]
+                )
+                down = {("analyzer-readback", "codacy"): "INCOMPLETE"}
+                verdict = assurance_completeness.evaluate(
+                    declaration,
+                    subject=SUBJECT,
+                    change_class=change_class,
                     receipts=_live_receipts(down),
                 )
-                self.assertEqual(
-                    {"codacy": "COMPLETE"}, _items(verdict, "analyzer-readback")
-                )
-                if change_class == "normal":
-                    self.assertEqual("COMPLETE", verdict["status"])
-                    self.assertNotIn(
-                        "deepsource-readback",
-                        [r["id"] for r in verdict["requirements"]],
-                    )
-                    continue
                 self.assertEqual("INCOMPLETE", verdict["status"])
                 self.assertEqual(
-                    {"deepsource-diff": "INCOMPLETE", "deepsource-full": "INCOMPLETE"},
-                    _items(verdict, "deepsource-readback"),
+                    {"codacy": "INCOMPLETE"}, _items(verdict, "analyzer-readback")
                 )
 
     def test_a_1_0_declaration_holds_whenever_a_declared_item_is_not_complete(
@@ -925,11 +908,10 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
         F2's migration must keep green (the Router's disposition, #389
         6158642620), and the other 1.0 tests pin the rest of the verdict.
 
-        Section C's split (#389 A0-MP1 slice 3, 6381812211) keeps it for every
-        class but NORMAL, with DeepSource's receipts under their own requirement.
-        NORMAL diverges by design: it no longer collects DeepSource, so with the
-        project's inventory complete it gets 1.0's verdict as if DeepSource were
-        complete."""
+        Every class diverges by design, as NORMAL already did under section C's
+        split (#389 A0-MP1 slice 3, 6381812211): DeepSource is retired as merge
+        evidence (Decision 0130), so with the project's inventory complete each
+        class gets 1.0's verdict as if DeepSource were complete."""
         baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
         current = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
@@ -944,14 +926,8 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
             ("analyzer-readback", "deepsource-full"),
         }
 
-        def moved(receipt: dict[str, Any]) -> dict[str, Any]:
-            if (receipt["requirement"], receipt["coverage"][0]) in deepsource:
-                return {
-                    **receipt,
-                    "requirement": "deepsource-readback",
-                    "producer": "deepsource-readback-producer",
-                }
-            return receipt
+        def collected(receipt: dict[str, Any]) -> bool:
+            return (receipt["requirement"], receipt["coverage"][0]) not in deepsource
 
         project = [
             _receipt("project-risk-readback", [item])
@@ -977,15 +953,13 @@ class MissingVendorCharacterizationTests(unittest.TestCase):
                     baseline,
                     subject=SUBJECT,
                     change_class=change_class,
-                    receipts=ignoring_deepsource
-                    if change_class == "normal"
-                    else receipts,
+                    receipts=ignoring_deepsource,
                 )["status"]
                 got = assurance_completeness.evaluate(
                     current,
                     subject=SUBJECT,
                     change_class=change_class,
-                    receipts=[*map(moved, receipts), *project],
+                    receipts=[*filter(collected, receipts), *project],
                 )["status"]
                 if expected != got:
                     wrong.append((change_class, sorted(down), expected, got))
@@ -1449,9 +1423,9 @@ class ClaimDeclarationTests(unittest.TestCase):
 
 class GnostoaClaimsTests(unittest.TestCase):
     def test_gnostoa_declares_each_item_s_failure_domain(self) -> None:
-        """#389 F1: GitHub's checks and CodeQL share GitHub, and DeepSource's
-        diff and full reads are one domain (R2, R9). No substitute is qualified
-        yet (6157839931), so each item is its own claim. The project's own
+        """#389 F1: GitHub's checks and CodeQL share GitHub (R2, R9); DeepSource, whose
+        diff and full reads were one domain, is retired (Decision 0130). Each item is
+        its own claim (6157839931). The project's own
         inventory runs on GitHub's Actions, so it shares GitHub's domain (#389
         A0-MP1 slice 3, 6381812211 section C)."""
         declaration = assurance_completeness.load_declaration(
@@ -1470,8 +1444,6 @@ class GnostoaClaimsTests(unittest.TestCase):
                 ("verification-checks", "regression"): "github",
                 ("verification-checks", "smoke"): "github",
                 ("codeql", "codeql"): "github",
-                ("deepsource-readback", "deepsource-diff"): "deepsource",
-                ("deepsource-readback", "deepsource-full"): "deepsource",
                 ("analyzer-readback", "codacy"): "codacy",
                 ("project-risk-readback", "project-diff"): "github",
                 ("project-risk-readback", "project-full"): "github",
@@ -1486,8 +1458,8 @@ class GnostoaClaimsTests(unittest.TestCase):
             for evidence in claim["evidence"]
         )
         self.assertEqual(sorted(domains), supported)
-        # Each claim is required in exactly its requirement's classes: DeepSource's in
-        # every class but NORMAL, the project's in NORMAL alone, the rest in all.
+        # Each claim is required in exactly its requirement's classes: since Decision
+        # 0130, every merging class's.
         applies = {r["id"]: r["applies_to"] for r in declaration["requirements"]}
         for claim in declaration["claims"]:
             with self.subTest(claim=claim["id"]):
