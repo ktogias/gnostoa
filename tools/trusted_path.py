@@ -15,8 +15,13 @@ TRUSTED_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 
 
 def trusted_executable(name: str) -> str:
-    """The absolute path of `name` on TRUSTED_PATH. It is refused as FileNotFoundError
-    when it is not there, so that each caller's own OSError handling names it."""
+    """The absolute path of the bare `name` on TRUSTED_PATH. It is refused as
+    FileNotFoundError when it is not there, or when `name` has a directory part, which
+    shutil.which would check as a path; each caller's own OSError handling applies."""
+    if not name or os.path.basename(name) != name:
+        raise FileNotFoundError(
+            errno.ENOENT, "not a bare name on the trusted lookup", name
+        )
     found = shutil.which(name, path=TRUSTED_PATH)
     if found is None or not os.path.isabs(found):
         raise FileNotFoundError(errno.ENOENT, "not on the trusted lookup", name)

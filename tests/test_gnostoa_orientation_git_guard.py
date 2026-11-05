@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from tools.trusted_path import TRUSTED_PATH
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
     "gnostoa_self_orientation_git_guard", ROOT / "tasks/gnostoa_orientation.py"
@@ -194,9 +196,7 @@ class OrientationGitGuardTests(unittest.TestCase):
         # The trusted absolute git, never the caller's PATH (#389 B1).
         self.assertEqual(
             [
-                shutil.which(
-                    "git", path="/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
-                ),
+                shutil.which("git", path=TRUSTED_PATH),
                 "-c",
                 f"safe.directory={root}",
                 "-C",

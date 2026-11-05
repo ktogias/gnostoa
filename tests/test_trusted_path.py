@@ -14,7 +14,8 @@ import shutil
 import sys
 import tempfile
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -35,7 +36,8 @@ SINGLE_FILE = ("tools/candidate_prepare.py", "tasks/gnostoa_orientation.py")
 def _load(name: str, relative: str) -> ModuleType:
     """A fresh copy of `relative`, executed from its own file, registered while it runs."""
     spec = importlib.util.spec_from_file_location(name, ROOT / relative)
-    assert spec is not None and spec.loader is not None
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {relative}")
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, {name: module}):
         spec.loader.exec_module(module)
@@ -64,37 +66,39 @@ def _original(module: object, name: str) -> Any:
 orientation = _load("gnostoa_orientation_trusted_path", "tasks/gnostoa_orientation.py")
 
 
-class _Shadow:
-    """A directory first on the caller's PATH holding an executable named git, which no trusted start may run."""
-
-    def __enter__(self) -> Path:
-        self._dir = tempfile.TemporaryDirectory()
-        root = Path(self._dir.name)
-        fake = root / "git"
+@contextmanager
+def _shadow(name: str = "git") -> Iterator[Path]:
+    """A directory first on the caller's PATH holding an executable `name`, which no trusted start may run."""
+    with tempfile.TemporaryDirectory() as directory:
+        fake = Path(directory) / name
         fake.write_text("#!/bin/sh\nexit 97\n", encoding="utf-8")
         fake.chmod(0o755)
-        self._env = patch.dict(
-            os.environ, {"PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}"}
-        )
-        self._env.start()
-        return fake
-
-    def __exit__(self, *_exc: object) -> None:
-        self._env.stop()
-        self._dir.cleanup()
+        path = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
+        with patch.dict(os.environ, {"PATH": path}):
+            yield fake
 
 
 class TrustedPathTests(unittest.TestCase):
     def test_it_resolves_on_the_trusted_lookup_only(self) -> None:
-        with _Shadow() as fake:
+        with _shadow() as fake:
             found = _leaf().trusted_executable("git")
         self.assertEqual(shutil.which("git", path=TRUSTED), found)
         self.assertTrue(os.path.isabs(found))
         self.assertNotEqual(str(fake), found)
 
     def test_an_executable_off_the_trusted_lookup_is_refused(self) -> None:
-        with _Shadow(), self.assertRaises(FileNotFoundError):
-            _leaf().trusted_executable("gnostoa-not-an-executable")
+        # Planted first on the caller's PATH, so a lookup there would find it.
+        with _shadow("gnostoa-not-an-executable") as fake:
+            self.assertEqual(str(fake), shutil.which(fake.name))
+            with self.assertRaises(FileNotFoundError):
+                _leaf().trusted_executable(fake.name)
+
+    def test_a_path_qualified_name_is_refused_unsearched(self) -> None:
+        # A name with a directory part is never checked as a path (cubic, Sourcery).
+        with _shadow() as fake:
+            for name in (str(fake), f"./{fake.name}", f"sub/{fake.name}", ""):
+                with self.subTest(name=name), self.assertRaises(FileNotFoundError):
+                    _leaf().trusted_executable(name)
 
     def test_the_lookup_is_the_one_agents_md_states(self) -> None:
         leaf = _leaf()
@@ -157,7 +161,7 @@ class SitesStartTheTrustedGitTests(unittest.TestCase):
                 )
             raise OSError("stop at this child")
 
-        with _Shadow(), patch("subprocess.run", side_effect=capture):
+        with _shadow(), patch("subprocess.run", side_effect=capture):
             try:
                 call()
             except refused:
@@ -182,7 +186,7 @@ class SitesStartTheTrustedGitTests(unittest.TestCase):
         # Its second start, reached once the revision read has answered.
         git_state = _original(quality_evidence, "_git_state")
         with tempfile.TemporaryDirectory() as root:
-            _, second = self._first_argvs(lambda: git_state(Path(root)), answered=1)
+            second = self._first_argvs(lambda: git_state(Path(root)), answered=1)[1]
         self._assert_trusted(second)
 
     def test_the_orientation_subject_read(self) -> None:

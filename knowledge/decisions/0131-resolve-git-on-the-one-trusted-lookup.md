@@ -61,15 +61,21 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
 ## Decision
 
 1. **`tools/trusted_path.py` owns the lookup:** `TRUSTED_PATH` and
-   `trusted_executable(name)`, which returns the absolute path on it or raises
-   `FileNotFoundError`, so each caller's own `OSError` handling names the failure. It
-   imports only the standard library.
+   `trusted_executable(name)`, which returns the absolute path of a bare name on it or
+   raises `FileNotFoundError`. A name with a directory part is refused, never checked as
+   a path. Each caller's own `OSError` handling applies: `tools/exact_tree.py` refuses it
+   as `git-failed`, orientation as its `OrientationError`, and `_git_state` keeps its
+   existing unbound state. It imports only the standard library.
 2. **`tools/exact_tree.py` consumes it** and keeps its own error mapping.
 3. **`_git_state` starts the trusted git** for both of its reads.
 4. **The self-only `tasks/gnostoa_orientation.py` keeps a pinned copy,** since it imports
    no `tools/` module; a test pins the copy to the leaf's.
 5. **Decision 0130's `BAN-B607` Limit, corrected** (source `route-i`): the partial-path
-   lookups that lose a gating reader at the exit are five, not two; their owner is this
+   lookups that lose a gating reader at the exit are five, not two: the four `S607`
+   literals (`_git_state` ×2, `repository_scope`'s `_git_result`, orientation's
+   `_git_output`) and `candidate_prepare`'s `shutil.which("git")`, which is no `S607`
+   literal. The two capsule `S607` sites are not among them: their own `env` `PATH`
+   already confines them. Their owner is this
    leaf, not `tools/exact_tree.py`. This change closes three: `_git_state` ×2 and
    orientation's `_git_output`.
 
@@ -97,7 +103,7 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
 
 ## Consequences
 
-- Non-test `S607` sites fall from six to three: the capsule pair and
-  `tools/repository_scope.py`.
+- Non-test `S607` sites fall from six (the four literals above and the capsule pair) to
+  three: the capsule pair and `tools/repository_scope.py`.
 - **Rollback:** reverting this change restores the bare `git` starts; nothing else depends
   on the leaf.
