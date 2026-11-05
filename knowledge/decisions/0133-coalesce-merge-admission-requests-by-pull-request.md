@@ -75,10 +75,21 @@ those windows. A guarded dispatch could wait longer than the guard's own deadlin
    holds the two together.
 3. **Publication on one head is serialized.** `invalidate` and `admit` share one job-level lock
    keyed by the head, `gnostoa-merge-admission-publication-<head>`, with `queue: max` and
-   `cancel-in-progress: false`. Two publications on one head never overlap, and none is dropped.
-   The relay's rules for an overtaken or superseded run decide between runs as before.
-4. **An equivalent routine request is skipped before anything is written.** L1's subject
-   selection drops a routine request's subject when the pinned App's latest record at its head
+   `cancel-in-progress: false`. Two publications on one head never overlap, and none is
+   cancelled while fewer than GitHub's 100 wait for the lock; past that, GitHub cancels the
+   excess, and the sweep re-evaluates the head. The lock covers each job, not the run, so
+   another run may act on the head between this run's `invalidate` and its `admit`. The relay
+   already decides between such runs, fail-closed, as before:
+   - `publish` completes its pending run only while it is the App's latest;
+   - a success is written only over the run it observed at `invalidate`;
+   - a dispatched run that is overtaken records a failure, which the guard refuses at once.
+
+   The cost is a fresh evaluation, never a merge (`test_an_older_worker_never_restores_a_success`,
+   `test_a_newer_run_s_success_stands_over_an_older_worker`,
+   `test_an_overtaken_dispatched_success_still_leaves_a_failure_record`).
+4. **An equivalent request is skipped before anything is written.** L1's subject selection
+   drops the subject of a request woken by a completed workflow run when the pinned App's
+   latest record at its head
    is a completed authoritative success. Authoritative means its external id is a verdict's
    digest, not a pending, superseded, overtaken or incomplete run's. The record must also show
    all of the following:
@@ -90,9 +101,11 @@ those windows. A guarded dispatch could wait longer than the guard's own deadlin
    `not_a_success`, `recorded_digest`, `changed`, `not_alone`, `open_population` and
    `unbundled_evidence`, composed by `equivalent`. The guard refuses with their reasons
    unchanged. The commit alone never proves equivalence. A missing, unreadable or short record
-   never does either: the subject is then evaluated. A request is routine only for a
-   `workflow_run` event run (`GITHUB_EVENT_NAME`), so the sweep, manual requests and guarded
-   dispatches are never skipped this way. A DENY is never coalesced.
+   never does either: the subject is then evaluated. The skip applies only to a request woken
+   by a completed workflow run (`GITHUB_EVENT_NAME` `workflow_run`), a relayed comment's
+   included: item 1's routine requests and the relayed comments that item 2 queues apart. The
+   sweep, manual requests and guarded dispatches are never skipped this way. A DENY is never
+   coalesced.
 5. **The `subjects` job stays outside `gnostoa-ma0`** (source `pao`). Its selection step reads
    the pinned App's id as a literal, `GNOSTOA_MA0_APP_ID: "5302326"`. That is the value the
    publishing jobs read from their environment, and the one the App's published runs carry. A
@@ -114,9 +127,12 @@ those windows. A guarded dispatch could wait longer than the guard's own deadlin
   158 of #478's saved trigger runs. So a push starts a new group, and a request woken at the
   old head does not wait for one at the new head. Both evaluate the pull request's current
   head, and the head's lock serializes their publication.
-- **A relayed comment is never coalesced.** Its pull request is unknown when the run is
-  scheduled, so each successful relay evaluates in a group of its own. The equivalence skip
-  still applies to it.
+- **A relayed comment is never queued with routine requests.** Its pull request is unknown
+  when the run is scheduled, so each successful relay evaluates in a group of its own. The
+  equivalence skip still applies to it. A comment that changes nothing material, such as the
+  seal repeated for the same head, writes nothing. One that does, such as a new head's seal or
+  its removal, changes the evidence's declared candidate, and with it the digest, so it is
+  evaluated.
 - **The guard's deadline does not count a wait for the head's lock.** A dispatched run's
   `invalidate` or `admit` can wait behind another run's on the same head. Each run ahead holds
   the lock for at most its job's own limit, but the wait is not part of the 75-minute critical

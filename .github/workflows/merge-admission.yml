@@ -208,8 +208,11 @@ jobs:
       matrix:
         subject: ${{ fromJSON(needs.subjects.outputs.subjects) }}
     # One publication on a head at a time, whatever woke its run: this job and
-    # `admit` share the head's lock, and every one waiting keeps its place, so none
-    # is dropped and none is cancelled (Decision 0133).
+    # `admit` share the head's lock, and every one waiting keeps its place, up to
+    # GitHub's 100 waiting per group, past which GitHub cancels the excess and the sweep
+    # re-evaluates. The lock is the job's, not the run's: another run can act on the
+    # head between this job and `admit`, and the relay's own checks keep that
+    # fail-closed (Decision 0133).
     concurrency:
       group: gnostoa-merge-admission-publication-${{ matrix.subject.head }}
       cancel-in-progress: false
