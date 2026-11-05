@@ -42,6 +42,7 @@ import copy
 import functools
 import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -118,7 +119,7 @@ def _tokens(text: str) -> list[tuple[str, str]]:
 
 def _truthy(value: object) -> bool:
     return value not in (None, False, 0, "") and not (
-        isinstance(value, float) and value != value
+        isinstance(value, float) and math.isnan(value)
     )
 
 
@@ -402,7 +403,11 @@ class _Scheduler:
         waiting.append(name)
 
     def finish(self, name: str) -> None:
-        group = next(g for g, running in self.running.items() if running == name)
+        group = next(
+            (g for g, running in self.running.items() if running == name), None
+        )
+        if group is None:
+            raise AssertionError(f"the model has no running {name}")
         del self.running[group]
         waiting = self.pending.get(group, [])
         if waiting:
@@ -933,7 +938,8 @@ class SelectionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.current = _state_digest(_replies())
 
-    def _provider(self, *records: dict[str, Any], head: str = HEAD) -> _Provider:
+    @staticmethod
+    def _provider(*records: dict[str, Any], head: str = HEAD) -> _Provider:
         provider = _Provider(_replies())
         provider.records[head] = list(records)
         return provider
@@ -1029,8 +1035,11 @@ class SelectionTests(unittest.TestCase):
         provider = self._provider(_record(self.current))
         replies = _replies()
         pull = replies[f"{API}/pulls/300"][0]
-        peer = {**copy.deepcopy(pull), "number": 301}
-        peer["html_url"] = "https://github.com/ktogias/gnostoa/pull/301"
+        peer = {
+            **copy.deepcopy(pull),
+            "number": 301,
+            "html_url": "https://github.com/ktogias/gnostoa/pull/301",
+        }
         replies[LISTING] = ([copy.deepcopy(pull), peer], {})
         provider.refresh(replies)
         self.assertEqual((0, [{"pull_number": 300, "head": HEAD}]), _select(provider))
