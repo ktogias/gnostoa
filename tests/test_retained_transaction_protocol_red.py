@@ -77,23 +77,11 @@ def _receipt(task_id: str, bound: dict[str, str]) -> qualification.Qualification
 
 
 class ProtocolFixture(ConsumptionFixture):
-    def committed_generation(self) -> int | None:
-        path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
-        if not path.is_file():
-            return None
-        payload: dict[str, Any] = json.loads(path.read_text())
-        generation = payload["generation"]
-        assert isinstance(generation, int)
-        return generation
-
     def prepared_candidate(self) -> str:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         return candidate
-
-    def authorised_candidate(self) -> Any:
-        return self.consumption_authority(self.prepared_candidate())
 
     @staticmethod
     def second_approval(candidate: str) -> authority_module.PreflightAuthority:
@@ -105,12 +93,27 @@ class ProtocolFixture(ConsumptionFixture):
             preflight_candidate_sha256=candidate,
         )
 
-    def retained_reservation(self) -> dict[str, Any] | None:
-        path = self.workspace / retained_commit.RESERVATION_FILENAME
-        if not path.is_file():
-            return None
-        payload: dict[str, Any] = json.loads(path.read_text())
-        return payload
+
+def committed_generation(fixture: ProtocolFixture) -> int | None:
+    path = fixture.workspace / retained_commit.COMMIT_RECORD_FILENAME
+    if not path.is_file():
+        return None
+    payload: dict[str, Any] = json.loads(path.read_text())
+    generation = payload["generation"]
+    assert isinstance(generation, int)
+    return generation
+
+
+def authorised_candidate(fixture: ProtocolFixture) -> Any:
+    return fixture.consumption_authority(fixture.prepared_candidate())
+
+
+def retained_reservation(fixture: ProtocolFixture) -> dict[str, Any] | None:
+    path = fixture.workspace / retained_commit.RESERVATION_FILENAME
+    if not path.is_file():
+        return None
+    payload: dict[str, Any] = json.loads(path.read_text())
+    return payload
 
 
 class ReservationAtomicityTests(ProtocolFixture):
@@ -123,7 +126,7 @@ class ReservationAtomicityTests(ProtocolFixture):
         blindly afterwards is anchored to a snapshot that no longer exists, and its
         holder then skips the stale-snapshot check on the strength of holding it.
         """
-        authority = self.authorised_candidate()
+        authority = authorised_candidate(self)
         intervened: list[str] = []
         observed_pairs: list[tuple[str | None, str | None]] = []
 
@@ -203,7 +206,7 @@ class ForwardRecoveryTests(ProtocolFixture):
         again. An identical authorised caller must be able to complete that
         transaction from what was staged, opening no new effect.
         """
-        authority = self.authorised_candidate()
+        authority = authorised_candidate(self)
         effects: list[str] = []
 
         def qualify(*args: object, **kwargs: object) -> Any:
@@ -260,7 +263,7 @@ class CommitRecordProvenanceTests(ProtocolFixture):
         transaction model unless the canonical state itself says it was written
         under one.
         """
-        authority = self.authorised_candidate()
+        authority = authorised_candidate(self)
         with mock.patch.object(
             compiler,
             "qualify_subjects",
@@ -333,7 +336,7 @@ class SingleCommittedTransactionTests(ProtocolFixture):
         Asserting equal locks and equal receipts cannot see that; asserting how many
         times the committed state advanced can.
         """
-        authority = self.authorised_candidate()
+        authority = authorised_candidate(self)
 
         owner_in_effect = threading.Event()
         waiter_observed_owner = threading.Event()
@@ -375,7 +378,7 @@ class SingleCommittedTransactionTests(ProtocolFixture):
             return _receipt(task_id, dict(bound))
 
         shared_spec = self._spec()
-        before = self.committed_generation()
+        before = committed_generation(self)
         self.assertIsNotNone(before)
         assert before is not None
 
@@ -433,7 +436,7 @@ class SingleCommittedTransactionTests(ProtocolFixture):
         )
 
         self.assertEqual(
-            self.committed_generation(),
+            committed_generation(self),
             before + 1,
             "an identical authorised pair must advance the committed state exactly "
             "once; a waiter that republishes identical content under its own "
@@ -562,7 +565,7 @@ class ReservationRaceGapTests(ProtocolFixture):
                 "identical to",
             )
             # Observed while the winner is still holding its live transaction.
-            held = self.retained_reservation()
+            held = retained_reservation(self)
 
             release_winner.set()
             threads["winner"].join(timeout=60)
@@ -598,7 +601,7 @@ class AbandonedReservationTests(ProtocolFixture):
         be green already; it is here so the recovery work cannot quietly turn a
         recoverable abandonment into a permanently consumed candidate.
         """
-        authority = self.authorised_candidate()
+        authority = authorised_candidate(self)
         effects: list[str] = []
 
         def qualify(*args: object, **kwargs: object) -> Any:
@@ -626,7 +629,7 @@ class AbandonedReservationTests(ProtocolFixture):
                 effects, [], "the abandoned transaction must not have run an effect"
             )
             self.assertIsNotNone(
-                self.retained_reservation(),
+                retained_reservation(self),
                 "the abandoned transaction must genuinely have left a reservation",
             )
 
@@ -647,7 +650,7 @@ class AbandonedReservationTests(ProtocolFixture):
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
         self.assertIsNone(
-            self.retained_reservation(),
+            retained_reservation(self),
             "a completed transaction must leave no reservation behind",
         )
 

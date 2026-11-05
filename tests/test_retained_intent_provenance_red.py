@@ -79,19 +79,6 @@ class IntentProvenanceFixture(ConsumptionFixture):
 
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
-    def crash_before_the_first_canonical_write(self) -> Any:
-        real_write = _original(retained_commit, "_write_atomic")
-
-        def crash(path: Path, payload: bytes) -> None:
-            if (
-                path.parent == self.workspace
-                and path.name == retained_commit.LEDGER_FILENAME
-            ):
-                raise RuntimeError("crash after the intent, before publishing")
-            return real_write(path, payload)
-
-        return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
-
     def substitute(self, transaction: str) -> None:
         """Replace <txid> with a complete, self-consistent directory of its own."""
         original = retained_commit.staging_directory(self.workspace, transaction)
@@ -129,6 +116,20 @@ class IntentProvenanceFixture(ConsumptionFixture):
         self.assertEqual(canonical, before)
 
 
+def crash_before_the_first_canonical_write(fixture: IntentProvenanceFixture) -> Any:
+    real_write = _original(retained_commit, "_write_atomic")
+
+    def crash(path: Path, payload: bytes) -> None:
+        if (
+            path.parent == fixture.workspace
+            and path.name == retained_commit.LEDGER_FILENAME
+        ):
+            raise RuntimeError("crash after the intent, before publishing")
+        return real_write(path, payload)
+
+    return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
+
+
 class UnsealedReservationTests(IntentProvenanceFixture):
     """A reservation covering a publication must say which bytes, not only which request."""
 
@@ -147,7 +148,7 @@ class UnsealedReservationTests(IntentProvenanceFixture):
         before = (self.workspace / "experiment-state.json").read_text()
 
         with self.patched_effect(effects):
-            with self.crash_before_the_first_canonical_write():
+            with crash_before_the_first_canonical_write(self):
                 with self.assertRaises(RuntimeError):
                     self.prepare(authority=authority)
 
@@ -184,7 +185,7 @@ class NonReservingIntentTests(IntentProvenanceFixture):
         # records no intent at all.
         self.payload["tasks"][0]["id"] = "T9"
         with self.patched_effect(effects):
-            with self.crash_before_the_first_canonical_write():
+            with crash_before_the_first_canonical_write(self):
                 with self.assertRaises(RuntimeError):
                     self.prepare()
 

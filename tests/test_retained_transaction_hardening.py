@@ -300,18 +300,21 @@ class PublicationIntentTests(ConsumptionFixture):
 
 
 class CompletedWorkspaceFixture(ConsumptionFixture):
-    def complete(self) -> None:
-        observed = self.prepare()
-        candidate = observed.preflight_candidate_sha256
-        assert candidate is not None
-        with mock.patch.object(
-            compiler,
-            "qualify_subjects",
-            side_effect=lambda *a, **k: _receipt(
-                k.get("task_id", "T1"), dict(k.get("bound") or {})
-            ),
-        ):
-            self.prepare(authority=self.consumption_authority(candidate))
+    """A consumption fixture; its helpers are module functions of it."""
+
+
+def complete(fixture: CompletedWorkspaceFixture) -> None:
+    observed = fixture.prepare()
+    candidate = observed.preflight_candidate_sha256
+    assert candidate is not None
+    with mock.patch.object(
+        compiler,
+        "qualify_subjects",
+        side_effect=lambda *a, **k: _receipt(
+            k.get("task_id", "T1"), dict(k.get("bound") or {})
+        ),
+    ):
+        fixture.prepare(authority=fixture.consumption_authority(candidate))
 
 
 class ConcurrentStagingCreationTests(ConsumptionFixture):
@@ -479,7 +482,7 @@ class LockIdentityTests(CompletedWorkspaceFixture):
     """The persisted bytes and the identity they carry are two facts, not one."""
 
     def test_the_commit_record_binds_both_and_confuses_neither(self) -> None:
-        self.complete()
+        complete(self)
         record = json.loads(
             (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
         )
@@ -497,7 +500,7 @@ class LockIdentityTests(CompletedWorkspaceFixture):
         )
 
     def test_every_recorded_reference_names_the_same_lock(self) -> None:
-        self.complete()
+        complete(self)
         carried = json.loads((self.workspace / "experiment.lock").read_text())[
             "lock_sha256"
         ]
@@ -567,7 +570,7 @@ class LocklessCommitTests(CompletedWorkspaceFixture):
         transaction published no lock, it would contradict the lock sitting on disk
         and every subsequent read would refuse a workspace nothing is wrong with.
         """
-        self.complete()
+        complete(self)
         published = json.loads(
             (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
         )

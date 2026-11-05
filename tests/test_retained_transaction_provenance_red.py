@@ -74,22 +74,23 @@ class ProvenanceFixture(ConsumptionFixture):
 
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
-    def die_before_the_first_canonical_write(self) -> Any:
-        """Interrupt a publication after its intent and before any canonical byte."""
-        real_write = _original(retained_commit, "_write_atomic")
-
-        def crash(path: Path, payload: bytes) -> None:
-            if (
-                path.parent == self.workspace
-                and path.name == retained_commit.LEDGER_FILENAME
-            ):
-                raise RuntimeError("crash after the intent, before publishing")
-            return real_write(path, payload)
-
-        return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
-
     def staged_member(self, transaction: str, name: str) -> Path:
         return retained_commit.staging_directory(self.workspace, transaction) / name
+
+
+def die_before_the_first_canonical_write(fixture: ProvenanceFixture) -> Any:
+    """Interrupt a publication after its intent and before any canonical byte."""
+    real_write = _original(retained_commit, "_write_atomic")
+
+    def crash(path: Path, payload: bytes) -> None:
+        if (
+            path.parent == fixture.workspace
+            and path.name == retained_commit.LEDGER_FILENAME
+        ):
+            raise RuntimeError("crash after the intent, before publishing")
+        return real_write(path, payload)
+
+    return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
 
 
 class InterruptedPublicationDisplacementTests(ProvenanceFixture):
@@ -136,7 +137,7 @@ class InterruptedPublicationDisplacementTests(ProvenanceFixture):
             if not interrupted:
                 interrupted.append("interrupted")
                 with self.patched_effect(effects):
-                    with self.die_before_the_first_canonical_write():
+                    with die_before_the_first_canonical_write(self):
                         with self.assertRaises(RuntimeError):
                             self.prepare_spec(effect_bearing_spec, authority)
             return real_stage(root, **kwargs)
@@ -189,7 +190,7 @@ class PublicationIntentBindingTests(ProvenanceFixture):
         before = (self.workspace / "experiment-state.json").read_text()
 
         with self.patched_effect():
-            with self.die_before_the_first_canonical_write():
+            with die_before_the_first_canonical_write(self):
                 authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
                     self.prepare(authority=authority)
