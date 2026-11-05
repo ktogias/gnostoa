@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Resolve git on the one trusted lookup, the leaf the repository's tools share
-description: "B1 of #389's cleanup, security first: tools/trusted_path.py owns AGENTS.md's trusted executable lookup; tools/exact_tree.py consumes it; tools/quality_evidence.py's _git_state starts git through it; the self-only orientation task keeps a pinned copy tested equal to it. Decision 0130's BAN-B607 Limit is corrected in extent and in owner. repository_scope, candidate_prepare and the capsule pair follow by their own changes."
+description: "B1 of #389's cleanup, security first: tools/trusted_path.py owns AGENTS.md's trusted executable lookup; tools/exact_tree.py consumes it; tools/quality_evidence.py's _git_state starts git through it. Decision 0130's BAN-B607 Limit is corrected in extent and in owner. Orientation, repository_scope, candidate_prepare and the capsule pair follow by their own changes."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -28,6 +28,9 @@ sources:
   - id: lineage
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6634384923
     title: "B1's lineage, published before any edit"
+  - id: route-b
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6652443128
+    title: "The owner's route (B): orientation leaves B1, with its child environment"
   - id: narrowing
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6645177503
     title: "The admission packet: route (A′), measured on main 683a9be7"
@@ -64,24 +67,25 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
    `trusted_executable(name)`, which returns the absolute path of a bare name on it or
    raises `FileNotFoundError`. A name with a directory part is refused, never checked as
    a path. Each caller's own `OSError` handling applies: `tools/exact_tree.py` refuses it
-   as `git-failed`, orientation as its `OrientationError`, and `_git_state` keeps its
-   existing unbound state. It imports only the standard library.
+   as `git-failed`, and `_git_state` keeps its existing unbound state. It imports only the
+   standard library.
 2. **`tools/exact_tree.py` consumes it** and keeps its own error mapping.
 3. **`_git_state` starts the trusted git** for both of its reads.
-4. **The self-only `tasks/gnostoa_orientation.py` keeps a pinned copy,** since it imports
-   no `tools/` module; a test pins the copy to the leaf's.
-5. **Decision 0130's `BAN-B607` Limit, corrected** (source `route-i`): the partial-path
+4. **Decision 0130's `BAN-B607` Limit, corrected** (source `route-i`): the partial-path
    lookups that lose a gating reader at the exit are five, not two: the four `S607`
    literals (`_git_state` ×2, `repository_scope`'s `_git_result`, orientation's
    `_git_output`) and `candidate_prepare`'s `shutil.which("git")`, which is no `S607`
    literal. The two capsule `S607` sites are not among them: their own `env` `PATH`
    already confines them. Their owner is this
-   leaf, not `tools/exact_tree.py`. This change closes three: `_git_state` ×2 and
-   orientation's `_git_output`.
+   leaf, not `tools/exact_tree.py`. This change closes two: `_git_state` ×2.
 
 ## Limits
 
-- **Deferred, each to its own change** (source `narrowing`):
+- **Deferred, each to its own change** (sources `narrowing`, `route-b`):
+  - `tasks/gnostoa_orientation.py`'s `_git_output`, a self-only task that imports no
+    `tools/` module: changing its start brings the call into Codacy's read, whose Semgrep
+    rules also name its `os.environ`-based child environment. Its executable and its
+    environment are fixed together;
   - `tools/repository_scope.py`, with the 77 inherited SLF001 findings of
     `tests/test_quality_evidence.py`, which its test would bring into the protected-access
     family's read;
@@ -95,15 +99,14 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
 ## Verification
 
 - **RED first.** On `main`, the leaf's tests failed for the missing behaviour: each site
-  started the bare `git`, and the leaf and the pinned copy were absent.
-- **Mutants.** Each mutation of the leaf, its consumers and the pinned copy is killed by
-  a named test, against a passing baseline.
-- **The active families** list no finding in the changed files; the git-guard test's
-  inherited SLF001 and typing error are repaired in place.
+  started the bare `git`, and the leaf was absent.
+- **Mutants.** Each mutation of the leaf and its consumers is killed by a named test,
+  against a passing baseline.
+- **The active families** list no finding in the changed files.
 
 ## Consequences
 
 - Non-test `S607` sites fall from six (the four literals above and the capsule pair) to
-  three: the capsule pair and `tools/repository_scope.py`.
+  four: the capsule pair, `tools/repository_scope.py` and orientation's `_git_output`.
 - **Rollback:** reverting this change restores the bare `git` starts; nothing else depends
   on the leaf.

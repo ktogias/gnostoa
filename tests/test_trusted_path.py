@@ -1,14 +1,13 @@
 """B1 (#389; owner 6633186827 §3; PAO 6634192406; lineage 6634384923; route (A), 6644368315): the git these sites
 start is resolved on the repository's one trusted lookup, AGENTS.md's PATH, never the caller's. tools/trusted_path.py
-owns it; the self-only orientation task keeps a pinned copy, tested equal to it. tools/repository_scope.py follows with
+owns it. The orientation task follows with its child environment, tools/repository_scope.py with
 tests/test_quality_evidence.py's SLF001 repair, and tools/candidate_prepare.py, a preparation authority, by its own
-separately admitted change (AGENTS.md)."""
+separately admitted change (AGENTS.md; route (B), the owner's 6652443128)."""
 
 from __future__ import annotations
 
 import ast
 import importlib
-import importlib.util
 import os
 import shutil
 import sys
@@ -33,17 +32,6 @@ TRUSTED = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 SINGLE_FILE = ("tools/candidate_prepare.py", "tasks/gnostoa_orientation.py")
 
 
-def _load(name: str, relative: str) -> ModuleType:
-    """A fresh copy of `relative`, executed from its own file, registered while it runs."""
-    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {relative}")
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {name: module}):
-        spec.loader.exec_module(module)
-    return module
-
-
 def _leaf() -> ModuleType:
     # Imported when used, so each site's test runs on its own where the leaf is absent.
     return importlib.import_module("tools.trusted_path")
@@ -61,9 +49,6 @@ def _original(module: object, name: str) -> Any:
     with patch.object(module, name, spec=True, new_callable=kept):
         pass
     return found[0]
-
-
-orientation = _load("gnostoa_orientation_trusted_path", "tasks/gnostoa_orientation.py")
 
 
 @contextmanager
@@ -88,17 +73,19 @@ class TrustedPathTests(unittest.TestCase):
 
     def test_an_executable_off_the_trusted_lookup_is_refused(self) -> None:
         # Planted first on the caller's PATH, so a lookup there would find it.
+        leaf = _leaf()
         with _shadow("gnostoa-not-an-executable") as fake:
             self.assertEqual(str(fake), shutil.which(fake.name))
             with self.assertRaises(FileNotFoundError):
-                _leaf().trusted_executable(fake.name)
+                leaf.trusted_executable(fake.name)
 
     def test_a_path_qualified_name_is_refused_unsearched(self) -> None:
         # A name with a directory part is never checked as a path (cubic, Sourcery).
+        leaf = _leaf()
         with _shadow() as fake:
             for name in (str(fake), f"./{fake.name}", f"sub/{fake.name}", ""):
                 with self.subTest(name=name), self.assertRaises(FileNotFoundError):
-                    _leaf().trusted_executable(name)
+                    leaf.trusted_executable(name)
 
     def test_the_lookup_is_the_one_agents_md_states(self) -> None:
         leaf = _leaf()
@@ -189,15 +176,6 @@ class SitesStartTheTrustedGitTests(unittest.TestCase):
             second = self._first_argvs(lambda: git_state(Path(root)), answered=1)[1]
         self._assert_trusted(second)
 
-    def test_the_orientation_subject_read(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            self._assert_trusted(
-                self._first_argv(
-                    lambda: orientation.observe_repository_subject(Path(root)),
-                    orientation.OrientationError,
-                )
-            )
-
 
 class PinnedCopiesTests(unittest.TestCase):
     """The single-file authorities state the lookup themselves; each copy must stay the leaf's."""
@@ -217,9 +195,6 @@ class PinnedCopiesTests(unittest.TestCase):
             ]
             with self.subTest(relative):
                 self.assertFalse([n for n in named if n.split(".")[0] == "tools"])
-
-    def test_orientation_trusted_path_matches_leaf(self) -> None:
-        self.assertEqual(_leaf().TRUSTED_PATH, _original(orientation, "_TRUSTED_PATH"))
 
 
 if __name__ == "__main__":

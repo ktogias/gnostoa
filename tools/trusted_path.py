@@ -2,8 +2,8 @@
 starts a named executable from, never the caller's PATH (#389 B1).
 
 It imports only the standard library, so that a module importing it keeps its own
-import-time requirements. The self-only tasks/gnostoa_orientation.py and the protected
-ci/merge_admission_guard.py state the same lookup themselves."""
+import-time requirements. The protected ci/merge_admission_guard.py states the same lookup
+itself."""
 
 from __future__ import annotations
 
