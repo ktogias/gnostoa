@@ -28,10 +28,12 @@ from tests.merge_admission_support import (
     debt_entry,
     debt_finding,
 )
+from tests.quality_evidence_profile_support import _original
 from tools import (
     assurance_completeness,
     check_change_policy,
     merge_admission,
+    quality_evidence,
     verdict_cli,
 )
 from tools.check_change_policy import load_change_policy
@@ -1210,6 +1212,20 @@ class DebtLedgerM17Tests(unittest.TestCase):
                 self._verdict([debt_finding(category="PERFORMANCE")], [debt_entry()])
             ),
         )
+
+    def test_an_inventory_security_rule_is_never_inherited(self) -> None:
+        """Codex on #480: the project inventory's own security rules, such as
+        unsafe-calls' S307, carry the producer's security category, so an exact entry
+        that calls itself `correctness` still absorbs nothing."""
+        produced = _original(quality_evidence, "_diagnostic_finding")(
+            "ruff", "S307", "tools/x.py", (3, 1, 3, 9), "eval", {}
+        )
+        category = {"category": produced["category"]} if "category" in produced else {}
+        finding = debt_finding(rule="S307", tool={"id": "ruff"}, **category)
+        entry = debt_entry(rule="S307", tool={"id": "ruff"}, aspect="correctness")
+        verdict = self._verdict([finding], [entry])
+        self.assertEqual({"M17": ["1 unresolved analyzer finding"]}, _failed(verdict))
+        self.assertEqual([], verdict["for_approval"]["inherited_findings"])
 
     def test_an_entry_absorbs_one_finding(self) -> None:
         verdict = self._verdict(

@@ -1456,6 +1456,8 @@ _PRODUCER_ORDER = (
     "gitlab-shellcheck",
     "secrets",
 )
+# Ruff's flake8-bandit codes, its security checks: S and digits.
+_BANDIT_CODE = re.compile(r"S[0-9]+")
 # The producers launched as processes, whose environment is observed. Public for the analyzer
 # inventory, which checks a record's producer against it; this module's own uses keep the
 # private name.
@@ -1993,6 +1995,12 @@ def _diagnostic_finding(
         },
         "provenance": [{"surface": "diagnostic-inventory", "reference": tool}],
     }
+    # The producer's own security classification, as Codacy's and SonarCloud's adapters
+    # give theirs: Ruff's S rules, an S and digits, are flake8-bandit's security checks
+    # (SLF and SIM are other linters'), and every secrets finding is one. M17's ledger
+    # match never absorbs such a finding (Codex on #480; Decision 0129).
+    if tool == "secrets" or (tool == "ruff" and _BANDIT_CODE.fullmatch(code or "")):
+        finding["category"] = "security"
     # Validated by the consumed owner record by record (Router on #436), which refuses
     # a code or message that is not text, and keeps a null code null (Claude on
     # #436): a record it refuses is its report's gap, never the collection's abort.

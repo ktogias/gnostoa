@@ -269,3 +269,10 @@ DeepSource-specific carried-forward rule #480 introduced, its wiring and its tes
   evidence, so the bundle carries no DeepSource readback. The tests that took their
   findings from DeepSource take them from the active providers, and the owner's checks
   before merge are added to the Verification.
+
+*2026-11-05, Codex on #480.* M17's guard refuses a security finding by its `category`, and the
+project inventory, the only provider whose findings can be inherited, gave none. Its producer
+now gives its own security classification as `category: security`, as Codacy's and SonarCloud's
+adapters give theirs: Ruff's flake8-bandit rules (`S` and digits, such as `literal-secrets`'
+`S106` and `unsafe-calls`' `S307`) and every finding of the `secrets` producer. An exact entry
+that calls such a finding, say, `correctness` still absorbs nothing.

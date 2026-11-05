@@ -804,6 +804,7 @@ guardrails:
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_entry_without_a_tool_matches_only_a_finding_without_one
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_entry_recorded_without_severity_needs_a_finding_without_one
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_security_finding_is_never_inherited
+      - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_inventory_security_rule_is_never_inherited
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_finding_s_configuration_is_text
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_an_entry_absorbs_one_finding
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_without_complete_required_evidence_nothing_is_matched
