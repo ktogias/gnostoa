@@ -64,6 +64,12 @@ sources:
   - id: typ028-admission
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6606320054
     title: "The owner's admission of the step reader's TYP-028 remedy and its characterization test"
+  - id: exit
+    resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
+    title: The DeepSource exit, which retires DeepSource as merge evidence
+  - id: rebase
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6656748736
+    title: "#477 re-evaluated on main b4d65083, after Decision 0130"
   - id: typ028-round-5
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6608390902
     title: "#477's round 5: TYP-028 gone from DeepSource's exact-head run, and the touched file's pre-existing findings"
@@ -257,6 +263,11 @@ review round (source `review-477`):
 
 ## Merge-admission repairs
 
+*Note, on `main` `b4d65083`:* Decision 0130 has since retired DeepSource as merge evidence, so
+its full-run findings no longer enter M17. #477's verdict at `5802cccd`, after that Decision
+landed, lists no analyzer finding (sources `exit`, `rebase`). The repairs below were made while
+they did, and stand on their own.
+
 M17 counts every analyzer finding the readback lists, with no waiver. For this `critical` change,
 DeepSource's full run lists the issues in the whole files it touches, not only on its lines
 (source `m17-blocker`). The test files' findings are repaired without suppression. Behaviour
@@ -315,4 +326,5 @@ remedy, and its permanent characterization test, `tests/test_quality_evidence_lo
   - After the remedy, mypy reports nothing at that line.
 - **The falsifier's result:** DeepSource's complete exact-head run at `b003c5fd` lists no `TYP-028`
   (source `typ028-round-5`). Touching the file also enters its pre-existing findings into that run;
-  that remainder is for the owner's decision there.
+  that remainder was for the owner's decision there. Decision 0130 then retired DeepSource as merge
+  evidence, so the remainder no longer reaches M17 (sources `exit`, `rebase`).
