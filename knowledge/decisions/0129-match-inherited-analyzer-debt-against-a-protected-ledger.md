@@ -1,7 +1,7 @@
 ---
 type: Decision
-title: Match inherited analyzer debt against a protected ledger that ships empty, and settle carried-forward comments by the full run
-description: "The M17 transition of #389's closure: a finding that matches an entry of the protected target's analyzer debt ledger exactly, by its item, rule, path, message, severity, run-bound configuration identity, analyzer identity and the content of its enclosing function or class, is listed as inherited and does not count. Any other finding counts as before. The ledger ships empty, so no finding is inherited until the owner approves an entry, and only a finding whose readback states a run-bound configuration, today the project inventory's, can match one. Unlike the ledger, the carried-forward rule takes effect when this lands: a carried-forward DeepSource comment no longer degrades the DIFF read when the same run's complete full read shows its finding gone."
+title: Match inherited analyzer debt against a protected ledger that ships empty
+description: "The M17 transition of #389's closure: a finding that matches an entry of the protected target's analyzer debt ledger exactly, by its item, rule, path, message, severity, run-bound configuration identity, analyzer identity and the content of its enclosing function or class, is listed as inherited and does not count. Any other finding counts as before. The ledger ships empty, so no finding is inherited until the owner approves an entry, and only a finding whose readback states a run-bound configuration, today the project inventory's, can match one. The owner's Option B dropped the DeepSource carried-forward rule this first proposed; DeepSource's adapter and full-report reader stay, as an optional source."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -34,6 +34,12 @@ sources:
   - id: readback
     resource: ./0107-run-the-analyzer-readback-for-every-pull-request-head.md
     title: The authenticated analyzer readback, which now reads each finding's enclosing scope
+  - id: option-b
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6658166252
+    title: "The owner's Option B: keep the empty ledger and its strict matching, drop only the DeepSource carried-forward rule"
+  - id: exit
+    resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
+    title: The DeepSource exit, which retired DeepSource as merge evidence
 x-project-knowledge:
   id: kit.decision.0129.match-inherited-analyzer-debt-against-a-protected-ledger
   owners:
@@ -45,9 +51,11 @@ x-project-knowledge:
       target: /decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
     - kind: references
       target: /decisions/0107-run-the-analyzer-readback-for-every-pull-request-head.md
+    - kind: references
+      target: /decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
 ---
 
-# Match inherited analyzer debt against a protected ledger that ships empty, and settle carried-forward comments by the full run
+# Match inherited analyzer debt against a protected ledger that ships empty
 
 ## Context
 
@@ -73,10 +81,6 @@ The owner asked for a transition of M17 with no activation (source `owner-decisi
 
 The owner then authorized the implementation and its review (source `owner-follow-up`).
 
-#477's M2–M8 is a separate obligation, with a separate cause. GitHub carries one DeepSource
-inline comment from an earlier head to the current one. The adapter excludes such a
-comment, and so it marks the DIFF read `PARTIAL`.
-
 ## Decision
 
 1. **A finding's enclosing scope.** `enclosing` is a finding's smallest enclosing function or
@@ -90,7 +94,9 @@ comment, and so it marks the DIFF read `PARTIAL`.
    The readback's normalizer keeps it as a closed record, so a readback that carries it
    rebuilds exactly. Where the scope comes from:
    - The bundle step of the authenticated readback computes it (`collect_bundle`, source
-     `addendum`).
+     `addendum`), for the findings of every readback the bundle carries: Codacy's,
+     SonarCloud's and the project inventory's. DeepSource, retired as merge evidence,
+     gives none (source `exit`).
    - The step reads each Python finding's file (`.py` or `.pyi`) at the exact head through
      GitHub's contents API. The file is read as data: nothing in the head runs or selects a
      tool. It is read and parsed once for all its findings.
@@ -180,23 +186,8 @@ comment, and so it marks the DIFF read `PARTIAL`.
      whose readback states no configuration at all: an unknown configuration is not a
      comparable one.
    - **The read.** A stale, partial or unbound read matches nothing.
-5. **The carried-forward comment.** Such a comment is still excluded from DeepSource's DIFF
-   read.
-   - **When the read is complete:** the same run's full read of the exact head is
-     `COMPLETE`. It lists no finding at the comment's path and line, whatever its message,
-     and none in that file with the comment's stated title, at any line. So neither a
-     reworded title nor a drifted line hides a finding. Then the read records the comment
-     in its native record, as absent from the full run.
-   - **When it stays `PARTIAL`:**
-     - the comment has no path, line or stated title;
-     - the full read is of another run, head or provider, or is not complete.
-   - **A finding the full run still lists** reaches M17 through that run.
-   - Unlike the packet's first form, it does not also require the comment's review thread to
-     be resolved: the readback does not read thread state, and reading it would be a new
-     acquisition (source `addendum`).
-6. **The ledger is not activated; the carried-forward rule is.** The ledger ships empty, so
-   no finding is inherited until the owner approves an entry. Item 5 is not gated by the
-   ledger: it takes effect when this lands. An entry is added only by a pull request on
+5. **The ledger is not activated.** The ledger ships empty, so no finding is inherited
+   until the owner approves an entry. An entry is added only by a pull request on
    protected `main` that the owner approves. Each entry carries its proof:
    - a BOUND, COMPLETE authenticated readback listed it;
    - its scope was byte-identical on that protected commit;
@@ -209,7 +200,8 @@ comment, and so it marks the DIFF read `PARTIAL`.
   and each proved producer's effective identity. DeepSource, Codacy and SonarCloud
   findings never match.
   - **DeepSource:** its API exposes no run's own configuration or analyzer version; its
-    capability discovery is `CURRENT_NOT_RUN_BOUND`.
+    capability discovery is `CURRENT_NOT_RUN_BOUND`. Since Decision 0130 it gives the
+    bundle no readback at all; its adapter stays, as an optional source.
   - **Codacy and SonarCloud:** their readbacks name no configuration.
   - Each can become matchable only when its adapter states a run-bound configuration
     identity, which is a change of its own.
@@ -229,18 +221,51 @@ comment, and so it marks the DIFF read `PARTIAL`.
   - the head read;
   - the matching;
   - the analyzer identity and the security category;
-  - the evidence;
-  - the carried-forward remedy.
-- **The end-to-end test.** It runs through `evidence_for` and `merge_admission.evaluate`.
-  With the ledger's entry for a finding, M17 does not fail on it. With another scope, or no
-  ledger, M17 fails.
+  - the evidence.
+- **The end-to-end test.** It runs through `evidence_for` and `merge_admission.evaluate`,
+  on the active providers' evidence: Codacy's, SonarCloud's and the inventory's. With the
+  ledger's entry for a finding, M17 does not fail on it. With another scope, severity,
+  profile or producer, a finding whose readback states no configuration, or no ledger,
+  M17 fails.
+- **The head read** is exercised on the inventory's readback: the bundle binds a
+  document as the inventory job writes it, and gives its Python findings their scopes
+  within the bounds.
+- **The owner's checks before merge** (source `option-b`). Under the ledger this
+  repository ships, which is empty, and in every class, end to end:
+  - missing or incomplete required evidence still denies M2–M8 and M17: no readback,
+    another head's, Codacy's read missing or unavailable, SonarCloud's inventory
+    unavailable, either inventory read missing or partial;
+  - every obtained finding still denies M17: a new one, a worsened one, one whose
+    identity an entry could match, a security one, and Codacy's and SonarCloud's;
+  - the shipped ledger changes no criterion's verdict or reasons against no ledger.
+  The declaration's required items, their classes and their claims are main's: this
+  change does not touch `policy/assurance-evidence.yaml` or its checks.
 
 ## Consequences
 
 - **With the empty ledger, the matching changes no verdict:** no finding is inherited.
   The verdict also lists `inherited_findings` and `resolved_debt`, both empty, and the
   evidence carries `analyzer_debt`.
-- **The carried-forward rule does change verdicts when this lands,** because the
-  readback runs `main`'s adapter: a DIFF read that it settles is no longer `PARTIAL`.
 - **Each pull request's inherited findings** become an owner's decision, entry by entry, in
   a ledger pull request. A finding that a change makes worse, or adds, still denies.
+
+## Amendments
+
+*2026-11-05, the owner's Option B (source `option-b`).* This text narrows the version
+#480 published at `ace8d7cd` (15077 bytes, SHA-256
+`368460bf8cbcc31f11acc4304c553febf66fb2075b46186d32b70e5cd216f3d5`). The owner kept the
+protected debt ledger, empty at delivery, with strict matching of the enclosing scope,
+severity and configuration bound to the actual run, and dropped only the
+DeepSource-specific carried-forward rule #480 introduced, its wiring and its tests.
+
+- **Removed:** that version's item 5, the carried-forward comment, and each statement
+  that the rule takes effect when this lands: the second half of its title, the last
+  sentence of its description, its Context's paragraph on #477's carried-forward comment,
+  item 6's, now item 5's, and its Verification's and Consequences' bullets on the rule.
+- **Kept:** DeepSource's adapter and full-report reader, as on `main`. DeepSource stays
+  available as an optional source, and a carried-forward comment keeps its DIFF read
+  `PARTIAL`, as before.
+- **Since that version,** Decision 0130 (source `exit`) retired DeepSource as merge
+  evidence, so the bundle carries no DeepSource readback. The tests that took their
+  findings from DeepSource take them from the active providers, and the owner's checks
+  before merge are added to the Verification.
