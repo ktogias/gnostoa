@@ -833,11 +833,13 @@ guardrails:
       - ci/analyzer_readback_subject.py
       - ci/review_github_current_state.py
       - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
+      - knowledge/decisions/0133-coalesce-merge-admission-requests-by-pull-request.md
       - knowledge/runbooks/operate-the-merge-gate.md
     tests:
       - tests/test_merge_admission_relay.py
       - tests/test_merge_admission_workflows.py
       - tests/test_merge_admission_guard.py
+      - tests/test_merge_admission_queue.py
       - tests/test_github_rest.py
   - id: github-merge-evidence
     title: A GitHub pull request's merge evidence comes from L1's snapshot and the protected target's declarations, and an incomplete read never passes as complete

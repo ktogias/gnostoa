@@ -74,6 +74,21 @@ def _normalized(expression: object) -> str:
     return " ".join(str(expression).split())
 
 
+# The `gnostoa-ma0` App's id, which is public: the subject selection holds it as a
+# literal to find the App's standing record (#407's queue correction, Decision 0133).
+MA0_APP_ID = "5302326"
+
+
+def _without_the_app_s_public_id(job: dict[str, Any]) -> tuple[dict[str, Any], object]:
+    """`subjects` without the one value of the App's it holds, and that value: the
+    App's id in the selection's environment."""
+
+    copied = copy.deepcopy(job)
+    (step,) = [s for s in _steps(copied) if s.get("name") == "Select the subjects"]
+    environment: dict[str, Any] = step.get("env", {})
+    return copied, environment.pop("GNOSTOA_MA0_APP_ID", None)
+
+
 # The exact conditions (cubic r4251444309 on #426): a substring proves nothing about
 # what an `||` beside it admits.
 SUBJECTS_IF = (
@@ -356,12 +371,22 @@ class AdmissionWorkflowTests(unittest.TestCase):
     def test_permissions_are_granted_per_job(self) -> None:
         """SonarCloud S8264 on #426: the workflow grants nothing, and each job only
         the reads it needs. Only `subjects` reads another run's artifact (the
-        relayed comment), and `admit` reads no Actions state (cubic r4251444300)."""
+        relayed comment), and `admit` reads no Actions state (cubic r4251444300).
+        `subjects` reads what rebuilding a pull request's evidence reads, its issues,
+        checks and statuses, to compare a routine request with the App's standing
+        record (#407's queue correction, Decision 0133; PAO 6665267587)."""
         workflow = _load(ADMISSION)
         self.assertEqual({}, workflow["permissions"])
         jobs = workflow["jobs"]
         self.assertEqual(
-            {"contents": "read", "pull-requests": "read", "actions": "read"},
+            {
+                "contents": "read",
+                "pull-requests": "read",
+                "actions": "read",
+                "issues": "read",
+                "checks": "read",
+                "statuses": "read",
+            },
             jobs["subjects"]["permissions"],
         )
         self.assertEqual({"contents": "read"}, jobs["invalidate"]["permissions"])
@@ -597,7 +622,10 @@ class AdmissionWorkflowTests(unittest.TestCase):
         """CodeAnt on #426: nor the App's key, id or token by any other route. The
         readback's call forwards exactly the analyzer tokens (#407 6154772083), and
         no other secret reaches a job that is not a holder, from the job itself or
-        from the workflow's own level (CodeAnt on #430)."""
+        from the workflow's own level (CodeAnt on #430). The one exception is the
+        App's public id, which `subjects` holds as the pinned literal, never as a
+        variable or a secret, and outside the App's environment (#407's queue
+        correction, Decision 0133; PAO 6665267587)."""
         document = _load(ADMISSION)
         workflow = {k: v for k, v in document.items() if k != "jobs"}
         self.assertEqual(set(), _secret_references(workflow))
@@ -605,6 +633,10 @@ class AdmissionWorkflowTests(unittest.TestCase):
             if job.get("environment") == "gnostoa-ma0":
                 continue
             with self.subTest(job=name):
+                if name == "subjects":
+                    self.assertNotIn("environment", job)
+                    job, public = _without_the_app_s_public_id(job)
+                    self.assertEqual(MA0_APP_ID, public)
                 text = str(job)
                 self.assertNotIn(APP_MINT_ACTION, text)
                 rest = job
