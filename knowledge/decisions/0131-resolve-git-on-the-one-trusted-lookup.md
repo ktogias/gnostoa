@@ -130,5 +130,6 @@ through `tools/exact_tree.py`; the measured extent in non-test Python is 17 star
 - Non-test `S607` sites fall from six (the four literals above and the capsule pair) to
   four: the capsule pair, `tools/repository_scope.py` and orientation's `_git_output`.
 - Non-test Python git starts on the caller's `PATH` fall from 17 in 6 files to 15 in 5.
-- **Rollback:** reverting this change restores the bare `git` starts; nothing else depends
-  on the leaf.
+- **Rollback:** reverting this change restores `_git_state`'s two bare `git` starts and
+  `tools/exact_tree.py`'s own copy of the lookup. Nothing outside this change imports the
+  leaf, so the revert takes it and its two consumers back together.

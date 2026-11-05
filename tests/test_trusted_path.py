@@ -83,8 +83,9 @@ class TrustedPathTests(unittest.TestCase):
     def test_a_path_qualified_name_is_refused_unsearched(self) -> None:
         # A name with a directory part is never checked as a path (cubic, Sourcery). Each
         # one names a real executable from the working directory, so a lookup that checked
-        # it would find it (Claude on #483). The absolute one pins the bare-name guard; the
-        # relative ones are also refused by the absolute-result check.
+        # it would find it (Claude on #483). The bare-name guard refuses all three. Without
+        # it, only the absolute one would be accepted, since the absolute-result check still
+        # refuses the relative ones; they catch the loss of both checks.
         leaf = _leaf()
         with _shadow() as fake, contextlib.chdir(fake.parent):
             nested = fake.parent / "sub" / fake.name
