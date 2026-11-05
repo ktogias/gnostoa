@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Resolve git on the one trusted lookup, the leaf the repository's tools share
-description: "B1 of #389's cleanup, security first: tools/trusted_path.py owns AGENTS.md's trusted executable lookup; tools/exact_tree.py consumes it; tools/quality_evidence.py's _git_state starts git through it. Decision 0130's BAN-B607 Limit is corrected in extent and in owner. Orientation, repository_scope, candidate_prepare and the capsule pair follow by their own changes."
+description: "B1 of #389's cleanup, security first: tools/trusted_path.py owns AGENTS.md's trusted executable lookup; tools/exact_tree.py consumes it; tools/quality_evidence.py's _git_state starts git through it. Decision 0130's BAN-B607 Limit is corrected in extent and in owner. Orientation, repository_scope, candidate_prepare, adoption_check, release_smoke and the capsule pair follow by their own changes."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -31,6 +31,9 @@ sources:
   - id: route-b
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6652443128
     title: "The owner's route (B): orientation leaves B1, with its child environment"
+  - id: sweep
+    resource: https://github.com/ktogias/gnostoa/pull/483#issuecomment-6654044967
+    title: "Claude's part 2 on #483: the helpers' git starts the count left out"
   - id: narrowing
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6645177503
     title: "The admission packet: route (A′), measured on main 683a9be7"
@@ -57,7 +60,7 @@ x-project-knowledge:
 `tools/quality_evidence.py`'s `_git_state` started a bare `git`, so the caller's `PATH`
 chose the binary. A local run with a shim first on `PATH` returned the shim's revision
 and state (source `audit`). Decision 0130's Limits named those two calls and a repair
-through `tools/exact_tree.py`; the measured extent is five sites, and that owner fails
+through `tools/exact_tree.py`; the measured extent is 17 starts in 6 files, and that owner fails
 #451's import constraint, which keeps `tools/exact_tree.py` out of
 `tools/quality_evidence.py`'s import (source `leaf`).
 
@@ -71,13 +74,20 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
    standard library.
 2. **`tools/exact_tree.py` consumes it** and keeps its own error mapping.
 3. **`_git_state` starts the trusted git** for both of its reads.
-4. **Decision 0130's `BAN-B607` Limit, corrected** (source `route-i`): the partial-path
-   lookups that lose a gating reader at the exit are five, not two: the four `S607`
-   literals (`_git_state` ×2, `repository_scope`'s `_git_result`, orientation's
-   `_git_output`) and `candidate_prepare`'s `shutil.which("git")`, which is no `S607`
-   literal. The two capsule `S607` sites are not among them: their own `env` `PATH`
-   already confines them. Their owner is this
-   leaf, not `tools/exact_tree.py`. This change closes two: `_git_state` ×2.
+4. **Decision 0130's `BAN-B607` Limit, corrected** (sources `route-i`, `sweep`). On `main`, the
+   non-test git starts that resolve on the caller's `PATH` are 17 in 6 files, not two. They
+   were found by a sweep of every start, not by a linter:
+   - the four `S607` literals, which lose their gating reader at the exit: `_git_state` ×2,
+     `repository_scope`'s `_git_result`, and orientation's `_git_output`, whose child
+     environment is built from `os.environ`;
+   - 13 starts that no `S607` rule reads, because each goes through `shutil.which` or a
+     helper: `candidate_prepare`'s `shutil.which("git")`, `adoption_check`'s `_git` and
+     `release_smoke`'s 11 `_run` starts.
+   - Confined, so not among them: the capsule pair (their own `env` `PATH`),
+     `review_protected`'s `shutil.which("git", path=os.defpath)`, and
+     `ci/merge_admission_guard.py`'s own statement of the lookup.
+   - Their owner is this leaf, not `tools/exact_tree.py`. This change closes two:
+     `_git_state` ×2.
 
 ## Limits
 
@@ -92,6 +102,8 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
   - `tools/candidate_prepare.py`'s `_GIT`: it is preparation authority, which the
     exact-parent preparation refuses as a candidate change, so its evolution needs its own
     admitted path (`AGENTS.md`);
+  - `tools/release_smoke.py`'s `_run` git starts and `tools/adoption_check.py`'s `_git`,
+    which `verification.yml`'s installed-artifact adoption smoke runs (source `sweep`);
   - the capsule pair, which already confines its lookup through its own `env` `PATH` (B4).
 - **Until those land,** local collector runs use the trusted `PATH` (the owner's direction).
 - **The protected `ci/merge_admission_guard.py`** keeps its own statement of the lookup.
@@ -108,5 +120,6 @@ through `tools/exact_tree.py`; the measured extent is five sites, and that owner
 
 - Non-test `S607` sites fall from six (the four literals above and the capsule pair) to
   four: the capsule pair, `tools/repository_scope.py` and orientation's `_git_output`.
+- Non-test git starts on the caller's `PATH` fall from 17 in 6 files to 15 in 5.
 - **Rollback:** reverting this change restores the bare `git` starts; nothing else depends
   on the leaf.
