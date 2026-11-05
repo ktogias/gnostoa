@@ -122,10 +122,23 @@ def _pins(
 
 
 class SelectionTests(unittest.TestCase):
-    def test_mains_profile_acquires_nothing_and_makes_no_request(self) -> None:
+    def test_mains_profile_selects_exactly_its_active_families_tools(self) -> None:
         profile = quality_evidence.load_diagnostic_profile(
             ROOT / "policy" / "diagnostic-profile.yaml"
         )
+        # shell-lint and gitlab-script run shellcheck, workflow-lint actionlint and
+        # shellcheck; dockerfile-lint's hadolint stays unselected (Decision 0130).
+        self.assertEqual(
+            ["actionlint", "shellcheck"], quality_evidence.tool_names(profile)
+        )
+
+    def test_mains_profile_without_its_tool_families_makes_no_request(self) -> None:
+        profile = quality_evidence.load_diagnostic_profile(
+            ROOT / "policy" / "diagnostic-profile.yaml"
+        )
+        for family in profile["families"]:
+            if family["id"] in ("shell-lint", "workflow-lint", "gitlab-script"):
+                family["active"] = False
         self.assertEqual([], quality_evidence.tool_names(profile))
         fetcher = mock.Mock(side_effect=AssertionError("no request may be made"))
         with tempfile.TemporaryDirectory() as directory:

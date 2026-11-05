@@ -57,14 +57,19 @@ PROTECTED: dict[str, Any] = {
             "diff": "all",
             "full": None,
         },
-        # The pinned tool families and unsafe-calls, inactive until activation (#389 H-PYSEC-2).
+        # The pinned tool families and unsafe-calls (#389 H-PYSEC-2): four active since the DeepSource exit's remedy
+        # (Decision 0130 item 4); dockerfile-lint waits for #477's repairs and secrets for F-a.
         *(
             {
                 "id": family,
                 "producer": producer,
                 "diff": "all",
                 "full": "all",
-                "active": False,
+                **(
+                    {"active": False}
+                    if family in ("dockerfile-lint", "secrets")
+                    else {}
+                ),
             }
             for family, producer in (
                 ("shell-lint", "shellcheck"),
@@ -80,7 +85,6 @@ PROTECTED: dict[str, Any] = {
             "select": ["S301", "S307", "S324", "S602", "S605", "S608"],
             "diff": "all",
             "full": "all",
-            "active": False,
         },
     ],
     "tools": {
@@ -141,8 +145,25 @@ PROTECTED: dict[str, Any] = {
         },
     },
 }
-# The active families: the inactive ones are never planned, run or rowed.
-FAMILIES = {"typing", "protected-access", "literal-secrets", "complexity"}
+# The active families: the inactive ones (dockerfile-lint, secrets) are never planned, run or rowed.
+FAMILIES = {
+    "typing",
+    "protected-access",
+    "literal-secrets",
+    "complexity",
+    "shell-lint",
+    "workflow-lint",
+    "gitlab-script",
+    "unsafe-calls",
+}
+# The families whose FULL scope covers every file: they analyze the whole tree, whatever the comparison.
+WHOLE_TREE = {
+    "literal-secrets",
+    "shell-lint",
+    "workflow-lint",
+    "gitlab-script",
+    "unsafe-calls",
+}
 
 
 def _original(module: object, name: str) -> Any:
@@ -304,7 +325,9 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         )
         inventory = self._protected(base=self.base)
         selected = set().union(*(_select(c) for c in self._producer_commands("ruff")))
-        self.assertEqual({"SLF001", "S106"}, selected)
+        # Unsafe-calls' rules run on the same producer since its activation.
+        unsafe = {f["id"]: f for f in PROTECTED["families"]}["unsafe-calls"]
+        self.assertEqual({"SLF001", "S106", *unsafe["select"]}, selected)
         self.assertEqual(
             [],
             [
@@ -567,7 +590,10 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
                 # Protected access too: its changed files are unknown, with or without
                 # a FULL scope (a characterization; the owner's N, #389 6405282317).
                 self.assertEqual("INCOMPLETE", rows["protected-access"]["analysis"])
-                self.assertEqual("COMPLETE", rows["literal-secrets"]["analysis"])
+                # A family whose FULL scope covers every file analyzed the whole tree.
+                self.assertEqual(
+                    {"COMPLETE"}, {rows[f]["analysis"] for f in WHOLE_TREE}
+                )
                 self.assertEqual(
                     [None, None], [rows[f]["targets"] for f in ("typing", "complexity")]
                 )

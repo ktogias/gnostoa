@@ -16,7 +16,6 @@ from typing import Any, NamedTuple, Protocol
 
 from tools import (
     analyzer_codacy,
-    analyzer_deepsource,
     analyzer_sonarcloud,
     github_events,
     github_rest,
@@ -363,76 +362,6 @@ def _review_comments(
     )
 
 
-def _deepsource_status_projection(
-    statuses: list[Mapping[str, Any]],
-    checks: list[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    projected: list[Mapping[str, Any]] = []
-    for item in statuses:
-        creator = item.get("creator")
-        creator_map = creator if isinstance(creator, Mapping) else {}
-        projected.append(
-            {
-                "context": item.get("context"),
-                "state": item.get("state"),
-                "target_url": item.get("target_url"),
-                "source_kind": "commit_status",
-                "creator_login": creator_map.get("login"),
-                "creator_type": creator_map.get("type"),
-            }
-        )
-    for check in checks:
-        name = check.get("name")
-        details = check.get("details_url")
-        if not isinstance(name, str) or not name.startswith("DeepSource:"):
-            continue
-        if not isinstance(details, str) or not details:
-            continue
-        conclusion = check.get("conclusion")
-        status = check.get("status")
-        state = conclusion if isinstance(conclusion, str) and conclusion else status
-        app = check.get("app")
-        app_map = app if isinstance(app, Mapping) else {}
-        projected.append(
-            {
-                "context": name,
-                "state": state or "pending",
-                "target_url": details,
-                "source_kind": "check_run",
-                "app_slug": app_map.get("slug"),
-            }
-        )
-    return projected
-
-
-def _deepsource_comments(
-    comments: list[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    result: list[Mapping[str, Any]] = []
-    for comment in comments:
-        result.append(
-            {
-                "body": comment.get("body"),
-                "path": comment.get("path"),
-                "line": comment.get("line") or comment.get("original_line"),
-                "commit_id": comment.get("commit_id"),
-                "original_commit_id": comment.get("original_commit_id"),
-                "url": comment.get("html_url") or comment.get("url"),
-                "author_login": (
-                    comment.get("user", {}).get("login")
-                    if isinstance(comment.get("user"), Mapping)
-                    else None
-                ),
-                "author_type": (
-                    comment.get("user", {}).get("type")
-                    if isinstance(comment.get("user"), Mapping)
-                    else None
-                ),
-            }
-        )
-    return result
-
-
 def _unavailable_readback(
     *,
     provider: str,
@@ -499,12 +428,21 @@ def collect_bundle(
     repository: str,
     pull_number: int,
     requested_head: str,
-    deepsource: analyzer_deepsource.GraphQLReader | None,
     codacy: analyzer_codacy.JsonReader | None,
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
+    deepsource: None = None,
 ) -> dict[str, Any]:
+    # DeepSource is retired as merge evidence (Decision 0130): nothing is read from
+    # it, and a reader handed in is refused, so retirement is never an unavailable
+    # read. The keyword stays only for the callers that pass None, until the
+    # cleanup after the exit.
+    if deepsource is not None:
+        raise RunnerError(
+            "DeepSource is retired as merge evidence (Decision 0130): "
+            "the readback reads nothing from it"
+        )
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
     observed = observed_at or _now()
@@ -522,65 +460,12 @@ def collect_bundle(
             "readbacks": [],
         }
 
+    # The bundle's GitHub projection of the subject, as its v1 contract states it.
+    # Only DeepSource's retired DIFF read used it (Decision 0130); the bundle's next
+    # version drops it, with these reads.
     statuses = _statuses(github, repository, requested)
     checks = _check_runs(github, repository, requested)
     comments = _review_comments(github, repository, pull_number)
-    diff_local = analyzer_deepsource.diff_local_from_github(
-        repository=repository,
-        pull_number=pull_number,
-        requested_head=requested,
-        observed_head=initial_head,
-        statuses=_deepsource_status_projection(statuses, checks),
-        comments=_deepsource_comments(comments),
-        observed_at=observed,
-    )
-
-    run_uid = diff_local.get("analysis_id")
-    if deepsource is None:
-        full = _unavailable_readback(
-            provider="deepsource",
-            adapter="deepsource-graphql/v1",
-            repository=repository,
-            pull_number=pull_number,
-            requested_head=requested,
-            analysis_id=run_uid if isinstance(run_uid, str) else None,
-            scope="FULL",
-            native_mode="FULL_RUN",
-            completeness="AUTH_UNAVAILABLE",
-            observed_at=observed,
-            reason="AUTH_UNAVAILABLE",
-        )
-    elif not isinstance(run_uid, str):
-        full = build_readback(
-            provider="deepsource",
-            adapter="deepsource-graphql/v1",
-            repository=repository,
-            pull_number=pull_number,
-            requested_head=requested,
-            observed_head=None,
-            analysis_id=None,
-            scope="FULL",
-            completeness="AMBIGUOUS",
-            native_mode="FULL_RUN",
-            observed_at=observed,
-            run_state="UNKNOWN",
-            coverage_record=coverage(
-                "INCOMPLETE",
-                pages=0,
-                count=0,
-                reason="RUN_ASSOCIATION_AMBIGUOUS",
-            ),
-            findings=[],
-        )
-    else:
-        full = analyzer_deepsource.read_full_run(
-            deepsource,
-            repository=repository,
-            pull_number=pull_number,
-            requested_head=requested,
-            run_uid=run_uid,
-            observed_at=observed,
-        )
 
     if codacy is None:
         codacy_readback = _unavailable_readback(
@@ -642,8 +527,6 @@ def collect_bundle(
             "review_comments": len(comments),
         },
         "readbacks": [
-            diff_local,
-            full,
             codacy_readback,
             sonarcloud_readback,
             # The project's own inventory, when the workflow gives it, bound to its
@@ -710,12 +593,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         github = GitHubReadClient.from_environment()
         try:
-            deepsource: analyzer_deepsource.GraphQLReader | None = (
-                analyzer_deepsource.DeepSourceGraphQLClient.from_environment()
-            )
-        except analyzer_deepsource.ProviderReadFailure:
-            deepsource = None
-        try:
             codacy: analyzer_codacy.JsonReader | None = (
                 analyzer_codacy.CodacyRestClient.from_environment()
             )
@@ -732,7 +609,6 @@ def main(argv: list[str] | None = None) -> int:
             repository=args.repository,
             pull_number=args.pull_number,
             requested_head=args.head,
-            deepsource=deepsource,
             codacy=codacy,
             sonarcloud=sonarcloud,
             inventory=(

@@ -54,6 +54,7 @@ from tools.requirements_lock import (
     normalized_distribution_name,
 )
 from tools.security_scan import SecurityScanError, _strict_json_loads, scan_tracked_tree
+from tools.trusted_path import trusted_executable
 
 if TYPE_CHECKING:
     # Only for its type: the default collection, collect_quality_evidence, never imports
@@ -876,7 +877,13 @@ def _git_state(root: Path, *, timeout: float | None = None) -> dict[str, Any]:
         if remaining is not None and remaining <= 0:
             return {"revision": revision, "tracked_tree_dirty": None}
         revision_result = subprocess.run(
-            ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
+            [
+                trusted_executable("git"),
+                "-c",
+                f"safe.directory={root}",
+                "rev-parse",
+                "HEAD",
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -890,7 +897,7 @@ def _git_state(root: Path, *, timeout: float | None = None) -> dict[str, Any]:
             return {"revision": revision, "tracked_tree_dirty": None}
         status_result = subprocess.run(
             [
-                "git",
+                trusted_executable("git"),
                 "-c",
                 f"safe.directory={root}",
                 "status",
