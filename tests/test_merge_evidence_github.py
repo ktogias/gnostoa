@@ -4542,14 +4542,16 @@ _PRODUCER = "sha256:" + "e" * 64
 
 
 def _complete_bundle(
-    *full: dict[str, Any],
+    *codacy: dict[str, Any],
     inventory_full: tuple[dict[str, Any], ...] = (),
     profile: str = _PROFILE,
     binding: str = "BOUND",
     producers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """A bound bundle whose every readback is complete, with `full` in DeepSource's
-    full run and `inventory_full` in the inventory's, under `profile`."""
+    """A bound bundle of the active providers whose every readback is complete, with
+    `codacy` in Codacy's pull-request read, which states no configuration, and
+    `inventory_full` in the inventory's full run, under `profile`. DeepSource gives
+    none: it is retired as merge evidence (Decision 0130)."""
     bound = {
         "profile": profile,
         "source_binding": binding,
@@ -4557,9 +4559,7 @@ def _complete_bundle(
         "producers": {"python": _PRODUCER} if producers is None else dict(producers),
     }
     return _bundle(
-        _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
-        _readback("deepsource", "FULL", *full),
-        _readback("codacy", "DIFF"),
+        _readback("codacy", "DIFF", *codacy),
         _readback(*SONAR),
         _inventory("DIFF", native=bound),
         _inventory("FULL", *inventory_full, native=bound),
@@ -4752,7 +4752,7 @@ class DebtLedgerTests(unittest.TestCase):
             ),
             (
                 "a provider that states no configuration",
-                {**ledger, "entries": [{**entry, "item": "deepsource-full"}]},
+                {**ledger, "entries": [{**entry, "item": "codacy"}]},
                 _complete_bundle(raw),
                 unresolved,
             ),
