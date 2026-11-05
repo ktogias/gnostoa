@@ -88,6 +88,15 @@ def _unavailable_inventory_document(
         observed_at=OBSERVED,
         reason="QualityEvidenceError",
     )
+    document, digest = _inventory_document(directory, None, recorded)
+    return document, digest, recorded
+
+
+def _inventory_document(
+    directory: str, inventory: dict[str, str] | None, readbacks: list[dict[str, Any]]
+) -> tuple[Path, str]:
+    """The inventory job's document of this subject, naming `inventory` and holding
+    `readbacks`, as `inventory_collect` writes it: its path and its SHA-256."""
     document = Path(directory) / "gnostoa-inventory-readback.json"
     document.write_text(
         canonical_json(
@@ -99,13 +108,54 @@ def _unavailable_inventory_document(
                 "observed_at": OBSERVED,
                 "base_tip": OTHER,
                 "base": OTHER,
-                "inventory": None,
-                "readbacks": recorded,
+                "inventory": inventory,
+                "readbacks": readbacks,
             }
         ),
         encoding="utf-8",
     )
-    return document, hashlib.sha256(document.read_bytes()).hexdigest(), recorded
+    return document, hashlib.sha256(document.read_bytes()).hexdigest()
+
+
+# The head's tree, as GitHub reads it for the inventory's binding.
+_TREE = "d" * 40
+
+
+def _complete_inventory_document(
+    directory: str, findings: list[dict[str, Any]]
+) -> tuple[Path, str]:
+    """A document as the inventory job writes it when its collection succeeded: the
+    inventory adapter's two readbacks of a complete inventory of the head, whose tree
+    is `_TREE`, under the protected profile, so the bundle's binding keeps them. The
+    comparison changed no path, so the FULL readback lists each of `findings`. Its
+    path and its SHA-256."""
+    from tools import analyzer_inventory, quality_evidence
+    from tools.review_model import canonical_digest
+
+    record = {
+        "schema": quality_evidence.DIAGNOSTIC_SCHEMA,
+        "source": {"revision": HEAD, "tree": _TREE, "source_binding": "BOUND"},
+        "scope": {"diff": {"changed_paths": []}},
+        "coverage": {"status": "COMPLETE", "pages": 1, "count": len(findings)},
+        "configuration": {
+            "profile": {
+                "digest": canonical_digest(quality_evidence.load_diagnostic_profile())
+            }
+        },
+        "findings": findings,
+    }
+    readbacks = analyzer_inventory.readbacks(
+        record,
+        repository="ktogias/gnostoa",
+        pull_number=312,
+        requested_head=HEAD,
+        observed_at=OBSERVED,
+    )
+    written = {
+        "file": "inventory.json",
+        "sha256": hashlib.sha256(canonical_json(record).encode("utf-8")).hexdigest(),
+    }
+    return _inventory_document(directory, written, readbacks)
 
 
 def _github_urls() -> dict[str, str]:
@@ -1498,6 +1548,8 @@ _SCOPE_SOURCE = "import os\n\n\ndef f(x):\n    return x\n"
 # The bounds Decision 0129 states for the head read.
 _SCOPE_FILE_BYTES = 1_048_576
 _SCOPE_FILES = 64
+# `_SCOPE_SOURCE` with a byte no UTF-8 text holds, in a trailing comment.
+_NOT_UTF8 = _SCOPE_SOURCE.encode("utf-8") + b"# \xff\n"
 
 
 def _contents_url(quoted_path: str) -> str:
@@ -1525,79 +1577,80 @@ def _wrapped(text: str, width: int = 60) -> list[str]:
     return [text[index : index + width] for index in range(0, len(text), width)]
 
 
-def _head_comment(identity: str, path: str, line: int) -> dict[str, Any]:
-    """A DeepSource comment made on the head, so the DIFF read lists its finding."""
+def _inventory_finding(identity: str, path: str, line: int) -> dict[str, Any]:
+    """A finding as the inventory records it, at `path` and `line` of the head."""
     return {
-        "body": (
-            f"<!-- DeepSource: id={identity} -->\n<h3><picture></picture>finding</h3>"
-        ),
+        "id": identity,
+        "message": "finding",
+        "rule": "F401",
         "path": path,
-        "line": line,
-        "commit_id": HEAD,
-        "original_commit_id": HEAD,
-        "html_url": f"https://github.com/ktogias/gnostoa/pull/312#discussion_{identity}",
-        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+        "tool": {"id": "ruff"},
+        "range": {"start_line": line, "start_column": 1},
+        "provenance": [{"surface": "diagnostic-inventory", "reference": "ruff"}],
     }
 
 
 class EnclosingScopeRunnerTests(unittest.TestCase):
     """The bundle gives each Python finding its enclosing scope, from its file at the
     exact head, read over REST as data; past a bound or unreadable, none (#389,
-    6615072518)."""
+    6615072518). The findings are the project inventory's, whose readbacks the
+    bundle binds to the same run's document (Decision 0130: DeepSource gives none)."""
 
     def _scoped(
-        self, comments: list[dict[str, Any]], contents: dict[str, Any]
+        self, findings: list[dict[str, Any]], contents: dict[str, Any]
     ) -> tuple[dict[str, dict[str, Any]], list[str]]:
-        """The DIFF findings, by id, of the bundle collected while GitHub answers each
-        contents URL as `contents` says, and the contents URLs read."""
+        """The inventory's FULL findings, by id, of the bundle collected from a
+        document listing `findings` while GitHub answers each contents URL as
+        `contents` says, and the contents URLs read."""
         urls = _github_urls()
         github = _GitHubFake(
             {
                 urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [
-                    {
-                        "context": "DeepSource: Python",
-                        "state": "success",
-                        "target_url": (
-                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                            f"{RUN_UID}/python/"
-                        ),
-                        "creator": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    }
-                ],
+                urls["statuses"]: [],
                 urls["checks"]: {"check_runs": []},
-                urls["comments"]: comments,
-                urls["sonar_checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                f"https://api.github.com/repos/ktogias/gnostoa/commits/{HEAD}": {
+                    "commit": {"tree": {"sha": _TREE}}
+                },
                 **contents,
             }
         )
-        bundle = runner.collect_bundle(
-            github,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            deepsource=None,
-            codacy=None,
-            sonarcloud=None,
-            observed_at=OBSERVED,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            document, digest = _complete_inventory_document(directory, findings)
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+                inventory=runner.InventoryInput(document, digest, "success", "1", "1"),
+            )
         self.assertEqual("BOUND", bundle["subject_binding"])
         recorded = json.loads(canonical_json(bundle))
         self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
-        (diff,) = [
-            r for r in bundle["readbacks"] if r["adapter"] == "deepsource-github/v1"
+        (full,) = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("gnostoa-inventory", "FULL")
         ]
-        findings = {finding["id"]: finding for finding in diff["findings"]}
-        return findings, [url for url in github.calls if "/contents/" in url]
+        # The binding kept the document's readback: it lists every finding.
+        self.assertEqual(
+            ("FULL_RUN", "COMPLETE", len(findings)),
+            (full["completeness"], full["coverage"]["status"], len(full["findings"])),
+        )
+        listed = {finding["id"]: finding for finding in full["findings"]}
+        return listed, [url for url in github.calls if "/contents/" in url]
 
     def test_each_python_finding_gets_its_enclosing_scope(self) -> None:
         spaced, failing = _contents_url("dir/a%20b.py"), _contents_url("c.py")
         findings, read = self._scoped(
             [
-                _head_comment("in-f", "dir/a b.py", 5),
-                _head_comment("module", "dir/a b.py", 1),
-                _head_comment("markdown", "b.md", 1),
-                _head_comment("unread", "c.py", 2),
+                _inventory_finding("in-f", "dir/a b.py", 5),
+                _inventory_finding("module", "dir/a b.py", 1),
+                _inventory_finding("markdown", "b.md", 1),
+                _inventory_finding("unread", "c.py", 2),
             ],
             {spaced: _file_reply(), failing: runner.RunnerError("Not Found")},
         )
@@ -1615,7 +1668,10 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         url = _contents_url("a.py")
         with patch.object(ast, "parse", wraps=ast.parse) as parse:
             findings, read = self._scoped(
-                [_head_comment("def", "a.py", 4), _head_comment("body", "a.py", 5)],
+                [
+                    _inventory_finding("def", "a.py", 4),
+                    _inventory_finding("body", "a.py", 5),
+                ],
                 {url: _file_reply()},
             )
         self.assertEqual(1, parse.call_count)
@@ -1626,7 +1682,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         """CodeAnt on #480: a finding in a `.pyi` stub gets its scope."""
         url = _contents_url("a.pyi")
         findings, read = self._scoped(
-            [_head_comment("stub", "a.pyi", 5)], {url: _file_reply()}
+            [_inventory_finding("stub", "a.pyi", 5)], {url: _file_reply()}
         )
         self.assertEqual(
             analyzer_readback.enclosing_scope(_SCOPE_SOURCE, 5),
@@ -1641,7 +1697,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         reply = _file_reply(_sized(64 * 1024), size=10)
         with patch.object(base64, "b64decode", wraps=base64.b64decode) as decode:
             findings, read = self._scoped(
-                [_head_comment("in-f", "a.py", 5)], {url: reply}
+                [_inventory_finding("in-f", "a.py", 5)], {url: reply}
             )
         self.assertNotIn("enclosing", findings["in-f"])
         self.assertEqual([url], read)
@@ -1673,8 +1729,16 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
                 _file_reply(size=len(_SCOPE_SOURCE) - 1),
                 False,
             ),
-            # cubic on #480: its true size, so only the UTF-8 decoding refuses it.
-            ("not UTF-8", _file_reply(content="//79", size=3), False),
+            # cubic on #480: its true size, so only the UTF-8 decoding refuses it;
+            # Python source otherwise, so no failed parse can hide that refusal.
+            (
+                "not UTF-8",
+                _file_reply(
+                    content=base64.b64encode(_NOT_UTF8).decode("ascii"),
+                    size=len(_NOT_UTF8),
+                ),
+                False,
+            ),
             # cubic on #480: a character outside base64 is refused, not dropped.
             ("not base64", _file_reply(content="!" + _file_reply()["content"]), False),
             (
@@ -1685,7 +1749,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 findings, read = self._scoped(
-                    [_head_comment("in-f", "a.py", 5)], {url: reply}
+                    [_inventory_finding("in-f", "a.py", 5)], {url: reply}
                 )
                 self.assertEqual(scoped, "enclosing" in findings["in-f"])
                 self.assertEqual([url], read)
@@ -1693,7 +1757,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
     def test_the_reads_are_bounded_in_files_and_in_bytes(self) -> None:
         paths = [f"m{index}.py" for index in range(_SCOPE_FILES + 1)]
         findings, read = self._scoped(
-            [_head_comment(path, path, 5) for path in paths],
+            [_inventory_finding(path, path, 5) for path in paths],
             {_contents_url(path): _file_reply() for path in paths},
         )
         self.assertEqual(_SCOPE_FILES, len(read))
@@ -1703,7 +1767,7 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         # Nine files at the file bound: the ninth is read, and past 8 MiB refused.
         paths = [f"m{index}.py" for index in range(9)]
         findings, read = self._scoped(
-            [_head_comment(path, path, 5) for path in paths],
+            [_inventory_finding(path, path, 5) for path in paths],
             {
                 _contents_url(path): _file_reply(_sized(_SCOPE_FILE_BYTES))
                 for path in paths
