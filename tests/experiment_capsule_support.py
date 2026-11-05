@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 
+from tests.exact_tree_support import git as exact_tree_git
 from tools.capsule import compiler, qualification
 from tools.capsule.authority import LaunchAuthority, PreflightAuthority
 from tools.capsule.spec import ExperimentSpec
@@ -17,27 +16,23 @@ from tools.capsule.spec import ExperimentSpec
 IMAGE_A = "sha256:" + "a" * 64
 
 
+# The capsule fixtures' Git environment: a fixed identity, no user or system config,
+# and a fixed child PATH, on which the child resolves git.
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "PATH": "/usr/bin:/bin",
+}
+
+
 def git(repo: Path, *args: str) -> str:
-    environment = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.invalid",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.invalid",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-        "PATH": "/usr/bin:/bin",
-    }
-    # The child's own PATH is where subprocess would look for git.
-    executable = shutil.which("git", path=environment["PATH"])
-    if executable is None:
-        raise FileNotFoundError(f"git is not on {environment['PATH']}")
-    return subprocess.run(
-        [executable, "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    ).stdout.strip()
+    """Git in `repo` under the capsule fixtures' environment, through the exact-tree
+    fixtures' one Git start."""
+    return exact_tree_git(repo, *args, env=_GIT_ENV)
 
 
 class CapsuleFixture(unittest.TestCase):

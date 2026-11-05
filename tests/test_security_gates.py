@@ -30,6 +30,7 @@ from tools.security_scan import (
     evaluate_secret_report,
     scan_tracked_tree,
 )
+from tools.trusted_path import trusted_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTECTED_BASELINE_PATH = "tasks/issue-11-r2a-current-advisory.json"
@@ -1197,11 +1198,10 @@ class ProviderSecurityGateTests(unittest.TestCase):
                         "RUNNER_TEMP": str(temporary),
                     }
                 )
-                bash = shutil.which("bash", path=environment["PATH"])
-                if bash is None:
-                    self.fail("bash must be on the route's PATH")
+                # The outer shell is the trusted one; the route's own commands still
+                # resolve on the child's PATH, the fakes first.
                 completed = subprocess.run(
-                    [bash, "-c", route_script],
+                    [trusted_executable("bash"), "-c", route_script],
                     cwd=ROOT,
                     env=environment,
                     check=False,
