@@ -128,6 +128,8 @@ inherited, copied or loaded by adopting projects.
 - [Repair the typing of seventeen test modules, the closure's first group](decisions/0123-repair-the-typing-of-seventeen-test-modules.md)
 - [Bound three capsule functions by one extraction each](decisions/0126-bound-three-capsule-functions-by-one-extraction-each.md)
 - [Bound the spec's control parser and the handoff's source walk](decisions/0127-bound-the-spec-control-parser-and-the-handoff-walk.md)
+- [Retire DeepSource as merge evidence, and give every class the project inventory's claims](decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md)
+- [Resolve git on the one trusted lookup, the leaf the repository's tools share](decisions/0131-resolve-git-on-the-one-trusted-lookup.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
