@@ -11,13 +11,12 @@ import importlib
 import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -152,7 +151,10 @@ class SitesStartTheTrustedGitTests(unittest.TestCase):
         def capture(argv: list[str], *_args: object, **_kwargs: object) -> object:
             seen.append(argv[0])
             if len(seen) <= answered:
-                return subprocess.CompletedProcess(argv, 0, "a" * 40 + "\n", "")
+                # The fields `_git_state` reads, without the subprocess module itself.
+                return SimpleNamespace(
+                    args=argv, returncode=0, stdout="a" * 40 + "\n", stderr=""
+                )
             raise OSError("stop at this child")
 
         with _Shadow(), patch("subprocess.run", side_effect=capture):
