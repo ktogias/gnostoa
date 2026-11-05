@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
-from tools import analyzer_readback, github_events
+from tools import analyzer_deepsource, analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,7 @@ OTHER = "b" * 40
 OBSERVED = "2026-09-23T14:00:00Z"
 # SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
 SONAR_ENV = "SONAR_TOKEN"
+CODACY_ENV = "CODACY_API_TOKEN"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
@@ -322,12 +323,12 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 runner.RunnerError,
             ),
             (
-                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                analyzer_deepsource.DeepSourceGraphQLClient,
                 lambda c: c.graphql(
-                    runner.analyzer_deepsource.RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": RUN_UID, "cursor": None},
                 ),
-                runner.analyzer_deepsource.ProviderReadFailure,
+                analyzer_deepsource.ProviderReadFailure,
             ),
             (
                 runner.analyzer_codacy.CodacyRestClient,
@@ -371,12 +372,12 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 "Bearer {}",
             ),
             (
-                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                analyzer_deepsource.DeepSourceGraphQLClient,
                 lambda c: c.graphql(
-                    runner.analyzer_deepsource.RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": RUN_UID, "cursor": None},
                 ),
-                runner.analyzer_deepsource.ProviderReadFailure,
+                analyzer_deepsource.ProviderReadFailure,
                 "Authorization",
                 "Bearer {}",
             ),
@@ -433,12 +434,12 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 runner.RunnerError,
             ),
             (
-                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                analyzer_deepsource.DeepSourceGraphQLClient,
                 lambda c: c.graphql(
-                    runner.analyzer_deepsource.RUN_QUERY,
+                    analyzer_deepsource.RUN_QUERY,
                     {"runUid": RUN_UID},
                 ),
-                runner.analyzer_deepsource.ProviderReadFailure,
+                analyzer_deepsource.ProviderReadFailure,
             ),
             (
                 runner.analyzer_codacy.CodacyRestClient,
@@ -636,103 +637,74 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 )
 
     def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
-        for provider, token_name, peer_type, peer in (
-            (
-                "deepsource",
-                "DEEPSOURCE_API_TOKEN",
-                runner.analyzer_codacy.CodacyRestClient,
-                _CodacyReader(),
-            ),
-            (
-                "codacy",
-                "CODACY_API_TOKEN",
-                runner.analyzer_deepsource.DeepSourceGraphQLClient,
-                _deepsource_fake(),
-            ),
-        ):
+        """A malformed Codacy credential reads AUTH_UNAVAILABLE and leaks nowhere,
+        while SonarCloud's valid read stays complete. DeepSource, its peer before, is
+        retired as merge evidence (Decision 0130)."""
+        events: list[str] = []
+        urls = _github_urls()
+        sonar_check = {
+            "id": 114609123587,
+            "name": "SonarCloud Code Analysis",
+            "head_sha": HEAD,
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-10-11T23:57:56Z",
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=312",
+            "app": {"id": 12526},
+        }
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                urls["sonar_checks"]: {"total_count": 1, "check_runs": [sonar_check]},
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "readback.json"
+            stderr, stdout = io.StringIO(), io.StringIO()
             with (
-                self.subTest(provider=provider),
-                tempfile.TemporaryDirectory() as directory,
+                patch.dict(
+                    os.environ,
+                    {CODACY_ENV: "synthetic-optional-credential\n"},
+                    clear=True,
+                ),
+                patch.object(
+                    runner.GitHubReadClient, "from_environment", return_value=github
+                ),
+                patch.object(
+                    runner.analyzer_sonarcloud.SonarCloudRestClient,
+                    "from_environment",
+                    return_value=_SonarCloudReader(events),
+                ),
+                patch.object(
+                    http.client.HTTPSConnection,
+                    "connect",
+                    side_effect=AssertionError("network forbidden"),
+                ) as connect,
+                contextlib.redirect_stderr(stderr),
+                contextlib.redirect_stdout(stdout),
             ):
-                urls = _github_urls()
-                github = _GitHubFake(
-                    {
-                        urls["pr"]: [_pr(), _pr()],
-                        urls["statuses"]: [
-                            {
-                                "context": "DeepSource: Python",
-                                "state": "success",
-                                "target_url": "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                                + RUN_UID
-                                + "/python/",
-                                "creator": {
-                                    "login": "deepsource-io[bot]",
-                                    "type": "Bot",
-                                },
-                            }
-                        ],
-                        urls["checks"]: {"check_runs": []},
-                        urls["comments"]: [],
-                    }
-                )
-                output = Path(directory) / "readback.json"
-                stderr, stdout = io.StringIO(), io.StringIO()
-                with (
-                    patch.dict(
-                        os.environ,
-                        {token_name: "synthetic-optional-credential\n"},
-                        clear=True,
-                    ),
-                    patch.object(
-                        runner.GitHubReadClient, "from_environment", return_value=github
-                    ),
-                    patch.object(peer_type, "from_environment", return_value=peer),
-                    patch.object(
-                        http.client.HTTPSConnection,
-                        "connect",
-                        side_effect=AssertionError("network forbidden"),
-                    ) as connect,
-                    contextlib.redirect_stderr(stderr),
-                    contextlib.redirect_stdout(stdout),
-                ):
-                    result = runner.main(
-                        [
-                            "--repository",
-                            "ktogias/gnostoa",
-                            "--pull-number",
-                            "312",
-                            "--head",
-                            HEAD,
-                            "--output",
-                            str(output),
-                        ]
-                    )
-                self.assertEqual(0, result)
-                serialized = output.read_text()
-                self.assertNotIn(
-                    "synthetic-optional-credential",
-                    serialized + stderr.getvalue() + stdout.getvalue(),
-                )
-                document = json.loads(serialized)
-                self.assertEqual("BOUND", document["subject_binding"])
-                readbacks = {
-                    item["provider"]: item
-                    for item in document["readbacks"]
-                    if item["adapter"] != "deepsource-github/v1"
-                }
-                self.assertEqual(
-                    "AUTH_UNAVAILABLE", readbacks[provider]["completeness"]
-                )
-                other = "codacy" if provider == "deepsource" else "deepsource"
-                self.assertEqual("FULL_RUN", readbacks[other]["completeness"])
-                connect.assert_not_called()
+                self.assertEqual(0, _main(output))
+            serialized = output.read_text()
+        self.assertNotIn(
+            "synthetic-optional-credential",
+            serialized + stderr.getvalue() + stdout.getvalue(),
+        )
+        document = json.loads(serialized)
+        self.assertEqual("BOUND", document["subject_binding"])
+        readbacks = {item["provider"]: item for item in document["readbacks"]}
+        self.assertEqual("AUTH_UNAVAILABLE", readbacks["codacy"]["completeness"])
+        self.assertEqual("COMPLETE", readbacks["sonarcloud"]["coverage"]["status"])
+        connect.assert_not_called()
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):
     def test_the_bundle_schema_is_the_reader_s(self) -> None:
         self.assertEqual(analyzer_readback.BUNDLE_SCHEMA, runner.BUNDLE_SCHEMA)
 
-    def test_review_comment_pages_fit_bound_and_retain_all_comments(self) -> None:
+    def test_review_comment_pages_fit_bound_and_count_every_comment(self) -> None:
         endpoint = "https://api.github.com/repos/ktogias/gnostoa/pulls/312/comments"
         total_comments = 234
         # The runner's own bound on one response, as its client reads under it.
@@ -748,7 +720,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         }
 
         def discussion(comment_id: int) -> str:
-            """Each comment's own URL, which the projection keeps."""
+            """Each comment's own URL."""
             return (
                 f"https://github.com/ktogias/gnostoa/pull/312#discussion_r{comment_id}"
             )
@@ -785,36 +757,28 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 return comments, headers
 
         client = _BoundedReviewCommentPages()
-        # The comments as the bundle projects them for DeepSource, observed on their
-        # way to its public adapter.
-        with patch.object(
-            runner.analyzer_deepsource,
-            "diff_local_from_github",
-            wraps=runner.analyzer_deepsource.diff_local_from_github,
-        ) as diff_local:
-            bundle = runner.collect_bundle(
-                client,
-                repository="ktogias/gnostoa",
-                pull_number=312,
-                requested_head=HEAD,
-                deepsource=None,
-                codacy=None,
-                sonarcloud=None,
-                observed_at=OBSERVED,
-            )
+        # The bundle's GitHub projection counts every comment, read in bounded pages.
+        # DeepSource's retired DIFF read, which kept each comment, is gone (Decision
+        # 0130): the count is what the bundle keeps, so every page is read once, in order.
+        bundle = runner.collect_bundle(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
 
         self.assertEqual("BOUND", bundle["subject_binding"])
         self.assertEqual(total_comments, bundle["github_projection"]["review_comments"])
-        # Every comment kept, each once and in order.
-        diff_local.assert_called_once()
-        self.assertEqual(
-            [discussion(comment_id) for comment_id in range(total_comments)],
-            [item["url"] for item in diff_local.call_args.kwargs["comments"]],
-        )
         pages = [
             url for url in client.calls if urlsplit(url).path == urlsplit(endpoint).path
         ]
-        self.assertEqual(5, len(pages))
+        self.assertEqual(
+            ["1", "2", "3", "4", "5"],
+            [parse_qs(urlsplit(url).query).get("page", ["1"])[0] for url in pages],
+        )
         self.assertTrue(
             all(parse_qs(urlsplit(url).query)["per_page"] == ["50"] for url in pages)
         )
@@ -918,275 +882,6 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertEqual(OTHER, bundle["observed_head"])
         self.assertEqual([], bundle["readbacks"])
 
-    def test_deepsource_comment_projection_retains_original_commit_identity(
-        self,
-    ) -> None:
-        # Two marked DeepSource comments on the head: one carried forward from
-        # another commit, one made on the head itself.
-        urls = _github_urls()
-        github = _GitHubFake(
-            {
-                urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [
-                    {
-                        "context": "DeepSource: Python",
-                        "state": "success",
-                        "target_url": (
-                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                            f"{RUN_UID}/python/"
-                        ),
-                        "creator": {
-                            "login": "deepsource-io[bot]",
-                            "type": "Bot",
-                        },
-                    }
-                ],
-                urls["checks"]: {"check_runs": []},
-                # The finding's file at the head, for its enclosing scope (#389):
-                # GitHub has none here, so the readback keeps its findings as they are.
-                f"https://api.github.com/repos/ktogias/gnostoa/contents/tools/example.py?ref={HEAD}": (
-                    runner.RunnerError("Not Found")
-                ),
-                urls["comments"]: [
-                    {
-                        "body": "<!-- DeepSource: id=carried -->\n<h3>finding</h3>",
-                        "path": "tools/example.py",
-                        "line": 7,
-                        "commit_id": HEAD,
-                        "original_commit_id": OTHER,
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
-                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    },
-                    {
-                        "body": "<!-- DeepSource: id=on-head -->\n<h3>finding</h3>",
-                        "path": "tools/example.py",
-                        "line": 8,
-                        "commit_id": HEAD,
-                        "original_commit_id": HEAD,
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_2",
-                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    },
-                ],
-            }
-        )
-        # The comments as the bundle projects them, observed on their way to
-        # DeepSource's public adapter.
-        with patch.object(
-            runner.analyzer_deepsource,
-            "diff_local_from_github",
-            wraps=runner.analyzer_deepsource.diff_local_from_github,
-        ) as diff_local:
-            bundle = runner.collect_bundle(
-                github,
-                repository="ktogias/gnostoa",
-                pull_number=312,
-                requested_head=HEAD,
-                deepsource=None,
-                codacy=None,
-                sonarcloud=None,
-                observed_at=OBSERVED,
-            )
-        diff_local.assert_called_once()
-        projected = diff_local.call_args.kwargs["comments"]
-        self.assertEqual(HEAD, projected[0]["commit_id"])
-        self.assertEqual(OTHER, projected[0]["original_commit_id"])
-        self.assertEqual(HEAD, projected[1]["commit_id"])
-        self.assertEqual(HEAD, projected[1]["original_commit_id"])
-        # And the readback tells them apart: the head's own comment is its one
-        # finding, and the carried-forward one is excluded, by name.
-        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        diff = readbacks["deepsource-github/v1"]
-        self.assertEqual(["on-head"], [item["id"] for item in diff["findings"]])
-        self.assertEqual(1, diff["native"]["carried_forward_comments_excluded"])
-        self.assertEqual("PARTIAL", diff["coverage"]["status"])
-        self.assertEqual(
-            "CARRIED_FORWARD_COMMENTS_EXCLUDED", diff["coverage"]["reason"]
-        )
-
-    def test_the_bundle_settles_a_carried_forward_comment_by_the_full_run(
-        self,
-    ) -> None:
-        """#389 (addendum 6615072518): the same run's complete full read lists no
-        finding at the carried-forward comment's path, line and message, so the
-        DIFF read is complete, and says why."""
-        urls = _github_urls()
-        github = _GitHubFake(
-            {
-                urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [],
-                urls["checks"]: {
-                    "check_runs": [
-                        {
-                            "name": "DeepSource: Python",
-                            "status": "completed",
-                            "conclusion": "success",
-                            "details_url": (
-                                "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                                f"{RUN_UID}/python/"
-                            ),
-                            "app": {"slug": "deepsource-io"},
-                        }
-                    ]
-                },
-                urls["comments"]: [
-                    {
-                        "body": (
-                            "<!-- DeepSource: id=carried -->\n"
-                            "<h3><picture></picture>finding</h3>"
-                        ),
-                        "path": "tools/example.py",
-                        "line": 7,
-                        "commit_id": HEAD,
-                        "original_commit_id": OTHER,
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
-                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    }
-                ],
-            }
-        )
-        bundle = runner.collect_bundle(
-            github,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            deepsource=_deepsource_fake(),
-            codacy=_CodacyReader(),
-            sonarcloud=None,
-            observed_at=OBSERVED,
-        )
-        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        diff = readbacks["deepsource-github/v1"]
-        self.assertEqual("COMPLETE", diff["coverage"]["status"])
-        self.assertEqual(1, diff["native"]["carried_forward_comments_excluded"])
-        self.assertEqual(
-            1, diff["native"]["carried_forward_comments_absent_from_full_run"]
-        )
-        recorded = json.loads(canonical_json(bundle))
-        self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
-
-    def test_check_run_can_supply_deepsource_run_association(self) -> None:
-        urls = _github_urls()
-        github = _GitHubFake(
-            {
-                urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [],
-                urls["checks"]: {
-                    "check_runs": [
-                        {
-                            "name": "DeepSource: Python",
-                            "status": "completed",
-                            "conclusion": "success",
-                            "details_url": (
-                                "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                                f"{RUN_UID}/python/"
-                            ),
-                            "app": {"slug": "deepsource-io"},
-                        }
-                    ]
-                },
-                urls["comments"]: [],
-            }
-        )
-        bundle = runner.collect_bundle(
-            github,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            deepsource=_deepsource_fake(),
-            codacy=_CodacyReader(),
-            sonarcloud=None,
-            observed_at=OBSERVED,
-        )
-        self.assertEqual("BOUND", bundle["subject_binding"])
-        # The merge-evidence reader accepts the producer's own bundle unchanged
-        # (1b.3b-2, #407 6101607240).
-        recorded = json.loads(canonical_json(bundle))
-        self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
-        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        self.assertEqual(
-            RUN_UID,
-            readbacks["deepsource-github/v1"]["analysis_id"],
-        )
-        self.assertEqual(
-            "DIFF_LOCAL",
-            readbacks["deepsource-github/v1"]["completeness"],
-        )
-        self.assertEqual(
-            "FULL_RUN",
-            readbacks["deepsource-graphql/v1"]["completeness"],
-        )
-        self.assertEqual(
-            "COMPLETE",
-            readbacks["deepsource-graphql/v1"]["coverage"]["status"],
-        )
-        self.assertEqual(
-            "FULL_RUN",
-            readbacks["codacy-api-v3/v1"]["completeness"],
-        )
-
-    def test_projection_normalization_failure_still_drives_full_run_readback(
-        self,
-    ) -> None:
-        urls = _github_urls()
-        github = _GitHubFake(
-            {
-                urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [
-                    {
-                        "context": "DeepSource: Python",
-                        "state": "success",
-                        "target_url": (
-                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                            f"{RUN_UID}/python/"
-                        ),
-                        "creator": {
-                            "login": "deepsource-io[bot]",
-                            "type": "Bot",
-                        },
-                    }
-                ],
-                urls["checks"]: {"check_runs": []},
-                urls["comments"]: [
-                    {
-                        "body": "<!-- DeepSource: id=conflict -->\n<h3>First title</h3>",
-                        "path": "tools/example.py",
-                        "line": 7,
-                        "commit_id": HEAD,
-                        "original_commit_id": HEAD,
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
-                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    },
-                    {
-                        "body": "<!-- DeepSource: id=conflict -->\n<h3>Different title</h3>",
-                        "path": "tools/other.py",
-                        "line": 7,
-                        "commit_id": HEAD,
-                        "original_commit_id": HEAD,
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_2",
-                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
-                    },
-                ],
-            }
-        )
-        bundle = runner.collect_bundle(
-            github,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            deepsource=_deepsource_fake(),
-            codacy=_CodacyReader(),
-            sonarcloud=None,
-            observed_at=OBSERVED,
-        )
-        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        diff_local = readbacks["deepsource-github/v1"]
-        full = readbacks["deepsource-graphql/v1"]
-        self.assertEqual("READBACK_UNAVAILABLE", diff_local["completeness"])
-        self.assertEqual("NORMALIZATION_ERROR", diff_local["coverage"]["reason"])
-        self.assertEqual(RUN_UID, diff_local["analysis_id"])
-        self.assertEqual("FULL_RUN", full["completeness"])
-        self.assertEqual("COMPLETE", full["coverage"]["status"])
-
     def test_the_bundle_carries_the_inventory_s_two_readbacks(self) -> None:
         """#389 A0-MP1 slice 3 (r4, 6399931352): given the inventory job's outputs,
         the bundle adds the document's two project readbacks after the vendors',
@@ -1278,8 +973,6 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         [
-                            "deepsource",
-                            "deepsource",
                             "codacy",
                             "sonarcloud",
                             "gnostoa-inventory",
@@ -1386,9 +1079,9 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                             document, digest, "success", "1", "1"
                         ),
                     )
-                    vendors = ["deepsource", "deepsource", "codacy", "sonarcloud"]
+                    vendors = ["codacy", "sonarcloud"]
                     self.assertEqual(
-                        vendors, [r["provider"] for r in bundle["readbacks"][:4]]
+                        vendors, [r["provider"] for r in bundle["readbacks"][:2]]
                     )
                     self.assertEqual(
                         []
@@ -1399,7 +1092,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                         ],
                         [
                             (r["scope"], r["completeness"], r["coverage"]["reason"])
-                            for r in bundle["readbacks"][4:]
+                            for r in bundle["readbacks"][2:]
                         ],
                     )
 
@@ -1445,7 +1138,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
                 inventory=runner.InventoryInput(document, digest, "success", "1", "1"),
             )
         self.assertEqual(
-            ["deepsource", "deepsource", "codacy", "sonarcloud"],
+            ["codacy", "sonarcloud"],
             [r["provider"] for r in bundle["readbacks"][:-2]],
         )
         self.assertEqual(
@@ -1558,55 +1251,20 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         )
         self.assertEqual("BOUND", bundle["subject_binding"])
         readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        self.assertEqual(
-            "AUTH_UNAVAILABLE",
-            readbacks["deepsource-graphql/v1"]["completeness"],
-        )
-        self.assertEqual(
-            "UNAVAILABLE", readbacks["deepsource-graphql/v1"]["coverage"]["status"]
-        )
-        self.assertEqual(
-            "AUTH_UNAVAILABLE",
-            readbacks["deepsource-graphql/v1"]["coverage"]["reason"],
-        )
+        # DeepSource is retired, not unavailable: it gives no readback (Decision 0130).
+        self.assertNotIn("deepsource-graphql/v1", readbacks)
         self.assertEqual(
             "AUTH_UNAVAILABLE",
             readbacks["codacy-api-v3/v1"]["completeness"],
         )
         self.assertEqual(
+            "AUTH_UNAVAILABLE",
+            readbacks["codacy-api-v3/v1"]["coverage"]["reason"],
+        )
+        self.assertEqual(
             "UNAVAILABLE", readbacks["codacy-api-v3/v1"]["coverage"]["status"]
         )
-        self.assertNotIn("observed_head", readbacks["deepsource-graphql/v1"])
         self.assertNotIn("observed_head", readbacks["codacy-api-v3/v1"])
-
-    def test_missing_deepsource_run_association_does_not_invent_observed_head(
-        self,
-    ) -> None:
-        urls = _github_urls()
-        github = _GitHubFake(
-            {
-                urls["pr"]: [_pr(), _pr()],
-                urls["statuses"]: [],
-                urls["checks"]: {"check_runs": []},
-                urls["comments"]: [],
-            }
-        )
-        bundle = runner.collect_bundle(
-            github,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            deepsource=_deepsource_fake(),
-            codacy=None,
-            sonarcloud=None,
-            observed_at=OBSERVED,
-        )
-        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
-        full = readbacks["deepsource-graphql/v1"]
-        self.assertEqual("AMBIGUOUS", full["completeness"])
-        self.assertEqual("INCOMPLETE", full["coverage"]["status"])
-        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", full["coverage"]["reason"])
-        self.assertNotIn("observed_head", full)
 
     def test_secret_sentinel_is_rejected_before_output(self) -> None:
         # A bundle that holds the credential inside a longer value is refused before
@@ -1787,7 +1445,6 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         acquire = steps[read]
         expected = (
             ("GITHUB_TOKEN", "github.token"),
-            ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
             ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
             ("SONAR_TOKEN", "secrets.SONAR_TOKEN"),
             ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
@@ -2058,6 +1715,81 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         )
 
 
+class DeepSourceRetirementRunnerTests(unittest.TestCase):
+    """The DeepSource exit (#389, owner 6625223543; Decision 0130): the runner
+    acquires nothing from DeepSource, and a reader handed to it is refused, so
+    retirement is explicit rather than an unavailable read."""
+
+    @staticmethod
+    def _github() -> _GitHubFake:
+        urls = _github_urls()
+        return _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+            }
+        )
+
+    def test_the_bundle_has_no_deepsource_readback(self) -> None:
+        bundle = runner.collect_bundle(
+            self._github(),
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=None,
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(
+            [("codacy", "DIFF"), ("sonarcloud", "DIFF")],
+            [(r["provider"], r["scope"]) for r in bundle["readbacks"]],
+        )
+
+    def test_a_deepsource_reader_is_refused_as_retired(self) -> None:
+        github, reader = self._github(), cast(Any, _deepsource_fake())
+        with self.assertRaisesRegex(
+            runner.RunnerError, "DeepSource is retired as merge evidence"
+        ):
+            runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=reader,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+
+    def test_no_workflow_passes_the_retired_provider_s_token(self) -> None:
+        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        self.assertEqual(
+            [],
+            [
+                path.name
+                for path in sorted(workflows.glob("*.yml"))
+                if "DEEPSOURCE_API_TOKEN" in path.read_text(encoding="utf-8")
+            ],
+        )
+
+    def test_the_pre_merge_check_reads_no_retired_provider_s_status(self) -> None:
+        # Otherwise DeepSource's red status would still gate every merge through the
+        # normal merge's pre-merge check (Decision 0130).
+        runbook = " ".join(
+            (ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "A retired provider's statuses and check runs are not read: "
+            "DeepSource's, such as `DeepSource: Python` (Decision 0130)",
+            runbook,
+        )
+
+
 class _SonarCloudReader:
     """SonarCloud for the runner's tests: the head analysed, no issue. Every read
     is logged in ``events``, beside the GitHub reads, so their order shows."""
@@ -2155,7 +1887,7 @@ class SonarCloudRunnerTests(unittest.TestCase):
             observed_at=OBSERVED,
         )
         self.assertEqual("BOUND", bundle["subject_binding"])
-        self.assertEqual(4, len(bundle["readbacks"]))
+        self.assertEqual(2, len(bundle["readbacks"]))
         readback = bundle["readbacks"][-1]
         self.assertEqual("sonarcloud-web-api/v1", readback["adapter"])
         # Read in full and bound: the latest published report's, COMPLETE (R1).
@@ -2274,11 +2006,6 @@ class SonarCloudRunnerTests(unittest.TestCase):
                 runner.GitHubReadClient, "from_environment", return_value=github
             ),
             patch.object(
-                runner.analyzer_deepsource.DeepSourceGraphQLClient,
-                "from_environment",
-                return_value=_deepsource_fake(),
-            ),
-            patch.object(
                 runner.analyzer_codacy.CodacyRestClient,
                 "from_environment",
                 return_value=_CodacyReader(),
@@ -2299,12 +2026,9 @@ class SonarCloudRunnerTests(unittest.TestCase):
             serialized + stderr.getvalue() + stdout.getvalue(),
         )
         readbacks = {
-            item["provider"]: item
-            for item in json.loads(serialized)["readbacks"]
-            if item["adapter"] != "deepsource-github/v1"
+            item["provider"]: item for item in json.loads(serialized)["readbacks"]
         }
         self.assertEqual("AUTH_UNAVAILABLE", readbacks["sonarcloud"]["completeness"])
-        self.assertEqual("FULL_RUN", readbacks["deepsource"]["completeness"])
         self.assertEqual("FULL_RUN", readbacks["codacy"]["completeness"])
         connect.assert_not_called()
 

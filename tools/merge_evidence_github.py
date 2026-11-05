@@ -82,26 +82,25 @@ _CHECK_PRODUCER = "gnostoa.merge-evidence-github/check-runs"
 # inventory is its own requirement's item, beside the gate the check manifest
 # gives (1b.3c; G1, #407 6119736075).
 _ANALYZER_ITEMS = {
-    # DeepSource's two readbacks are their own requirement, which NORMAL does not
-    # apply (#389 A0-MP1 slice 3, 6381812211 row 6).
-    ("deepsource", "DIFF"): ("deepsource-readback", "deepsource-diff"),
-    ("deepsource", "FULL"): ("deepsource-readback", "deepsource-full"),
     ("codacy", "DIFF"): ("analyzer-readback", "codacy"),
     ("sonarcloud", "DIFF"): ("sonarcloud", "issue-inventory"),
-    # The project's own inventory (Decision 0118) gives NORMAL's project-risk items.
+    # The project's own inventory (Decision 0118) gives the project-risk items, every
+    # class's since Decision 0130.
     ("gnostoa-inventory", "DIFF"): ("project-risk-readback", "project-diff"),
     ("gnostoa-inventory", "FULL"): ("project-risk-readback", "project-full"),
 }
 # The kind of read each item stands for, as the producer marks a complete one; a
 # complete read of another kind does not give it (Decision 0091; Codex on #417).
 _ANALYZER_COMPLETENESS = {
-    "deepsource-diff": "DIFF_LOCAL",
-    "deepsource-full": "FULL_RUN",
     "codacy": "FULL_RUN",
     "issue-inventory": "FULL_RUN",
     "project-diff": "DIFF_LOCAL",
     "project-full": "FULL_RUN",
 }
+# The providers retired as merge evidence, each with its Decision: protected here,
+# so a bundle that still carries one's readback is refused as retired, never read as
+# an unknown or an unavailable readback, and the evidence names each (Decision 0130).
+_RETIRED_ANALYZERS = {"deepsource": "0130"}
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"
 # As the readback normalized them; its provenance and native metadata stay in the
@@ -1732,6 +1731,10 @@ def evidence_from_snapshot(
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
         "analyzer_debt": _analyzer_debt(debt_ledger),
+        "analyzer_retired": [
+            {"provider": name, "decision": decision}
+            for name, decision in sorted(_RETIRED_ANALYZERS.items())
+        ],
         # The check items' receipts (1b.3b-1), SonarCloud's gate among them, and
         # the readback items' (1b.3b-2), SonarCloud's inventory among them (1b.3c).
         "receipts": [
@@ -1888,6 +1891,11 @@ def _readbacks_by_item(
     by_item: dict[tuple[str, str], dict[str, Any]] = {}
     for readback in readbacks:
         pair = (readback["provider"], readback["scope"])
+        if pair[0] in _RETIRED_ANALYZERS:
+            raise MergeEvidenceError(
+                f"the {_ANALYZER_LABEL} carries the readback {pair}, but {pair[0]} is "
+                f"retired as merge evidence (Decision {_RETIRED_ANALYZERS[pair[0]]})"
+            )
         if pair not in _ANALYZER_ITEMS:
             raise MergeEvidenceError(
                 f"the {_ANALYZER_LABEL} has an unknown readback {pair}"

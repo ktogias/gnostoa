@@ -352,8 +352,9 @@ def _readback(
 ) -> dict[str, Any]:
     complete = status == "COMPLETE"
     if completeness is None:
-        # As the producer marks them: DeepSource's diff read is diff-local, its
-        # full read and Codacy's are full runs.
+        # As the producer marks them: Codacy's and SonarCloud's reads are full runs,
+        # and a retired DeepSource's diff read, which only the retirement tests
+        # build, diff-local (Decision 0130).
         local = (provider, scope) == ("deepsource", "DIFF")
         completeness = "DIFF_LOCAL" if local else "FULL_RUN"
     if native_mode is None:
@@ -391,8 +392,9 @@ def _readback(
 
 def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
     """The authenticated readback's bundle for the snapshot's pull request; by
-    default its six readbacks are complete and find nothing: the four vendors' and,
-    since #389 A0-MP1 slice 3, the project inventory's two."""
+    default its four readbacks are complete and find nothing: Codacy's, SonarCloud's
+    and, since #389 A0-MP1 slice 3, the project inventory's two. DeepSource gives
+    none: it is retired as merge evidence (Decision 0130)."""
 
     bundle: dict[str, Any] = {
         "schema": analyzer_readback.BUNDLE_SCHEMA,
@@ -405,8 +407,6 @@ def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
         "github_projection": {"statuses": 0, "check_runs": 5, "review_comments": 0},
         "readbacks": list(readbacks)
         or [
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR),
             *_inventory_readbacks(),
@@ -424,8 +424,8 @@ def _inventory_readbacks() -> tuple[dict[str, Any], dict[str, Any]]:
     return (_inventory("DIFF"), _inventory("FULL"))
 
 
-ANALYZER_ITEMS = ("deepsource-diff", "deepsource-full", "codacy")
-ANALYZERS = (("deepsource", "DIFF"), ("deepsource", "FULL"), ("codacy", "DIFF"))
+ANALYZER_ITEMS = ("codacy",)
+ANALYZERS = (("codacy", "DIFF"),)
 # SonarCloud's inventory gives the `sonarcloud` requirement's own item (1b.3c).
 SONAR = ("sonarcloud", "DIFF")
 
@@ -2287,8 +2287,6 @@ class CheckReceiptTests(unittest.TestCase):
             {
                 **{("verification-checks", n): checks for n in REQUIRED},
                 ("codeql", "codeql"): checks,
-                ("deepsource-readback", "deepsource-diff"): readback,
-                ("deepsource-readback", "deepsource-full"): readback,
                 ("analyzer-readback", "codacy"): readback,
                 ("project-risk-readback", "project-diff"): readback,
                 ("project-risk-readback", "project-full"): readback,
@@ -3110,15 +3108,24 @@ class AnalyzerReceiptTests(unittest.TestCase):
     analyzer readback gives the analyzer items their receipts, whatever its
     findings, and its findings stay explicit in the evidence for M17."""
 
+    # Every item the readback gives, each named once: Codacy's, SonarCloud's
+    # inventory and the project inventory's two (DeepSource is retired, Decision 0130).
+    _READBACK_ITEMS = ("codacy", "issue-inventory", "project-diff", "project-full")
+
     @staticmethod
     def _statuses(bundle: dict[str, Any] | None) -> dict[str, str]:
-        # The readback's three vendor items: Codacy's under `analyzer-readback`,
-        # DeepSource's two under their own requirement (#389 A0-MP1 slice 3).
+        # The readback's vendor item under `analyzer-readback`: Codacy's, DeepSource's
+        # own requirement being retired (#389 A0-MP1 slice 3; Decision 0130).
         statuses = _receipt_statuses(_evidence(analyzer=bundle))
         return {
-            item: s
-            for (r, item), s in statuses.items()
-            if r in ("analyzer-readback", "deepsource-readback")
+            item: s for (r, item), s in statuses.items() if r == "analyzer-readback"
+        }
+
+    @classmethod
+    def _items(cls, bundle: dict[str, Any]) -> dict[str, str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {
+            item: s for (_, item), s in statuses.items() if item in cls._READBACK_ITEMS
         }
 
     def test_a_bound_complete_bundle_gives_each_item_a_complete_receipt(self) -> None:
@@ -3133,22 +3140,21 @@ class AnalyzerReceiptTests(unittest.TestCase):
     def test_findings_leave_the_receipt_complete_and_stay_explicit(self) -> None:
         suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
         bundle = _bundle(
-            _readback("deepsource", "DIFF", suppressed),
-            _readback("deepsource", "FULL", FINDING),
+            _inventory("DIFF", suppressed),
+            _inventory("FULL", FINDING),
             _readback("codacy", "DIFF"),
             _readback(*SONAR),
-            *_inventory_readbacks(),
         )
         self.assertEqual(
-            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(bundle)
+            dict.fromkeys(self._READBACK_ITEMS, "COMPLETE"), self._items(bundle)
         )
         evidence = _evidence(analyzer=bundle)
         self.assertEqual(
             {
                 "coverage": "COMPLETE",
                 "findings": [
-                    {"item": "deepsource-diff", **suppressed},
-                    {"item": "deepsource-full", **FINDING},
+                    {"item": "project-diff", **suppressed},
+                    {"item": "project-full", **FINDING},
                 ],
             },
             evidence["analyzer_findings"],
@@ -3172,8 +3178,8 @@ class AnalyzerReceiptTests(unittest.TestCase):
             **FINDING,
             "id": "issue-2",
             "category": "antipattern",
-            "native_ref": "https://app.deepsource.com/gh/ktogias/gnostoa/run/x",
-            "tool": {"id": "python", "name": "Python"},
+            "native_ref": "https://app.codacy.com/gh/ktogias/gnostoa/pull-requests/300",
+            "tool": {"id": "pylint", "name": "Pylint"},
             "range": {
                 "start_line": 3,
                 "start_column": 1,
@@ -3183,20 +3189,19 @@ class AnalyzerReceiptTests(unittest.TestCase):
         }
         raw = {
             **rich,
-            "provenance": [{"surface": "check-run", "reference": "123"}],
-            "native": {"shortcode": "PYL-W0404"},
+            "provenance": [{"surface": "codacy-api-v3", "reference": "issue-2"}],
+            "native": {"issue_id": "issue-2"},
         }
         bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL", raw, FINDING),
-            _readback("codacy", "DIFF"),
+            _readback("codacy", "DIFF", raw, FINDING),
             _readback(*SONAR),
+            *_inventory_readbacks(),
         )
         evidence = _evidence(analyzer=bundle)
         self.assertEqual(
             [
-                {"item": "deepsource-full", **FINDING},
-                {"item": "deepsource-full", **rich},
+                {"item": "codacy", **FINDING},
+                {"item": "codacy", **rich},
             ],
             evidence["analyzer_findings"]["findings"],
         )
@@ -3242,7 +3247,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             {
                 item: status
                 for (record, item), status in _receipt_statuses(evidence).items()
-                if record in ("analyzer-readback", "deepsource-readback")
+                if record == "analyzer-readback"
             },
         )
         self.assertEqual(
@@ -3251,17 +3256,17 @@ class AnalyzerReceiptTests(unittest.TestCase):
 
     def test_a_readback_s_own_status_is_its_receipt_s(self) -> None:
         bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
+            _inventory("DIFF"),
+            _inventory("FULL"),
             _readback("codacy", "DIFF", status="UNAVAILABLE"),
         )
         self.assertEqual(
             {
-                "deepsource-diff": "COMPLETE",
-                "deepsource-full": "COMPLETE",
+                "project-diff": "COMPLETE",
+                "project-full": "COMPLETE",
                 "codacy": "UNAVAILABLE",
             },
-            self._statuses(bundle),
+            self._items(bundle),
         )
         self.assertEqual(
             "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
@@ -3274,26 +3279,26 @@ class AnalyzerReceiptTests(unittest.TestCase):
             (
                 "a diff-local read as the full one",
                 (
-                    _readback("deepsource", "DIFF"),
-                    _readback("deepsource", "FULL", completeness="DIFF_LOCAL"),
+                    _inventory("DIFF"),
+                    _readback("gnostoa-inventory", "FULL", completeness="DIFF_LOCAL"),
                     _readback("codacy", "DIFF"),
                 ),
-                "deepsource-full",
+                "project-full",
             ),
             (
                 "a full run as the diff-local one",
                 (
-                    _readback("deepsource", "DIFF", completeness="FULL_RUN"),
-                    _readback("deepsource", "FULL"),
+                    _readback("gnostoa-inventory", "DIFF", completeness="FULL_RUN"),
+                    _inventory("FULL"),
                     _readback("codacy", "DIFF"),
                 ),
-                "deepsource-diff",
+                "project-diff",
             ),
             (
                 "a diff-local read as Codacy's",
                 (
-                    _readback("deepsource", "DIFF"),
-                    _readback("deepsource", "FULL"),
+                    _inventory("DIFF"),
+                    _inventory("FULL"),
                     _readback("codacy", "DIFF", completeness="DIFF_LOCAL"),
                 ),
                 "codacy",
@@ -3301,19 +3306,17 @@ class AnalyzerReceiptTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 bundle = _bundle(*readbacks)
-                self.assertEqual("INCOMPLETE", self._statuses(bundle)[item])
+                self.assertEqual("INCOMPLETE", self._items(bundle)[item])
                 self.assertEqual(
                     "INCOMPLETE",
                     _evidence(analyzer=bundle)["analyzer_findings"]["coverage"],
                 )
 
     def test_a_missing_readback_gives_its_item_no_receipt(self) -> None:
-        bundle = _bundle(
-            _readback("deepsource", "DIFF"), _readback("deepsource", "FULL")
-        )
+        bundle = _bundle(_inventory("DIFF"), _inventory("FULL"))
         self.assertEqual(
-            {"deepsource-diff": "COMPLETE", "deepsource-full": "COMPLETE"},
-            self._statuses(bundle),
+            {"project-diff": "COMPLETE", "project-full": "COMPLETE"},
+            self._items(bundle),
         )
         self.assertEqual(
             "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
@@ -3323,18 +3326,16 @@ class AnalyzerReceiptTests(unittest.TestCase):
         for name, bundle in (
             (
                 "an unknown analyzer",
-                _bundle(_readback("deepsource", "DIFF"), _readback("semgrep", "DIFF")),
+                _bundle(_readback("codacy", "DIFF"), _readback("semgrep", "DIFF")),
             ),
             (
                 "a repeated item",
-                _bundle(
-                    _readback("deepsource", "FULL"), _readback("deepsource", "FULL")
-                ),
+                _bundle(_inventory("FULL"), _inventory("FULL")),
             ),
             (
                 "an unknown analyzer, for another head",
                 _bundle(
-                    _readback("deepsource", "DIFF", head=PREVIOUS),
+                    _readback("codacy", "DIFF", head=PREVIOUS),
                     _readback("semgrep", "DIFF", head=PREVIOUS),
                     requested_head=PREVIOUS,
                     observed_head=PREVIOUS,
@@ -3343,8 +3344,8 @@ class AnalyzerReceiptTests(unittest.TestCase):
             (
                 "a repeated item, for another head",
                 _bundle(
-                    _readback("deepsource", "FULL", head=PREVIOUS),
-                    _readback("deepsource", "FULL", head=PREVIOUS),
+                    _inventory("FULL", head=PREVIOUS),
+                    _inventory("FULL", head=PREVIOUS),
                     requested_head=PREVIOUS,
                     observed_head=PREVIOUS,
                 ),
@@ -3353,7 +3354,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             (
                 "a readback time that is not one",
                 _bundle(
-                    {**_readback("deepsource", "DIFF"), "observed_at": "yesterday"},
+                    {**_readback("codacy", "DIFF"), "observed_at": "yesterday"},
                 ),
             ),
             ("a bundle time that is not one", _bundle(observed_at="yesterday")),
@@ -3361,7 +3362,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
                 "a readback time that is not one, for another head",
                 _bundle(
                     {
-                        **_readback("deepsource", "DIFF", head=PREVIOUS),
+                        **_readback("codacy", "DIFF", head=PREVIOUS),
                         "observed_at": "yesterday",
                     },
                     requested_head=PREVIOUS,
@@ -3386,12 +3387,10 @@ class AnalyzerReceiptTests(unittest.TestCase):
         declaration = assurance_completeness.load_declaration(
             ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
         )
-        # The readback's items, as section C splits them (#389 A0-MP1 slice 3).
+        # The readback's items, as section C splits them (#389 A0-MP1 slice 3), without
+        # DeepSource's, which Decision 0130 retires.
         coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
         self.assertEqual(["codacy"], coverage["analyzer-readback"])
-        self.assertEqual(
-            ["deepsource-diff", "deepsource-full"], coverage["deepsource-readback"]
-        )
         self.assertEqual(
             ["project-diff", "project-full"], coverage["project-risk-readback"]
         )
@@ -3408,11 +3407,7 @@ class AnalyzerReceiptTests(unittest.TestCase):
             statuses = _receipt_statuses(json.loads(out))
             self.assertEqual(
                 dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
-                {
-                    i: s
-                    for (r, i), s in statuses.items()
-                    if r in ("analyzer-readback", "deepsource-readback")
-                },
+                {i: s for (r, i), s in statuses.items() if r == "analyzer-readback"},
             )
             # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
             for text in ("not json", json.dumps({**_bundle(), "extra": 1}), "null"):
@@ -3494,7 +3489,7 @@ class SonarCloudInventoryTests(unittest.TestCase):
             {
                 item: s
                 for (r, item), s in _receipt_statuses(evidence).items()
-                if r in ("analyzer-readback", "deepsource-readback")
+                if r == "analyzer-readback"
             },
         )
         self.assertEqual(
@@ -3509,8 +3504,6 @@ class SonarCloudInventoryTests(unittest.TestCase):
             for n in range(29)
         ]
         bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR, *issues),
             *_inventory_readbacks(),
@@ -3550,11 +3543,7 @@ class SonarCloudInventoryTests(unittest.TestCase):
         """C9: a bundle without SonarCloud's readback, as every bundle before
         1b.3c, gives its item no receipt, so the reducer reports it MISSING, and
         M17's coverage is not COMPLETE."""
-        bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
-            _readback("codacy", "DIFF"),
-        )
+        bundle = _bundle(_readback("codacy", "DIFF"), *_inventory_readbacks())
         self.assertEqual({}, self._inventory(bundle))
         evidence = _evidence(analyzer=bundle)
         self.assertEqual("INCOMPLETE", evidence["analyzer_findings"]["coverage"])
@@ -3595,10 +3584,7 @@ class SonarCloudInventoryTests(unittest.TestCase):
         ):
             with self.subTest(status):
                 bundle = _bundle(
-                    _readback("deepsource", "DIFF"),
-                    _readback("deepsource", "FULL"),
-                    _readback("codacy", "DIFF"),
-                    readback,
+                    _readback("codacy", "DIFF"), readback, *_inventory_readbacks()
                 )
                 self.assertEqual(
                     {("sonarcloud", "issue-inventory"): status},
@@ -3608,10 +3594,9 @@ class SonarCloudInventoryTests(unittest.TestCase):
     def test_the_inventory_needs_a_full_run(self) -> None:
         """C9: a complete read of another kind does not give the item."""
         bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR, completeness="DIFF_LOCAL"),
+            *_inventory_readbacks(),
         )
         self.assertEqual(
             {("sonarcloud", "issue-inventory"): "INCOMPLETE"}, self._inventory(bundle)
@@ -3636,10 +3621,9 @@ class SonarCloudInventoryTests(unittest.TestCase):
             "state": "false_positive",
         }
         bundle = _bundle(
-            _readback("deepsource", "DIFF"),
-            _readback("deepsource", "FULL"),
             _readback("codacy", "DIFF"),
             _readback(*SONAR, accepted, false_positive),
+            *_inventory_readbacks(),
         )
         evidence = _evidence(analyzer=bundle)
         self.assertEqual(
@@ -3992,10 +3976,13 @@ class SonarCloudGateTests(unittest.TestCase):
 # coverage is the completeness verdict over every applicable claim of the
 # protected declaration, computed once by the admission; the adapter keeps each
 # source's raw coverage, and every obtained finding still vetoes. The substitute
-# claims are a test-only qualification, never a live one (F3 owns qualification).
+# claims are a test-only qualification, never a live one (F3 owns qualification):
+# since Decision 0130 retires DeepSource, a down Codacy is stood in for by the
+# project's diff read and a down SonarCloud inventory by its full read, each pair
+# two failure domains.
 _F2_SUBSTITUTES = (
-    (("deepsource-readback", "deepsource-diff"), ("analyzer-readback", "codacy")),
-    (("deepsource-readback", "deepsource-full"), ("sonarcloud", "issue-inventory")),
+    (("analyzer-readback", "codacy"), ("project-risk-readback", "project-diff")),
+    (("sonarcloud", "issue-inventory"), ("project-risk-readback", "project-full")),
 )
 _F2_CLASSES = ("critical", "mechanical", "normal", "normative")
 
@@ -4054,20 +4041,21 @@ def _f2_declaration(
     return document
 
 
-def _f2_partial(scope: str, *findings: dict[str, Any]) -> dict[str, Any]:
-    """A partial DeepSource read that still obtained findings."""
+def _f2_partial(provider: str, *findings: dict[str, Any]) -> dict[str, Any]:
+    """A partial read by a vendor, Codacy or SonarCloud's inventory, each its
+    pull-request analysis of DIFF, that still obtained findings."""
 
     return analyzer_readback.build_readback(
-        provider="deepsource",
-        adapter="deepsource-fake/v1",
+        provider=provider,
+        adapter=f"{provider}-fake/v1",
         repository="ktogias/gnostoa",
         pull_number=300,
         requested_head=HEAD,
         observed_head=HEAD,
         analysis_id=None,
-        scope=scope,
+        scope="DIFF",
         completeness="READBACK_UNAVAILABLE",
-        native_mode="DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN",
+        native_mode="PULL_REQUEST",
         observed_at="2026-09-19T16:40:50Z",
         run_state="UNKNOWN",
         coverage_record={
@@ -4080,17 +4068,17 @@ def _f2_partial(scope: str, *findings: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-_F2_DEEPSOURCE_DOWN = (
-    _readback("deepsource", "DIFF", status="UNAVAILABLE"),
-    _readback("deepsource", "FULL", status="UNAVAILABLE"),
-    _readback("codacy", "DIFF"),
-    _readback(*SONAR),
+# The vendors' readbacks that remain since Decision 0130, complete, and each down.
+_VENDORS = (_readback("codacy", "DIFF"), _readback(*SONAR))
+_VENDORS_DOWN = (
+    _readback("codacy", "DIFF", status="UNAVAILABLE"),
+    _readback(*SONAR, status="UNAVAILABLE"),
 )
 
 
 # #389 A0-MP1 slice 3 (6381812211 rows 4, 6 and 7): the inventory's two readbacks
-# give the NORMAL-only project-risk items, and DeepSource's readbacks become their own
-# requirement, which NORMAL no longer applies.
+# give the project-risk items, NORMAL's alone under section C and every class's since
+# Decision 0130, which retires DeepSource's requirement.
 _PROJECT_ITEMS = (
     ("project-risk-readback", "project-diff"),
     ("project-risk-readback", "project-full"),
@@ -4098,10 +4086,10 @@ _PROJECT_ITEMS = (
 
 
 def _section_c_declaration() -> dict[str, Any]:
-    """Gnostoa's own declaration, which carries 6381812211 section C's NORMAL-only
-    split: Codacy stays `analyzer-readback`'s, DeepSource's two items are
-    `deepsource-readback`'s (every class but NORMAL), and the project's inventory
-    gives `project-risk-readback` (NORMAL only)."""
+    """Gnostoa's own declaration: Codacy stays `analyzer-readback`'s, and the
+    project's inventory gives `project-risk-readback`, NORMAL's alone under
+    6381812211 section C and every class's since Decision 0130, which retires
+    DeepSource's requirement and claims."""
 
     document: dict[str, Any] = yaml.safe_load(
         (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
@@ -4155,84 +4143,13 @@ def _inventory_incomplete(scope: str) -> dict[str, Any]:
 
 class ProjectRiskActivationTests(unittest.TestCase):
     """#389 A0-MP1 slice 3, end to end through `evidence_for` and
-    `merge_admission.evaluate`: under section C's declaration the inventory's
-    readbacks give the NORMAL-only project items (6381812211 section D's cases)."""
-
-    def test_the_declaration_is_section_c_s(self) -> None:
-        """RED: the project-risk items are NORMAL's alone, DeepSource's every other
-        class's, and Codacy stays every class's."""
-        document = _section_c_declaration()
-        requirements = {r["id"]: r for r in document["requirements"]}
-        self.assertEqual(["codacy"], requirements["analyzer-readback"]["coverage"])
-        self.assertEqual(
-            (
-                ["mechanical", "normative", "critical"],
-                ["deepsource-diff", "deepsource-full"],
-            ),
-            (
-                requirements["deepsource-readback"]["applies_to"],
-                requirements["deepsource-readback"]["coverage"],
-            ),
-        )
-        self.assertEqual(
-            (["normal"], ["project-diff", "project-full"]),
-            (
-                requirements["project-risk-readback"]["applies_to"],
-                requirements["project-risk-readback"]["coverage"],
-            ),
-        )
-        claims = {c["id"]: c for c in document["claims"]}
-        for claim, requirement, classes in (
-            (
-                "deepsource-diff-findings",
-                "deepsource-readback",
-                {"mechanical", "normative", "critical"},
-            ),
-            (
-                "deepsource-full-findings",
-                "deepsource-readback",
-                {"mechanical", "normative", "critical"},
-            ),
-            ("project-diff-risk-findings", "project-risk-readback", {"normal"}),
-            ("project-full-risk-findings", "project-risk-readback", {"normal"}),
-        ):
-            with self.subTest(claim=claim):
-                self.assertEqual(
-                    requirement, claims[claim]["evidence"][0]["requirement"]
-                )
-                self.assertEqual(classes, set(claims[claim]["independent_domains"]))
-
-    def test_a_normal_change_with_deepsource_down_meets_its_project_claims(
-        self,
-    ) -> None:
-        """RED (candidate-profile-positive): main's map produces no project item, so
-        `producer_routes` refuses section C's declaration. Its claims met, NORMAL is
-        denied only by this fixture's other gaps, M13 and M15 (the name says what it
-        checks: Cubic on #461)."""
-        bundle = _bundle(*_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL"))
-        evidence, failed = _admitted(
-            _section_c_declaration(), bundle, change_class="normal"
-        )
-        statuses = _receipt_statuses(evidence)
-        for pair in _PROJECT_ITEMS:
-            with self.subTest(item=pair):
-                self.assertEqual("COMPLETE", statuses[pair])
-        self.assertEqual({"M13", "M15"}, set(failed))
-
-    def test_deepsource_still_holds_every_class_but_normal(self) -> None:
-        """RED (baseline for the other classes): with DeepSource down, every class but
-        NORMAL still lacks its two DeepSource claims, whatever the inventory says."""
-        bundle = _bundle(*_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL"))
-        for change_class in ("mechanical", "normative", "critical"):
-            with self.subTest(change_class=change_class):
-                _, failed = _admitted(
-                    _section_c_declaration(), bundle, change_class=change_class
-                )
-                self.assertIn("M2-M8", failed)
+    `merge_admission.evaluate`: the inventory's readbacks give the project items
+    (6381812211 section D's cases), NORMAL's alone under section C and every class's
+    since Decision 0130."""
 
     def test_an_incomplete_composite_never_gives_a_project_claim(self) -> None:
         """RED (absent-or-partial): an inventory that is missing, or not complete,
-        leaves NORMAL's project claims unmet."""
+        leaves a NORMAL change's project claims unmet, its vendors' claims met."""
         for name, inventories in (
             ("missing", ()),
             ("partial diff", (_inventory_incomplete("DIFF"), _inventory("FULL"))),
@@ -4255,7 +4172,7 @@ class ProjectRiskActivationTests(unittest.TestCase):
             with self.subTest(name):
                 _, failed = _admitted(
                     _section_c_declaration(),
-                    _bundle(*_F2_DEEPSOURCE_DOWN, *inventories),
+                    _bundle(*_VENDORS, *inventories),
                     change_class="normal",
                 )
                 self.assertIn("M2-M8", failed)
@@ -4264,7 +4181,7 @@ class ProjectRiskActivationTests(unittest.TestCase):
         """RED (full-not-diff-label): a complete read of the other kind does not give
         the item (Decision 0091, `_ANALYZER_COMPLETENESS`)."""
         bundle = _bundle(
-            *_F2_DEEPSOURCE_DOWN,
+            *_VENDORS,
             _readback("gnostoa-inventory", "DIFF", completeness="FULL_RUN"),
             _inventory("FULL"),
         )
@@ -4280,9 +4197,7 @@ class ProjectRiskActivationTests(unittest.TestCase):
     def test_an_inventory_finding_denies_a_normal_change(self) -> None:
         """RED (all-negative-evidence): under met claims, a finding the inventory
         obtained is M17's only reason, listed as its item's."""
-        bundle = _bundle(
-            *_F2_DEEPSOURCE_DOWN, _inventory("DIFF"), _inventory("FULL", FINDING)
-        )
+        bundle = _bundle(*_VENDORS, _inventory("DIFF"), _inventory("FULL", FINDING))
         evidence, failed = _admitted(
             _section_c_declaration(), bundle, change_class="normal"
         )
@@ -4292,21 +4207,14 @@ class ProjectRiskActivationTests(unittest.TestCase):
         self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
 
     def test_an_inventory_finding_denies_every_class(self) -> None:
-        """Characterization (PAO 6399779328, finding 2): a requirement that is NORMAL's
-        alone does not make its findings NORMAL's. M17 lists every finding obtained,
-        so once the bundle carries the inventory, a standing project finding denies a
-        critical or normative change whose own claims are all met. This is the
-        cross-class burden the production-admission packet carries, with its
-        pre-collection scope alternative; a finding is never filtered after it is
+        """Characterization (PAO 6399779328, finding 2): the classes a requirement
+        applies to never filter its findings. M17 lists every finding obtained, so
+        once the bundle carries the inventory, a standing project finding denies a
+        change of every class whose own claims are all met, the project items being
+        every class's since Decision 0130; a finding is never filtered after it is
         obtained."""
-        complete = (
-            _readback("deepsource", "DIFF", completeness="DIFF_LOCAL"),
-            _readback("deepsource", "FULL"),
-            _readback("codacy", "DIFF"),
-            _readback(*SONAR),
-        )
-        bundle = _bundle(*complete, _inventory("DIFF"), _inventory("FULL", FINDING))
-        for change_class in ("mechanical", "normative", "critical"):
+        bundle = _bundle(*_VENDORS, _inventory("DIFF"), _inventory("FULL", FINDING))
+        for change_class in ("mechanical", "normal", "normative", "critical"):
             with self.subTest(change_class=change_class):
                 evidence, failed = _admitted(
                     _section_c_declaration(), bundle, change_class=change_class
@@ -4364,6 +4272,112 @@ def _admitted(
     return evidence, failed
 
 
+class DeepSourceRetirementTests(unittest.TestCase):
+    """The DeepSource exit (#389, owner 6625223543; Decision 0130), end to end through
+    `evidence_for` and `merge_admission.evaluate`: the project inventory's claims stand
+    for every class, DeepSource is retired rather than unavailable, and a missing or
+    partial inventory, or any obtained finding, still denies."""
+
+    _CLASSES = ("mechanical", "normal", "normative", "critical")
+
+    @staticmethod
+    def _without_deepsource(*inventories: dict[str, Any]) -> dict[str, Any]:
+        return _bundle(
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR),
+            *(inventories or (_inventory("DIFF"), _inventory("FULL"))),
+        )
+
+    def test_the_declaration_names_no_deepsource_and_the_project_for_every_class(
+        self,
+    ) -> None:
+        document = _section_c_declaration()
+        requirements = {r["id"]: r for r in document["requirements"]}
+        claims = {c["id"]: c for c in document["claims"]}
+        self.assertNotIn("deepsource-readback", requirements)
+        self.assertEqual(
+            [],
+            [c for c in claims if "deepsource" in c],
+        )
+        self.assertEqual(
+            list(self._CLASSES), requirements["project-risk-readback"]["applies_to"]
+        )
+        for claim in ("project-diff-risk-findings", "project-full-risk-findings"):
+            with self.subTest(claim=claim):
+                self.assertEqual(
+                    dict.fromkeys(self._CLASSES, 1),
+                    claims[claim]["independent_domains"],
+                )
+
+    def test_every_class_meets_its_claims_without_deepsource(self) -> None:
+        """Its other gates met, each class is denied only by this fixture's own gaps,
+        M13 and M15: no class needs DeepSource any more."""
+        for change_class in self._CLASSES:
+            with self.subTest(change_class=change_class):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    self._without_deepsource(),
+                    change_class=change_class,
+                )
+                self.assertEqual({"M13", "M15"}, set(failed))
+
+    def test_a_missing_or_partial_inventory_denies_every_class(self) -> None:
+        for name, inventories in (
+            ("no full read", (_inventory("DIFF"),)),
+            ("no diff read", (_inventory("FULL"),)),
+            (
+                "a partial full read",
+                (_inventory("DIFF"), _inventory_incomplete("FULL")),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, failed = _admitted(
+                        _section_c_declaration(),
+                        _bundle(
+                            _readback("codacy", "DIFF"), _readback(*SONAR), *inventories
+                        ),
+                        change_class=change_class,
+                    )
+                    self.assertIn("M2-M8", failed)
+
+    def test_an_obtained_finding_still_denies_every_class(self) -> None:
+        for change_class in self._CLASSES:
+            with self.subTest(change_class=change_class):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    self._without_deepsource(
+                        _inventory("DIFF"), _inventory("FULL", FINDING)
+                    ),
+                    change_class=change_class,
+                )
+                self.assertIn("M17", failed)
+
+    def test_a_retired_provider_s_readback_is_refused_as_retired(self) -> None:
+        """Not as an unknown readback: retirement is a protected, recorded state."""
+        for scope in ("DIFF", "FULL"):
+            with self.subTest(scope=scope):
+                bundle = self._without_deepsource()
+                bundle["readbacks"].insert(0, _readback("deepsource", scope))
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "deepsource is retired as merge evidence \\(Decision 0130\\)",
+                ):
+                    _evidence(analyzer=bundle)
+
+    def test_the_evidence_records_the_retirement(self) -> None:
+        evidence = _evidence(analyzer=self._without_deepsource())
+        self.assertEqual(
+            [{"provider": "deepsource", "decision": "0130"}],
+            evidence["analyzer_retired"],
+        )
+
+
+# #389 F2's "down" bundle: both vendors down, and the project inventory's two reads,
+# which `_F2_SUBSTITUTES` lets stand in for them, complete.
+_F2_DOWN = (*_VENDORS_DOWN, *_inventory_readbacks())
+
+
 class AnalyzerClaimsCoverageTests(unittest.TestCase):
     """#389 F2, end to end through `evidence_for` and `merge_admission.evaluate`:
     a qualified alternative meets M17 only through the verdict, a down vendor's
@@ -4382,14 +4396,14 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
     def test_a_qualified_alternative_meets_m17_through_the_verdict(self) -> None:
         """RED: today M17 counts all four readbacks, whatever the claims say."""
         evidence, failed = self._admit(
-            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DEEPSOURCE_DOWN)
+            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DOWN)
         )
         statuses = _receipt_statuses(evidence)
         self.assertEqual(
             ("UNAVAILABLE", "UNAVAILABLE"),
             (
-                statuses[("deepsource-readback", "deepsource-diff")],
-                statuses[("deepsource-readback", "deepsource-full")],
+                statuses[("analyzer-readback", "codacy")],
+                statuses[("sonarcloud", "issue-inventory")],
             ),
         )
         self.assertEqual(
@@ -4401,29 +4415,34 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
         """RED for the reasons: under met claims, a finding from a partial,
         unselected or selected source, suppressed or not, is M17's only reason."""
         suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
+        codacy_down, inventory_down = _VENDORS_DOWN
         for name, readbacks, item in (
             (
-                "partial unselected diff",
-                (_f2_partial("DIFF", FINDING), *_F2_DEEPSOURCE_DOWN[1:]),
-                "deepsource-diff",
+                "partial unselected Codacy",
+                (
+                    _f2_partial("codacy", FINDING),
+                    inventory_down,
+                    *_inventory_readbacks(),
+                ),
+                "codacy",
             ),
             (
-                "partial unselected full",
+                "partial unselected SonarCloud inventory",
                 (
-                    _F2_DEEPSOURCE_DOWN[0],
-                    _f2_partial("FULL", FINDING),
-                    *_F2_DEEPSOURCE_DOWN[2:],
+                    codacy_down,
+                    _f2_partial("sonarcloud", FINDING),
+                    *_inventory_readbacks(),
                 ),
-                "deepsource-full",
+                "issue-inventory",
             ),
             (
                 "suppressed on the selected source",
                 (
-                    *_F2_DEEPSOURCE_DOWN[:2],
-                    _readback("codacy", "DIFF", suppressed),
-                    _F2_DEEPSOURCE_DOWN[3],
+                    *_VENDORS_DOWN,
+                    _inventory("DIFF", suppressed),
+                    _inventory("FULL"),
                 ),
-                "codacy",
+                "project-diff",
             ),
         ):
             with self.subTest(name):
@@ -4440,18 +4459,16 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
 
     def test_f1_already_meets_m2_m8_under_the_alternative(self) -> None:
         """Characterization: F1's claims give M2-M8 today, beside M17."""
-        _, failed = self._admit(
-            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DEEPSOURCE_DOWN)
-        )
+        _, failed = self._admit(_f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DOWN))
         self.assertNotIn("M2-M8", failed)
 
-    def test_without_proof_deepsource_still_holds(self) -> None:
+    def test_without_proof_a_down_vendor_still_holds(self) -> None:
         """Characterization: singleton claims, an unbound or another subject's
-        bundle, a missing alternative and one vendor's two reads all leave M2-M8
-        and M17 failing."""
+        bundle, a missing alternative, one source's two reads and fewer domains than
+        the minimum all leave M2-M8 and M17 failing."""
         diff_only = (_F2_SUBSTITUTES[0],)
         for name, declaration, bundle in (
-            ("singleton claims", _f2_declaration(), _bundle(*_F2_DEEPSOURCE_DOWN)),
+            ("singleton claims", _f2_declaration(), _bundle(*_F2_DOWN)),
             (
                 "another head",
                 _f2_declaration(_F2_SUBSTITUTES),
@@ -4465,24 +4482,19 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
             (
                 "the alternative is missing",
                 _f2_declaration(_F2_SUBSTITUTES),
-                _bundle(*_F2_DEEPSOURCE_DOWN[:2], _F2_DEEPSOURCE_DOWN[3]),
+                _bundle(*_VENDORS_DOWN),
             ),
+            # The project inventory's two reads share GitHub's domain; neither stands
+            # in for the other when both are missing.
             (
-                "one vendor's two reads",
-                _f2_declaration(
-                    (
-                        (
-                            ("deepsource-readback", "deepsource-diff"),
-                            ("deepsource-readback", "deepsource-full"),
-                        ),
-                    )
-                ),
-                _bundle(*_F2_DEEPSOURCE_DOWN),
+                "one source's two reads",
+                _f2_declaration((_PROJECT_ITEMS,)),
+                _bundle(*_VENDORS),
             ),
             (
                 "fewer domains than the minimum",
                 _f2_declaration(diff_only, minimum=2),
-                _bundle(*_F2_DEEPSOURCE_DOWN),
+                _bundle(*_F2_DOWN),
             ),
         ):
             with self.subTest(name):
@@ -4495,7 +4507,7 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
         evidence document cannot carry its own completeness verdict."""
         readback = {**_readback("codacy", "DIFF"), "claims": ["diff-findings"]}
         declaration = _f2_declaration(_F2_SUBSTITUTES)
-        bundle = _bundle(*_F2_DEEPSOURCE_DOWN[:2], readback, _F2_DEEPSOURCE_DOWN[3])
+        bundle = _bundle(readback, _readback(*SONAR), *_inventory_readbacks())
         with self.assertRaises(merge_evidence_github.MergeEvidenceError):
             self._admit(declaration, bundle)
         evidence = _evidence(analyzer=_bundle())

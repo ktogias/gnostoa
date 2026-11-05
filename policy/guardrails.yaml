@@ -811,6 +811,8 @@ guardrails:
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_the_analyzer_debt_has_a_closed_contract
       - tests/test_merge_admission.py::DebtLedgerM17Tests.test_a_finding_s_enclosing_scope_is_closed
       - tests/test_merge_admission.py::GnostoaDecisionParityTests.test_the_real_policy_keeps_every_merge_decision
+      - tests/test_merge_admission.py::AnalyzerRetirementTests.test_the_verdict_lists_each_retired_provider
+      - tests/test_merge_admission.py::AnalyzerRetirementTests.test_the_retirement_has_a_closed_contract
 
   - id: merge-admission-publication
     title: The merge-admission check is published from protected main only, on the exact evaluated head, and never once its evidence has changed
@@ -1069,17 +1071,20 @@ guardrails:
       - tests/test_merge_evidence_github.py::EvidenceDocumentTests.test_a_subject_repository_not_in_owner_name_form_is_refused
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_an_unreadable_escape_is_not_a_foreign_association
       - tests/test_merge_evidence_github.py::SonarCloudGateTests.test_the_gate_s_qualification_follows_its_identity
-      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_the_declaration_is_section_c_s
-      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_a_normal_change_with_deepsource_down_meets_its_project_claims
-      - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_deepsource_still_holds_every_class_but_normal
       - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_incomplete_composite_never_gives_a_project_claim
       - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_a_full_read_never_gives_the_diff_item
       - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_inventory_finding_denies_a_normal_change
       - tests/test_merge_evidence_github.py::ProjectRiskActivationTests.test_an_inventory_finding_denies_every_class
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_the_declaration_names_no_deepsource_and_the_project_for_every_class
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_every_class_meets_its_claims_without_deepsource
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_a_missing_or_partial_inventory_denies_every_class
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_an_obtained_finding_still_denies_every_class
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_a_retired_provider_s_readback_is_refused_as_retired
+      - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_the_evidence_records_the_retirement
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_a_qualified_alternative_meets_m17_through_the_verdict
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_any_obtained_finding_still_denies
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_f1_already_meets_m2_m8_under_the_alternative
-      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_without_proof_deepsource_still_holds
+      - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_without_proof_a_down_vendor_still_holds
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_neither_the_bundle_nor_the_evidence_can_supply_the_policy
 
   - id: authenticated-analyzer-readback
@@ -1353,11 +1358,11 @@ guardrails:
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_profile_that_is_not_utf_8_is_refused
       - tests/test_quality_evidence_profile.py::DiagnosticProfileContractTests.test_a_malformed_profile_is_refused_before_any_producer_runs
   - id: pinned-tool-families
-    title: The inventory's pinned tool and secrets families run only their pinned executables, from the protected tool root, with the protected configuration, name every directive, pragma, source and unsupported input as a gap, and stay inactive until a separate activation
+    title: The inventory's pinned tool and secrets families run only their pinned executables, from the protected tool root, with the protected configuration, name every directive, pragma, source and unsupported input as a gap; shell-lint, workflow-lint, gitlab-script and unsafe-calls are active (Decision 0130 item 4), and dockerfile-lint and secrets stay inactive until a separate activation
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: knowledge/decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md#decision
+    guidance: knowledge/decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md#decision
     implementation:
       - tools/quality_evidence.py#_check_version
       - tools/quality_evidence.py#_active_families
@@ -1411,7 +1416,7 @@ guardrails:
       - policy/diagnostic-profile.yaml
     tests:
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_v2_profile_admits_the_pinned_tool_families
-      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_protected_profile_declares_every_new_family_inactive
+      - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_the_protected_profile_activates_four_families_and_keeps_two_inactive
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_an_inactive_family_runs_nothing
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_a_tool_whose_digest_differs_from_its_pin_is_a_gap_and_never_runs
       - tests/test_quality_evidence_tool_families.py::ToolFamilyProfileTests.test_a_family_names_why_its_targets_went_unanalyzed

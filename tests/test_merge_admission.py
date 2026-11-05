@@ -119,6 +119,7 @@ def _evidence(subject: dict[str, Any] | None = None) -> dict[str, Any]:
         "closing_references": {"coverage": "COMPLETE", "found": []},
         "suppressions": {"coverage": "COMPLETE", "found": []},
         "trust_root_changes": {"coverage": "COMPLETE", "paths": []},
+        "analyzer_retired": [{"provider": "deepsource", "decision": "0130"}],
         "analyzer_findings": {"coverage": "COMPLETE", "findings": []},
         "receipts": [_receipt(exact, ["fast", "smoke"])],
     }
@@ -1551,16 +1552,16 @@ def _parity_evidence(
     return evidence
 
 
-def _moved(evidence: dict[str, Any]) -> dict[str, Any]:
-    """The same evidence under section C's declaration (#389 A0-MP1 slice 3):
-    DeepSource's receipts under their own requirement, and the project's two
-    inventory receipts complete."""
+def _successor(evidence: dict[str, Any]) -> dict[str, Any]:
+    """The same evidence under Decision 0130's declaration: DeepSource, retired as
+    merge evidence, gives no receipt, and the project's two inventory receipts are
+    complete."""
 
-    receipts = []
-    for receipt in evidence["receipts"]:
-        if (receipt["requirement"], receipt["coverage"][0]) in _PARITY_DEEPSOURCE:
-            receipt = {**receipt, "requirement": "deepsource-readback"}
-        receipts.append(receipt)
+    receipts = [
+        receipt
+        for receipt in evidence["receipts"]
+        if (receipt["requirement"], receipt["coverage"][0]) not in _PARITY_DEEPSOURCE
+    ]
     receipts += [
         {
             **_receipt(evidence["subject"], [item]),
@@ -1572,6 +1573,56 @@ def _moved(evidence: dict[str, Any]) -> dict[str, Any]:
     return {**evidence, "receipts": receipts}
 
 
+class AnalyzerRetirementTests(unittest.TestCase):
+    """The DeepSource exit (#389, Decision 0130): the evidence names each provider it
+    retires, and the verdict lists them for the approver, so a retired provider is
+    never read as an unavailable one."""
+
+    def test_the_verdict_lists_each_retired_provider(self) -> None:
+        evidence = _evidence()
+        evidence["analyzer_retired"] = [{"provider": "deepsource", "decision": "0130"}]
+        verdict = _claims_verdict(evidence)
+        self.assertEqual(
+            [{"provider": "deepsource", "decision": "0130"}],
+            verdict["for_approval"]["retired_analyzers"],
+        )
+
+    def test_the_retirement_has_a_closed_contract(self) -> None:
+        for name, value in (
+            ("not a list", {"provider": "deepsource", "decision": "0130"}),
+            (
+                "an unknown key",
+                [{"provider": "deepsource", "decision": "0130", "x": 1}],
+            ),
+            ("no decision", [{"provider": "deepsource"}]),
+            ("an empty provider", [{"provider": "", "decision": "0130"}]),
+            ("an empty decision", [{"provider": "deepsource", "decision": " "}]),
+            (
+                "a repeated provider",
+                [{"provider": "deepsource", "decision": "0130"}] * 2,
+            ),
+        ):
+            with self.subTest(name):
+                evidence = _evidence()
+                evidence["analyzer_retired"] = value
+                with self.assertRaises(
+                    assurance_completeness.AssuranceCompletenessError
+                ):
+                    _claims_verdict(evidence)
+        # And the record is required, though it may name none.
+        evidence = _evidence()
+        del evidence["analyzer_retired"]
+        with self.assertRaisesRegex(
+            assurance_completeness.AssuranceCompletenessError, "analyzer_retired"
+        ):
+            _claims_verdict(evidence)
+        evidence = _evidence()
+        evidence["analyzer_retired"] = []
+        self.assertEqual(
+            [], _claims_verdict(evidence)["for_approval"]["retired_analyzers"]
+        )
+
+
 class GnostoaDecisionParityTests(unittest.TestCase):
     def test_the_real_policy_keeps_every_merge_decision(self) -> None:
         """Guard for F2's singleton migration: over every combination of complete
@@ -1579,14 +1630,14 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         the decision its 1.0 form (main 935ea6c) gave. M17 may add only its
         coverage reason, and only where M2-M8 already fails.
 
-        Under section C (#389 A0-MP1 slice 3, 6381812211) that holds for every class
-        but NORMAL, with DeepSource's receipts under their own requirement. NORMAL
-        diverges by design: with the project's inventory complete it gets 1.0's
+        Every class diverges by design, as NORMAL already did under section C (#389
+        A0-MP1 slice 3, 6381812211): DeepSource is retired as merge evidence (Decision
+        0130), so with the project's inventory complete each class gets 1.0's
         decision as if DeepSource were complete. The project's items are therefore
         not in the 1.0 enumeration, which has no such item (Amazon Q on #461): this
-        guard holds only the decisions that must not change. NORMAL with the
-        inventory missing, partial or UNAVAILABLE is denied by
-        `test_merge_evidence_github.ProjectRiskActivationTests`."""
+        guard holds only the decisions that must not change. A class with the
+        inventory missing or partial is denied by
+        `test_merge_evidence_github.DeepSourceRetirementTests`."""
         from tests.test_assurance_completeness import GNOSTOA_1_0
 
         baseline = assurance_completeness.parse_declaration(GNOSTOA_1_0)
@@ -1603,16 +1654,14 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         for mask in range(2 ** len(items)):
             down = {pair for index, pair in enumerate(items) if mask >> index & 1}
             for change_class in ("mechanical", "normal", "normative", "critical"):
-                old_down = (
-                    down - _PARITY_DEEPSOURCE if change_class == "normal" else down
-                )
+                old_down = down - _PARITY_DEEPSOURCE
                 old = merge_admission.evaluate(
                     _parity_evidence(change_class, items, old_down),
                     declaration=baseline,
                     change_policy=POLICY,
                 )
                 new = merge_admission.evaluate(
-                    _moved(_parity_evidence(change_class, items, down)),
+                    _successor(_parity_evidence(change_class, items, down)),
                     declaration=current,
                     change_policy=POLICY,
                 )
@@ -1626,15 +1675,15 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         self.assertEqual([], wrong)
         # The guard's positive control (the Router's 6192773699): with every other
         # criterion valid, all ten items complete ALLOW in each class, and any one
-        # missing item DENYs, so the comparison above is never vacuous. For NORMAL
-        # a missing DeepSource item no longer DENYs: it is not NORMAL's.
+        # missing item DENYs, so the comparison above is never vacuous. A missing
+        # DeepSource item no longer DENYs any class: DeepSource is retired.
         for change_class in ("mechanical", "normal", "normative", "critical"):
             with self.subTest(change_class=change_class):
                 self.assertEqual(("ALLOW", "ALLOW"), decisions[(0, change_class)])
                 for index, pair in enumerate(items):
                     expected = (
                         ("ALLOW", "ALLOW")
-                        if change_class == "normal" and pair in _PARITY_DEEPSOURCE
+                        if pair in _PARITY_DEEPSOURCE
                         else ("DENY", "DENY")
                     )
                     self.assertEqual(expected, decisions[(1 << index, change_class)])

@@ -114,12 +114,12 @@ provider-neutral public change-governance contract of
      of them.
    - A `1.0` declaration keeps its form and its verdict. Gnostoa's own declaration
      is `1.1` since #389 F2, with each item its own claim at a minimum of one in
-     each class its requirement applies to. Since #389 A0-MP1 (Decision 0119),
-     DeepSource's two items are every class's but NORMAL's, and the project's own
-     inventory gives NORMAL's two project items. For every class but NORMAL each
-     `1.0` obligation stays, so a missing item still holds, as a guard over every
-     combination of statuses proves for the verdict and for the merge decision;
-     for NORMAL the same guard proves that DeepSource's status no longer decides. A substitute becomes
+     each class its requirement applies to. Decision 0119 gave NORMAL the project's
+     own inventory; Decision 0130 retires DeepSource as merge evidence and gives the
+     inventory's two project items to every class. Each other `1.0` obligation
+     stays, so a missing item still holds, as a guard over every combination of
+     statuses proves for the verdict and for the merge decision; the same guard
+     proves that DeepSource's status no longer decides any class. A substitute becomes
      eligible only through a reviewed change to the declaration, after its
      qualification (#389 F3).
 3. **The owner's native approval of the exact head is the only per-merge human act.**
@@ -392,10 +392,11 @@ provider-neutral public change-governance contract of
     rebuilds it exactly. A bundle bound to the exact repository, pull request (a
     `github-pull-request` change request) and head gives each item the receipt of
     its readback's own coverage, whatever its findings; readbacks map to items by
-    provider and scope (DeepSource diff and full, Codacy; SonarCloud's inventory,
-    under its own requirement, since 1b.3c). Each item stands for one kind of read,
-    as the producer marks a complete one: DeepSource's diff item a `DIFF_LOCAL`
-    read, its full item, Codacy's and SonarCloud's a `FULL_RUN`. A complete read of
+    provider and scope (Codacy; SonarCloud's inventory, under its own requirement,
+    since 1b.3c; the project's inventory, diff and full; DeepSource's until Decision
+    0130 retired it). Each item stands for one kind of read, as the producer marks a
+    complete one: the project's diff item a `DIFF_LOCAL` read, its full item,
+    Codacy's and SonarCloud's a `FULL_RUN`. A complete read of
     another kind gives `INCOMPLETE` (Decision 0091). A bundle that is not bound to
     the subject gives every item `INCOMPLETE`, and a missing readback gives its
     item no receipt (`MISSING`). Whatever the binding, an unknown or repeated

@@ -54,6 +54,9 @@ _EVIDENCE_KEYS = frozenset(
         "suppressions",
         "trust_root_changes",
         "analyzer_findings",
+        # The providers retired as merge evidence, each with its Decision, possibly
+        # none: required, so a producer that forgot retirement is refused (Decision 0130).
+        "analyzer_retired",
         "receipts",
     }
 )
@@ -99,6 +102,7 @@ _DEBT_ASPECTS = frozenset(
         "typing",
     }
 )
+_RETIRED_KEYS = frozenset({"provider", "decision"})
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
 _CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
@@ -734,6 +738,7 @@ def evaluate(
 
     document = require_mapping(evidence, "evidence")
     require_closed_keys(document, "evidence", _EVIDENCE_KEYS, _EVIDENCE_OPTIONAL_KEYS)
+    retired = _retired_analyzers(document["analyzer_retired"])
     subject = parse_subject(document["subject"], "subject")
     head = subject["head_commit"]
     change_class = parse_change_class(document["change_class"])
@@ -802,8 +807,29 @@ def evaluate(
             "analyzer_findings": analyzer_findings,
             "inherited_findings": inherited,
             "resolved_debt": resolved,
+            "retired_analyzers": retired,
         },
     }
+
+
+def _retired_analyzers(value: object) -> list[dict[str, str]]:
+    """The providers the evidence retires as merge evidence, each with its Decision
+    (Decision 0130), listed for the approver: a retired provider is never read as an
+    unavailable one, and none is named twice."""
+
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_retired must be a list")
+    retired: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        label = f"retired analyzer {index}"
+        record = require_mapping(item, label)
+        require_closed_keys(record, label, _RETIRED_KEYS)
+        provider = require_text(record["provider"], f"{label} provider")
+        if any(entry["provider"] == provider for entry in retired):
+            raise AssuranceCompletenessError(f"{label} repeats {provider!r}")
+        decision = require_text(record["decision"], f"{label} decision")
+        retired.append({"provider": provider, "decision": decision})
+    return retired
 
 
 def load_policy(path: Path, *, project_root: Path) -> dict[str, Any]:
