@@ -125,18 +125,18 @@ FROM runtime-build AS runtime
 # imports or invokes pip. Both shipped copies are removed, because uninstalling
 # the distribution leaves the wheel bundled under ensurepip, which is a separate
 # copy of the same component and can reinstall it.
-USER root
+USER 0:0
 RUN set -eux; \
     python -m pip uninstall --yes pip; \
     rm -rf "$(python -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip"; \
     rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12
-USER kit
+USER 10001:10001
 WORKDIR /workspace
 ENTRYPOINT ["knowledge"]
 CMD ["--help"]
 
 FROM development-build AS development
-USER root
+USER 0:0
 # After the development lock, Decision 0122's remainder (#389 H-PYSEC-2): the profile's pinned
 # tools for its active tool families, into the inventory's TOOL_ROOT. With every tool family
 # inactive this selects nothing and fetches nothing, so an ordinary development build needs no
@@ -150,6 +150,6 @@ RUN python -m pip install \
     && chmod 0444 .evidence/development-install-report.json \
     && install --directory --mode=0755 /opt/gnostoa-tools \
     && python -m tools.tool_acquisition
-USER kit
+USER 10001:10001
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

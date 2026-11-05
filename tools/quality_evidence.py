@@ -3391,17 +3391,69 @@ class _Located(str):
     step = 0
 
 
-def _located_loader() -> Any:
+def _located_load(text: str) -> Any:
+    """The document `yaml.load(text, Loader=BaseLoader)` gives, each scalar a `_Located` at the line its script starts
+    on, a block literal's lines its own. An alias returns the object it names; a node that contains itself is refused,
+    as BaseConstructor refuses it."""
     import yaml
 
-    class Loader(yaml.BaseLoader):
-        def construct_scalar(self, node: Any) -> Any:
-            value = _Located(super().construct_scalar(node))
-            literal = node.style == "|"
-            value.first, value.step = node.start_mark.line + 1 + literal, int(literal)
-            return value
+    root = yaml.compose(text, Loader=yaml.BaseLoader)
+    if root is None:
+        return None
+    built: dict[int, object] = {}
+    active: set[int] = set()
 
-    return Loader
+    def build(node: yaml.Node) -> object:
+        if id(node) in built:
+            return built[id(node)]
+        if id(node) in active:
+            raise yaml.constructor.ConstructorError(
+                None, None, "found unconstructable recursive node", node.start_mark
+            )
+        active.add(id(node))
+        try:
+            value = _located_value(node, build)
+        finally:
+            active.discard(id(node))
+        built[id(node)] = value
+        return value
+
+    return build(root)
+
+
+def _located_value(node: Any, build: Callable[[Any], object]) -> object:
+    """One composed node as BaseConstructor builds it, each child through `build`: a scalar a `_Located`, a sequence a
+    list, a mapping a dict whose keys must hash."""
+    import yaml
+
+    if isinstance(node, yaml.ScalarNode):
+        scalar = _Located(node.value)
+        literal = node.style == "|"
+        scalar.first, scalar.step = node.start_mark.line + 1 + literal, int(literal)
+        return scalar
+    if isinstance(node, yaml.SequenceNode):
+        return [build(child) for child in node.value]
+    if isinstance(node, yaml.MappingNode):
+        mapping: dict[object, object] = {}
+        for key_node, value_node in node.value:
+            key = build(key_node)
+            try:
+                hash(key)
+            except TypeError as exc:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found unhashable key",
+                    key_node.start_mark,
+                ) from exc
+            mapping[key] = build(value_node)
+        return mapping
+    raise yaml.constructor.ConstructorError(
+        None,
+        None,
+        f"could not determine a constructor for {node.tag}",
+        node.start_mark,
+    )
 
 
 def _masked(text: str) -> str:
@@ -3770,7 +3822,7 @@ def _step_shell_notes(
             f"{path}: a NEL, LS or PS line break at line {line}, so its step shells are not read"
         ]
     try:
-        document = yaml.load(text, Loader=_located_loader())
+        document = _located_load(text)
     except (yaml.YAMLError, ValueError, RecursionError):
         # PyYAML's scanner raises ValueError for an escape past U+10FFFF (cubic on #470).
         # A nesting past the reader's depth is a gap, never a crash.

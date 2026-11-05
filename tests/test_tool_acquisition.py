@@ -36,7 +36,8 @@ def _tar(members: list[tuple[str, bytes | None, str]], mode: str = "w:xz") -> by
     """An archive of the given members: (name, bytes, kind) with kind file, symlink or dir."""
     buffer = io.BytesIO()
     # One literal mode per call, as typeshed types tarfile.open, so no type suppression is needed.
-    assert mode in ("w:xz", "w:gz"), mode
+    if mode not in ("w:xz", "w:gz"):
+        raise AssertionError(mode)
     opened = (
         tarfile.open(fileobj=buffer, mode="w:gz")
         if mode == "w:gz"
@@ -661,7 +662,9 @@ class ConsumerTests(unittest.TestCase):
         )
         self.assertEqual(1, development.count(run))
         self.assertEqual(1, development.count("tools.tool_acquisition"))
-        self.assertLess(development.index(run), development.index("\nUSER kit\n"))
+        self.assertLess(
+            development.index(run), development.index("\nUSER 10001:10001\n")
+        )
         self.assertNotIn("\nADD ", development)
 
 
