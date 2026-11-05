@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 import unittest
-from pathlib import Path
+from collections.abc import Callable
+from pathlib import Path, PurePosixPath
+from types import ModuleType
+from unittest import mock
 
 import yaml
 
@@ -63,6 +68,97 @@ def _assert_all_in(case: unittest.TestCase, text: str, *required: str) -> None:
     """Each required fragment appears in a step's run text."""
     for fragment in required:
         case.assertIn(fragment, text)
+
+
+# The local candidate the boundary test hands the verifier, and what it measured.
+_CANDIDATE_IMAGE = "gnostoa-r2-restoration:boundary-test"
+_CANDIDATE_IMAGE_ID = "sha256:" + "b" * 64
+_CANDIDATE_SURFACE = "sha256:" + "5" * 64
+_CANDIDATE_IDENTITY_FORMAT = (
+    "{{.Os}}|{{.Architecture}}|{{.Config.User}}|"
+    '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+)
+# The tmpfs mount the verifier asks for, by its parts: the mount point, then its options in
+# order. The fake still compares each whole argv exactly, this value included.
+_CANDIDATE_TMPFS = f"{PurePosixPath('/', 'tmp')}:" + ",".join(
+    ("rw", "noexec", "nosuid", "nodev", "size=16m")
+)
+_CANDIDATE_RUN = (
+    "run",
+    "--rm",
+    "--pull=never",
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+)
+
+
+def _load_smoke() -> ModuleType:
+    """The restoration smoke, loaded from its file as the workflow runs it. As
+    importlib's own recipe does, the module is in `sys.modules` while it executes, so
+    its dataclass can resolve its annotations."""
+    spec = importlib.util.spec_from_file_location(
+        "restoration_smoke_under_test", SMOKE_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("the restoration smoke must load as a module")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
+    return module
+
+
+def _candidate_reads(change: dict[str, str]) -> Callable[..., bytes]:
+    """The local candidate's Docker reads, answered for exactly the verifier's argvs;
+    any other read is refused. `change` replaces one measured value."""
+    identity = change.get("identity", f"linux|amd64|kit|{SOURCE_COMMIT}")
+    reads = {
+        ("image", "inspect", "--format", "{{.Id}}", _CANDIDATE_IMAGE): change.get(
+            "image_id", _CANDIDATE_IMAGE_ID
+        ),
+        (
+            "image",
+            "inspect",
+            "--format",
+            _CANDIDATE_IDENTITY_FORMAT,
+            _CANDIDATE_IMAGE,
+        ): identity,
+        (
+            *_CANDIDATE_RUN,
+            "--entrypoint",
+            "sh",
+            _CANDIDATE_IMAGE,
+            "-ec",
+            "id -u; id -g",
+        ): change.get("ids", "10001\n10001\n"),
+        (
+            *_CANDIDATE_RUN,
+            "--tmpfs",
+            _CANDIDATE_TMPFS,
+            "--entrypoint",
+            "python",
+            _CANDIDATE_IMAGE,
+            "-m",
+            "tools.cli",
+            "surface-digest",
+            "--root",
+            "/opt/gnostoa",
+        ): change.get("surface", _CANDIDATE_SURFACE),
+    }
+
+    def answer(arguments: list[str], **_: object) -> bytes:
+        if tuple(arguments) not in reads:
+            raise AssertionError(f"unexpected Docker read: {arguments!r}")
+        return reads[tuple(arguments)].encode("utf-8")
+
+    return answer
 
 
 class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
@@ -329,9 +425,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("R3 requires separate owner authorization", decision)
 
     def test_r2_surface_is_owned_by_security_and_semantic_guardrails(self) -> None:
-        document = yaml.load(
-            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8"),
-            Loader=yaml.BaseLoader,
+        document = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         )
         self.assertIsInstance(document, dict)
         assert isinstance(document, dict)
@@ -378,6 +473,109 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "tests/test_current_advisory_restoration_runtime.py",
             provider_tests,
         )
+
+    @staticmethod
+    def _verify_candidate(
+        smoke: ModuleType, verify: Callable[..., None], change: dict[str, str]
+    ) -> None:
+        with mock.patch.object(
+            smoke, "_checked_output", side_effect=_candidate_reads(change)
+        ):
+            verify(
+                candidate_image=_CANDIDATE_IMAGE,
+                expected_image_id=_CANDIDATE_IMAGE_ID,
+                expected_revision=SOURCE_COMMIT,
+                expected_surface_digest=_CANDIDATE_SURFACE,
+                consumer={
+                    "runtime_revision": change.get("consumer_revision", SOURCE_COMMIT)
+                },
+                config_dir=ROOT / "docker-config-unused",
+            )
+
+    def test_local_candidate_boundary_accepts_exactly_kit_and_its_number(
+        self,
+    ) -> None:
+        """The local candidate may run as `kit` or as `10001:10001` and nothing else;
+        every other identity, field count, platform, revision, image id, uid, gid or
+        public surface is refused with its own reason (Decision 0125, item 6)."""
+        smoke = _load_smoke()
+        # The module's own binding: the restoration job runs this file with only the
+        # restoration source on its path, so no other test module is importable.
+        verify = vars(smoke)["_verify_local_candidate"]
+        accepted = {
+            "kit": {},
+            "10001:10001": {"identity": f"linux|amd64|10001:10001|{SOURCE_COMMIT}"},
+        }
+        identity = "runtime identity changed"
+        refused: dict[str, tuple[dict[str, str], str]] = {
+            f"user {user!r}": (
+                {"identity": f"linux|amd64|{user}|{SOURCE_COMMIT}"},
+                identity,
+            )
+            for user in ("root", "0:0", "10001", "10002:10002", "kit:kit", "")
+        }
+        refused.update(
+            {
+                "three fields": ({"identity": "linux|amd64|kit"}, identity),
+                "five fields": (
+                    {"identity": f"linux|amd64|kit|{SOURCE_COMMIT}|extra"},
+                    identity,
+                ),
+                "another OS": (
+                    {"identity": f"windows|amd64|kit|{SOURCE_COMMIT}"},
+                    identity,
+                ),
+                "another architecture": (
+                    {"identity": f"linux|arm64|kit|{SOURCE_COMMIT}"},
+                    identity,
+                ),
+                "another revision label": (
+                    {"identity": "linux|amd64|kit|" + "0" * 40},
+                    identity,
+                ),
+                "another consumer revision": (
+                    {"consumer_revision": "0" * 40},
+                    "identity changed revision",
+                ),
+                "another image id": (
+                    {"image_id": "sha256:" + "c" * 64},
+                    "image id changed",
+                ),
+                "another uid": ({"ids": "10002\n10001\n"}, "uid/gid changed"),
+                "another gid": ({"ids": "10001\n10002\n"}, "uid/gid changed"),
+                "another surface": (
+                    {"surface": "sha256:" + "6" * 64},
+                    "public surface changed",
+                ),
+            }
+        )
+        for label, change in accepted.items():
+            with self.subTest(accepted=label):
+                self._verify_candidate(smoke, verify, change)
+        for label, (change, reason) in refused.items():
+            with (
+                self.subTest(refused=label),
+                self.assertRaisesRegex(RuntimeError, reason),
+            ):
+                self._verify_candidate(smoke, verify, change)
+
+    def test_residue_probe_without_a_daemon_image_reports_it_and_runs_nothing(
+        self,
+    ) -> None:
+        """When the original plan builder raised, so that no daemon image was recorded,
+        the residue probe reports that before any Docker run (Decision 0125, item 6)."""
+        smoke = _load_smoke()
+        run = vars(smoke)["_CandidateRun"](
+            candidate_image=_CANDIDATE_IMAGE,
+            synthetic_runtime_image="gnostoa-r2-synthetic:boundary-test",
+        )
+        with mock.patch.object(smoke, "_run_docker") as docker:
+            issue = vars(smoke)["_tmp_residue_issue"](
+                run, "gnostoa-r2-tmp-boundary-test", ROOT / "docker-config-unused"
+            )
+        self.assertEqual("R2 shared tmp residue inspection had no daemon image", issue)
+        docker.assert_not_called()
+        self.assertFalse(run.sentinel_absent)
 
 
 if __name__ == "__main__":

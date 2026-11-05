@@ -126,6 +126,8 @@ inherited, copied or loaded by adopting projects.
 - [Refresh the development lock's msgpack pin for an unbounded memory leak](decisions/0121-refresh-the-development-lock-msgpack-pin.md)
 - [Add the inventory's pinned tool and secrets families, inactive until a separate activation](decisions/0122-add-the-inventory-s-pinned-tool-and-secrets-families-inactive.md)
 - [Repair the typing of seventeen test modules, the closure's first group](decisions/0123-repair-the-typing-of-seventeen-test-modules.md)
+- [Bound tests/test_tools.py's two complex functions by extraction and repair its typing](decisions/0124-bound-test-tools-two-complex-functions-and-repair-its-typing.md)
+- [Name the image's users by number](decisions/0125-name-the-image-s-users-by-number.md)
 - [Bound three capsule functions by one extraction each](decisions/0126-bound-three-capsule-functions-by-one-extraction-each.md)
 - [Bound the spec's control parser and the handoff's source walk](decisions/0127-bound-the-spec-control-parser-and-the-handoff-walk.md)
 - [Retire DeepSource as merge evidence, and give every class the project inventory's claims](decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md)
