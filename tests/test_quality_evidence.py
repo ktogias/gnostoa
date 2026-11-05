@@ -3002,7 +3002,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                 stream.raw.write(data[:10])
                 raise OSError(errno.ENOSPC, "no space")
 
-            stream.write = write
+            vars(stream)["write"] = write
             return stream
 
         publish = _original(self.module, "_publish")

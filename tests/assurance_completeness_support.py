@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+# Gnostoa's declaration at main 935ea6c: a guard that no later form of it changes
+# a verdict before a substitute is qualified (#389, the owner's admission 6157791244).
 GNOSTOA_1_0: dict[str, Any] = {
     "schema_version": "1.0",
     "id": "gnostoa.required-evidence",

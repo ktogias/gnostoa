@@ -739,8 +739,7 @@ class GnostoaDeclarationTests(unittest.TestCase):
         )
 
 
-# Gnostoa's declaration at main 935ea6c: a guard that no later form of it changes
-# a verdict before a substitute is qualified (#389, the owner's admission 6157791244).
+# The classes that merge through admission: every one but `emergency`.
 MERGING_CLASSES = sorted(CHANGE_CLASSES - {"emergency"})
 
 
