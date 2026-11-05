@@ -25,9 +25,9 @@ from unittest import mock
 
 import yaml
 
-from tests.test_claude_actions_workflows import _expression_secrets
-from tests.test_merge_evidence_github import API, HEAD, _replies
-from tests.test_review_reconcile_l1 import adapter_fixture, paged_fake_fixture
+from tests.claude_actions_workflows_support import _expression_secrets
+from tests.merge_evidence_github_support import API, HEAD, _replies
+from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"

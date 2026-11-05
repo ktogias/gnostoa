@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import yaml
 
+from tests.assurance_completeness_support import GNOSTOA_1_0
 from tools import analyzer_readback, assurance_completeness, review_reconcile
 from tools.review_policy import CHANGE_CLASSES
 
@@ -738,39 +739,7 @@ class GnostoaDeclarationTests(unittest.TestCase):
         )
 
 
-# Gnostoa's declaration at main 935ea6c: a guard that no later form of it changes
-# a verdict before a substitute is qualified (#389, the owner's admission 6157791244).
-GNOSTOA_1_0: dict[str, Any] = {
-    "schema_version": "1.0",
-    "id": "gnostoa.required-evidence",
-    "version": "0.1.0",
-    "requirements": [
-        {
-            "id": "verification-checks",
-            "title": "The status checks R-main requires ran on the exact head",
-            "applies_to": ["mechanical", "normal", "normative", "critical"],
-            "coverage": ["policy", "fast", "regression", "smoke"],
-        },
-        {
-            "id": "codeql",
-            "title": "CodeQL analysed the exact head",
-            "applies_to": ["mechanical", "normal", "normative", "critical"],
-            "coverage": ["codeql"],
-        },
-        {
-            "id": "analyzer-readback",
-            "title": "The authenticated analyzer readback is bound to the exact head",
-            "applies_to": ["mechanical", "normal", "normative", "critical"],
-            "coverage": ["deepsource-diff", "deepsource-full", "codacy"],
-        },
-        {
-            "id": "sonarcloud",
-            "title": "SonarCloud's quality gate and its issue inventory",
-            "applies_to": ["mechanical", "normal", "normative", "critical"],
-            "coverage": ["quality-gate", "issue-inventory"],
-        },
-    ],
-}
+# The classes that merge through admission: every one but `emergency`.
 MERGING_CLASSES = sorted(CHANGE_CLASSES - {"emergency"})
 
 

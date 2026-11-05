@@ -17,11 +17,15 @@ import re
 import stat
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 from tests.quality_evidence_fixtures import PINS, _DiagnosticInventoryFixture
+from tests.quality_evidence_profile_support import _original
+from tools.quality_evidence import DiagnosticLimits
+from tools.requirements_lock import LockedRequirement
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -166,20 +170,6 @@ WHOLE_TREE = {
 }
 
 
-def _original(module: object, name: str) -> Any:
-    """`module`'s own `name`, as unittest.mock hands an original to new_callable under spec=True, so no private
-    attribute is named (the fixtures' own pattern, #389 6480056885)."""
-    found: list[object] = []
-
-    def kept(*, spec: object) -> object:
-        found.append(spec)
-        return spec
-
-    with patch.object(module, name, spec=True, new_callable=kept):
-        pass
-    return found[0]
-
-
 # The owner's accepted residual (#389 6405841272), which only a BOUND record names: for
 # the bounded diagnostic source binding, and no stronger claim.
 ACCEPTED_RESIDUAL = {
@@ -210,11 +200,18 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
     """The protected route's inventory: collected with no profile argument, so that
     the producer tree's own profile governs. The fake Ruff answers as Ruff does."""
 
+    mypy_exit: dict[str, int]
+    mypy_records: dict[str, list[dict[str, Any]]]
+    ruff_as_ruff: bool
+    ruff_exit: int | None
+    run_directory: Path
+    versions: dict[str, str | None]
+
     def setUp(self) -> None:
         super().setUp()
         self.ruff_exit, self.ruff_as_ruff = None, True
 
-    def _protected(self, **options) -> dict:
+    def _protected(self, **options: object) -> dict[str, Any]:
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
             path = self.module.collect_diagnostic_inventory(
                 self.root, self.output, **options
@@ -222,7 +219,9 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         self.run_directory = Path(path).parent
         return self._read(path)
 
-    def _inventory_with(self, profile: dict, **options) -> dict:
+    def _inventory_with(
+        self, profile: dict[str, Any], **options: object
+    ) -> dict[str, Any]:
         """The private path's inventory under a supplied profile."""
         with patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run):
             path = _original(self.module, "_collect_diagnostic_inventory")(
@@ -256,7 +255,8 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
                 given |= {prefix + f for f in _files(command)}
         return given
 
-    def _rows(self, inventory: dict) -> dict[str, dict]:
+    @staticmethod
+    def _rows(inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
         rows = inventory.get("families", [])
         return {row["family"]: row for row in rows}
 
@@ -526,9 +526,11 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         (self.root / "tools" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
         self._git("commit", "-q", "-am", "two changed complexity targets")
         real = _original(self.module, "_diagnostic_git")
-        scans = []
+        scans: list[tuple[str, ...]] = []
 
-        def counting(root, deadline, *arguments, **options):
+        def counting(
+            root: Path, deadline: float, *arguments: str, **options: int
+        ) -> str:
             if "--name-only" in arguments:
                 scans.append(arguments)
             return real(root, deadline, *arguments, **options)
@@ -729,19 +731,27 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
     # endpoints are equal (P4). Each negative breaks one predicate, every other
     # holding, and names it.
 
-    def _bound(self, **options) -> dict:
+    def _bound(self, **options: object) -> dict[str, Any]:
         """The protected route with every predicate holding: the producers answer
         their pins."""
         self.versions = dict(PINS)
         return self._protected(**options)
 
-    def _observed(self, *answers: str | None, **options) -> dict:
+    def _observed(self, *answers: str | None, **options: object) -> dict[str, Any]:
         """The protected route, the producers at their pins, and its environment
         observations answered in turn; None fails as an unreadable observation."""
         self.versions = dict(PINS)
         pending = list(answers)
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if command != self._observation_command():
                 return self._fake_run(
                     command,
@@ -770,13 +780,13 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         return self._read(path)
 
     @staticmethod
-    def _unmet(inventory: dict) -> list[str]:
+    def _unmet(inventory: dict[str, Any]) -> list[str]:
         """The predicates the record names unmet, in its order."""
         # A COMPLETE composite records no reason at all.
         reason = inventory["coverage"].get("reason") or ""
         return re.findall(r"source binding (P[1-4]) unmet", reason)
 
-    def _unbound(self, inventory: dict, predicate: str, detail: str) -> None:
+    def _unbound(self, inventory: dict[str, Any], predicate: str, detail: str) -> None:
         """UNVERIFIED, with no accepted residual, the binding's residual still a gap,
         and `predicate` the only one unmet, for `detail`."""
         source = inventory["source"]
@@ -901,7 +911,7 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         real = self.module.locked_requirements
         read: list[Path] = []
 
-        def without_ruff(path: Path) -> list:
+        def without_ruff(path: Path) -> list[LockedRequirement]:
             read.append(path)
             return [r for r in real(path) if r["normalized_name"] != "ruff"]
 
@@ -984,13 +994,28 @@ class DiagnosticProfileTests(_DiagnosticInventoryFixture):
         order: list[str] = []
         real = self.module.locked_requirements
 
-        def pins(path: Path) -> list:
+        def pins(path: Path) -> list[LockedRequirement]:
             order.append("lock")
             return real(path)
 
-        def run(command, **options):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             order.append("launch")
-            return self._fake_run(command, **options)
+            return self._fake_run(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
 
         self.versions = dict(PINS)
         with (
@@ -1178,9 +1203,9 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         with (
             patch.object(self.module, "_PRODUCER_TREE", producer),
             patch.object(self.module, "_PROFILE", link),
+            self.assertRaises(self.module.QualityEvidenceError),
         ):
-            with self.assertRaises(self.module.QualityEvidenceError):
-                self.module.load_diagnostic_profile()
+            self.module.load_diagnostic_profile()
 
     def test_a_missing_protected_profile_is_refused_before_anything_runs(self) -> None:
         # An installed wheel ships the collector without policy/, as every policy file
@@ -1188,9 +1213,11 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         absent = (
             _original(self.module, "_PRODUCER_TREE") / "policy" / "absent-profile.yaml"
         )
-        with patch.object(self.module, "_PROFILE", absent):
-            with self.assertRaises(self.module.QualityEvidenceError):
-                self.module.collect_diagnostic_inventory(self.root, self.output)
+        with (
+            patch.object(self.module, "_PROFILE", absent),
+            self.assertRaises(self.module.QualityEvidenceError),
+        ):
+            self.module.collect_diagnostic_inventory(self.root, self.output)
         self.assertEqual([], self.commands)
         self.assertFalse(self.output.exists() and any(self.output.iterdir()))
 
@@ -1201,9 +1228,11 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         second = Path(self.directory.name) / "loop-b.yaml"
         first.symlink_to(second)
         second.symlink_to(first)
-        with patch.object(self.module, "_PROFILE", first):
-            with self.assertRaises(self.module.QualityEvidenceError) as raised:
-                self.module.load_diagnostic_profile()
+        with (
+            patch.object(self.module, "_PROFILE", first),
+            self.assertRaises(self.module.QualityEvidenceError) as raised,
+        ):
+            self.module.load_diagnostic_profile()
         # The refusal names the failure by its type, never a path or the text it
         # carries (Revix's sanitized-error-diagnostics on #459).
         self.assertNotIn(self.directory.name, str(raised.exception))
@@ -1221,7 +1250,7 @@ class DiagnosticProfileContractTests(_DiagnosticInventoryFixture):
         self.assertIsNone(raised.exception.__cause__)
 
     def test_a_malformed_profile_is_refused_before_any_producer_runs(self) -> None:
-        cases = {
+        cases: dict[str, Callable[[dict[str, Any]], object]] = {
             "schema": lambda p: p.update(schema="gnostoa-diagnostic-profile/v0"),
             "unknown key": lambda p: p.update(owner="anyone"),
             "producer": lambda p: p["families"][0].update(producer="pylint"),

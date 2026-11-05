@@ -10,166 +10,33 @@ from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+from tests.experiment_capsule_support import IMAGE_A, CapsuleFixture, git
 from tools.capsule import certificates, compiler, execute, profiles, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.authority import LaunchAuthority, PreflightAuthority
+from tools.capsule.compiler import _frozen_or_blocked, _materialize_verified
+from tools.capsule.execute import _materialize
 from tools.capsule.preparation import discover_test_config, project_test_config
 from tools.capsule.spec import SpecError, load_spec
 
-IMAGE_A = "sha256:" + "a" * 64
 IMAGE_B = "sha256:" + "b" * 64
 
 
-def git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@example.invalid",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@example.invalid",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "PATH": "/usr/bin:/bin",
-        },
-    ).stdout.strip()
-
-
-class CapsuleFixture(unittest.TestCase):
-    """Builds a tiny offline Git subject and a minimal spec around it."""
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
-        self.workspace = self.root / "workspace"
-        self.workspace.mkdir()
-
-    def make_repo(self, name: str, files: dict[str, str]) -> Path:
-        repo = self.root / name
-        (repo / "src").mkdir(parents=True)
-        git(repo.parent, "init", "-q", "-b", "main", str(repo))
-        for rel, text in files.items():
-            target = repo / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text)
-        git(repo, "add", "-A")
-        git(repo, "commit", "-q", "-m", "base")
-        return repo
-
-    def commit(self, repo: Path, files: dict[str, str], message: str) -> str:
-        for rel, text in files.items():
-            target = repo / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text)
-        git(repo, "add", "-A")
-        git(repo, "commit", "-q", "-m", message)
-        return git(repo, "rev-parse", "HEAD")
-
-    def write_spec(self, payload: dict) -> Path:
-        path = self.root / "experiment.json"
-        path.write_text(json.dumps(payload, indent=2))
-        return path
-
-    def base_spec(self, repo: Path, base: str, ref: str, **task: object) -> dict:
-        entry: dict[str, object] = {
-            "id": "T1",
-            "adapter": "python-pytest",
-            "source": {
-                "repository": str(repo),
-                "base_commit": base,
-                "base_tree": git(repo, "rev-parse", base + "^{tree}"),
-            },
-            "reference": {
-                "kind": "accepted-merge-commit",
-                "commit": ref,
-                "tree": git(repo, "rev-parse", ref + "^{tree}"),
-            },
-            "runtime": {"image": IMAGE_A},
-            "oracle": {"path": str(self.root / "oracle.py")},
-            "semantics": {
-                "requirement": "subject must not regress",
-                "discriminator": {"cases": ["test_discriminates"]},
-                "controls": [],
-            },
-            "expectations": {
-                "base": {"failed": 1, "passed": 0},
-                "reference": {"failed": 0, "passed": 1},
-            },
-            "execution": {
-                "command": ["python", "-c", "print('executor')"],
-                "environment_allowlist": ["HOME"],
-            },
-        }
-        entry.update(task)
-        return {
-            "schema": "gnostoa-experiment-spec/v1",
-            "experiment": {
-                "id": "E1",
-                "question": "q",
-                "claim_boundary": "bounded",
-                "executor": {"id": "exec", "version": "1", "config_sha256": "1" * 64},
-                "resources": {
-                    "timeout_seconds": 600,
-                    "archive_limit_bytes": 268435456,
-                    "network": {"mode": "none", "allow": []},
-                },
-            },
-            "tasks": [entry],
-        }
-
-    def launch_authority(
-        self,
-        lock_sha256: str,
-        *,
-        experiment_id: str = "E1",
-        max_runs: int | None = None,
-    ) -> LaunchAuthority:
-        return LaunchAuthority(
-            id="launch-1",
-            experiment_id=experiment_id,
-            lock_sha256=lock_sha256,
-            scope=("experimental-execution",),
-            max_runs=max_runs,
-        )
-
-    def authority(
-        self, experiment_id: str = "E1", candidate: str | None = None
-    ) -> PreflightAuthority:
-        return PreflightAuthority(
-            id="auth-1",
-            experiment_id=experiment_id,
-            scope=("base-reference-qualification",),
-            preflight_candidate_sha256=candidate or "",
-        )
-
-    def prepare_authorized(self, spec, workspace, *, experiment_id="E1", **kwargs):
-        """Observe the prepared candidate, authorise that exact one, then run it.
-
-        This is the operational sequence itself, not a shortcut around it: an
-        authority-less prepare reports the candidate digest, the owner approves that
-        digest, and the unchanged candidate is re-prepared under it. prepare is
-        idempotent, so the second call reuses the retained stages.
-        """
-        observed = compiler.prepare(spec, workspace, offline=True, **kwargs)
-        return compiler.prepare(
-            spec,
-            workspace,
-            offline=True,
-            preflight_authority=self.authority(
-                experiment_id=experiment_id,
-                candidate=observed.preflight_candidate_sha256,
-            ),
-            **kwargs,
-        )
+def _project_root(test: unittest.TestCase, outcome: execute.ExecutionResult) -> Path:
+    """The project root of `outcome`'s first run. A missing run, or a root that is not a
+    str, fails `test`."""
+    first_run = next(iter(outcome.runs.values()), None)
+    if first_run is None:
+        test.fail("the outcome must hold a run")
+    root = first_run["project_root"]
+    if not isinstance(root, str):
+        test.fail("root must be a str")
+    return Path(root)
 
 
 class SpecContractTests(CapsuleFixture):
@@ -206,6 +73,8 @@ class D1PreloadTests(CapsuleFixture):
         )
 
         harness = result.task("T1").harness
+        if harness is None:
+            self.fail("harness must be set")
         self.assertIn("pkg._impl", harness.preload_modules)
         self.assertTrue(
             any("import pkg._impl" in f.content for f in harness.generated_files),
@@ -237,9 +106,10 @@ class D1PreloadTests(CapsuleFixture):
                 getattr(b.task("T1"), field),
                 f"{field} must not change when only a mechanical preload is declared",
             )
-        self.assertNotEqual(
-            a.task("T1").harness.identity, b.task("T1").harness.identity
-        )
+        harness_a, harness_b = a.task("T1").harness, b.task("T1").harness
+        if harness_a is None or harness_b is None:
+            self.fail("both preparations must stage a harness")
+        self.assertNotEqual(harness_a.identity, harness_b.identity)
 
 
 class D2ConfigIsolationTests(CapsuleFixture):
@@ -272,6 +142,8 @@ class D2ConfigIsolationTests(CapsuleFixture):
         )
         task = result.task("T1")
 
+        if task.invocation is None:
+            self.fail("task.invocation must be set")
         self.assertIn("-c", task.invocation.argv)
         joined = " ".join(task.invocation.argv)
         self.assertNotIn("--benchmark", joined)
@@ -397,7 +269,7 @@ class D4SemanticPrequalificationTests(CapsuleFixture):
         )
         return repo, git(repo, "rev-parse", "HEAD")
 
-    def _spec_with_control(self, repo: Path, base: str, literal: str) -> dict:
+    def _spec_with_control(self, repo: Path, base: str, literal: str) -> dict[str, Any]:
         (self.root / "oracle.py").write_text(
             "def test_discriminates():\n"
             "    assert render() == 'Basic'\n\n"
@@ -465,7 +337,7 @@ class D4SemanticPrequalificationTests(CapsuleFixture):
 class CertificateTests(CapsuleFixture):
     """D0: reuse an exact, current capability certificate instead of requalifying."""
 
-    def _certificate(self, *, max_bytes: int) -> dict:
+    def _certificate(self, *, max_bytes: int) -> dict[str, Any]:
         return {
             "schema": "gnostoa-capability-certificate/v1",
             "capability": "sealed-sink",
@@ -529,7 +401,7 @@ class CertificateTests(CapsuleFixture):
 class StageResumeTests(CapsuleFixture):
     """Preparation resumes from retained artifacts and invalidates downstream on change."""
 
-    def _prepare(self, spec: dict) -> compiler.PrepareResult:
+    def _prepare(self, spec: dict[str, Any]) -> compiler.PrepareResult:
         return compiler.prepare(
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
@@ -614,6 +486,8 @@ class GeneratedArtifactTests(CapsuleFixture):
             offline=True,
         )
         profile = result.task("T1").execution_profile
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(profile["schema"], PROFILE_SCHEMA)
         self.assertEqual(
             validate_profile_data(profile, for_run=True),
@@ -640,7 +514,7 @@ class OfflineTests(CapsuleFixture):
 class EndToEndReadinessTests(CapsuleFixture):
     """Readiness requires a completed receipt for every required stage."""
 
-    def _pipeline_spec(self) -> tuple[dict, str]:
+    def _pipeline_spec(self) -> tuple[dict[str, Any], str]:
         repo = self.make_repo(
             "subject", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -668,10 +542,15 @@ class EndToEndReadinessTests(CapsuleFixture):
                 stage, result.stage_receipts(), f"{stage} needs a completed receipt"
             )
         self.assertIsNotNone(result.lock_path)
+        if result.lock_path is None:
+            self.fail("the readiness pipeline must write a lock")
         payload = compiler.lock_module.load(result.lock_path)
-        self.assertEqual(payload["experiment"]["id"], "E1")
-        self.assertIn("executor", payload["launch"])
-        self.assertIn("resources", payload["launch"])
+        experiment, launch = payload["experiment"], payload["launch"]
+        if not isinstance(experiment, dict) or not isinstance(launch, dict):
+            self.fail("the lock's experiment and launch must be mappings")
+        self.assertEqual(experiment["id"], "E1")
+        self.assertIn("executor", launch)
+        self.assertIn("resources", launch)
 
     def test_authority_out_of_scope_cannot_grant_readiness(self) -> None:
         spec, _ = self._pipeline_spec()
@@ -718,6 +597,8 @@ class EndToEndReadinessTests(CapsuleFixture):
             "base-reference-qualification-failed", [b["code"] for b in result.blockers]
         )
         receipt = result.task("T1").qualification
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
 
 
@@ -761,6 +642,8 @@ class PreparationReceiptTests(CapsuleFixture):
         self.assertTrue(task.preparation.required)
         self.assertIsNotNone(task.preparation_receipt, result.blockers)
         receipt = task.preparation_receipt
+        if receipt is None:
+            self.fail("receipt must be set")
         self.assertIn("src/pkg/_version.py", receipt.generated)
         self.assertTrue(receipt.tracked_tree_unchanged)
         self.assertTrue(
@@ -770,6 +653,8 @@ class PreparationReceiptTests(CapsuleFixture):
             receipt.runnability, "deferred-to-base-reference-qualification"
         )
         self.assertTrue(str(receipt.derivation["version"]).startswith("1.0.0.dev"))
+        if task.base_path is None:
+            self.fail("task.base_path must be set")
         generated = task.base_path / "src/pkg/_version.py"
         self.assertTrue(generated.is_file(), "the declared artifact must exist on disk")
         self.assertIn("__version__ = version =", generated.read_text())
@@ -811,6 +696,8 @@ class StaleMaterializationTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         subject = first.task("T1").base_path
+        if subject is None:
+            self.fail("subject must be set")
         (subject / "src/pkg/__init__.py").write_text("tampered = True\n")
 
         second = compiler.prepare(
@@ -912,7 +799,10 @@ class ConfigProjectionTests(CapsuleFixture):
         projection = project_test_config(config, ["pytest"])
         self.assertIn("filterwarnings", projection.preserved)
         self.assertIn("markers", projection.preserved)
-        self.assertIn("-q", projection.preserved["addopts"])
+        addopts = projection.preserved["addopts"]
+        if not isinstance(addopts, list):
+            self.fail("addopts must be a list")
+        self.assertIn("-q", addopts)
         self.assertIn("--benchmark-disable", projection.removed_options)
         self.assertIn("pytest-benchmark", projection.removed_for_plugins)
         self.assertIn("error", projection.content)
@@ -990,6 +880,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_execution_profile_admits_no_private_surface(self) -> None:
         result = self._capsule()
         task = result.task("T1")
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         admitted = profiles.admitted_paths(task.execution_profile)
         private = [
             task.reference_path,
@@ -1007,6 +899,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_executor_workspace_contains_no_oracle_or_reference_content(self) -> None:
         result = self._capsule()
         task = result.task("T1")
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         project = Path(task.execution_profile["project_root"])
         blob = "".join(
             path.read_text(errors="replace")
@@ -1021,6 +915,8 @@ class ExecutionBoundaryTests(CapsuleFixture):
     def test_qualification_and_execution_are_distinct_trust_domains(self) -> None:
         result = self._capsule()
         task = result.task("T1")
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         self.assertEqual(task.execution_profile["trust_domain"], profiles.EXECUTION)
         for profile in task.qualification_profiles.values():
             self.assertEqual(profile["trust_domain"], profiles.QUALIFICATION)
@@ -1033,6 +929,10 @@ class ExecutionBoundaryTests(CapsuleFixture):
         """The exact regression the owner review identified."""
         result = self._capsule()
         task = result.task("T1")
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
+        if task.reference_path is None:
+            self.fail("task.reference_path must be set")
         leaky = dict(task.execution_profile)
         leaky["read_only_roots"] = [str(Path(task.reference_path).parent)]
         with self.assertRaises(profiles.ProfileBoundaryError):
@@ -1044,7 +944,7 @@ class ExecutionBoundaryTests(CapsuleFixture):
 class PriorQualificationReuseTests(CapsuleFixture):
     """D0: an already-valid, identity-bound qualification is reused, not rerun."""
 
-    def _qualified(self) -> tuple[dict, compiler.PrepareResult]:
+    def _qualified(self) -> tuple[dict[str, Any], compiler.PrepareResult]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -1069,6 +969,8 @@ class PriorQualificationReuseTests(CapsuleFixture):
         self.assertEqual(first.status, stages.READY_FOR_OWNER_REVIEW, first.blockers)
         receipt = first.task("T1").qualification
         receipt_path = self.root / "receipt.json"
+        if receipt is None:
+            self.fail("receipt must be set")
         receipt_path.write_text(json.dumps(receipt.as_json(), indent=2))
 
         spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
@@ -1086,8 +988,14 @@ class PriorQualificationReuseTests(CapsuleFixture):
 
     def test_a_receipt_bound_to_other_identities_is_refused(self) -> None:
         spec, first = self._qualified()
-        stale = dict(first.task("T1").qualification.as_json())
-        stale["bound"] = {**stale["bound"], "base_tree": "0" * 40}
+        qualification = first.task("T1").qualification
+        if qualification is None:
+            self.fail("qualification must be set")
+        stale = dict(qualification.as_json())
+        bound = stale["bound"]
+        if not isinstance(bound, dict):
+            self.fail("bound must be a dict")
+        stale["bound"] = {**bound, "base_tree": "0" * 40}
         receipt_path = self.root / "stale.json"
         receipt_path.write_text(json.dumps(stale, indent=2))
 
@@ -1105,8 +1013,14 @@ class PriorQualificationReuseTests(CapsuleFixture):
     def test_a_receipt_bound_to_a_different_preparation_is_refused(self) -> None:
         """A changed generated preparation must invalidate a prior qualification."""
         spec, first = self._qualified()
-        stale = dict(first.task("T1").qualification.as_json())
-        stale["bound"] = {**stale["bound"], "preparation_identity": "other-preparation"}
+        qualification = first.task("T1").qualification
+        if qualification is None:
+            self.fail("qualification must be set")
+        stale = dict(qualification.as_json())
+        bound = stale["bound"]
+        if not isinstance(bound, dict):
+            self.fail("bound must be a dict")
+        stale["bound"] = {**bound, "preparation_identity": "other-preparation"}
         receipt_path = self.root / "prep.json"
         receipt_path.write_text(json.dumps(stale, indent=2))
 
@@ -1117,15 +1031,25 @@ class PriorQualificationReuseTests(CapsuleFixture):
         )
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "prior-qualification-receipt-not-current"
+            (
+                b
+                for b in result.blockers
+                if b["code"] == "prior-qualification-receipt-not-current"
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold a prior-qualification-receipt-not-current blocker"
+            )
         self.assertIn("preparation_identity", str(blocker["detail"]))
 
     def test_a_receipt_without_bound_identities_is_refused(self) -> None:
         spec, first = self._qualified()
-        naked = dict(first.task("T1").qualification.as_json())
+        qualification = first.task("T1").qualification
+        if qualification is None:
+            self.fail("qualification must be set")
+        naked = dict(qualification.as_json())
         naked.pop("bound")
         receipt_path = self.root / "naked.json"
         receipt_path.write_text(json.dumps(naked, indent=2))
@@ -1171,11 +1095,13 @@ class LockExecutionTests(CapsuleFixture):
     def test_capsule_materialises_from_the_lock_alone(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        project = _project_root(self, outcome)
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
 
     # #389 F3 S2 A (S2-A3-01/02, Router 6297725852): the execution capsule is the
@@ -1191,11 +1117,13 @@ class LockExecutionTests(CapsuleFixture):
         (repo / ".git" / "info" / "attributes").write_text(
             "src/pkg/__init__.py export-ignore\n"
         )
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        project = _project_root(self, outcome)
         self.assertTrue(
             (project / "src/pkg/__init__.py").is_file(),
             "the source repository's metadata dropped a tracked file",
@@ -1208,10 +1136,12 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_reused_capsule_keeps_its_run_outputs(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        project = Path(next(iter(first.runs.values()))["project_root"])
+        project = _project_root(self, first)
         (project / "run-output.log").write_text("made by a previous run\n")
         again = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
@@ -1220,10 +1150,12 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_reused_capsule_whose_tracked_source_changed_is_refused(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         first = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        project = Path(next(iter(first.runs.values()))["project_root"])
+        project = _project_root(self, first)
         (project / "src/pkg/__init__.py").write_text("tampered = True\n")
         again = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
@@ -1239,16 +1171,20 @@ class LockExecutionTests(CapsuleFixture):
         git(repo, "config", "filter.probe.clean", f"sh -c 'touch {marker}; cat'")
         (repo / ".git" / "info").mkdir(exist_ok=True)
         (repo / ".git" / "info" / "attributes").write_text("* filter=probe\n")
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         execute.execute_lock(result.lock_path, self.workspace / "exec", dry_run=True)
         self.assertFalse(marker.exists(), "a source repository's driver ran")
 
     def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
         """Qualification-domain artifacts must not reach the executor capsule."""
         result = self._locked(execution_command=["python", "-c", "print(1)"])
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        project = _project_root(self, outcome)
         self.assertFalse(
             (project / "conftest.py").exists(), "harness is qualification-only"
         )
@@ -1265,6 +1201,8 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_tampered_lock_is_refused(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         payload = json.loads(result.lock_path.read_text())
         payload["tasks"][0]["base_tree"] = "0" * 40
         result.lock_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -1275,6 +1213,8 @@ class LockExecutionTests(CapsuleFixture):
 
     def test_a_missing_store_artifact_blocks_materialisation(self) -> None:
         result = self._locked(execution_command=["python", "-c", "print(1)"])
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         payload = json.loads(result.lock_path.read_text())
         payload["tasks"][0]["stored_artifacts"].append(
             {
@@ -1359,6 +1299,8 @@ class OciQualificationTests(CapsuleFixture):
         # python:3.12-slim carries no pytest, so this must classify as infrastructure
         # rather than be mistaken for a behavioural outcome.
         self.assertIsNotNone(receipt)
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         self.assertEqual(receipt.backend, "oci")
         self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
 
@@ -1387,6 +1329,8 @@ class LaunchAuthorityTests(CapsuleFixture):
 
     def test_execution_without_an_authority_is_refused(self) -> None:
         result = self._locked()
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "x", dry_run=False
         )
@@ -1398,6 +1342,8 @@ class LaunchAuthorityTests(CapsuleFixture):
     def test_an_authority_for_another_lock_is_refused(self) -> None:
         result = self._locked()
         stale = self.launch_authority("0" * 64)
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path,
             self.workspace / "x",
@@ -1413,6 +1359,10 @@ class LaunchAuthorityTests(CapsuleFixture):
     def test_an_authority_with_the_wrong_scope_is_refused(self) -> None:
         result = self._locked()
         # right lock, wrong scope: a preflight scope must not open execution
+        if result.lock_identity is None:
+            self.fail("result.lock_identity must be set")
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         capped = LaunchAuthority(
             id="c",
             experiment_id="E1",
@@ -1484,6 +1434,10 @@ class RunPlanTests(CapsuleFixture):
     def test_plan_follows_the_declared_schedule_order_verbatim(self) -> None:
         result = self._planned()
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         self.assertEqual(len(result.run_plan), 4)
         payload = json.loads(result.lock_path.read_text())
         plan = payload["run_plan"]
@@ -1595,25 +1549,35 @@ class RunPlanTests(CapsuleFixture):
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
 
         # Fresh workspace: only the lock and the bound store may be consulted.
+        if result.lock_path is None:
+            self.fail("a ready preparation must write a lock")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "fresh", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
         run = next(iter(outcome.runs.values()))
-        capsule = Path(run["project_root"]).parent
+        root = run["project_root"]
+        if not isinstance(root, str):
+            self.fail("root must be a str")
+        capsule = Path(root).parent
         statements = list(capsule.rglob("task.md"))
         self.assertTrue(statements, "the declared executor input must be materialised")
         self.assertIn("the declared task statement", statements[0].read_text())
 
     def test_every_planned_run_materialises_with_only_its_own_arm(self) -> None:
         result = self._planned()
+        if result.lock_path is None:
+            self.fail("result.lock_path must be set")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
         self.assertEqual(len(outcome.runs), 4)
         for run_id, run in outcome.runs.items():
-            capsule = Path(run["project_root"]).parent
+            root = run["project_root"]
+            if not isinstance(root, str):
+                self.fail("root must be a str")
+            capsule = Path(root).parent
             blob = "".join(
                 path.read_text(errors="replace")
                 for path in capsule.rglob("*")
@@ -1682,11 +1646,13 @@ class PreparedExecutionCapsuleTests(CapsuleFixture):
             execution_artifacts, "the generated artifact must be an execution artifact"
         )
 
+        if result.lock_path is None:
+            self.fail("a ready preparation must write a lock")
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        project = _project_root(self, outcome)
         generated = project / "src/pkg/_version.py"
         self.assertTrue(
             generated.is_file(),
@@ -1713,7 +1679,7 @@ class ContainmentDirectionTests(CapsuleFixture):
 class ScheduleCompletenessTests(CapsuleFixture):
     """A frozen order must also be exactly the preregistered set of runs."""
 
-    def _spec_with_schedule(self, schedule: list[dict]) -> dict:
+    def _spec_with_schedule(self, schedule: list[dict[str, Any]]) -> dict[str, Any]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -1744,14 +1710,16 @@ class ScheduleCompletenessTests(CapsuleFixture):
         }
         return spec
 
-    def _prepare(self, schedule: list[dict], name: str) -> compiler.PrepareResult:
+    def _prepare(
+        self, schedule: list[dict[str, Any]], name: str
+    ) -> compiler.PrepareResult:
         return self.prepare_authorized(
             load_spec(self.write_spec(self._spec_with_schedule(schedule))),
             self.workspace / name,
         )
 
     @staticmethod
-    def _complete() -> list[dict]:
+    def _complete() -> list[dict[str, Any]]:
         return [
             {"task": "T1", "repetition": repetition, "arm": arm}
             for repetition in (1, 2)
@@ -1767,6 +1735,8 @@ class ScheduleCompletenessTests(CapsuleFixture):
         ]
         result = self._prepare(shuffled, "shuffled")
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
         self.assertEqual(len(result.run_plan), 4)
         self.assertEqual(
             [(e.repetition, e.arm) for e in result.run_plan.entries],
@@ -1779,20 +1749,34 @@ class ScheduleCompletenessTests(CapsuleFixture):
         result = self._prepare(schedule, "duplicate")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("duplicate scheduled runs", str(blocker["detail"]))
 
     def test_an_omitted_run_is_refused(self) -> None:
         result = self._prepare(self._complete()[:-1], "omission")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("missing scheduled runs", str(blocker["detail"]))
 
     def test_a_repetition_outside_the_declared_range_is_refused(self) -> None:
@@ -1801,15 +1785,24 @@ class ScheduleCompletenessTests(CapsuleFixture):
         result = self._prepare(schedule, "range")
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
-            b
-            for b in result.blockers
-            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            (
+                b
+                for b in result.blockers
+                if b["code"] == "assignment-schedule-not-a-complete-permutation"
+            ),
+            None,
         )
+        if blocker is None:
+            self.fail(
+                "result must hold an assignment-schedule-not-a-complete-permutation blocker"
+            )
         self.assertIn("outside 1..2", str(blocker["detail"]))
 
     def test_run_identities_are_unique_across_the_plan(self) -> None:
         result = self._prepare(self._complete(), "unique")
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        if result.run_plan is None:
+            self.fail("result.run_plan must be set")
         identities = [entry.id for entry in result.run_plan.entries]
         self.assertEqual(len(set(identities)), len(identities))
 
@@ -1833,7 +1826,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         project = self.root / "project"
         project.mkdir()
         with self.assertRaises(execute.ExecuteError) as raised:
-            execute._materialize(repo, tree, project)
+            _materialize(repo, tree, project)
         self.assertIn("escaping-link", str(raised.exception))
         self.assertNotIn("SECRET-LINK", str(raised.exception))
         self.assertNotIn("outside", str(raised.exception))
@@ -1841,7 +1834,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
     def test_a_compiler_blocker_names_the_code_not_the_path(self) -> None:
         repo, tree = self.escaping_repo()
         blockers: list[dict[str, object]] = []
-        result = compiler._materialize_verified(
+        result = _materialize_verified(
             repo, tree, self.root / "subject", "base", blockers, "T1"
         )
         self.assertIsNone(result)
@@ -1861,9 +1854,9 @@ class RoundTwoConsumerTests(CapsuleFixture):
         second = git(repo, "rev-parse", "HEAD^{tree}")
         project = self.root / "project"
         project.mkdir()
-        execute._materialize(repo, first, project)
+        _materialize(repo, first, project)
         with self.assertRaises(execute.ExecuteError):
-            execute._materialize(repo, second, project)
+            _materialize(repo, second, project)
 
     # K: a re-prepare for another base tree does not reuse the execution project
     # (a kill test, added with the mutants).
@@ -1895,9 +1888,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
     def test_an_unlistable_subject_tree_is_a_blocker(self) -> None:
         repo = self.make_repo("s", {"src/pkg/__init__.py": ""})
         blockers: list[dict[str, object]] = []
-        self.assertIsNone(
-            compiler._frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1")
-        )
+        self.assertIsNone(_frozen_or_blocked(repo, "0" * 40, "base", blockers, "T1"))
         self.assertEqual(
             [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]
         )
@@ -1908,7 +1899,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         tree = git(repo, "rev-parse", "HEAD^{tree}")
         first: list[dict[str, object]] = []
         self.assertIsNotNone(
-            compiler._materialize_verified(
+            _materialize_verified(
                 repo, tree, self.root / "subject", "base", first, "T1"
             )
         )
@@ -1919,7 +1910,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         )
         blockers: list[dict[str, object]] = []
         with mock.patch.object(exact_tree.Limits, "within", return_value=tight):
-            result = compiler._materialize_verified(
+            result = _materialize_verified(
                 repo, tree, self.root / "subject", "base", blockers, "T1"
             )
         self.assertIsNone(result)
@@ -1936,9 +1927,7 @@ class RoundTwoConsumerTests(CapsuleFixture):
         subject.mkdir()
         (subject / f"base-{tree}").write_text("planted\n")
         blockers: list[dict[str, object]] = []
-        result = compiler._materialize_verified(
-            repo, tree, subject, "base", blockers, "T1"
-        )
+        result = _materialize_verified(repo, tree, subject, "base", blockers, "T1")
         self.assertIsNone(result)
         self.assertEqual(
             [b["code"] for b in blockers], ["materialised-subject-identity-mismatch"]

@@ -21,10 +21,10 @@ from unittest import mock
 
 import yaml
 
-from tests.test_merge_admission import _evidence as _verdict_evidence
-from tests.test_merge_admission import _failed as _verdict_failed
-from tests.test_merge_admission import _verdict
-from tests.test_merge_evidence_github import (
+from tests.merge_admission_support import _evidence as _verdict_evidence
+from tests.merge_admission_support import _failed as _verdict_failed
+from tests.merge_admission_support import _verdict
+from tests.merge_evidence_github_support import (
     COMPARE,
     HEAD,
     REQUIRED_CHECKS,
@@ -37,10 +37,9 @@ from tests.test_merge_evidence_github import (
     _replies,
     _run,
     _snapshot,
-    adapter_fixture,
-    paged_fake_fixture,
     unregistered_tests,
 )
+from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
 from tools import assurance_completeness, merge_evidence_github
 
 # What `knowledge merge-evidence` reports as an input error.

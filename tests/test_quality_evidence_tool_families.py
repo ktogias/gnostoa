@@ -18,71 +18,29 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.machinery
 import importlib.util
 import json
 import os
 import platform
 import shlex
 import time
+import types
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from tests.quality_evidence_fixtures import _DiagnosticInventoryFixture
-from tests.test_quality_evidence_profile import _original
-
-_SC_NATIVE = {
-    "file": "tool",
-    "line": 2,
-    "endLine": 2,
-    "column": 6,
-    "endColumn": 8,
-    "level": "info",
-    "code": 2086,
-    "message": "Double quote to prevent globbing and word splitting.",
-    "fix": None,
-}
-
-
-def _sourced(line: int) -> dict:
-    """ShellCheck's own record of a source it does not follow."""
-    message = "Not following: ./lib.sh was not specified as input (see shellcheck -x)."
-    return dict(_SC_NATIVE, line=line, endLine=line, code=1091, message=message)
-
-
-_HL_NATIVE = {
-    "code": "SC2086",
-    "column": 1,
-    "file": "Dockerfile",
-    "level": "info",
-    "line": 2,
-    "message": "Double quote to prevent globbing and word splitting.",
-}
-_AL_NATIVE = {
-    "message": "shellcheck reported issue in this script: SC2086:info:1:6: Double quote to prevent globbing and word splitting",
-    "filepath": ".github/workflows/w.yml",
-    "line": 10,
-    "column": 9,
-    "kind": "shellcheck",
-    "snippet": "      - run: echo $FOO\n        ^~~~",
-    "end_column": 12,
-}
-_SCRIPT = "#!/bin/sh\necho $1\n"
-_DOCKERFILE = "FROM debian:12\nRUN echo $FOO\n"
-_WORKFLOW = (
-    "on: push\n"
-    "concurrency:\n"
-    "  group: g\n"
-    "  cancel-in-progress: false\n"
-    "  queue: max\n"
-    "jobs:\n"
-    "  a:\n"
-    "    runs-on: ubuntu-latest\n"
-    "    steps:\n"
-    "      - run: echo $FOO\n"
+from tests.quality_evidence_profile_support import _original
+from tests.quality_evidence_tool_families_support import (
+    _AL_NATIVE,
+    _SC_NATIVE,
+    _WORKFLOW,
+    _sourced,
+    _ToolFamilyFixture,
 )
-_GITLAB = "job:\n  script:\n    - echo $FOO\n"
+from tools.quality_evidence import DiagnosticLimits
+
 # The repository's protected reviewed baseline, which the producer tree's secrets family holds the scan to.
 _REVIEWED_BASELINE = Path(__file__).resolve().parent.parent / ".secrets.baseline"
 _NEW_FAMILIES = (
@@ -93,196 +51,6 @@ _NEW_FAMILIES = (
     "secrets",
     "unsafe-calls",
 )
-
-
-def _shellcheck_answer(command, status, body):
-    """ShellCheck's answer to `command`: each comment names the file it was given, the first one here, and an
-    `--include` keeps its own codes alone, exiting 0 when none is left (measured on the pinned 0.11.0, #389 round 12)."""
-    given = command[command.index("--") + 1] if "--" in command else command[-1]
-    codes = [a[10:].split(",") for a in command if a.startswith("--include=")]
-    comments = [
-        dict(c, file=given)
-        for c in body["comments"]
-        if not codes or f"SC{c['code']}" in codes[0]
-    ]
-    return (0 if codes and not comments else status), {"comments": comments}
-
-
-class _ToolFamilyFixture(_DiagnosticInventoryFixture):
-    """The shared fixture plus one file per new family, fake pinned tools and a v2 profile with every new family
-    active, as a qualification run uses it."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        for path, text in {
-            "ci/tool": _SCRIPT,
-            "Dockerfile": _DOCKERFILE,
-            ".github/workflows/w.yml": _WORKFLOW,
-            ".gitlab-ci.yml": _GITLAB,
-        }.items():
-            target = self.root / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8")
-        (self.root / "ci" / "tool").chmod(0o755)
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "tool families")
-        self.base = self._git("rev-parse", "HEAD")
-        self.tool_root = Path(self.directory.name) / "tools"
-        self.tool_root.mkdir()
-        pins = {}
-        for name, version in (
-            ("shellcheck", "0.11.0"),
-            ("hadolint", "2.15.1"),
-            ("actionlint", "1.7.12"),
-        ):
-            binary = self.tool_root / name
-            binary.write_bytes(f"#!fake {name}\n".encode())
-            binary.chmod(0o755)
-            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-            pins[name] = {"version": version, "sha256": {platform.machine(): digest}}
-        self.profile: dict[str, Any] = {
-            "schema": "gnostoa-diagnostic-profile/v2",
-            "id": "fixture.tool-families",
-            "scopes": {"all": {"exclude": []}},
-            "tools": pins,
-            "families": [
-                {
-                    "id": "shell-lint",
-                    "producer": "shellcheck",
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-                {
-                    "id": "dockerfile-lint",
-                    "producer": "hadolint",
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-                {
-                    "id": "workflow-lint",
-                    "producer": "actionlint",
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-                {
-                    "id": "gitlab-script",
-                    "producer": "gitlab-shellcheck",
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-                {
-                    "id": "secrets",
-                    "producer": "secrets",
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-                {
-                    "id": "unsafe-calls",
-                    "producer": "ruff",
-                    "select": ["S301", "S307", "S324", "S602", "S605", "S608"],
-                    "diff": "all",
-                    "full": "all",
-                    "active": True,
-                },
-            ],
-        }
-        self.executed: list[tuple[str, str]] = []
-        self.tool_answers: dict[str, tuple[int | None, object]] = {
-            "shellcheck": (1, {"comments": [dict(_SC_NATIVE, file="ci/tool")]}),
-            "hadolint": (1, [_HL_NATIVE]),
-            "actionlint": (1, [_AL_NATIVE]),
-        }
-
-    def _tool(self, command) -> str | None:
-        for name in ("shellcheck", "hadolint", "actionlint"):
-            if Path(command[0]).name == name:
-                return name
-        return None
-
-    def _fake_run(self, command, *, cwd, environment, report, deadline, limits):
-        name = self._tool(command)
-        if name is None:
-            return super()._fake_run(
-                command,
-                cwd=cwd,
-                environment=environment,
-                report=report,
-                deadline=deadline,
-                limits=limits,
-            )
-        self.commands.append((list(command), Path(cwd), dict(environment)))
-        if not {"--version", "-version"} & set(command):
-            self.executed.append(
-                (name, hashlib.sha256(Path(command[0]).read_bytes()).hexdigest())
-            )
-        if report.exists():
-            # As the real run does: its report is always a new file (_bounded_run, _new_file).
-            return None, "cannot create its report: FileExistsError", False
-        if "--version" in command or "-version" in command:
-            report.write_text(
-                f"{name} {self.profile['tools'][name]['version']}\n", encoding="utf-8"
-            )
-            return 0, None, False
-        status, body = self.tool_answers[name]
-        if name == "shellcheck" and isinstance(body, dict):
-            status, body = _shellcheck_answer(command, status, body)
-        report.write_text(
-            body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
-        )
-        return status, None, False
-
-    def _collect(self, profile=None, **options) -> dict:
-        # The pinned tools are found under the protected tool root only; `create=True`, because on protected main
-        # there is none yet, so the collection reaches the profile's own contract before anything else.
-        with (
-            patch("tools.quality_evidence._bounded_run", side_effect=self._fake_run),
-            patch.object(self.module, "TOOL_ROOT", self.tool_root, create=True),
-        ):
-            # The private collector, as the shared fixture captured it from unittest.mock (no attribute access).
-            path = self.collect.func(
-                self.root, self.output, profile=profile or self.profile, **options
-            )
-        return self._read(path)
-
-    def _rows(self, inventory: dict) -> dict[str, dict]:
-        return {row["family"]: row for row in inventory.get("families", [])}
-
-    def _change(self, path: str, old: str, new: str) -> None:
-        source = self.root / path
-        source.write_text(
-            source.read_text(encoding="utf-8").replace(old, new, 1) + "# head\n",
-            encoding="utf-8",
-        )
-        self._git("commit", "-q", "-am", "head")
-
-    def _commands_of(self, name: str) -> list[tuple[list[str], Path, dict[str, str]]]:
-        return [
-            c
-            for c in self.commands
-            if Path(c[0][0]).name == name and not {"--version", "-version"} & set(c[0])
-        ]
-
-    def _findings(self, inventory: dict, tool: str) -> list[dict]:
-        return [f for f in inventory["findings"] if f["tool"]["id"] == tool]
-
-    def _commit(self, files: dict[str, str]) -> None:
-        for name, body in files.items():
-            target = self.root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(body, encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "round two")
-
-    def _gitlab_analyzed(self) -> list[str]:
-        command = next(
-            c for c, _cwd, _env in self._commands_of("shellcheck") if "--shell=sh" in c
-        )
-        return command[command.index("--") + 1 :]
 
 
 class ToolFamilyProfileTests(_ToolFamilyFixture):
@@ -679,17 +447,19 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         # Amazon Q on #470: the pinned module's name must be a detect-secrets plugin class before it is made.
         original = importlib.util.spec_from_file_location
 
-        def no_class(name, location):
+        def no_class(
+            name: str, location: str | os.PathLike[str]
+        ) -> importlib.machinery.ModuleSpec:
             spec = original(name, location)
             assert spec is not None
             assert spec.loader is not None
             load = spec.loader.exec_module
 
-            def exec_module(module):
+            def exec_module(module: types.ModuleType) -> None:
                 load(module)
-                module.GnostoaAssignmentDetector = lambda: None
+                vars(module)["GnostoaAssignmentDetector"] = lambda: None
 
-            spec.loader.exec_module = exec_module
+            vars(spec.loader)["exec_module"] = exec_module
             return spec
 
         with patch("importlib.util.spec_from_file_location", side_effect=no_class):
@@ -704,11 +474,13 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         # Amazon Q on #470: any import-time failure of the protected plugin fails the scan closed, named.
         original = importlib.util.spec_from_file_location
 
-        def failing_spec(name, location):
+        def failing_spec(
+            name: str, location: str | os.PathLike[str]
+        ) -> importlib.machinery.ModuleSpec:
             spec = original(name, location)
             assert spec is not None
             assert spec.loader is not None
-            spec.loader.exec_module = lambda module: (_ for _ in ()).throw(
+            vars(spec.loader)["exec_module"] = lambda module: (_ for _ in ()).throw(
                 ImportError("x")
             )
             return spec
@@ -767,7 +539,8 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         ]
         self.assertEqual([3], [f["range"]["start_line"] for f in found])
 
-    def _secrets_runs(self, inventory: dict) -> list[dict]:
+    @staticmethod
+    def _secrets_runs(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         return [r for r in inventory["producers"] if r["producer"] == "secrets"]
 
     def test_the_secrets_run_names_the_scanner_version_it_was_held_to(self) -> None:
@@ -785,13 +558,13 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         protected = _REVIEWED_BASELINE
         reviewed = json.loads(protected.read_text(encoding="utf-8"))
 
-        def other_version(document: dict) -> None:
+        def other_version(document: dict[str, Any]) -> None:
             document["version"] = "0.0.1"
 
-        def one_plugin_fewer(document: dict) -> None:
+        def one_plugin_fewer(document: dict[str, Any]) -> None:
             document["plugins_used"] = document["plugins_used"][1:]
 
-        def one_filter_fewer(document: dict) -> None:
+        def one_filter_fewer(document: dict[str, Any]) -> None:
             document["filters_used"] = document["filters_used"][1:]
 
         for change in (other_version, one_plugin_fewer, one_filter_fewer):
@@ -816,7 +589,10 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         inventory = self._collect(base=self.base)
         (run,) = self._secrets_runs(inventory)
         identity = self.output.glob(f"diagnostic-*/{run['report']['path']}")
-        document = json.loads(next(identity).read_text(encoding="utf-8"))
+        report = next(identity, None)
+        if report is None:
+            self.fail("the secrets run's report must be in the output")
+        document = json.loads(report.read_text(encoding="utf-8"))
         protected = _REVIEWED_BASELINE
         self.assertEqual(
             {
@@ -834,7 +610,7 @@ class SecretsFamilyTests(_ToolFamilyFixture):
         outside.write_text("kept", encoding="utf-8")
         scoped = _original(self.module, "_scoped_baseline")
 
-        def planting(run, paths):
+        def planting(run: Path, paths: list[str]) -> Path:
             (run / "diagnostic-secrets-identity.json").symlink_to(outside)
             return scoped(run, paths)
 
@@ -847,6 +623,8 @@ class SecretsFamilyTests(_ToolFamilyFixture):
 class RoundTwoContractTests(_ToolFamilyFixture):
     """The contract #470's review rounds found missing (#389 H-PYSEC-2). Its own class, since the secrets
     tests skip without detect-secrets and these must run wherever the suite does."""
+
+    tool_root: Path
 
     def test_a_run_with_no_status_and_no_gap_is_never_clean(self) -> None:
         # Amazon Q on #470.
@@ -909,7 +687,9 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: the comparison was read only when a Python path reached past FULL.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-python"] = {"exclude": ["tools/", "tests/"]}
-        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell = next((f for f in profile["families"] if f["id"] == "shell-lint"), None)
+        if shell is None:
+            self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-python", full=None)
         self._change("ci/tool", "echo $1", "echo $2")
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
@@ -929,10 +709,15 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         )
         inventory = self._collect(base=self.base)
         command = next(
-            c
-            for c, _cwd, _env in self._commands_of("shellcheck")
-            if "--shell=sh" not in c
+            (
+                c
+                for c, _cwd, _env in self._commands_of("shellcheck")
+                if "--shell=sh" not in c
+            ),
+            None,
         )
+        if command is None:
+            self.fail("a shellcheck command without --shell=sh must have run")
         self.assertIn("ci/lib.bash", command)
         self.assertIn("ci/lib.ksh", command)
         self.assertNotIn("ci/lib.zsh", command)
@@ -1024,7 +809,9 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Codex on #470: only what the family's scopes select can downgrade its row.
         profile = copy.deepcopy(self.profile)
         profile["scopes"]["no-tests"] = {"exclude": ["tests/"]}
-        shell = next(f for f in profile["families"] if f["id"] == "shell-lint")
+        shell = next((f for f in profile["families"] if f["id"] == "shell-lint"), None)
+        if shell is None:
+            self.fail("the profile must hold the shell-lint family")
         shell.update(diff="no-tests", full="no-tests")
         self._commit({"tests/tool.zsh": "echo $1\n"})
         row = self._rows(self._collect(profile, base=self.base))["shell-lint"]
@@ -1248,10 +1035,16 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # published with every other family's findings.
         real_open = os.open
 
-        def no_copy(path, flags, *args, **kwargs):
+        def no_copy(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             if flags & os.O_CREAT and "tools-shell-lint" in str(path):
                 raise OSError(28, "ENOSPC")
-            return real_open(path, flags, *args, **kwargs)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
 
         with patch("tools.quality_evidence.os.open", side_effect=no_copy):
             row = self._rows(self._collect(base=self.base))["shell-lint"]
@@ -1266,8 +1059,19 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         pinned = self.profile["tools"]["shellcheck"]["sha256"][platform.machine()]
         verify = _original(self.module, "_version_gap")
 
-        def then_replace(*args, **kwargs):
-            gap = verify(*args, **kwargs)
+        def then_replace(
+            tool: Path,
+            name: str,
+            run: Path,
+            limits: DiagnosticLimits,
+            deadline: float,
+            pinned: str,
+            *,
+            family: str,
+        ) -> str | None:
+            gap: str | None = verify(
+                tool, name, run, limits, deadline, pinned, family=family
+            )
             (self.tool_root / "shellcheck").write_bytes(b"#!replaced\n")
             return gap
 
@@ -1280,10 +1084,25 @@ class RoundTwoContractTests(_ToolFamilyFixture):
         # Revix on #470: a version call that fails or times out is not a version that differs from the pin.
         fake = self._fake_run
 
-        def failing(command, **options):
+        def failing(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if "--version" in command:
                 return None, "the inventory deadline passed", False
-            return fake(command, **options)
+            return fake(
+                command,
+                cwd=cwd,
+                environment=environment,
+                report=report,
+                deadline=deadline,
+                limits=limits,
+            )
 
         with patch.object(self, "_fake_run", new=failing):
             row = self._rows(self._collect(base=self.base))["shell-lint"]

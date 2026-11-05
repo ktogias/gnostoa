@@ -31,12 +31,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -82,19 +79,6 @@ class IntentProvenanceFixture(ConsumptionFixture):
 
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
-    def crash_before_the_first_canonical_write(self) -> Any:
-        real_write = retained_commit._write_atomic
-
-        def crash(path: Path, payload: bytes) -> None:
-            if (
-                path.parent == self.workspace
-                and path.name == retained_commit.LEDGER_FILENAME
-            ):
-                raise RuntimeError("crash after the intent, before publishing")
-            return real_write(path, payload)
-
-        return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
-
     def substitute(self, transaction: str) -> None:
         """Replace <txid> with a complete, self-consistent directory of its own."""
         original = retained_commit.staging_directory(self.workspace, transaction)
@@ -132,6 +116,20 @@ class IntentProvenanceFixture(ConsumptionFixture):
         self.assertEqual(canonical, before)
 
 
+def crash_before_the_first_canonical_write(fixture: IntentProvenanceFixture) -> Any:
+    real_write = _original(retained_commit, "_write_atomic")
+
+    def crash(path: Path, payload: bytes) -> None:
+        if (
+            path.parent == fixture.workspace
+            and path.name == retained_commit.LEDGER_FILENAME
+        ):
+            raise RuntimeError("crash after the intent, before publishing")
+        return real_write(path, payload)
+
+    return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
+
+
 class UnsealedReservationTests(IntentProvenanceFixture):
     """A reservation covering a publication must say which bytes, not only which request."""
 
@@ -145,12 +143,12 @@ class UnsealedReservationTests(IntentProvenanceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
         before = (self.workspace / "experiment-state.json").read_text()
 
         with self.patched_effect(effects):
-            with self.crash_before_the_first_canonical_write():
+            with crash_before_the_first_canonical_write(self):
                 with self.assertRaises(RuntimeError):
                     self.prepare(authority=authority)
 
@@ -187,7 +185,7 @@ class NonReservingIntentTests(IntentProvenanceFixture):
         # records no intent at all.
         self.payload["tasks"][0]["id"] = "T9"
         with self.patched_effect(effects):
-            with self.crash_before_the_first_canonical_write():
+            with crash_before_the_first_canonical_write(self):
                 with self.assertRaises(RuntimeError):
                     self.prepare()
 
@@ -200,7 +198,7 @@ class NonReservingIntentTests(IntentProvenanceFixture):
         )
         before = (self.workspace / "experiment-state.json").read_text()
 
-        real_digest = retained_commit._staged_manifest_digest
+        real_digest = _original(retained_commit, "_staged_manifest_digest")
         substituted: list[str] = []
 
         def digest_then_substitute(root: Path, transaction_id: str) -> Any:

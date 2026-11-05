@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import contextlib
 import csv
 import dataclasses
 import errno
@@ -17,21 +18,28 @@ import string
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import IO, Any, Self
 from unittest.mock import Mock, patch
 
-from quality_evidence_fixtures import (
+from tests.quality_evidence_fixtures import (
     _DIAGNOSTIC_SAMPLE,
     _EXTRA_COMPLEX,
     _SOURCE_BINDING_GAP,
     _DiagnosticInventoryFixture,
 )
+from tests.quality_evidence_profile_support import _original
+from tools.quality_evidence import DiagnosticLimits
 
 
 class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
     """The subject the inventory binds, and the Git metadata it reads to bind it,
     with the producers faked at `_bounded_run`."""
+
+    mypy_records: dict[str, list[dict[str, Any]]]
+    ruff_records: list[dict[str, Any]]
 
     def test_a_root_without_its_own_git_is_not_bound_to_an_enclosing_checkout(
         self,
@@ -49,7 +57,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         self._git("commit", "-q", "-m", "a package")
         standalone = self._package(Path(self.directory.name) / "standalone")
         unfrozen = "the subject has no Git metadata of its own: no commit was frozen"
-        cases = (
+        cases: tuple[tuple[str, Path, dict[str, str]], ...] = (
             ("nested, a base", nested, {"base": self.base}),
             ("nested, no base", nested, {}),
             ("outside any repository, a base", standalone, {"base": self.base}),
@@ -121,7 +129,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 "a dangling symlink",
                 lambda entry: entry.symlink_to(self.root / "missing"),
             ),
-            ("another kind", lambda entry: os.mkfifo(entry)),
+            ("another kind", os.mkfifo),
         ):
             with self.subTest(label):
                 package = self._package(self.root / label.replace(" ", "-"))
@@ -176,7 +184,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             "-C", str(elsewhere / "linked"), "rev-parse", "--absolute-git-dir"
         )
 
-        def gitfile(target: str):
+        def gitfile(target: str) -> Callable[[Path], object]:
             return lambda entry: entry.write_text(
                 f"gitdir: {target}\n", encoding="utf-8"
             )
@@ -204,7 +212,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         # the check what is left of it, never no bound.
         identity = Mock(return_value=True)
         with patch.object(self.module, "has_git_metadata", identity):
-            commit, _tree, _gaps = self.module._frozen_subject(
+            commit, _tree, _gaps = _original(self.module, "_frozen_subject")(
                 self.root, None, time.monotonic() - 1
             )
         self.assertEqual([], identity.call_args_list)
@@ -212,7 +220,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         identity = Mock(return_value=True)
         gaps: list[str] = []
         with patch.object(self.module, "has_git_metadata", identity):
-            rebound = self.module._metadata_rebound(
+            rebound = _original(self.module, "_metadata_rebound")(
                 self.root, time.monotonic() - 1, gaps
             )
         self.assertEqual([], identity.call_args_list)
@@ -220,7 +228,9 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         self.assertEqual(["the subject could not be re-read after collection"], gaps)
         identity = Mock(return_value=True)
         with patch.object(self.module, "has_git_metadata", identity):
-            self.module._frozen_subject(self.root, None, time.monotonic() + 30)
+            _original(self.module, "_frozen_subject")(
+                self.root, None, time.monotonic() + 30
+            )
         self.assertEqual(1, identity.call_count)
         timeout = identity.call_args.kwargs["timeout"]
         self.assertIsNotNone(timeout)
@@ -234,7 +244,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         # reading decides both: a spent budget starts no Git, and an open one passes
         # exactly what that reading leaves, never the floor. The frozen tree's owner
         # takes the absolute deadline itself, never a converted timeout (#389 F3 S2 B).
-        def clock(*readings):
+        def clock(*readings: float) -> SimpleNamespace:
             values = iter(readings)
             return SimpleNamespace(
                 monotonic=lambda: next(values, readings[-1]), sleep=time.sleep
@@ -246,7 +256,9 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             patch.object(self.module, "has_git_metadata", identity),
             patch.object(self.module, "_diagnostic_git", reader),
         ):
-            commit, _tree, _gaps = self.module._frozen_subject(self.root, None, 100.5)
+            commit, _tree, _gaps = _original(self.module, "_frozen_subject")(
+                self.root, None, 100.5
+            )
         self.assertEqual([], identity.call_args_list)
         self.assertEqual([], reader.call_args_list)
         self.assertIsNone(commit)
@@ -257,13 +269,15 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
             patch.object(self.module, "has_git_metadata", identity),
             patch.object(self.module, "_diagnostic_git", reader),
         ):
-            self.module._frozen_subject(self.root, None, 100.5)
+            _original(self.module, "_frozen_subject")(self.root, None, 100.5)
         self.assertEqual(0.5, identity.call_args.kwargs["timeout"])
         owner = importlib.import_module("tools.exact_tree")
         bounds = owner.Limits(100.5, 10, 10)
         enumeration = Mock(return_value=frozenset({"tools/sample.py", "a.txt"}))
         with patch.object(owner, "tree_paths", enumeration):
-            expected = self.module._tracked_python(self.root, "t" * 40, bounds)
+            expected = _original(self.module, "_tracked_python")(
+                self.root, "t" * 40, bounds
+            )
         self.assertIs(bounds, enumeration.call_args.kwargs["limits"])
         self.assertEqual(["tools/sample.py"], expected)
 
@@ -297,7 +311,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
                 )
                 self.assertNotIn("raw /host detail", json.dumps(inventory))
 
-        def spending(root, *, timeout=None):
+        def spending(_root: Path, *, timeout: float | None = None) -> bool:
             time.sleep(0.4)
             return True
 
@@ -391,10 +405,10 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         self.mypy_records, self.ruff_records = {}, []
         real_lstat = Path.lstat
 
-        def failing(path, *args, **kwargs):
+        def failing(path: Path) -> os.stat_result:
             if path.name == ".git" and path.parent == self.root:
                 raise PermissionError(errno.EACCES, "denied")
-            return real_lstat(path, *args, **kwargs)
+            return real_lstat(path)
 
         with patch.object(Path, "lstat", failing):
             reason, state, comparison = self._refused_spied(self.root, base=self.base)
@@ -411,7 +425,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         real = self.module.has_git_metadata
         calls: list[Path] = []
 
-        def final_with_a_link(root, *args, **kwargs):
+        def final_with_a_link(root: Path, *args: object, **kwargs: object) -> object:
             calls.append(root)
             if len(calls) == 2:
                 (root / ".git").rename(root / ".git-moved")
@@ -445,7 +459,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         for kind, base in bases.items():
             with self.subTest(kind):
                 shutil.rmtree(self.output, ignore_errors=True)
-                comparison = Mock(side_effect=self.module._diagnostic_git)
+                comparison = Mock(side_effect=_original(self.module, "_diagnostic_git"))
                 with (
                     patch.object(
                         self.module, "has_git_metadata", side_effect=[unknown, True]
@@ -478,7 +492,9 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         real = self.module.has_git_metadata
         calls: list[Path] = []
 
-        def final_without_metadata(root, *args, **kwargs):
+        def final_without_metadata(
+            root: Path, *args: object, **kwargs: object
+        ) -> object:
             calls.append(root)
             if len(calls) == 2:
                 (root / ".git").rename(root / ".git-moved")
@@ -592,7 +608,7 @@ class DiagnosticSubjectTests(_DiagnosticInventoryFixture):
         from tools.repository_scope import RepositoryScopeError
 
         unknown = RepositoryScopeError("raw detail", category="GIT_FAILED")
-        spy = Mock(side_effect=self.module._diagnostic_git)
+        spy = Mock(side_effect=_original(self.module, "_diagnostic_git"))
         with (
             patch.object(self.module, "has_git_metadata", side_effect=[unknown, True]),
             patch.object(self.module, "_diagnostic_git", spy),
@@ -664,12 +680,26 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
     faked at `_bounded_run`; anything they launch besides a version read, mypy and
     Ruff is the environment's isolated identity read, answered by `installed`."""
 
-    def _environment(self, *installed: tuple[str, ...]):
+    mypy_records: dict[str, list[dict[str, Any]]]
+    observed_bytes: int
+    run_directory: Path
+
+    def _environment(
+        self, *installed: tuple[str, ...] | None
+    ) -> Callable[..., tuple[int | None, str | None, bool]]:
         """A launcher whose identity reads answer `installed[0]`, then `installed[1]`
         and so on, keeping the last one; None answers as an unreadable read."""
         answers = list(installed)
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if "--version" in command or "mypy" in command or "ruff" in command:
                 return self._fake_run(
                     command,
@@ -689,7 +719,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
 
         return run
 
-    def _run(self, launcher, code: str) -> dict:
+    def _run(self, launcher: Callable[..., object], code: str) -> dict[str, Any]:
         self.mypy_records = {
             "tests/test_sample.py": [
                 self._mypy(
@@ -708,7 +738,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         return self._read(path)
 
     @staticmethod
-    def _producers(inventory: dict) -> list[dict]:
+    def _producers(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         # A report's digest follows its bytes, which the findings already compare.
         return [
             {key: value for key, value in record.items() if key != "report"}
@@ -716,7 +746,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ]
 
     @staticmethod
-    def _rules(inventory: dict) -> list[str]:
+    def _rules(inventory: dict[str, Any]) -> list[str]:
         return sorted(
             f["rule"] for f in inventory["findings"] if f["tool"]["id"] == "mypy"
         )
@@ -804,7 +834,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # producers, so the endpoints enclose every producer launch (Sourcery on #452).
         launches: list[str] = []
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if command == self._observation_command():
                 launches.append("observation")
             else:
@@ -824,12 +862,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual(2, launches.count("observation"))
         self.assertEqual({"mypy", "ruff"}, set(launches[3:-1]))
 
-    def _observe_with(self, *roots: Path, caps: dict | None = None) -> dict:
+    def _observe_with(
+        self, *roots: Path, caps: dict[str, int] | None = None
+    ) -> dict[str, Any]:
         """The collector's own observer module, run for real through its bounded
         launcher with exactly `roots` as its import path, so that the result does not
         depend on the image running the tests (Claude on #452). Without `caps`, it runs
         with the composed command's own caps and format."""
-        command = self.module._environment_command()
+        command = _original(self.module, "_environment_command")()
         if caps is not None:
             command = [*command[:3], json.dumps(caps, sort_keys=True), command[4]]
         source = Path(command[2]).read_text(encoding="utf-8")
@@ -842,7 +882,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         )
         report = self.output / f"observation-{len(list(self.output.glob('*')))}.json"
         self.output.mkdir(parents=True, exist_ok=True)
-        status, gap, invalid = self.module._bounded_run(
+        status, gap, invalid = _original(self.module, "_bounded_run")(
             [*command[:2], "-c", prefix + source, *command[3:]],
             cwd=self.root,
             environment=dict(os.environ),
@@ -890,15 +930,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             with self.subTest(name):
 
                 def run(
-                    command,
+                    command: list[str],
                     *,
-                    cwd,
-                    environment,
-                    report,
-                    deadline,
-                    limits,
-                    answer=answer,
-                ):
+                    cwd: Path,
+                    environment: dict[str, str],
+                    report: Path,
+                    deadline: float,
+                    limits: DiagnosticLimits,
+                    answer: str | None = answer,
+                ) -> tuple[int | None, str | None, bool]:
                     if command != self._observation_command():
                         return self._fake_run(
                             command,
@@ -926,7 +966,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         deadlines: list[tuple[str, float]] = []
         observations = 0
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             nonlocal observations
             if command != self._observation_command():
                 deadlines.append(("producer", deadline))
@@ -1001,7 +1049,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         foreign = json.loads(self._observation())
         foreign["format"] = "another-observation/v1"
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if command != self._observation_command():
                 return self._fake_run(
                     command,
@@ -1065,15 +1121,23 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual([], observed["roots"])
         self.assertIsNone(observed["interpreter"]["executable"])
 
-    def _answering(self, answer: object):
+    def _answering(self, answer: object) -> Callable[..., object]:
         """A launcher that answers the observation command with `answer` as JSON, and
         every other command as the fixture does."""
         return self._answering_text(json.dumps(answer))
 
-    def _answering_text(self, text: str):
+    def _answering_text(self, text: str) -> Callable[..., object]:
         """A launcher that answers the observation command with exactly `text`."""
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             if command != self._observation_command():
                 return self._fake_run(
                     command,
@@ -1089,10 +1153,12 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         return run
 
     @staticmethod
-    def _recording(launcher, launched: list[list[str]]):
+    def _recording(
+        launcher: Callable[..., object], launched: list[list[str]]
+    ) -> Callable[..., object]:
         """`launcher`, with every command it is given appended to `launched`."""
 
-        def run(command, **kwargs):
+        def run(command: list[str], **kwargs: object) -> object:
             launched.append(command)
             return launcher(command, **kwargs)
 
@@ -1175,13 +1241,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 ][0]["environment_observation"]
                 self.assertEqual("unavailable", member["status"])
 
-    def _with_probe_runs(self, *probes: tuple[str, list[str], object]):
+    def _with_probe_runs(
+        self, *probes: tuple[str, list[str], object]
+    ) -> contextlib.AbstractContextManager[object]:
         """The collector's runner, merging further producers' runs after complexity's,
         without changing the collector: each probe is (producer, argv, launch), from an
         adapter that declares `launch`, or declares nothing when it is None."""
-        original = self.module._run_complexity
+        original = _original(self.module, "_run_complexity")
 
-        def run_complexity(*args, **kwargs):
+        def run_complexity(*args: object, **kwargs: object) -> object:
             result = original(*args, **kwargs)
             for producer, argv, launch in probes:
                 record = {
@@ -1205,7 +1273,9 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # nor does in-process complexity (Router 6351766731 R2; PAO 6351691418).
         observed = getattr(self.module, "_ISOLATED_PYTHON", None)
         self.assertIsNotNone(observed, "the collector declares no observed launch")
-        other = self.module._Launch("/another/python", ("-I",))
+        other = _original(self.module, "_Launch")("/another/python", ("-I",))
+        if observed is None:
+            self.fail("observed must be set")
         with self._with_probe_runs(
             ("probe-producer", [*observed.argv(), "-m", "probe"], observed),
             ("another-interpreter", [*other.argv(), "-m", "probe"], other),
@@ -1232,6 +1302,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertIn("environment_observation", runs["mypy"])
 
     def _observer(self) -> Path:
+        if self.module.__file__ is None:
+            self.fail("self.module.__file__ must be set")
         return (
             Path(self.module.__file__).resolve().parent
             / "python_environment_observation.py"
@@ -1246,7 +1318,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             observer.is_file() and not observer.is_symlink(),
             "no observer module beside the collector",
         )
-        command = self.module._environment_command()
+        command = _original(self.module, "_environment_command")()
         self.assertEqual([sys.executable, "-I", str(observer)], command[:3])
         self.assertNotIn("-c", command)
 
@@ -1320,7 +1392,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             (self.root / place).write_text(forged, encoding="utf-8")
         run = Path(self.directory.name) / "isolated-run"
         run.mkdir()
-        self.module._observe_environment(
+        _original(self.module, "_observe_environment")(
             self.root,
             run,
             self.module.DEFAULT_DIAGNOSTIC_LIMITS,
@@ -1427,25 +1499,26 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observer = importlib.import_module("tools.python_environment_observation")
         record = Path(self.directory.name) / "RECORD"
         record.write_text("x" * 64, encoding="utf-8")
-        opened = os.fdopen
+        opened: Callable[..., IO[bytes]] = os.fdopen
 
         class Failing:
-            def __init__(self, stream) -> None:
+            def __init__(self, stream: IO[bytes]) -> None:
                 self.stream = stream
 
-            def __enter__(self):
+            def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *exc) -> None:
+            def __exit__(self, *exc: object) -> None:
                 self.stream.close()
 
             def fileno(self) -> int:
                 return self.stream.fileno()
 
-            def read(self, size: int) -> bytes:
+            @staticmethod
+            def read(size: int) -> bytes:
                 raise OSError(errno.EIO, "a read that fails mid-file")
 
-        observation = observer._Observation(
+        observation = _original(observer, "_Observation")(
             dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         )
         with patch.object(
@@ -1479,18 +1552,20 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 self.assertEqual("unreadable", observed["incomplete"])
 
     @staticmethod
-    def _offset_recording(opened, offsets: list[int]):
+    def _offset_recording(
+        opened: Callable[..., IO[bytes]], offsets: list[int]
+    ) -> Callable[..., object]:
         """`opened` (os.fdopen), its streams appending the descriptor's offset after
         every read to `offsets`: what the reader consumed from the file."""
 
         class Recording:
-            def __init__(self, stream) -> None:
+            def __init__(self, stream: IO[bytes]) -> None:
                 self.stream = stream
 
-            def __enter__(self):
+            def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *exc) -> None:
+            def __exit__(self, *exc: object) -> None:
                 self.stream.close()
 
             def fileno(self) -> int:
@@ -1510,7 +1585,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observer = importlib.import_module("tools.python_environment_observation")
         record = Path(self.directory.name) / "LARGE-RECORD"
         record.write_bytes(b"x" * 100_000)
-        opened = os.fdopen
+        opened: Callable[..., IO[bytes]] = os.fdopen
         base = dict(self.module.ENVIRONMENT_OBSERVATION_CAPS)
         for name, caps, stop in (
             ("per file", {**base, "file_bytes": 1}, "file_bytes"),
@@ -1518,7 +1593,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ):
             with self.subTest(name):
                 offsets: list[int] = []
-                observation = observer._Observation(caps)
+                observation = _original(observer, "_Observation")(caps)
                 with patch.object(
                     observer.os, "fdopen", self._offset_recording(opened, offsets)
                 ):
@@ -1556,8 +1631,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         moved = Path(self.directory.name) / "moved-dist-info"
         opened = os.open
 
-        def swapping(path, flags, *args, **kwargs):
-            descriptor = opened(path, flags, *args, **kwargs)
+        def swapping(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = opened(path, flags, mode, dir_fd=dir_fd)
             named = os.fspath(path) in (str(dist), dist.name)
             if named and flags & os.O_DIRECTORY and not moved.exists():
                 dist.rename(moved)
@@ -1589,8 +1670,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         dist = "mm-1.0.dist-info"
         opened = os.open
 
-        def swapping(path, flags, *args, **kwargs):
-            descriptor = opened(path, flags, *args, **kwargs)
+        def swapping(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = opened(path, flags, mode, dir_fd=dir_fd)
             named = os.fspath(path) in (str(link / dist), dist)
             if named and not retarget.exists():
                 retarget.symlink_to(second, target_is_directory=True)
@@ -1623,8 +1710,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         ).hexdigest()
         opened = os.open
 
-        def swapping(path, flags, *args, **kwargs):
-            descriptor = opened(path, flags, *args, **kwargs)
+        def swapping(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = opened(path, flags, mode, dir_fd=dir_fd)
             if os.fspath(path) == str(link) and not retarget.exists():
                 retarget.symlink_to(second, target_is_directory=True)
                 os.replace(retarget, link)
@@ -1666,15 +1759,16 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 retarget = Path(self.directory.name) / f"linked-alias-{kind}.new"
 
                 def swapping(
-                    path,
-                    flags,
-                    *args,
-                    link=link,
-                    other=other,
-                    retarget=retarget,
-                    **kwargs,
-                ):
-                    descriptor = opened(path, flags, *args, **kwargs)
+                    path: str | os.PathLike[str],
+                    flags: int,
+                    mode: int = 0o777,
+                    *,
+                    dir_fd: int | None = None,
+                    link: Path = link,
+                    other: Path = other,
+                    retarget: Path = retarget,
+                ) -> int:
+                    descriptor = opened(path, flags, mode, dir_fd=dir_fd)
                     if os.fspath(path) == str(link) and not retarget.exists():
                         retarget.symlink_to(other, target_is_directory=True)
                         os.replace(retarget, link)
@@ -1698,8 +1792,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         retarget = Path(self.directory.name) / "linked-racing.new"
         resolved = os.path.realpath
 
-        def swapping(path, *args, **kwargs):
-            real = resolved(path, *args, **kwargs)
+        def swapping(path: str | os.PathLike[str], *, strict: bool = False) -> str:
+            real = resolved(path, strict=strict)
             if os.fspath(path) == str(link) and not retarget.exists():
                 retarget.symlink_to(second, target_is_directory=True)
                 os.replace(retarget, link)
@@ -1757,10 +1851,15 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         self.assertEqual([], observed["roots"])
         examined = os.stat
 
-        def refusing(path, *args, **kwargs):
+        def refusing(
+            path: str | os.PathLike[str],
+            *,
+            dir_fd: int | None = None,
+            follow_symlinks: bool = True,
+        ) -> os.stat_result:
             if os.fspath(path) == str(root):
                 raise PermissionError(errno.EACCES, "permission denied", str(path))
-            return examined(path, *args, **kwargs)
+            return examined(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
         with self.subTest("simulated"), patch.object(observer.os, "stat", refusing):
             observed = json.loads(observer.observe([str(root)], caps, form))
@@ -1831,13 +1930,14 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ),
             ("the fixture launcher", self._fake_run),
         ):
+            deadline = time.monotonic() + 60
             with self.subTest(name), self.assertRaises(AssertionError):
                 launcher(
                     wrong,
                     cwd=self.root,
                     environment={},
                     report=report,
-                    deadline=time.monotonic() + 60,
+                    deadline=deadline,
                     limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                 )
 
@@ -1853,14 +1953,16 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
             ("observer", ("_OBSERVER", Path("/elsewhere/observer.py"))),
         ):
             with self.subTest(name), patch.object(self.module, *moved):
-                command = self.module._environment_command()
+                command = _original(self.module, "_environment_command")()
+                run = self._environment(("fixture-1.0",))
+                deadline = time.monotonic() + 60
                 with self.assertRaises(AssertionError):
-                    self._environment(("fixture-1.0",))(
+                    run(
                         command,
                         cwd=self.root,
                         environment={},
                         report=report,
-                        deadline=time.monotonic() + 60,
+                        deadline=deadline,
                         limits=self.module.DEFAULT_DIAGNOSTIC_LIMITS,
                     )
 
@@ -1923,8 +2025,8 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # A hashed row that is not a supported, well-formed sha256 over a readable
         # regular file in the root never passes as verified (Router #389 6361147179).
         # A well-formed sha256 claim, so that each case isolates its own condition.
-        claim = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).rstrip(b"=")
-        claim = claim.decode()
+        digest = hashlib.sha256(b"x").digest()
+        claim = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         cases = (
             (
                 "an unsupported algorithm",
@@ -1992,17 +2094,30 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         touched: list[str] = []
         real_open, real_stat, real_lstat = os.open, os.stat, os.lstat
 
-        def opening(path, *args, **kwargs):
+        def opening(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             touched.append(os.fspath(path))
-            return real_open(path, *args, **kwargs)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
 
-        def stating(path, *args, **kwargs):
+        def stating(
+            path: str | os.PathLike[str],
+            *,
+            dir_fd: int | None = None,
+            follow_symlinks: bool = True,
+        ) -> os.stat_result:
             touched.append(os.fspath(path))
-            return real_stat(path, *args, **kwargs)
+            return real_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
-        def lstating(path, *args, **kwargs):
+        def lstating(
+            path: str | os.PathLike[str], *, dir_fd: int | None = None
+        ) -> os.stat_result:
             touched.append(os.fspath(path))
-            return real_lstat(path, *args, **kwargs)
+            return real_lstat(path, dir_fd=dir_fd)
 
         with (
             patch.object(observer.os, "open", opening),
@@ -2190,29 +2305,34 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # held, so a RECORD at the per-file cap costs about its own size.
         observer = importlib.import_module("tools.python_environment_observation")
         chunks = [b"mm/a.py,,\n" * 6553] * 64
-        lines = observer._record_lines(chunks)
-        self.assertEqual("mm/a.py,,\n", next(lines))
+        lines = _original(observer, "_record_lines")(chunks)
+        self.assertEqual("mm/a.py,,\n", next(lines, None))
         self.assertEqual(63, len(chunks))
         self.assertEqual(6553 * 64 - 1, sum(1 for _ in lines))
         self.assertEqual([], chunks)
         endless = [b"x" * 65536] * 64
+        record_lines = _original(observer, "_record_lines")
+        record_stream = record_lines(endless)
         with self.assertRaises(csv.Error):
-            next(observer._record_lines(endless))
+            next(record_stream, None)
         self.assertGreater(len(endless), 40)
         # CodeAnt on #453: a line whose end falls in the chunk that takes it past the
         # bound is refused before it is joined; one at the bound, its newline
         # included, is a line.
-        bound = observer._RECORD_LINE_CHARACTERS
+        bound = _original(observer, "_RECORD_LINE_CHARACTERS")
         for length, refused in ((bound, False), (bound + 1, True)):
             with self.subTest(length=length):
                 data = b"x" * (length - 1) + b"\n"
                 chunks = [data[i : i + 65536] for i in range(0, len(data), 65536)]
-                lines = observer._record_lines(chunks)
+                lines = _original(observer, "_record_lines")(chunks)
                 if refused:
                     with self.assertRaises(csv.Error):
-                        next(lines)
+                        next(lines, None)
                 else:
-                    self.assertEqual(length, len(next(lines)))
+                    line = next(lines, None)
+                    if line is None:
+                        self.fail("lines must hold a line")
+                    self.assertEqual(length, len(line))
 
     def test_a_legitimate_large_installed_payload_is_observed(self) -> None:
         # Router 6364506650 (B): the composed caps admit a matching in-root payload of
@@ -2245,19 +2365,24 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         observer = importlib.import_module("tools.python_environment_observation")
         real = os.path.realpath(self.directory.name)
         bases = {".", real}
-        self.assertEqual(("outside", None), observer._record_path(bases, "../bin/tool"))
+        self.assertEqual(
+            ("outside", None), _original(observer, "_record_path")(bases, "../bin/tool")
+        )
         self.assertEqual(
             ("ambiguous", None),
-            observer._record_path(bases, f"../{os.path.basename(real)}/mm/x.py"),
+            _original(observer, "_record_path")(
+                bases, f"../{os.path.basename(real)}/mm/x.py"
+            ),
         )
         self.assertEqual(
-            ("inside", ["mm", "x.py"]), observer._record_path(bases, "mm/x.py")
+            ("inside", ["mm", "x.py"]),
+            _original(observer, "_record_path")(bases, "mm/x.py"),
         )
-        self.assertFalse(observer._within_any({"."}, "../bin/tool"))
-        self.assertFalse(observer._within_any({"../a"}, "../../a/b"))
-        self.assertTrue(observer._within_any({"."}, "mm/x.py"))
-        self.assertTrue(observer._within_any({"../a"}, "../a/b"))
-        self.assertTrue(observer._within_any({"/r"}, "/r"))
+        self.assertFalse(_original(observer, "_within_any")({"."}, "../bin/tool"))
+        self.assertFalse(_original(observer, "_within_any")({"../a"}, "../../a/b"))
+        self.assertTrue(_original(observer, "_within_any")({"."}, "mm/x.py"))
+        self.assertTrue(_original(observer, "_within_any")({"../a"}, "../a/b"))
+        self.assertTrue(_original(observer, "_within_any")({"/r"}, "/r"))
         # The full observer, as PAO-453-OWNER-6364237541-E41F55F8-v1 replayed it: the
         # same root supplied as `.` and as its absolute path, with a matching module
         # and a valid hashed row outside the root, is complete either way.
@@ -2354,7 +2479,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # unavailable observation, never an escaping error.
         original = Path.read_bytes
 
-        def failing(path):
+        def failing(path: Path) -> bytes:
             if path.name.startswith("diagnostic-environment-"):
                 raise OSError("unreadable report")
             return original(path)
@@ -2374,7 +2499,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         (root / "mm" / "extra.py").write_bytes(extra)
         return root
 
-    def _walk_caps(self, **overrides: int) -> dict:
+    def _walk_caps(self, **overrides: int) -> dict[str, int]:
         return {**self.module.ENVIRONMENT_OBSERVATION_CAPS, **overrides}
 
     def test_a_file_no_record_lists_changes_the_observation(self) -> None:
@@ -2482,15 +2607,21 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         peak = [0]
         opened: list[str] = []
 
-        def counting_open(path, flags, *args, **kwargs):
-            descriptor = real_open(path, flags, *args, **kwargs)
+        def counting_open(
+            path: str | os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
             if flags & os.O_DIRECTORY:
                 live.add(descriptor)
                 peak[0] = max(peak[0], len(live))
                 opened.append(os.fspath(path))
             return descriptor
 
-        def counting_close(descriptor):
+        def counting_close(descriptor: int) -> None:
             live.discard(descriptor)
             real_close(descriptor)
 
@@ -2535,7 +2666,11 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                 link.symlink_to(first, target_is_directory=True)
                 original = getattr(observer, stage)
 
-                def retargeting(*args, original=original, **kwargs):
+                def retargeting(
+                    *args: object,
+                    original: Callable[..., object] = original,
+                    **kwargs: object,
+                ) -> object:
                     result = original(*args, **kwargs)
                     link.unlink()
                     link.symlink_to(second, target_is_directory=True)
@@ -2582,10 +2717,18 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         for name, root, swap in cases:
             with self.subTest(name):
 
-                def swapping(path, flags, *args, root=root, swap=swap, **kwargs):
+                def swapping(
+                    path: str | os.PathLike[str],
+                    flags: int,
+                    mode: int = 0o777,
+                    *,
+                    dir_fd: int | None = None,
+                    root: Path = root,
+                    swap: str | None = swap,
+                ) -> int:
                     moved = root / "mm" / swap if swap else None
                     if (
-                        swap
+                        moved is not None
                         and path == swap
                         and moved.is_dir()
                         and not moved.is_symlink()
@@ -2594,7 +2737,7 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
                         moved.symlink_to(
                             root / "mm" / "moved", target_is_directory=True
                         )
-                    return real_open(path, flags, *args, **kwargs)
+                    return real_open(path, flags, mode, dir_fd=dir_fd)
 
                 with patch.object(observer.os, "open", swapping):
                     observed = json.loads(
@@ -2648,12 +2791,20 @@ class ProducerEnvironmentTests(_DiagnosticInventoryFixture):
         # before the observer's own code, so that it always needs longer than what
         # remains: the cut is the launcher's, the same for any child. A synthetic spent
         # budget, not a run of the real producers.
-        real = self.module._bounded_run
+        real = _original(self.module, "_bounded_run")
         marker = f"# remaining-deadline-{os.getpid()}-{time.monotonic_ns()}"
         launches: list[tuple[bool, float]] = []
         after: dict[str, float] = {}
 
-        def run(command, *, cwd, environment, report, deadline, limits):
+        def run(
+            command: list[str],
+            *,
+            cwd: Path,
+            environment: dict[str, str],
+            report: Path,
+            deadline: float,
+            limits: DiagnosticLimits,
+        ) -> tuple[int | None, str | None, bool]:
             observation = command == self._observation_command()
             launches.append((observation, deadline))
             if not observation or len([o for o, _ in launches if o]) == 1:
