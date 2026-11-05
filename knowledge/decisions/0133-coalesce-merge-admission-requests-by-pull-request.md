@@ -131,8 +131,17 @@ those windows. A guarded dispatch could wait longer than the guard's own deadlin
 ## Verification
 
 - `tests/test_merge_admission_queue.py`: its six REDs on `main` `a515a2b1` turn green, and its
-  guards and model checks still hold. It gains a case for a success under no verdict's id, and
-  a scheduling test that a run `subjects` does not admit shares no group.
+  guards and model checks still hold. A kill-check of the implementation added what its
+  mutants showed unbound:
+  - three scheduling tests, which fail on `main` as the REDs do: a run `subjects` does not
+    admit shares no group; a newer routine request replaces the one waiting; and the sweep, a
+    dispatch and a manual request each keep their own group;
+  - two cases of the authoritative-success guard: a success under no verdict's id, and a
+    verdict's DENY;
+  - one guard: a selection without `--event` never coalesces.
+
+  All 21 mutants of the predicates, the selection, the workflow's groups and locks, and the two
+  protected pins then fail a test.
 - The neighbouring merge-admission and L1 suites stay green, with the two protected changes
   named above.
 - **Projection, not a measurement.** #478's 163 saved runs were replayed under the declared
