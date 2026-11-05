@@ -125,6 +125,8 @@ _MAX_WORK_ITEMS = 20
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+# A GitHub App's id, as the runner names it: a positive ASCII decimal.
+_APP_ID = re.compile(r"^[1-9]\d{0,18}$", re.ASCII)
 _GITHUB_EXECUTION_ID = re.compile(r"^github-actions:([1-9][0-9]*):([1-9][0-9]*)$")
 
 
@@ -2265,23 +2267,84 @@ def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int
     return selected
 
 
+def _coalescing(args: argparse.Namespace) -> tuple[int, str] | None:
+    """The pinned merge-admission App's id and the protected revision this run
+    executes, from the runner, when the request is routine: an event run woken by a
+    completed workflow run (Decision 0133). A guarded dispatch, a manual request and
+    the sweep never coalesce, nor a run that does not name both exactly."""
+    app_id = os.environ.get("GNOSTOA_MA0_APP_ID", "")
+    revision = os.environ.get("GITHUB_SHA", "")
+    if (
+        not args.event
+        or os.environ.get("GITHUB_EVENT_NAME") != "workflow_run"
+        or _APP_ID.fullmatch(app_id) is None
+        or _SHA40.fullmatch(revision) is None
+    ):
+        return None
+    return int(app_id), revision
+
+
+def _already_admitted(
+    client: GitHubRestClient,
+    repository: str,
+    subject: dict[str, Any],
+    pinned: tuple[int, str],
+) -> bool:
+    """Whether the pinned App's latest record on the subject's head already binds
+    its whole material state, by the guarded merge's own predicates, so evaluating
+    it again would only repeat that record (Decision 0133). Whatever cannot be read
+    proves nothing, and the subject is evaluated."""
+    # Imported here, not at module level: the predicates and the evidence they
+    # rebuild need the runtime lock, which L1's own `publish` job does not install.
+    from tools import merge_admission_checks as checks
+
+    number, head = subject["pull_number"], subject["head"]
+    app_id, revision = pinned
+    try:
+        return checks.equivalent(
+            client,
+            repository,
+            number,
+            head,
+            app_id=app_id,
+            revision=revision,
+            rebuild=lambda: checks.unbundled_evidence(
+                collect_snapshot,
+                client,
+                repository=repository,
+                number=number,
+                root=Path.cwd(),
+            ),
+            observe=lambda: checks.open_population(_open_pulls(client, repository)),
+        )
+    except (github_rest.GitHubError, checks.PublicationError, ValueError, OSError):
+        return False
+
+
 def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Write the open Pull Requests the merge-admission relay evaluates, each with
     its head as GitHub reports it now (#407, slice 1b.4). An event's numbers are
-    hints only: each is re-read, and a closed one is no subject."""
+    hints only: each is re-read, and a closed one is no subject. A routine request's
+    subject whose state the pinned App's standing success already binds is none
+    either, so nothing invalidates that success (Decision 0133)."""
     if args.output is None:
         raise SystemExit("--output is required for subjects")
     selected = (
         _event_pulls(args, client) if args.event else _selected_pulls(args, client)
     )
+    pinned = _coalescing(args)
     subjects = []
     for number in selected:
         document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
         pull = _normalize_pull(document)
         if pull["number"] != number:
             raise ProviderReadError("the pull request read is not the one asked for")
-        if pull["state"] == "open":
-            subjects.append({"pull_number": number, "head": pull["head_sha"]})
+        subject = {"pull_number": number, "head": pull["head_sha"]}
+        if pull["state"] == "open" and (
+            pinned is None
+            or not _already_admitted(client, args.repository, subject, pinned)
+        ):
+            subjects.append(subject)
     args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
     return 0
 
