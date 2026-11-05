@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import selectors
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -1289,11 +1288,10 @@ class ProviderSecurityGateTests(unittest.TestCase):
                 }
             )
 
-            bash = shutil.which("bash", path=environment["PATH"])
-            if bash is None:
-                self.fail("bash must be on the route's PATH")
+            # The outer shell is the trusted one; the route's own commands still
+            # resolve on the child's PATH, the fake git first.
             completed = subprocess.run(
-                [bash, "-c", route_script],
+                [trusted_executable("bash"), "-c", route_script],
                 cwd=temporary,
                 env=environment,
                 check=False,
