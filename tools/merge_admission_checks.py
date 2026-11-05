@@ -1,10 +1,11 @@
 """The `merge-admission` check run's identity rules (#407, MA0 slice 1b.4).
 
 Decision 0112 item 5 publishes the verdict as one check run, posted by the dedicated
-App `gnostoa-ma0`. Two protected programs read those runs: the relay that publishes
-them (`ci/merge_admission_relay.py`) and the guard the merge procedure runs after
-activation (`ci/merge_admission_guard.py`, F1 part 3 on #426). They read a run the
-same way, from this module:
+App `gnostoa-ma0`. Three protected programs read those runs: the relay that publishes
+them (`ci/merge_admission_relay.py`), the guard the merge procedure runs after
+activation (`ci/merge_admission_guard.py`, F1 part 3 on #426), and L1's subject
+selection (`ci/review_github_current_state.py`). They read a run the same way, from
+this module:
 
 - a run is the App's only when its App id says so;
 - the App's latest run on a head is GitHub's `filter=latest` view, which keeps one run
@@ -13,6 +14,12 @@ same way, from this module:
   nonce of the guarded merge that dispatched it, if one did (G1), and the digest of
   the evidence that evaluation rebuilt without the analyzer bundle, once there is
   one, in one fenced block of its text.
+
+The guard's predicates over such a record live here as well, so the selection proves
+an equivalent routine request by the rules the guarded merge refuses by (#407's queue
+correction, Decision 0133): the pinned App's completed success on the head, the
+evidence rebuilt now without the bundle under the digest it records, and the pull
+request alone at its head.
 """
 
 from __future__ import annotations
@@ -20,7 +27,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from tools import github_rest
@@ -192,3 +200,159 @@ def _optional(value: object, pattern: re.Pattern[str]) -> bool:
     return value is None or (
         isinstance(value, str) and pattern.fullmatch(value) is not None
     )
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def not_a_success(check: object, app_id: int, head: str, **fields: Any) -> str | None:
+    """Why the run is not the pinned App's completed success of the check on the
+    head, with any further fields exactly as given, or None when it is."""
+
+    expected = {
+        "name": CHECK_NAME,
+        "head_sha": head,
+        "status": "completed",
+        "conclusion": "success",
+        **fields,
+    }
+    if not ours(check, app_id) or not matches(check, expected):
+        return "the check is not the pinned App's completed success on the head"
+    return None
+
+
+def recorded_digest(correlation: Mapping[str, Any]) -> str | None:
+    """The digest of the evidence the run's evaluation rebuilt without the analyzer
+    bundle, or None when the run records none."""
+
+    value = correlation.get("unbundled_evidence_sha256")
+    return value if isinstance(value, str) else None
+
+
+def changed(
+    rebuilt: Any, recorded: str, repository: str, number: int, head: str
+) -> str | None:
+    """Why the evidence rebuilt now is not the one the run's evaluation recorded, or
+    None when it names this subject and has the recorded digest."""
+
+    subject = _mapping(_mapping(rebuilt).get("subject"))
+    request = _mapping(subject.get("change_request"))
+    if (
+        request.get("id") != str(number)
+        or subject.get("head_commit") != head
+        or subject.get("repository") != f"https://github.com/{repository}"
+    ):
+        return "the rebuilt evidence names another subject"
+    if digest(rebuilt) != recorded:
+        return "the subject changed since the evaluation"
+    return None
+
+
+def not_alone(observed: Any, number: int, head: str) -> str | None:
+    """Why the complete open population does not show the pull request alone at its
+    head (H1), or None when it does."""
+
+    pulls = observed.get("pulls") if isinstance(observed, Mapping) else None
+    if not isinstance(pulls, list) or observed.get("coverage") != "COMPLETE":
+        return "the open population is not complete"
+    heads = {
+        item.get("pull_number"): item.get("head")
+        for item in pulls
+        if isinstance(item, Mapping)
+    }
+    if heads.get(number) != head:
+        return "the open population does not show this pull request at its head"
+    sharing = sorted(str(pull) for pull, at in heads.items() if at == head)
+    if len(sharing) != 1:
+        return f"the head is shared by #{', #'.join(sharing)}"
+    return None
+
+
+def open_population(pulls: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """The complete open population as the relay and the guard read it, from L1's
+    enumeration of each open pull request with its head."""
+
+    return {
+        "coverage": "COMPLETE",
+        "pulls": [
+            {"pull_number": item["number"], "head": item["head_sha"]} for item in pulls
+        ],
+    }
+
+
+def unbundled_evidence(
+    collect: Callable[..., Any],
+    reader: Any,
+    *,
+    repository: str,
+    number: int,
+    root: Path,
+) -> Any:
+    """The subject's evidence rebuilt now without the analyzer bundle: L1's snapshot
+    with merge evidence, through the function `knowledge merge-evidence` calls, so
+    its digest is comparable with the one the relay records."""
+
+    # Imported here: the adapter needs the runtime lock (PyYAML, jsonschema), which
+    # the importers of this module do not all install.
+    from tools import merge_evidence_github
+
+    snapshot = collect(
+        reader,
+        repository=repository,
+        pull_number=number,
+        observed_at=None,
+        merge_evidence=True,
+    )
+    return merge_evidence_github.evidence_for(snapshot, project_root=root)
+
+
+def authoritative(run: Mapping[str, Any]) -> bool:
+    """Whether the run's external id is a verdict's, the digest of what the relay
+    evaluated, never a pending, superseded, overtaken or incomplete run's."""
+
+    external = run.get("external_id")
+    return isinstance(external, str) and _SHA256.fullmatch(external) is not None
+
+
+def _standing_digest(
+    latest: Mapping[str, Any], app_id: int, head: str, revision: str
+) -> str | None:
+    """The digest the pinned App's completed authoritative success on the head
+    records, when the protected revision given wrote it, else None."""
+
+    if not_a_success(latest, app_id, head) is not None or not authoritative(latest):
+        return None
+    recorded = correlation_of(latest)
+    if recorded is None or recorded["protected_revision"] != revision:
+        return None
+    return recorded_digest(recorded)
+
+
+def equivalent(
+    client: Any,
+    repository: str,
+    number: int,
+    head: str,
+    *,
+    app_id: int,
+    revision: str,
+    rebuild: Callable[[], Any],
+    observe: Callable[[], Any],
+) -> bool:
+    """Whether a fresh evaluation of the pull request at the head would repeat the
+    pinned App's latest record there (Decision 0133): a completed authoritative
+    success written from the protected revision given, recording the digest of the
+    evidence rebuilt now, while the complete open population shows the pull request
+    alone at its head. The head alone never proves it, nor a run of another App or a
+    record without a digest. A latest view that cannot be read whole raises, as the
+    reads do, and the caller evaluates."""
+
+    latest = app_latest(client, repository, head, app_id)
+    if latest is None:
+        return False
+    expected = _standing_digest(latest, app_id, head, revision)
+    # The population before the rebuild: it is one listing, the rebuild many reads.
+    if expected is None or not_alone(observe(), number, head) is not None:
+        return False
+    return changed(rebuild(), expected, repository, number, head) is None

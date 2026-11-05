@@ -52,15 +52,18 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from tools import github_rest  # noqa: E402
 from tools.merge_admission_checks import (  # noqa: E402
-    CHECK_NAME,
     PublicationError,
     app_latest,
+    changed,
     correlation_of,
-    digest,
     matches,
-    ours,
+    not_a_success,
+    not_alone,
+    open_population,
     read_run,
+    recorded_digest,
     run_id,
+    unbundled_evidence,
 )
 
 if TYPE_CHECKING:
@@ -259,53 +262,32 @@ def _admitted(
         check = read_run(client, repository, identifier)
     except PublicationError as exc:
         raise Refused(f"the check could not be read: {exc}") from exc
-    expected = {
-        "id": identifier,
-        "name": CHECK_NAME,
-        "head_sha": approved,
-        "status": "completed",
-        "conclusion": "success",
-    }
-    if not ours(check, app_id) or not matches(check, expected):
-        raise Refused("the check is not the pinned App's completed success on the head")
+    _refuse(not_a_success(check, app_id, approved, id=identifier))
     recorded = correlation_of(check)
     if recorded is None or any(recorded[field] != record[field] for field in _IDENTITY):
         raise Refused("the check does not correlate with this dispatch's run")
-    digest_recorded = recorded["unbundled_evidence_sha256"]
-    if not isinstance(digest_recorded, str):
+    digest_recorded = recorded_digest(recorded)
+    if digest_recorded is None:
         raise Refused("the check records no evidence digest")
     return identifier, digest_recorded
+
+
+def _refuse(reason: str | None) -> None:
+    """Refuse for the reason a shared predicate gives (`tools.merge_admission_checks`,
+    which L1's selection reads by too), if it gives one."""
+
+    if reason is not None:
+        raise Refused(reason)
 
 
 def _unchanged(
     rebuilt: Any, recorded: str, repository: str, number: int, approved: str
 ) -> None:
-    subject = _mapping(_mapping(rebuilt).get("subject"))
-    request = _mapping(subject.get("change_request"))
-    if (
-        request.get("id") != str(number)
-        or subject.get("head_commit") != approved
-        or subject.get("repository") != f"https://github.com/{repository}"
-    ):
-        raise Refused("the rebuilt evidence names another subject")
-    if digest(rebuilt) != recorded:
-        raise Refused("the subject changed since the evaluation")
+    _refuse(changed(rebuilt, recorded, repository, number, approved))
 
 
-def _alone(population: Any, number: int, approved: str) -> None:
-    pulls = population.get("pulls") if isinstance(population, Mapping) else None
-    if not isinstance(pulls, list) or population.get("coverage") != "COMPLETE":
-        raise Refused("the open population is not complete")
-    heads = {
-        item.get("pull_number"): item.get("head")
-        for item in pulls
-        if isinstance(item, Mapping)
-    }
-    if heads.get(number) != approved:
-        raise Refused("the open population does not show this pull request at its head")
-    sharing = sorted(str(pull) for pull, head in heads.items() if head == approved)
-    if len(sharing) != 1:
-        raise Refused(f"the head is shared by #{', #'.join(sharing)}")
+def _alone(observed: Any, number: int, approved: str) -> None:
+    _refuse(not_alone(observed, number, approved))
 
 
 def guard(
@@ -451,31 +433,25 @@ def rebuilders(
     # by its path from the root (#389 F1). Imported by its name at run time, as the
     # statement this replaces did, and typed by the surface L1 checks itself against.
     l1: surface.Surface = importlib.import_module("review_github_current_state")
-
-    from tools import merge_evidence_github
+    # The evidence function's module, loaded here, before anything is dispatched, so
+    # a missing dependency stops the guard first; the rebuild calls it by name.
+    importlib.import_module("tools.merge_evidence_github")
 
     # Built as L1's own command builds it, from the token alone (CodeAnt and Kilo on
     # #426: its constructor takes no other option).
     reader = l1.GitHubRestClient(token)
 
     def rebuild() -> Any:
-        snapshot = l1.collect_snapshot(
+        return unbundled_evidence(
+            l1.collect_snapshot,
             reader,
             repository=repository,
-            pull_number=number,
-            observed_at=None,
-            merge_evidence=True,
+            number=number,
+            root=root,
         )
-        return merge_evidence_github.evidence_for(snapshot, project_root=root)
 
     def population() -> Any:
-        return {
-            "coverage": "COMPLETE",
-            "pulls": [
-                {"pull_number": item["number"], "head": item["head_sha"]}
-                for item in l1.open_pulls(reader, repository)
-            ],
-        }
+        return open_population(l1.open_pulls(reader, repository))
 
     return rebuild, population
 
