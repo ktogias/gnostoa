@@ -250,6 +250,12 @@ class FileCollectionTests(unittest.TestCase):
         self.assertLess(len(kept["patch"].encode("utf-8")), len(patch))
 
         adapter = adapter_fixture()
+        # The refusal below is the client's, so this adapter's client must carry that
+        # budget (Revix on #479). The client's own refusal past it is
+        # test_github_rest.SharedGitHubClientTests.test_bodies_are_bounded's.
+        self.assertEqual(
+            RESPONSE_BUDGET, adapter.GitHubRestClient("t").policy.max_response_bytes
+        )
         fake = paged_fake_fixture(_replies())
         answer = fake.get
 
