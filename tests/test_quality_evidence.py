@@ -2716,6 +2716,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
             with self.subTest(cap=cap):
                 spy = Mock(side_effect=real)
                 deadline = time.monotonic() + 30
+                head = self._head()
                 diff_scope = _original(self.module, "_diff_scope")
                 with (
                     patch.object(self.module, "_diagnostic_git", spy),
@@ -2724,9 +2725,7 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
                         "the comparison's Git output exceeds max_report_bytes",
                     ),
                 ):
-                    diff_scope(
-                        self.root, self.base, deadline, cap=cap, head=self._head()
-                    )
+                    diff_scope(self.root, self.base, deadline, cap=cap, head=head)
                 verbs = [call.args[2] for call in spy.call_args_list]
                 self.assertEqual(reads, len(verbs), verbs)
                 self.assertEqual(read_last, verbs[-1])
