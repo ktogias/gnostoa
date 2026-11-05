@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -1002,17 +1002,12 @@ def _read_full_run(
     )
 
 
-def _stated_title(body: str) -> str | None:
-    """The title a comment states, or None when it states none or an empty one."""
+def _comment_title(body: str) -> str:
     match = _H3_AFTER_PICTURE.search(body)
     if match is None:
-        return None
+        return "DeepSource issue"
     text = html.unescape(_TAG.sub("", match.group("title"))).strip()
-    return " ".join(text.split()) or None
-
-
-def _comment_title(body: str) -> str:
-    return _stated_title(body) or "DeepSource issue"
+    return " ".join(text.split()) or "DeepSource issue"
 
 
 def _trusted_github_status(value: Mapping[str, Any]) -> bool:
@@ -1156,12 +1151,12 @@ def _comment_finding(
 
 def _comment_findings(
     comments: Sequence[Mapping[str, Any]], requested_head: str
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The trusted, marked comments on the exact head, and those carried forward
-    from another head and so excluded, each as its finding."""
+) -> tuple[list[dict[str, Any]], int]:
+    """The trusted, marked comments on the exact head, and how many were carried
+    forward from another head and so excluded."""
 
     findings: list[dict[str, Any]] = []
-    carried_forward: list[dict[str, Any]] = []
+    carried_forward = 0
     for comment in comments:
         if not _trusted_github_comment(comment):
             continue
@@ -1171,82 +1166,11 @@ def _comment_findings(
         marker = _ISSUE_MARKER.search(body)
         if marker is None or comment.get("commit_id") != requested_head:
             continue
-        finding = _comment_finding(comment, body, marker.group("id"))
         if comment.get("original_commit_id") != requested_head:
-            # Its message only when the comment states a title, so a fallback never
-            # shows it gone from the head (#389; cubic on #480).
-            carried_forward.append({**finding, "message": _stated_title(body)})
+            carried_forward += 1
             continue
-        findings.append(finding)
+        findings.append(_comment_finding(comment, body, marker.group("id")))
     return findings, carried_forward
-
-
-def _located(finding: Mapping[str, Any]) -> tuple[Any, Any, Any]:
-    location = finding.get("range")
-    line = location.get("start_line") if isinstance(location, Mapping) else None
-    return finding.get("path"), line, finding.get("message")
-
-
-def _absent_from_full_run(
-    carried: Sequence[Mapping[str, Any]],
-    full: Mapping[str, Any] | None,
-    requested_head: str,
-    run_id: str,
-) -> bool:
-    """Whether the same run's complete full read of the exact head shows each of
-    the carried-forward comments' findings gone (#389, addendum 6615072518): it
-    lists no finding at the comment's path and line, whatever its message, and none
-    in that file with the comment's title, at any line, so neither a reworded title
-    nor a drifted line hides one (Revix on #480). A comment without a path, a line
-    or a title is never shown gone, and a finding the full run still lists reaches
-    M17 through it."""
-
-    if full is None:
-        return False
-    identity = tuple(
-        full.get(key)
-        for key in (
-            "provider",
-            "scope",
-            "completeness",
-            "analysis_id",
-            "requested_head",
-            "observed_head",
-        )
-    )
-    expected = (
-        "deepsource",
-        "FULL",
-        "FULL_RUN",
-        run_id,
-        requested_head,
-        requested_head,
-    )
-    # A FULL_RUN read is complete by the readback's own contract; checked here too,
-    # so no caller is trusted for it (Revix on #480).
-    record = full.get("coverage")
-    if identity != expected or not isinstance(record, Mapping):
-        return False
-    if record.get("status") != "COMPLETE":
-        return False
-    return not any(_still_listed(carried, full.get("findings", ())))
-
-
-def _still_listed(
-    carried: Sequence[Mapping[str, Any]], findings: Iterable[Mapping[str, Any]]
-) -> Iterator[bool]:
-    """For each carried-forward finding, whether the full read may still list it."""
-
-    listed = [_located(finding) for finding in findings]
-    at_line = {(path, line) for path, line, _ in listed}
-    titled = {(path, message) for path, _, message in listed}
-    for finding in carried:
-        path, line, title = _located(finding)
-        yield (
-            None in (path, line, title)
-            or (path, line) in at_line
-            or (path, title) in titled
-        )
 
 
 def _diff_local_from_github(
@@ -1258,7 +1182,6 @@ def _diff_local_from_github(
     statuses: Sequence[Mapping[str, Any]],
     comments: Sequence[Mapping[str, Any]],
     observed_at: str,
-    full: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     common: dict[str, Any] = {
         "repository": normalize_repository(repository),
@@ -1323,14 +1246,10 @@ def _diff_local_from_github(
         run_state = "SUCCESS"
     native: dict[str, Any] = dict(analyzers)
     if carried_forward:
-        native["carried_forward_comments_excluded"] = len(carried_forward)
+        native["carried_forward_comments_excluded"] = carried_forward
     partial = None
     if state_values & {"pending", "error"}:
         partial = "ANALYZER_STATE_UNAVAILABLE"
-    elif carried_forward and _absent_from_full_run(
-        carried_forward, full, requested_head, run_id
-    ):
-        native["carried_forward_comments_absent_from_full_run"] = len(carried_forward)
     elif carried_forward:
         partial = "CARRIED_FORWARD_COMMENTS_EXCLUDED"
     coverage_record = (
@@ -1468,11 +1387,8 @@ def diff_local_from_github(
     statuses: Sequence[Mapping[str, Any]],
     comments: Sequence[Mapping[str, Any]],
     observed_at: str,
-    full: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Project GitHub DeepSource evidence without surfacing model conflicts. With
-    the same run's `full` read, a carried-forward comment that read shows gone
-    from the head leaves the read complete (#389, addendum 6615072518)."""
+    """Project GitHub DeepSource evidence without surfacing model conflicts."""
 
     try:
         return _diff_local_from_github(
@@ -1483,7 +1399,6 @@ def diff_local_from_github(
             statuses=statuses,
             comments=comments,
             observed_at=observed_at,
-            full=full,
         )
     except AnalyzerReadbackError:
         try:
