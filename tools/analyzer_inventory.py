@@ -24,7 +24,7 @@ from .analyzer_readback import (
     build_readback,
     coverage,
 )
-from .quality_evidence import _LAUNCHED_PRODUCERS, DIAGNOSTIC_SCHEMA
+from .quality_evidence import DIAGNOSTIC_SCHEMA, LAUNCHED_PRODUCERS
 from .review_model import canonical_digest
 
 PROVIDER = "gnostoa-inventory"
@@ -167,7 +167,7 @@ def _invocation_identity(
     }
     argv = record.get("argv")
     environment = record.get("environment_observation")
-    if record["producer"] not in _LAUNCHED_PRODUCERS:
+    if record["producer"] not in LAUNCHED_PRODUCERS:
         if argv is not None or environment is not None:
             return None
         identity["settings"] = own_settings

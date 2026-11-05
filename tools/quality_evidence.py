@@ -1457,7 +1457,7 @@ _PRODUCER_ORDER = (
     "secrets",
 )
 # The producers launched as processes, whose environment is observed.
-_LAUNCHED_PRODUCERS = ("mypy", "ruff")
+LAUNCHED_PRODUCERS = ("mypy", "ruff")
 # Each identifier's whole text, checked by fullmatch in _check_profile: a schema
 # pattern's $ also matches before a trailing newline (Revix on #459).
 _NAME_TEXT = r"[a-z][a-z0-9-]{0,62}"
@@ -4453,7 +4453,7 @@ def _run_producers(
     }
     # Only a launched producer's environment is observed: the metric runs in process,
     # so a profile without one observes nothing (CodeAnt on #459).
-    launched = [producer for producer in _LAUNCHED_PRODUCERS if producer in used]
+    launched = [producer for producer in LAUNCHED_PRODUCERS if producer in used]
     versions: dict[str, str | None] = {}
     before: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
     if launched:
@@ -4966,7 +4966,7 @@ def _unmet_predicates(
     launched run's environment endpoints equal. An in-process family launches
     nothing, so neither P2 nor P4 reads it; a tree never staged ran nothing, which P1
     names, and P2 then reads nothing."""
-    launched = [run for run in runs if run["producer"] in _LAUNCHED_PRODUCERS]
+    launched = [run for run in runs if run["producer"] in LAUNCHED_PRODUCERS]
     # A family with targets, or whose targets are unknown, needs its producer run;
     # one with none needs nothing (cubic on #463). Withheld or over-budget targets
     # still count: BOUND claims nothing about a producer that analyzed nothing,
@@ -4975,7 +4975,7 @@ def _unmet_predicates(
         {
             row["producer"]
             for row in families
-            if row["producer"] in _LAUNCHED_PRODUCERS and row["targets"] != 0
+            if row["producer"] in LAUNCHED_PRODUCERS and row["targets"] != 0
         }
     )
     unmet: dict[str, list[str]] = {"P1": [], "P2": [], "P3": [], "P4": []}
