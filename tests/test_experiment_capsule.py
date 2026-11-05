@@ -23,7 +23,6 @@ from tools.capsule.compiler import _frozen_or_blocked, _materialize_verified
 from tools.capsule.execute import _materialize
 from tools.capsule.preparation import discover_test_config, project_test_config
 from tools.capsule.spec import SpecError, load_spec
-from tools.trusted_path import trusted_executable
 
 IMAGE_B = "sha256:" + "b" * 64
 
@@ -1259,19 +1258,10 @@ class LockExecutionTests(CapsuleFixture):
 
 
 def _local_image(reference: str = "python:3.12-slim") -> str | None:
-    """The immutable id of a locally present image, or None. Docker is resolved on the
-    repository's trusted lookup; off it, the start raises and the image is absent."""
+    """The immutable id of a locally present image, or None."""
     try:
         completed = subprocess.run(
-            [
-                trusted_executable("docker"),
-                "image",
-                "inspect",
-                "--format",
-                "{{.Id}}",
-                reference,
-            ],
-            check=False,
+            ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
             capture_output=True,
             text=True,
             timeout=30,

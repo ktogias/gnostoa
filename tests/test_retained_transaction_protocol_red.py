@@ -77,12 +77,6 @@ def _receipt(task_id: str, bound: dict[str, str]) -> qualification.Qualification
 
 
 class ProtocolFixture(ConsumptionFixture):
-    def prepared_candidate(self) -> str:
-        observed = self.prepare()
-        candidate = observed.preflight_candidate_sha256
-        assert candidate is not None
-        return candidate
-
     @staticmethod
     def second_approval(candidate: str) -> authority_module.PreflightAuthority:
         """A different owner approval of the same prepared candidate."""
@@ -92,6 +86,13 @@ class ProtocolFixture(ConsumptionFixture):
             scope=(authority_module.BASE_REFERENCE_QUALIFICATION,),
             preflight_candidate_sha256=candidate,
         )
+
+
+def prepared_candidate(fixture: ProtocolFixture) -> str:
+    observed = fixture.prepare()
+    candidate = observed.preflight_candidate_sha256
+    assert candidate is not None
+    return candidate
 
 
 def committed_generation(fixture: ProtocolFixture) -> int | None:
@@ -105,7 +106,7 @@ def committed_generation(fixture: ProtocolFixture) -> int | None:
 
 
 def authorised_candidate(fixture: ProtocolFixture) -> Any:
-    return fixture.consumption_authority(fixture.prepared_candidate())
+    return fixture.consumption_authority(prepared_candidate(fixture))
 
 
 def retained_reservation(fixture: ProtocolFixture) -> dict[str, Any] | None:
@@ -460,7 +461,7 @@ class ReservationRaceGapTests(ProtocolFixture):
         rather than parking it behind B, and the outcome can be observed while B is
         still holding the transaction.
         """
-        candidate = self.prepared_candidate()
+        candidate = prepared_candidate(self)
         winner_authority = self.consumption_authority(candidate)
         contender_authority = self.second_approval(candidate)
 
