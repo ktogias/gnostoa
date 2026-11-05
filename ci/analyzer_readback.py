@@ -479,13 +479,14 @@ def _head_source(
     size, content = document.get("size"), document.get("content")
     if type(size) is not int or not 0 <= size <= _SCOPE_FILE_BYTES:
         return None
-    if not isinstance(content, str) or not budget.admit(size):
+    if not isinstance(content, str):
         return None
     # GitHub wraps the base64 in lines. Only the encoded length the declared size
     # implies is ever decoded, so the bounds hold for the work done, not only for
-    # the answer (Claude on #480).
+    # the answer (Claude on #480). It is checked before the bytes are admitted, so
+    # an answer refused here spends none of them (Amazon Q on #480).
     encoded = "".join(content.split())
-    if len(encoded) != 4 * ((size + 2) // 3):
+    if len(encoded) != 4 * ((size + 2) // 3) or not budget.admit(size):
         return None
     try:
         # Any character outside base64 is refused, not dropped (cubic on #480).

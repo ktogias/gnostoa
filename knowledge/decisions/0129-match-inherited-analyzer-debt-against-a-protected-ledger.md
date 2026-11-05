@@ -101,9 +101,9 @@ The owner then authorized the implementation and its review (source `owner-follo
      GitHub's contents API. The file is read as data: nothing in the head runs or selects a
      tool. It is read and parsed once for all its findings.
    - The read is bounded: 64 requests, 1 MiB each, and 8 MiB in all. Content whose encoded
-     length is not the one its declared size implies is refused before it is decoded, so no
-     more than one base64 block past the declared size is ever decoded; the decoded bytes
-     must then be exactly the declared size.
+     length is not the one its declared size implies is refused before it is decoded and
+     before its bytes count toward the 8 MiB, so no more than one base64 block past the
+     declared size is ever decoded; the decoded bytes must then be exactly the declared size.
    - In these cases a finding gets no scope, and it is never matched:
      - the read fails;
      - the file is not a file, is over a bound, is not valid base64, has other than its
@@ -273,6 +273,6 @@ DeepSource-specific carried-forward rule #480 introduced, its wiring and its tes
 *2026-11-05, Codex on #480.* M17's guard refuses a security finding by its `category`, and the
 project inventory, the only provider whose findings can be inherited, gave none. Its producer
 now gives its own security classification as `category: security`, as Codacy's and SonarCloud's
-adapters give theirs: Ruff's flake8-bandit rules (`S` and digits, such as `literal-secrets`'
-`S106` and `unsafe-calls`' `S307`) and every finding of the `secrets` producer. An exact entry
-that calls such a finding, say, `correctness` still absorbs nothing.
+adapters give theirs: Ruff's flake8-bandit rules (`S` and ASCII digits, such as
+`literal-secrets`' `S106` and `unsafe-calls`' `S307`) and every finding of the `secrets`
+producer. An exact entry that calls such a finding, say, `correctness` still absorbs nothing.

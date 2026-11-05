@@ -1778,6 +1778,26 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             8, sum("enclosing" in finding for finding in findings.values())
         )
 
+    def test_a_refused_answer_spends_no_bytes(self) -> None:
+        """Amazon Q on #480: an answer whose encoded length is not the one its
+        declared size implies is refused before its bytes are admitted, so it leaves
+        the 8 MiB to the files after it."""
+        # Eight answers declaring the file bound with a few bytes' content, which
+        # would spend the whole byte bound, then one real file, read last.
+        refused = [f"m{index}.py" for index in range(8)]
+        replies = {
+            _contents_url(path): _file_reply(size=_SCOPE_FILE_BYTES) for path in refused
+        }
+        replies[_contents_url("z.py")] = _file_reply()
+        findings, read = self._scoped(
+            [_inventory_finding(path, path, 5) for path in [*refused, "z.py"]], replies
+        )
+        self.assertEqual(9, len(read))
+        self.assertEqual(
+            ["z.py"],
+            [path for path, finding in findings.items() if "enclosing" in finding],
+        )
+
 
 class DeepSourceRetirementRunnerTests(unittest.TestCase):
     """The DeepSource exit (#389, owner 6625223543; Decision 0130): the runner
