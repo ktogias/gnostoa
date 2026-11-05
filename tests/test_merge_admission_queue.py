@@ -897,6 +897,10 @@ class SelectionTests(unittest.TestCase):
             ],
             "another App's": [_record(self.current, app=OTHER_APP)],
             "no digest": [_record(None)],
+            # A success under an id no verdict carries, which the relay never writes.
+            "a success under no verdict's id": [
+                _record(self.current, external_id="overtaken:41:1")
+            ],
             "none": [],
         }
         for label, runs in records.items():
