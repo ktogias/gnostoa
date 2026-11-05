@@ -7,6 +7,7 @@ separately admitted change (AGENTS.md; route (B), the owner's 6652443128)."""
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib
 import os
 import shutil
@@ -80,12 +81,25 @@ class TrustedPathTests(unittest.TestCase):
                 leaf.trusted_executable(fake.name)
 
     def test_a_path_qualified_name_is_refused_unsearched(self) -> None:
-        # A name with a directory part is never checked as a path (cubic, Sourcery).
+        # A name with a directory part is never checked as a path (cubic, Sourcery). Each
+        # one names a real executable from the working directory, so a lookup that checked
+        # it would find it (Claude on #483). The absolute one pins the bare-name guard; the
+        # relative ones are also refused by the absolute-result check.
         leaf = _leaf()
-        with _shadow() as fake:
-            for name in (str(fake), f"./{fake.name}", f"sub/{fake.name}", ""):
-                with self.subTest(name=name), self.assertRaises(FileNotFoundError):
-                    leaf.trusted_executable(name)
+        with _shadow() as fake, contextlib.chdir(fake.parent):
+            nested = fake.parent / "sub" / fake.name
+            nested.parent.mkdir()
+            shutil.copy2(fake, nested)
+            for name in (str(fake), f"./{fake.name}", f"sub/{fake.name}"):
+                with self.subTest(name=name):
+                    self.assertIsNotNone(shutil.which(name, path=TRUSTED))
+                    with self.assertRaises(FileNotFoundError):
+                        leaf.trusted_executable(name)
+
+    def test_an_empty_name_is_refused(self) -> None:
+        leaf = _leaf()
+        with self.assertRaises(FileNotFoundError):
+            leaf.trusted_executable("")
 
     def test_the_lookup_is_the_one_agents_md_states(self) -> None:
         leaf = _leaf()
