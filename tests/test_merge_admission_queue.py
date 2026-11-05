@@ -1091,9 +1091,9 @@ class SelectionTests(unittest.TestCase):
         """Guard: the pinned App's id is a positive ASCII decimal (SonarCloud on #484).
         The same number in another script's digits, which int() would still read,
         names no App, so the request is evaluated."""
-        first, *rest = str(MA0_APP)
+        digits = str(MA0_APP)
         # Its first digit is ASCII, so only the decimal pattern's ASCII rule refuses it.
-        other_digits = first + "".join(chr(0x0660 + int(digit)) for digit in rest)
+        other_digits = digits[0] + "".join(chr(0x0660 + int(d)) for d in digits[1:])
         self.assertEqual(
             (0, [{"pull_number": 300, "head": HEAD}]),
             _select(self._provider(_record(self.current)), app_id=other_digits),
