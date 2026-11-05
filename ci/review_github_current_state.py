@@ -125,8 +125,8 @@ _MAX_WORK_ITEMS = 20
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-# A GitHub App's id, as the runner names it: a positive decimal.
-_APP_ID = re.compile(r"^[1-9][0-9]{0,18}$")
+# A GitHub App's id, as the runner names it: a positive ASCII decimal.
+_APP_ID = re.compile(r"^[1-9]\d{0,18}$", re.ASCII)
 _GITHUB_EXECUTION_ID = re.compile(r"^github-actions:([1-9][0-9]*):([1-9][0-9]*)$")
 
 

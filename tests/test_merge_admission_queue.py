@@ -654,6 +654,7 @@ def _select(
     *arguments: str,
     event_name: str = "workflow_run",
     revision: str = REVISION,
+    app_id: str = str(MA0_APP),
 ) -> tuple[int, list[dict[str, Any]] | None]:
     """L1's `--mode subjects`, as the relay's `subjects` job runs it."""
     module = adapter_fixture()
@@ -661,7 +662,7 @@ def _select(
         "GH_TOKEN": "x" * 40,
         "GITHUB_EVENT_NAME": event_name,
         "GITHUB_SHA": revision,
-        "GNOSTOA_MA0_APP_ID": str(MA0_APP),
+        "GNOSTOA_MA0_APP_ID": app_id,
     }
     with tempfile.TemporaryDirectory() as raw:
         output = Path(raw) / "subjects.json"
@@ -1084,6 +1085,18 @@ class SelectionTests(unittest.TestCase):
                 "--workflow-run-pulls-json",
                 "null",
             ),
+        )
+
+    def test_an_app_id_in_another_script_s_digits_never_coalesces(self) -> None:
+        """Guard: the pinned App's id is a positive ASCII decimal (SonarCloud on #484).
+        The same number in another script's digits, which int() would still read,
+        names no App, so the request is evaluated."""
+        first, *rest = str(MA0_APP)
+        # Its first digit is ASCII, so only the decimal pattern's ASCII rule refuses it.
+        other_digits = first + "".join(chr(0x0660 + int(digit)) for digit in rest)
+        self.assertEqual(
+            (0, [{"pull_number": 300, "head": HEAD}]),
+            _select(self._provider(_record(self.current)), app_id=other_digits),
         )
 
     def test_an_unreadable_record_never_coalesces(self) -> None:
