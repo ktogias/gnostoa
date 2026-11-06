@@ -377,42 +377,49 @@ def _deepsource_status_projection(
     statuses: list[Mapping[str, Any]],
     checks: list[Mapping[str, Any]],
 ) -> list[Mapping[str, Any]]:
-    projected: list[Mapping[str, Any]] = []
-    for item in statuses:
-        creator = item.get("creator")
-        creator_map = creator if isinstance(creator, Mapping) else {}
-        projected.append(
-            {
-                "context": item.get("context"),
-                "state": item.get("state"),
-                "target_url": item.get("target_url"),
-                "source_kind": "commit_status",
-                "creator_login": creator_map.get("login"),
-                "creator_type": creator_map.get("type"),
-            }
-        )
+    projected: list[Mapping[str, Any]] = [_status_entry(item) for item in statuses]
     for check in checks:
-        name = check.get("name")
-        details = check.get("details_url")
-        if not isinstance(name, str) or not name.startswith("DeepSource:"):
-            continue
-        if not isinstance(details, str) or not details:
-            continue
-        conclusion = check.get("conclusion")
-        status = check.get("status")
-        state = conclusion if isinstance(conclusion, str) and conclusion else status
-        app = check.get("app")
-        app_map = app if isinstance(app, Mapping) else {}
-        projected.append(
-            {
-                "context": name,
-                "state": state or "pending",
-                "target_url": details,
-                "source_kind": "check_run",
-                "app_slug": app_map.get("slug"),
-            }
-        )
+        entry = _check_run_entry(check)
+        if entry is not None:
+            projected.append(entry)
     return projected
+
+
+def _status_entry(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A commit status as DeepSource's adapter reads it, with its creator."""
+    creator = item.get("creator")
+    creator_map = creator if isinstance(creator, Mapping) else {}
+    return {
+        "context": item.get("context"),
+        "state": item.get("state"),
+        "target_url": item.get("target_url"),
+        "source_kind": "commit_status",
+        "creator_login": creator_map.get("login"),
+        "creator_type": creator_map.get("type"),
+    }
+
+
+def _check_run_entry(check: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """A DeepSource check run as its adapter reads it, or None for any other run and
+    one that names no run page."""
+    name = check.get("name")
+    details = check.get("details_url")
+    if not isinstance(name, str) or not name.startswith("DeepSource:"):
+        return None
+    if not isinstance(details, str) or not details:
+        return None
+    conclusion = check.get("conclusion")
+    status = check.get("status")
+    state = conclusion if isinstance(conclusion, str) and conclusion else status
+    app = check.get("app")
+    app_map = app if isinstance(app, Mapping) else {}
+    return {
+        "context": name,
+        "state": state or "pending",
+        "target_url": details,
+        "source_kind": "check_run",
+        "app_slug": app_map.get("slug"),
+    }
 
 
 def _deepsource_comments(

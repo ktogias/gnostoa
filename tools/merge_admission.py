@@ -225,12 +225,7 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
             raise AssuranceCompletenessError(f"{label} submitted_at: {exc}") from exc
         if state == "PENDING":
             continue
-        try:
-            found = dispositions(
-                review.get("dispositions", []), f"{label} dispositions"
-            )
-        except ReconciliationInputError as exc:
-            raise AssuranceCompletenessError(str(exc)) from exc
+        found = _review_dispositions(review, label)
         by_reviewer.setdefault(reviewer, []).append(
             {
                 "state": state,
@@ -242,6 +237,16 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
             }
         )
     return by_reviewer
+
+
+def _review_dispositions(review: Mapping[str, Any], label: str) -> list[dict[str, Any]]:
+    """A review's dispositions, each closed as the snapshot's contract states them
+    (Decision 0132 item 4), or none."""
+
+    try:
+        return dispositions(review.get("dispositions", []), f"{label} dispositions")
+    except ReconciliationInputError as exc:
+        raise AssuranceCompletenessError(str(exc)) from exc
 
 
 def _latest(

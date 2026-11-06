@@ -25,7 +25,7 @@ import heapq
 import json
 import re
 import string
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -1924,25 +1924,38 @@ def _optional_evidence(
     coverage = {(r["provider"], r["scope"]): r["coverage"] for r in records}
     findings: list[dict[str, Any]] = []
     for provider in sorted({name for name, _ in optional}):
-        observed: dict[str, tuple[str, Mapping[str, Any]]] = {}
-        for scope in _OPTIONAL_HEAD_SCOPES:
-            if coverage.get((provider, scope)) != "COMPLETE":
-                continue
-            item = f"{provider}-{scope.lower()}"
-            for finding in optional[(provider, scope)]["findings"]:
-                if finding.get("path") in changed:
-                    observed.setdefault(finding["id"], (item, finding))
         base = optional.get((provider, "BASE"))
         if base is None or coverage[(provider, "BASE")] != "COMPLETE":
             base = None
         findings.extend(
             _classified(
                 provider,
-                list(observed.values()),
+                _applicable(optional, coverage, provider, changed),
                 None if base is None else base["findings"],
             )
         )
     return records, findings
+
+
+def _applicable(
+    optional: Mapping[tuple[str, str], Mapping[str, Any]],
+    coverage: Mapping[tuple[str, str], str],
+    provider: str,
+    changed: frozenset[str],
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """A provider's findings in the files the change modifies, each with its item,
+    from its complete reads of the exact head: the full report first, so a finding
+    its inline comment repeats keeps the report's record, one per native id."""
+
+    observed: dict[str, tuple[str, Mapping[str, Any]]] = {}
+    for scope in _OPTIONAL_HEAD_SCOPES:
+        if coverage.get((provider, scope)) != "COMPLETE":
+            continue
+        item = f"{provider}-{scope.lower()}"
+        for finding in optional[(provider, scope)]["findings"]:
+            if finding.get("path") in changed:
+                observed.setdefault(finding["id"], (item, finding))
+    return list(observed.values())
 
 
 def _optional_record(
@@ -1977,16 +1990,8 @@ def _classified(
     pre-existing, introduced or unknown against its complete read of the merge base,
     `base`, or None when there is none (the owner's 6676021682 and 6676472012)."""
 
-    groups: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
-    for _, finding in observed:
-        key = _occurrence_key(finding)
-        if key is not None:
-            groups.setdefault(key, []).append(finding)
-    at_base: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
-    for finding in base or ():
-        key = _occurrence_key(finding)
-        if key is not None:
-            at_base.setdefault(key, []).append(finding)
+    groups = _groups(finding for _, finding in observed)
+    at_base = _groups(base or ())
     entries = []
     for item, finding in observed:
         key = _occurrence_key(finding)
@@ -2004,6 +2009,19 @@ def _classified(
             entry["configuration_provenance"] = "unproven"
         entries.append(entry)
     return entries
+
+
+def _groups(
+    findings: Iterable[Mapping[str, Any]],
+) -> dict[tuple[str, ...], list[Mapping[str, Any]]]:
+    """Findings by the group their occurrence belongs to; one with none is left out."""
+
+    groups: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
+    for finding in findings:
+        key = _occurrence_key(finding)
+        if key is not None:
+            groups.setdefault(key, []).append(finding)
+    return groups
 
 
 def _occurrence_key(finding: Mapping[str, Any]) -> tuple[str, ...] | None:
