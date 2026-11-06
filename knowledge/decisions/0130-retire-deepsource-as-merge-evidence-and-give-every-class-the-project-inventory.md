@@ -91,6 +91,13 @@ qualified remedy (sources `owner-scope`, `owner-target`).
    from GitHub's statuses and comments, nor the full GraphQL read. Its `deepsource` keyword
    survives only as `None`, and a reader handed to it is refused. The workflows no longer
    pass `DEEPSOURCE_API_TOKEN`; the secret stays in its environment for a rollback.
+
+   **Amended by Decision 0132 (2026-11-06), for findings only.** DeepSource moves from the
+   retired table to the optional providers': the readback reads its complete reports for
+   the head and the merge base, and its inline comments, with `DEEPSOURCE_API_TOKEN` passed
+   to the readback step alone. Those reads add findings and never coverage: no item or claim
+   is declared for DeepSource, and a missing, failed or stale read changes nothing. Item 2's
+   retired state and its record stay, naming no provider now.
 4. **The remedy for the aspects that would otherwise lose their gate is its own change.**
    Activating shell-lint, workflow-lint, gitlab-script and unsafe-calls, which on the whole
    tree of `main` `7cb731af` each measured complete with no finding (source `design`), is

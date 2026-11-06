@@ -146,10 +146,11 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 ## Verification
 
-- **RED first:** 19 acceptance tests fail on `main` `6b6c8501` for the missing behaviour:
-  18 in `tests/test_optional_reports.py`, where `main` refuses whole a bundle that carries
+- **RED first:** 21 acceptance tests fail on `main` `6b6c8501` for the missing behaviour:
+  20 in `tests/test_optional_reports.py`, where `main` refuses whole a bundle that carries
   DeepSource's readback, or refuses the `BASE` scope its base read needs; and 1 in
   `tests/test_analyzer_readback_runner.py`, where the readback refuses a DeepSource reader.
+  All 21 pass with this change.
 - **They cover:**
   - an unavailable optional source with its aspects covered;
   - a complete optional report that never covers a missing required item;
@@ -168,6 +169,19 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - an independent approver's disposition at the head closing its finding; the author's
     disposition, one for another commit, a provider's suppression or false-positive mark,
     and a disposition of another rule, each leaving it open.
+- **Their edges, tested with the change:**
+  - a base read for another commit, a severity outside the provider's order, and a finding
+    with no scope, each leaving the finding unknown or introduced; a lesser severity
+    pre-existing;
+  - a disposition by its line, listed for the approver; one in an approval its approver
+    later superseded, and one naming a required provider's finding, each closing nothing;
+  - a malformed disposition block left out, and at most 100 read from one review;
+  - an unknown baseline, provenance, optional coverage or field, and a malformed
+    disposition, each refused by the verdict as corrupt evidence;
+  - in the readback: without its credential nothing read from DeepSource; the head's and
+    the merge base's reports each read at its own commit, the base's scopes at the base;
+    a merge base GitHub does not give left unread; and the token reaching the readback
+    step alone.
 
 ## Consequences
 
