@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import assurance_completeness as completeness
-from .analyzer_readback import AnalyzerReadbackError, normalize_finding
+from .analyzer_readback import SHA256_DIGEST, AnalyzerReadbackError, normalize_finding
 from .assurance_completeness import (
     AssuranceCompletenessError,
     parse_change_class,
@@ -60,6 +60,48 @@ _EVIDENCE_KEYS = frozenset(
         "receipts",
     }
 )
+# The protected target's debt ledger (#389, the M17 transition): optional, so an older
+# input stays valid, and without it M17 is what it was.
+_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_debt"})
+_DEBT_KEYS = frozenset({"coverage", "entries"})
+_DEBT_COVERAGES = frozenset({"COMPLETE", "UNAVAILABLE"})
+_DEBT_ENTRY_KEYS = frozenset(
+    {
+        "id",
+        "item",
+        "rule",
+        "path",
+        "message",
+        "enclosing_sha256",
+        # The baseline severity, text or an explicit null, matched exactly (owner
+        # 6620829215 §1), and the run-bound configuration identity it was proved
+        # under (§2).
+        "severity",
+        "configuration",
+        "aspect",
+        "provenance",
+    }
+)
+# The analyzer's identity at the entry's proof, as the finding names it (PAO P2,
+# 6614901388): an entry without one matches only a finding without one.
+_DEBT_ENTRY_OPTIONAL_KEYS = frozenset({"tool"})
+_DEBT_PROVENANCE_KEYS = frozenset({"commit", "readback_run", "admitted_by"})
+# Each provider's own security category, compared without case: such a finding is
+# never matched, whatever its entry says.
+_SECURITY_CATEGORIES = frozenset({"security", "vulnerability", "security_hotspot"})
+# The aspects an entry may name. A security finding is never inherited debt: it is
+# repaired (PAO 6614901388 on #389).
+_DEBT_ASPECTS = frozenset(
+    {
+        "complexity",
+        "correctness",
+        "documentation",
+        "maintainability",
+        "performance",
+        "style",
+        "typing",
+    }
+)
 _RETIRED_KEYS = frozenset({"provider", "decision"})
 _LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
 _LINK_KEYS = frozenset({"work_items", "decisions"})
@@ -83,7 +125,19 @@ _SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
 _FINDING_KEYS = frozenset({"item", "id", "message"})
 _FINDING_OPTIONAL_KEYS = frozenset(
-    {"rule", "severity", "category", "path", "state", "native_ref", "tool", "range"}
+    {
+        "rule",
+        "severity",
+        "category",
+        "path",
+        "state",
+        "native_ref",
+        "tool",
+        "range",
+        "enclosing",
+        # Its readback's run-bound configuration identity, when it states one.
+        "configuration",
+    }
 )
 
 
@@ -344,12 +398,122 @@ def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
     return _criterion("M15", reasons), paths
 
 
+def _debt_entries(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if "analyzer_debt" not in evidence:
+        return []
+    return parse_analyzer_debt(evidence["analyzer_debt"])
+
+
+def parse_analyzer_debt(value: object) -> list[dict[str, Any]]:
+    """The protected target's debt ledger as the evidence carries it: its entries,
+    each closed and typed, or none without a ledger (#389, the M17 transition). A
+    security finding is refused. Merge evidence checks a loaded ledger with this
+    too, so the two never disagree on an entry."""
+
+    record = require_mapping(value, "analyzer_debt")
+    require_closed_keys(record, "analyzer_debt", _DEBT_KEYS)
+    # Text first: a JSON array or object is unhashable in the membership test.
+    if (
+        require_text(record["coverage"], "analyzer_debt coverage")
+        not in _DEBT_COVERAGES
+    ):
+        raise AssuranceCompletenessError(
+            f"analyzer_debt coverage {record['coverage']!r} is unknown"
+        )
+    entries = record["entries"]
+    if not isinstance(entries, list):
+        raise AssuranceCompletenessError("analyzer_debt entries must be a list")
+    if record["coverage"] == "UNAVAILABLE" and entries:
+        raise AssuranceCompletenessError("analyzer_debt has entries but no ledger")
+    result = [
+        _debt_entry(item, f"analyzer_debt entry {index}")
+        for index, item in enumerate(entries)
+    ]
+    require_unique_texts(
+        [e["id"] for e in result], "analyzer_debt entry ids", allow_empty=True
+    )
+    return result
+
+
+def _debt_entry(item: object, label: str) -> dict[str, Any]:
+    entry = require_mapping(item, label)
+    require_closed_keys(entry, label, _DEBT_ENTRY_KEYS, _DEBT_ENTRY_OPTIONAL_KEYS)
+    for key in ("id", "item", "rule", "path", "message", "configuration"):
+        require_text(entry[key], f"{label} {key}")
+    if entry["severity"] is not None:
+        require_text(entry["severity"], f"{label} severity")
+    digest = entry["enclosing_sha256"]
+    if not isinstance(digest, str) or SHA256_DIGEST.fullmatch(digest) is None:
+        raise AssuranceCompletenessError(
+            f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
+        )
+    if require_text(entry["aspect"], f"{label} aspect") == "security":
+        raise AssuranceCompletenessError(
+            f"{label} is a security finding, which is never inherited debt"
+        )
+    if entry["aspect"] not in _DEBT_ASPECTS:
+        raise AssuranceCompletenessError(
+            f"{label} aspect {entry['aspect']!r} is unknown"
+        )
+    provenance = require_mapping(entry["provenance"], f"{label} provenance")
+    require_closed_keys(provenance, f"{label} provenance", _DEBT_PROVENANCE_KEYS)
+    require_commit(provenance["commit"], f"{label} provenance commit")
+    require_text(provenance["readback_run"], f"{label} provenance readback_run")
+    require_text(provenance["admitted_by"], f"{label} provenance admitted_by")
+    if "tool" in entry:
+        tool = require_mapping(entry["tool"], f"{label} tool")
+        require_closed_keys(
+            tool, f"{label} tool", frozenset({"id"}), frozenset({"name"})
+        )
+        for key in tool:
+            require_text(tool[key], f"{label} tool {key}")
+    return dict(entry)
+
+
+def _finding_identity(
+    finding: Mapping[str, Any],
+) -> tuple[str | None, ...] | None:
+    """What a finding must share with a ledger entry: its item, rule, path, message,
+    enclosing scope, severity, configuration identity and tool. One without a rule, a
+    path or a scope has none, and neither has a security finding."""
+
+    enclosing = finding.get("enclosing")
+    if (
+        not isinstance(enclosing, Mapping)
+        or "rule" not in finding
+        or "path" not in finding
+        or str(finding.get("category", "")).casefold() in _SECURITY_CATEGORIES
+    ):
+        return None
+    return _identity(finding, enclosing["sha256"])
+
+
+def _identity(record: Mapping[str, Any], enclosing: str) -> tuple[str | None, ...]:
+    tool = record.get("tool") or {}
+    return (
+        record["item"],
+        record["rule"],
+        record["path"],
+        record["message"],
+        enclosing,
+        # Exactly, so a raised, lowered, new or dropped severity unmatches; and a
+        # finding without a configuration identity never meets an entry's.
+        record.get("severity"),
+        record.get("configuration"),
+        tool.get("id"),
+        tool.get("name"),
+    )
+
+
 def _analyzer_findings(
     evidence: Mapping[str, Any], claims_status: str | None
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, str]], list[str]]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
-    pass (the owner's rule, #407 6096770145 and 6101607240).
+    pass (the owner's rule, #407 6096770145 and 6101607240). The one exception is a
+    finding that matches an entry of the protected target's debt ledger exactly, on
+    a complete read: it stays listed, as inherited, and does not count (#389,
+    Decision 0129).
 
     Under a 1.1 declaration the read is complete when the claims are:
     `claims_status` is the status of the completeness verdict this admission
@@ -381,10 +545,67 @@ def _analyzer_findings(
             "analyzer finding coverage follows the required evidence, which is "
             f"{claims_status}"
         )
-    if findings:
-        plural = "" if len(findings) == 1 else "s"
-        reasons.append(f"{len(findings)} unresolved analyzer finding{plural}")
-    return _criterion("M17", reasons), findings
+    entries = _debt_entries(evidence)
+    # Only a complete read is matched: without it, every finding counts, and no
+    # entry is called resolved (#389, the M17 transition).
+    matchable = not reasons
+    absorbed = _inherited(findings, entries) if matchable else {}
+    inherited = list(absorbed.values())
+    resolved = _resolved(entries, findings, absorbed) if matchable else []
+    unresolved = len(findings) - len(inherited)
+    if unresolved:
+        plural = "" if unresolved == 1 else "s"
+        reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
+    return _criterion("M17", reasons), findings, inherited, resolved
+
+
+def _inherited(
+    findings: list[dict[str, Any]], entries: list[dict[str, Any]]
+) -> dict[int, dict[str, str]]:
+    """Each finding matched to its own entry of the same identity, in order, by its
+    position among the findings: an entry absorbs one finding, so a repeated
+    finding beyond it still counts, and ids may repeat (cubic on #480)."""
+
+    available: dict[tuple[str | None, ...], list[str]] = {}
+    for entry in entries:
+        identity = _identity(entry, entry["enclosing_sha256"])
+        available.setdefault(identity, []).append(entry["id"])
+    inherited: dict[int, dict[str, str]] = {}
+    for position, finding in enumerate(findings):
+        key = _finding_identity(finding)
+        ids = available.get(key) if key is not None else None
+        if ids:
+            inherited[position] = {
+                "item": finding["item"],
+                "id": finding["id"],
+                "ledger_entry": ids.pop(0),
+            }
+    return inherited
+
+
+def _resolved(
+    entries: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    absorbed: Mapping[int, Mapping[str, str]],
+) -> list[str]:
+    """The entries no finding answers to any more: unmatched, with no unmatched
+    finding left at their item, rule and path. An entry whose finding changed in
+    place, by its measure, scope, analyzer, severity or configuration, is not
+    resolved, since that finding still counts (Revix on #480). Only the findings at
+    the positions an entry absorbed are set aside, since ids may repeat (cubic)."""
+
+    matched = {found["ledger_entry"] for found in absorbed.values()}
+    remaining = {
+        (finding["item"], finding.get("rule"), finding.get("path"))
+        for position, finding in enumerate(findings)
+        if position not in absorbed
+    }
+    return [
+        entry["id"]
+        for entry in entries
+        if entry["id"] not in matched
+        and (entry["item"], entry["rule"], entry["path"]) not in remaining
+    ]
 
 
 def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
@@ -393,7 +614,13 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
     unchanged, so there is no second schema (#417 6107601240)."""
 
     item = require_text(finding["item"], f"{label} item")
-    fields = {key: value for key, value in finding.items() if key != "item"}
+    # The evidence's own field, not the readback's: its configuration identity.
+    evidence = {"item": item}
+    if "configuration" in finding:
+        evidence["configuration"] = require_text(
+            finding["configuration"], f"{label} configuration"
+        )
+    fields = {k: v for k, v in finding.items() if k not in ("item", "configuration")}
     try:
         normalized = normalize_finding(fields)
     except AnalyzerReadbackError as exc:
@@ -402,7 +629,7 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
         raise AssuranceCompletenessError(
             f"{label} is not in the readback's normalized form"
         )
-    return {"item": item, **normalized}
+    return {**evidence, **normalized}
 
 
 def _class_requirements(
@@ -510,7 +737,7 @@ def evaluate(
     """Admit or deny the change the evidence describes."""
 
     document = require_mapping(evidence, "evidence")
-    require_closed_keys(document, "evidence", _EVIDENCE_KEYS)
+    require_closed_keys(document, "evidence", _EVIDENCE_KEYS, _EVIDENCE_OPTIONAL_KEYS)
     retired = _retired_analyzers(document["analyzer_retired"])
     subject = parse_subject(document["subject"], "subject")
     head = subject["head_commit"]
@@ -542,7 +769,7 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
-    analyzer_criterion, analyzer_findings = _analyzer_findings(
+    analyzer_criterion, analyzer_findings, inherited, resolved = _analyzer_findings(
         document,
         evidence_verdict["status"]
         if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
@@ -578,6 +805,8 @@ def evaluate(
             "suppressions": justified,
             "trust_root_changes": trust_roots,
             "analyzer_findings": analyzer_findings,
+            "inherited_findings": inherited,
+            "resolved_debt": resolved,
             "retired_analyzers": retired,
         },
     }

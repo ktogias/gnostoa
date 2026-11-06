@@ -47,7 +47,7 @@ from .assurance_completeness import (
     require_unique_texts,
 )
 from .knowledge_common import KnowledgeFormatError
-from .merge_admission import load_policy
+from .merge_admission import load_policy, parse_analyzer_debt
 from .review_model import parse_rfc3339
 from .review_policy import CHANGE_CLASSES, load_policy_yaml
 from .review_reconcile import (
@@ -63,11 +63,13 @@ DEFAULT_REQUIRED_CHECKS = Path("policy") / "merge-required-checks.yaml"
 DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 DEFAULT_SUPPRESSION_MARKERS = Path("policy") / "merge-suppression-markers.yaml"
 DEFAULT_TRUST_ROOTS = Path("policy") / "merge-trust-roots.yaml"
+DEFAULT_DEBT_LEDGER = Path("policy") / "analyzer-debt-ledger.yaml"
 _REQUIRED_CHECKS_LABEL = "required checks"
 # The closed, versioned header every merge-evidence declaration shares.
 _DECLARATION_KEYS = frozenset({"schema_version", "id", "version"})
 _MARKERS_LABEL = "suppression markers"
 _ROOTS_LABEL = "trust roots"
+_LEDGER_LABEL = "analyzer debt ledger"
 _CHECK_KEYS = frozenset({"app_id", "name"})
 # The one qualification a check item may declare: its runs must name this pull
 # request in their `details_url`. Only SonarCloud's gate has it, and must, since a
@@ -112,6 +114,8 @@ _FINDING_FIELDS = (
     "native_ref",
     "tool",
     "range",
+    # The finding's smallest enclosing function or class on the head (#389).
+    "enclosing",
 )
 DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
 _INPUT_LABEL = "merge-evidence input"
@@ -368,6 +372,19 @@ def parse_trust_roots(document: object) -> TrustRoots:
     return TrustRoots(tuple(_rule(pattern) for pattern in patterns))
 
 
+def parse_debt_ledger(document: object) -> list[dict[str, Any]]:
+    """The analyzer debt entries the protected target admits (#389, the M17
+    transition), each checked by the verdict's own contract."""
+
+    try:
+        record = _declaration(document, _LEDGER_LABEL, "entries")
+        return parse_analyzer_debt(
+            {"coverage": "COMPLETE", "entries": record["entries"]}
+        )
+    except AssuranceCompletenessError as exc:
+        raise MergeEvidenceError(f"the {_LEDGER_LABEL} is invalid: {exc}") from exc
+
+
 # SonarCloud's gate, the one check qualified by its pull request (Q-a, #424).
 _QUALIFIED_KEY = (
     f"github-check-run:{sonarcloud_scope.CHECK_APP_ID}:{sonarcloud_scope.CHECK_NAME}"
@@ -436,6 +453,11 @@ def load_suppression_markers(
 def load_trust_roots(path: Path, *, project_root: Path) -> TrustRoots | None:
     document = _load_declaration(path, project_root, _ROOTS_LABEL)
     return None if document is None else parse_trust_roots(document)
+
+
+def load_debt_ledger(path: Path, *, project_root: Path) -> list[dict[str, Any]] | None:
+    document = _load_declaration(path, project_root, _LEDGER_LABEL)
+    return None if document is None else parse_debt_ledger(document)
 
 
 def _check_status(states: set[tuple[str, str, str | None]]) -> tuple[str, str | None]:
@@ -1632,11 +1654,12 @@ def evidence_from_snapshot(
     analyzer_readback: object = None,
     suppression_markers: Sequence[str] | None = None,
     trust_roots: TrustRoots | None = None,
+    debt_ledger: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The evidence document for the pull request the snapshot observed, with the
     authenticated analyzer readback's bundle when one is given. Without the
-    protected target's suppression markers or trust roots, what each governs is
-    UNAVAILABLE."""
+    protected target's suppression markers, trust roots or debt ledger, what each
+    governs is UNAVAILABLE."""
 
     document = require_mapping(snapshot, "snapshot")
     try:
@@ -1707,6 +1730,7 @@ def evidence_from_snapshot(
         "suppressions": _suppressions(files, suppression_markers),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
+        "analyzer_debt": _analyzer_debt(debt_ledger),
         "analyzer_retired": [
             {"provider": name, "decision": decision}
             for name, decision in sorted(_RETIRED_ANALYZERS.items())
@@ -1718,6 +1742,45 @@ def evidence_from_snapshot(
             *analyzer_receipts,
         ],
     }
+
+
+# A run-bound identity: a protected profile's, or a producer's, digest.
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _configuration(
+    readback: Mapping[str, Any], finding: Mapping[str, Any]
+) -> str | None:
+    """A finding's run-bound configuration identity: its readback's adapter, the
+    protected profile its run was bound to (owner 6620829215 §2), and the effective
+    identity of the finding's own producer (6621293483 §1). None when any is not
+    proved: today only the project inventory states them; DeepSource's API exposes
+    no run's own configuration, and Codacy's and SonarCloud's readbacks name none.
+    A finding without one can match no ledger entry."""
+
+    native = readback.get("native")
+    if not isinstance(native, Mapping) or native.get("source_binding") != "BOUND":
+        return None
+    profile = native.get("profile")
+    if not isinstance(profile, str) or _DIGEST.fullmatch(profile) is None:
+        return None
+    tool = finding.get("tool")
+    name = tool.get("id") if isinstance(tool, Mapping) else None
+    producers = native.get("producers")
+    if not isinstance(name, str) or not isinstance(producers, Mapping):
+        return None
+    producer = producers.get(name)
+    if not isinstance(producer, str) or _DIGEST.fullmatch(producer) is None:
+        return None
+    return f"{readback['adapter']}@{profile}/{name}@{producer}"
+
+
+def _analyzer_debt(debt_ledger: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
+    """The protected target's debt ledger as evidence: UNAVAILABLE without one."""
+
+    if debt_ledger is None:
+        return {"coverage": "UNAVAILABLE", "entries": []}
+    return {"coverage": "COMPLETE", "entries": [dict(e) for e in debt_ledger]}
 
 
 def _analyzer_receipt(
@@ -1797,6 +1860,9 @@ def _analyzer_evidence(
         for finding in readback["findings"]:
             entry = {"item": item, "id": finding["id"], "message": finding["message"]}
             entry.update({k: finding[k] for k in _FINDING_FIELDS if k in finding})
+            configuration = _configuration(readback, finding)
+            if configuration is not None:
+                entry["configuration"] = configuration
             findings.append(entry)
     complete = len(readbacks) == len(_ANALYZER_ITEMS) and all(
         r["status"] == "COMPLETE" for r in receipts
@@ -1969,6 +2035,15 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_CHANGE_POLICY,
         help=f"the change-control policy (default: {DEFAULT_CHANGE_POLICY})",
     )
+    parser.add_argument(
+        "--debt-ledger",
+        type=Path,
+        default=DEFAULT_DEBT_LEDGER,
+        help=(
+            f"the analyzer debt ledger (default: {DEFAULT_DEBT_LEDGER}; without "
+            "it, the analyzer debt is UNAVAILABLE and every finding counts)"
+        ),
+    )
     return parser
 
 
@@ -1983,6 +2058,7 @@ def evidence_for(
     suppression_markers: Path = DEFAULT_SUPPRESSION_MARKERS,
     trust_roots: Path = DEFAULT_TRUST_ROOTS,
     change_policy: Path = DEFAULT_CHANGE_POLICY,
+    debt_ledger: Path = DEFAULT_DEBT_LEDGER,
 ) -> dict[str, Any]:
     """The evidence document `knowledge merge-evidence` writes for the snapshot, from
     the protected target's declarations under `project_root`. The command and the
@@ -2017,6 +2093,7 @@ def evidence_for(
             inside(suppression_markers), project_root=root
         ),
         trust_roots=load_trust_roots(inside(trust_roots), project_root=root),
+        debt_ledger=load_debt_ledger(inside(debt_ledger), project_root=root),
     )
 
 
@@ -2049,6 +2126,7 @@ def main(argv: list[str] | None = None) -> int:
             suppression_markers=args.suppression_markers,
             trust_roots=args.trust_roots,
             change_policy=args.change_policy,
+            debt_ledger=args.debt_ledger,
         )
 
     return run(

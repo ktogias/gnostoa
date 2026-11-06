@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import functools
 import hashlib
 import os
@@ -27,6 +28,7 @@ from tools.analyzer_readback import (
     coverage,
     normalize_repository,
     parse_readback,
+    scope_reader,
 )
 
 BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
@@ -37,6 +39,13 @@ _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 40
 _MAX_ITEMS = 10_000
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+# Each Python finding's enclosing scope, read from its file at the exact head over
+# REST, as data: nothing in the head runs or selects a tool (#389, 6615072518). Past
+# these bounds, or unreadable, a finding has no enclosing scope and is never matched
+# to inherited debt.
+_SCOPE_FILES = 64
+_SCOPE_FILE_BYTES = 1_048_576
+_SCOPE_TOTAL_BYTES = 8_388_608
 
 
 class RunnerError(RuntimeError):
@@ -422,6 +431,122 @@ def _commit_tree(github: GitHubReader, repository: str, head: str) -> str:
     return _exact_head(tree, "the commit's tree")
 
 
+class _ScopeBudget:
+    """How many files, and how many bytes, the readback may still read for its
+    findings' enclosing scopes: a file is spent when it is requested, whatever the
+    answer, and its bytes when they are admitted."""
+
+    def __init__(self) -> None:
+        self.files = _SCOPE_FILES
+        self.bytes = _SCOPE_TOTAL_BYTES
+
+    def request(self) -> bool:
+        """Spend one request, or refuse it past the file bound."""
+        if self.files <= 0:
+            return False
+        self.files -= 1
+        return True
+
+    def admit(self, size: int) -> bool:
+        """Spend `size` bytes, or refuse them past the total bound."""
+        if size > self.bytes:
+            return False
+        self.bytes -= size
+        return True
+
+
+def _head_source(
+    github: GitHubReader, repository: str, head: str, path: str, budget: _ScopeBudget
+) -> str | None:
+    """One file's text at the exact head, as GitHub's contents API returns it: a
+    file, in base64, within the bounds and UTF-8. Anything else is None."""
+
+    if not budget.request():
+        return None
+    url = (
+        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}?ref={head}"
+    )
+    try:
+        document, _ = github.get(url)
+    except RunnerError:
+        return None
+    if (
+        not isinstance(document, Mapping)
+        or document.get("type") != "file"
+        or document.get("encoding") != "base64"
+    ):
+        return None
+    size, content = document.get("size"), document.get("content")
+    if type(size) is not int or not 0 <= size <= _SCOPE_FILE_BYTES:
+        return None
+    if not isinstance(content, str):
+        return None
+    # GitHub wraps the base64 in lines. Only the encoded length the declared size
+    # implies is ever decoded, so the bounds hold for the work done, not only for
+    # the answer (Claude on #480). It is checked before the bytes are admitted, so
+    # an answer refused here spends none of them (Amazon Q on #480).
+    encoded = "".join(content.split())
+    if len(encoded) != 4 * ((size + 2) // 3) or not budget.admit(size):
+        return None
+    try:
+        # Any character outside base64 is refused, not dropped (cubic on #480).
+        raw = base64.b64decode(encoded, validate=True)
+        # The bounds were spent on the declared size, so the bytes must be it.
+        return raw.decode("utf-8") if len(raw) == size else None
+    except ValueError:  # binascii.Error and UnicodeDecodeError are both ValueErrors
+        return None
+
+
+_ScopeReaders = dict[str, Callable[[int], dict[str, str] | None] | None]
+
+
+def _finding_scope(
+    finding: Mapping[str, Any],
+    readers: _ScopeReaders,
+    source_of: Callable[[str], str | None],
+) -> dict[str, str] | None:
+    """A Python finding's enclosing scope, its file read and parsed at most once
+    into `readers`; None for any other finding, or one already scoped."""
+
+    path = finding.get("path")
+    line = (finding.get("range") or {}).get("start_line")
+    if (
+        "enclosing" in finding
+        or not isinstance(path, str)
+        or not path.endswith((".py", ".pyi"))
+        or not isinstance(line, int)
+    ):
+        return None
+    if path not in readers:
+        source = source_of(path)
+        readers[path] = None if source is None else scope_reader(source)
+    reader = readers[path]
+    return None if reader is None else reader(line)
+
+
+def _with_enclosing(
+    readbacks: list[dict[str, Any]], source_of: Callable[[str], str | None]
+) -> list[dict[str, Any]]:
+    """Each readback, its Python findings given their enclosing scopes: each file is
+    read and parsed once, and a readback is rebuilt through its own contract only
+    when one of its findings gained a scope."""
+
+    readers: _ScopeReaders = {}
+    result = []
+    for readback in readbacks:
+        findings, changed = [], False
+        for finding in readback["findings"]:
+            scope = _finding_scope(finding, readers, source_of)
+            findings.append(
+                finding if scope is None else {**finding, "enclosing": scope}
+            )
+            changed = changed or scope is not None
+        result.append(
+            parse_readback({**readback, "findings": findings}) if changed else readback
+        )
+    return result
+
+
 def collect_bundle(
     github: GitHubReader,
     *,
@@ -526,28 +651,35 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": [
-            codacy_readback,
-            sonarcloud_readback,
-            # The project's own inventory, when the workflow gives it, bound to its
-            # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
-            *(
-                []
-                if inventory is None
-                else inventory_bundle_readbacks(
-                    inventory.document,
-                    expected_sha256=inventory.expected_sha256,
-                    result=inventory.result,
-                    attempt=inventory.attempt,
-                    run_attempt=inventory.run_attempt,
-                    repository=repository,
-                    pull_number=pull_number,
-                    requested_head=requested,
-                    tree=functools.partial(_commit_tree, github, repository, requested),
-                    observed_at=observed,
-                )
+        "readbacks": _with_enclosing(
+            [
+                codacy_readback,
+                sonarcloud_readback,
+                # The project's own inventory, when the workflow gives it, bound to its
+                # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
+                *(
+                    []
+                    if inventory is None
+                    else inventory_bundle_readbacks(
+                        inventory.document,
+                        expected_sha256=inventory.expected_sha256,
+                        result=inventory.result,
+                        attempt=inventory.attempt,
+                        run_attempt=inventory.run_attempt,
+                        repository=repository,
+                        pull_number=pull_number,
+                        requested_head=requested,
+                        tree=functools.partial(
+                            _commit_tree, github, repository, requested
+                        ),
+                        observed_at=observed,
+                    )
+                ),
+            ],
+            functools.partial(
+                _head_source, github, repository, requested, budget=_ScopeBudget()
             ),
-        ],
+        ),
     }
 
 

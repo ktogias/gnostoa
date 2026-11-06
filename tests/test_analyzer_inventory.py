@@ -22,6 +22,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import quote
 
 import yaml
 
@@ -231,6 +232,142 @@ class InventoryReadbackTests(_InventoryReadbackFixture):
                 )
                 self.assertEqual("UNVERIFIED", readback["native"]["source_binding"])
 
+    def test_the_readbacks_state_each_proved_producer_s_identity(self) -> None:
+        """Owner 6621293483 §1: each producer's effective identity, over its
+        invocations' version, settings (the argv before `--`) and environment, so a
+        change in any changes it; one whose version is missing or whose environment
+        is not observed equal at both ends is left out, so its findings stay
+        blocking."""
+        head = self._changed_head()
+        record = self._inventory(base=self.base, expected_revision=head)
+        equal: dict[str, Any] = {
+            "status": "endpoints_equal",
+            "interpreter": {"executable": "/usr/local/bin/python"},
+            "before": {"sha256": "a" * 64},
+            "after": {"sha256": "a" * 64},
+        }
+        mypy: dict[str, Any] = {
+            "producer": "mypy",
+            "invocation": "mypy:main",
+            "version": "2.3.0",
+            "argv": ["/usr/local/bin/python", "-I", "-m", "mypy", "--", "a.py"],
+            "environment_observation": equal,
+        }
+        complexity: dict[str, Any] = {
+            "producer": "complexity",
+            "invocation": "complexity",
+            "version": "cyclomatic-n-1/v1",
+        }
+
+        def producers(*entries: dict[str, Any], **extra: Any) -> dict[str, str]:
+            readbacks = self._readbacks(
+                {**record, **extra, "producers": list(entries)}, head
+            )
+            self.assertEqual(readbacks[0]["native"], readbacks[1]["native"])
+            return dict(readbacks[0]["native"]["producers"])
+
+        base = producers(mypy, complexity)
+        self.assertEqual({"mypy", "complexity"}, set(base))
+        for digest in base.values():
+            self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        # A version, a setting or the environment changes the identity; the file
+        # list after `--` does not.
+        for name, changed, same in (
+            ("another version", {**mypy, "version": "2.4.0"}, False),
+            (
+                "another setting",
+                {**mypy, "argv": [*mypy["argv"][:4], "--strict", "--", "a.py"]},
+                False,
+            ),
+            (
+                "another environment",
+                {
+                    **mypy,
+                    "environment_observation": {
+                        **equal,
+                        "after": {"sha256": "b" * 64},
+                        "before": {"sha256": "b" * 64},
+                    },
+                },
+                False,
+            ),
+            ("other files", {**mypy, "argv": [*mypy["argv"][:5], "b.py"]}, True),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    same, producers(changed, complexity)["mypy"] == base["mypy"]
+                )
+
+        # An in-process producer's settings are its own configuration (cubic on #480).
+        def configured(settings: dict[str, Any]) -> str:
+            configuration = {**record["configuration"], "complexity": settings}
+            return producers(mypy, complexity, configuration=configuration)[
+                "complexity"
+            ]
+
+        threshold = configured({"reported_above": 15})
+        self.assertEqual(threshold, configured({"reported_above": 15}))
+        self.assertNotEqual(threshold, configured({"reported_above": 16}))
+
+        # An unproved producer is left out: by its version, its environment, or a
+        # record unlike the launch the inventory declares for it (Revix on #480).
+        def without(entry: dict[str, Any], *keys: str) -> dict[str, Any]:
+            return {k: v for k, v in entry.items() if k not in keys}
+
+        for name, unproved in (
+            ("no version", without(mypy, "version")),
+            (
+                "an environment that changed",
+                {
+                    **mypy,
+                    "environment_observation": {**equal, "status": "endpoints_differ"},
+                },
+            ),
+            ("an environment not observed", without(mypy, "environment_observation")),
+            (
+                "no environment digest",
+                {**mypy, "environment_observation": {**equal, "after": {}}},
+            ),
+            (
+                "an environment digest that is no digest",
+                {
+                    **mypy,
+                    "environment_observation": {**equal, "after": {"sha256": "A" * 64}},
+                },
+            ),
+            (
+                "no interpreter",
+                {
+                    **mypy,
+                    "environment_observation": without(equal, "interpreter"),
+                },
+            ),
+            ("a launched producer without its argv", without(mypy, "argv")),
+            (
+                "a launched producer recorded as in process",
+                without(mypy, "argv", "environment_observation"),
+            ),
+            (
+                "a launched argv without the file list's separator",
+                {**mypy, "argv": [*mypy["argv"][:4], "a.py"]},
+            ),
+            (
+                "a process producer the inventory observes no environment for",
+                {**mypy, "producer": "shellcheck", "invocation": "shellcheck"},
+            ),
+            ("an in-process producer with an argv", {**complexity, "argv": ["c"]}),
+            (
+                "an in-process producer with an observation",
+                {**complexity, "environment_observation": equal},
+            ),
+        ):
+            with self.subTest(name):
+                other = mypy if unproved["producer"] == "complexity" else complexity
+                self.assertNotIn(unproved["producer"], producers(unproved, other))
+        # One unproved invocation leaves its whole producer out.
+        second = {**mypy, "invocation": "mypy:fixtures", "version": None}
+        self.assertNotIn("mypy", producers(mypy, second, complexity))
+
     def test_a_record_of_another_schema_is_refused(self) -> None:
         head = self._changed_head()
         record = self._inventory(base=self.base, expected_revision=head)
@@ -275,7 +412,10 @@ class _PullRequestReader:
 
     def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
         self.calls.append(url)
-        return self.answers[url], {}
+        answer = self.answers[url]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer, {}
 
 
 class InventoryRunnerTests(_InventoryReadbackFixture):
@@ -1273,6 +1413,15 @@ class InventoryBundleTests(_InventoryReadbackFixture):
                         f"{root}/commits/{head}": {"commit": {"tree": {"sha": read}}},
                     }
                 )
+                # Each Python finding's file at the head, for its enclosing scope
+                # (#389): GitHub has none here, so the document's readbacks are kept.
+                for finding in (
+                    f for r in document["readbacks"] for f in r["findings"]
+                ):
+                    if finding.get("path", "").endswith(".py") and "range" in finding:
+                        github.answers[
+                            f"{root}/contents/{quote(finding['path'])}?ref={head}"
+                        ] = runner.RunnerError("Not Found")
                 bundle = runner.collect_bundle(
                     github,
                     repository=REPOSITORY,

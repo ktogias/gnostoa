@@ -127,3 +127,54 @@ def _verdict(evidence: dict[str, Any]) -> dict[str, Any]:
 
 def _failed(verdict: dict[str, Any]) -> dict[str, list[str]]:
     return {c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"}
+
+
+# A finding's enclosing scope on the head, and the ledger entry that proved it on
+# protected main (#389, the M17 transition).
+_SCOPE = "c" * 64
+# A finding's run-bound configuration identity, as merge evidence derives it (owner
+# 6620829215 §2, 6621293483 §1): its readback's adapter and protected profile digest,
+# and its own producer's effective identity.
+CONFIGURATION = (
+    "gnostoa-inventory-fake/v1@sha256:" + "b" * 64 + "/python@sha256:" + "e" * 64
+)
+
+
+def debt_entry(**changes: Any) -> dict[str, Any]:
+    """A ledger entry for `debt_finding`'s finding, shared with the evidence tests."""
+    entry: dict[str, Any] = {
+        "id": "debt-1",
+        "item": "deepsource-full",
+        "rule": "PY-R1000",
+        "path": "tools/x.py",
+        "message": "`f` has a cyclomatic complexity of 16",
+        "enclosing_sha256": _SCOPE,
+        "tool": {"id": "python"},
+        "severity": "MINOR",
+        "configuration": CONFIGURATION,
+        "aspect": "complexity",
+        "provenance": {
+            "commit": "d" * 40,
+            "readback_run": "41678204434",
+            "admitted_by": "6612057593",
+        },
+    }
+    entry.update(changes)
+    return entry
+
+
+def debt_finding(**changes: Any) -> dict[str, Any]:
+    """A listed finding with its enclosing scope, shared with the evidence tests."""
+    finding: dict[str, Any] = {
+        "item": "deepsource-full",
+        "id": "issue-1",
+        "message": "`f` has a cyclomatic complexity of 16",
+        "rule": "PY-R1000",
+        "path": "tools/x.py",
+        "tool": {"id": "python"},
+        "severity": "MINOR",
+        "configuration": CONFIGURATION,
+        "enclosing": {"kind": "function", "name": "f", "sha256": _SCOPE},
+    }
+    finding.update(changes)
+    return finding

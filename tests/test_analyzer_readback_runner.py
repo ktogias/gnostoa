@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import base64
 import contextlib
 import hashlib
 import http.client
@@ -86,6 +88,15 @@ def _unavailable_inventory_document(
         observed_at=OBSERVED,
         reason="QualityEvidenceError",
     )
+    document, digest = _inventory_document(directory, None, recorded)
+    return document, digest, recorded
+
+
+def _inventory_document(
+    directory: str, inventory: dict[str, str] | None, readbacks: list[dict[str, Any]]
+) -> tuple[Path, str]:
+    """The inventory job's document of this subject, naming `inventory` and holding
+    `readbacks`, as `inventory_collect` writes it: its path and its SHA-256."""
     document = Path(directory) / "gnostoa-inventory-readback.json"
     document.write_text(
         canonical_json(
@@ -97,13 +108,54 @@ def _unavailable_inventory_document(
                 "observed_at": OBSERVED,
                 "base_tip": OTHER,
                 "base": OTHER,
-                "inventory": None,
-                "readbacks": recorded,
+                "inventory": inventory,
+                "readbacks": readbacks,
             }
         ),
         encoding="utf-8",
     )
-    return document, hashlib.sha256(document.read_bytes()).hexdigest(), recorded
+    return document, hashlib.sha256(document.read_bytes()).hexdigest()
+
+
+# The head's tree, as GitHub reads it for the inventory's binding.
+_TREE = "d" * 40
+
+
+def _complete_inventory_document(
+    directory: str, findings: list[dict[str, Any]]
+) -> tuple[Path, str]:
+    """A document as the inventory job writes it when its collection succeeded: the
+    inventory adapter's two readbacks of a complete inventory of the head, whose tree
+    is `_TREE`, under the protected profile, so the bundle's binding keeps them. The
+    comparison changed no path, so the FULL readback lists each of `findings`. Its
+    path and its SHA-256."""
+    from tools import analyzer_inventory, quality_evidence
+    from tools.review_model import canonical_digest
+
+    record = {
+        "schema": quality_evidence.DIAGNOSTIC_SCHEMA,
+        "source": {"revision": HEAD, "tree": _TREE, "source_binding": "BOUND"},
+        "scope": {"diff": {"changed_paths": []}},
+        "coverage": {"status": "COMPLETE", "pages": 1, "count": len(findings)},
+        "configuration": {
+            "profile": {
+                "digest": canonical_digest(quality_evidence.load_diagnostic_profile())
+            }
+        },
+        "findings": findings,
+    }
+    readbacks = analyzer_inventory.readbacks(
+        record,
+        repository="ktogias/gnostoa",
+        pull_number=312,
+        requested_head=HEAD,
+        observed_at=OBSERVED,
+    )
+    written = {
+        "file": "inventory.json",
+        "sha256": hashlib.sha256(canonical_json(record).encode("utf-8")).hexdigest(),
+    }
+    return _inventory_document(directory, written, readbacks)
 
 
 def _github_urls() -> dict[str, str]:
@@ -1489,6 +1541,274 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertIn('test "${EXECUTOR_REF}" = "refs/heads/main"', bind_step["run"])
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', bind_step["run"]
+        )
+
+
+_SCOPE_SOURCE = "import os\n\n\ndef f(x):\n    return x\n"
+# The bounds Decision 0129 states for the head read.
+_SCOPE_FILE_BYTES = 1_048_576
+_SCOPE_FILES = 64
+# `_SCOPE_SOURCE` with a byte no UTF-8 text holds, in a trailing comment.
+_NOT_UTF8 = _SCOPE_SOURCE.encode("utf-8") + b"# \xff\n"
+
+
+def _contents_url(quoted_path: str) -> str:
+    return f"https://api.github.com/repos/ktogias/gnostoa/contents/{quoted_path}?ref={HEAD}"
+
+
+def _file_reply(source: str = _SCOPE_SOURCE, **changes: Any) -> dict[str, Any]:
+    """GitHub's contents answer for one file."""
+    return {
+        "type": "file",
+        "encoding": "base64",
+        "content": base64.b64encode(source.encode("utf-8")).decode("ascii"),
+        "size": len(source.encode("utf-8")),
+        **changes,
+    }
+
+
+def _sized(size: int) -> str:
+    """`_SCOPE_SOURCE`, padded by a trailing comment to exactly `size` bytes."""
+    padding = size - len(_SCOPE_SOURCE) - 2
+    return _SCOPE_SOURCE + "#" + "x" * padding + "\n"
+
+
+def _wrapped(text: str, width: int = 60) -> list[str]:
+    return [text[index : index + width] for index in range(0, len(text), width)]
+
+
+def _inventory_finding(identity: str, path: str, line: int) -> dict[str, Any]:
+    """A finding as the inventory records it, at `path` and `line` of the head."""
+    return {
+        "id": identity,
+        "message": "finding",
+        "rule": "F401",
+        "path": path,
+        "tool": {"id": "ruff"},
+        "range": {"start_line": line, "start_column": 1},
+        "provenance": [{"surface": "diagnostic-inventory", "reference": "ruff"}],
+    }
+
+
+class EnclosingScopeRunnerTests(unittest.TestCase):
+    """The bundle gives each Python finding its enclosing scope, from its file at the
+    exact head, read over REST as data; past a bound or unreadable, none (#389,
+    6615072518). The findings are the project inventory's, whose readbacks the
+    bundle binds to the same run's document (Decision 0130: DeepSource gives none)."""
+
+    def _scoped(
+        self, findings: list[dict[str, Any]], contents: dict[str, Any]
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        """The inventory's FULL findings, by id, of the bundle collected from a
+        document listing `findings` while GitHub answers each contents URL as
+        `contents` says, and the contents URLs read."""
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                f"https://api.github.com/repos/ktogias/gnostoa/commits/{HEAD}": {
+                    "commit": {"tree": {"sha": _TREE}}
+                },
+                **contents,
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            document, digest = _complete_inventory_document(directory, findings)
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+                inventory=runner.InventoryInput(document, digest, "success", "1", "1"),
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        recorded = json.loads(canonical_json(bundle))
+        self.assertEqual(recorded, analyzer_readback.parse_bundle(recorded))
+        (full,) = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("gnostoa-inventory", "FULL")
+        ]
+        # The binding kept the document's readback: it lists every finding.
+        self.assertEqual(
+            ("FULL_RUN", "COMPLETE", len(findings)),
+            (full["completeness"], full["coverage"]["status"], len(full["findings"])),
+        )
+        listed = {finding["id"]: finding for finding in full["findings"]}
+        return listed, [url for url in github.calls if "/contents/" in url]
+
+    def test_each_python_finding_gets_its_enclosing_scope(self) -> None:
+        spaced, failing = _contents_url("dir/a%20b.py"), _contents_url("c.py")
+        findings, read = self._scoped(
+            [
+                _inventory_finding("in-f", "dir/a b.py", 5),
+                _inventory_finding("module", "dir/a b.py", 1),
+                _inventory_finding("markdown", "b.md", 1),
+                _inventory_finding("unread", "c.py", 2),
+            ],
+            {spaced: _file_reply(), failing: runner.RunnerError("Not Found")},
+        )
+        self.assertEqual(
+            analyzer_readback.enclosing_scope(_SCOPE_SOURCE, 5),
+            findings["in-f"]["enclosing"],
+        )
+        for identity in ("module", "markdown", "unread"):
+            self.assertNotIn("enclosing", findings[identity])
+        # Each Python file is read once, at the exact head; no other file is.
+        self.assertEqual(sorted([spaced, failing]), sorted(read))
+
+    def test_each_file_is_parsed_once_for_all_its_findings(self) -> None:
+        """Revix on #480: the scopes of a file's findings come from one parse."""
+        url = _contents_url("a.py")
+        with patch.object(ast, "parse", wraps=ast.parse) as parse:
+            findings, read = self._scoped(
+                [
+                    _inventory_finding("def", "a.py", 4),
+                    _inventory_finding("body", "a.py", 5),
+                ],
+                {url: _file_reply()},
+            )
+        self.assertEqual(1, parse.call_count)
+        self.assertEqual([url], read)
+        self.assertEqual(findings["def"]["enclosing"], findings["body"]["enclosing"])
+
+    def test_a_stub_file_is_python_too(self) -> None:
+        """CodeAnt on #480: a finding in a `.pyi` stub gets its scope."""
+        url = _contents_url("a.pyi")
+        findings, read = self._scoped(
+            [_inventory_finding("stub", "a.pyi", 5)], {url: _file_reply()}
+        )
+        self.assertEqual(
+            analyzer_readback.enclosing_scope(_SCOPE_SOURCE, 5),
+            findings["stub"]["enclosing"],
+        )
+        self.assertEqual([url], read)
+
+    def test_content_past_the_declared_size_is_never_decoded(self) -> None:
+        """Claude part 3 on #480: the bounds hold for the work done, not only for
+        the answer, so content longer than its declared size is refused undecoded."""
+        url = _contents_url("a.py")
+        reply = _file_reply(_sized(64 * 1024), size=10)
+        with patch.object(base64, "b64decode", wraps=base64.b64decode) as decode:
+            findings, read = self._scoped(
+                [_inventory_finding("in-f", "a.py", 5)], {url: reply}
+            )
+        self.assertNotIn("enclosing", findings["in-f"])
+        self.assertEqual([url], read)
+        self.assertEqual(0, decode.call_count)
+
+    def test_only_a_bounded_utf8_file_is_read(self) -> None:
+        url = _contents_url("a.py")
+        for name, reply, scoped in (
+            ("a file at its declared size", _file_reply(), True),
+            ("a file at the file bound", _file_reply(_sized(_SCOPE_FILE_BYTES)), True),
+            ("a directory", [_file_reply()], False),
+            ("a symlink", _file_reply(type="symlink"), False),
+            ("another encoding", _file_reply(encoding="none"), False),
+            # A real file one byte past the bound, so only the bound refuses it.
+            (
+                "past the file bound",
+                _file_reply(_sized(_SCOPE_FILE_BYTES + 1)),
+                False,
+            ),
+            ("a size that is not a number", _file_reply(size="5"), False),
+            # cubic on #480: the decoded bytes must be the declared size. These two
+            # are far from it, so the encoded length refuses them before any decoding,
+            # and they spend no bytes (Claude on #480).
+            ("more bytes than declared", _file_reply(size=3), False),
+            ("fewer bytes than declared", _file_reply(size=_SCOPE_FILE_BYTES), False),
+            # One byte more or fewer than declared, in the same base64 block, so the
+            # encoded length matches and only the decoded size, which the bounds were
+            # spent on, refuses it.
+            (
+                "one byte more than declared",
+                _file_reply(size=len(_SCOPE_SOURCE) - 1),
+                False,
+            ),
+            (
+                "one byte fewer than declared",
+                _file_reply(size=len(_SCOPE_SOURCE) + 1),
+                False,
+            ),
+            # cubic on #480: its true size, so only the UTF-8 decoding refuses it;
+            # Python source otherwise, so no failed parse can hide that refusal.
+            (
+                "not UTF-8",
+                _file_reply(
+                    content=base64.b64encode(_NOT_UTF8).decode("ascii"),
+                    size=len(_NOT_UTF8),
+                ),
+                False,
+            ),
+            # cubic on #480: a character outside base64 is refused, not dropped. It
+            # replaces one, so the encoded length is the declared size's and the
+            # decoding is reached (Revix on #480).
+            (
+                "not base64",
+                _file_reply(content="!" + _file_reply()["content"][1:]),
+                False,
+            ),
+            (
+                "wrapped as GitHub sends it",
+                _file_reply(content="\n".join(_wrapped(_file_reply()["content"]))),
+                True,
+            ),
+        ):
+            with self.subTest(name):
+                findings, read = self._scoped(
+                    [_inventory_finding("in-f", "a.py", 5)], {url: reply}
+                )
+                self.assertEqual(scoped, "enclosing" in findings["in-f"])
+                self.assertEqual([url], read)
+
+    def test_the_reads_are_bounded_in_files_and_in_bytes(self) -> None:
+        paths = [f"m{index}.py" for index in range(_SCOPE_FILES + 1)]
+        findings, read = self._scoped(
+            [_inventory_finding(path, path, 5) for path in paths],
+            {_contents_url(path): _file_reply() for path in paths},
+        )
+        self.assertEqual(_SCOPE_FILES, len(read))
+        self.assertEqual(
+            _SCOPE_FILES, sum("enclosing" in finding for finding in findings.values())
+        )
+        # Nine files at the file bound: the ninth is read, and past 8 MiB refused.
+        paths = [f"m{index}.py" for index in range(9)]
+        findings, read = self._scoped(
+            [_inventory_finding(path, path, 5) for path in paths],
+            {
+                _contents_url(path): _file_reply(_sized(_SCOPE_FILE_BYTES))
+                for path in paths
+            },
+        )
+        self.assertEqual(9, len(read))
+        self.assertEqual(
+            8, sum("enclosing" in finding for finding in findings.values())
+        )
+
+    def test_a_refused_answer_spends_no_bytes(self) -> None:
+        """Amazon Q on #480: an answer whose encoded length is not the one its
+        declared size implies is refused before its bytes are admitted, so it leaves
+        the 8 MiB to the files after it."""
+        # Eight answers declaring the file bound with a few bytes' content, which
+        # would spend the whole byte bound, then one real file, read last.
+        refused = [f"m{index}.py" for index in range(8)]
+        replies = {
+            _contents_url(path): _file_reply(size=_SCOPE_FILE_BYTES) for path in refused
+        }
+        replies[_contents_url("z.py")] = _file_reply()
+        findings, read = self._scoped(
+            [_inventory_finding(path, path, 5) for path in [*refused, "z.py"]], replies
+        )
+        self.assertEqual(9, len(read))
+        self.assertEqual(
+            ["z.py"],
+            [path for path, finding in findings.items() if "enclosing" in finding],
         )
 
 

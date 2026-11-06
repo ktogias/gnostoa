@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ast
+import hashlib
+import io
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from itertools import pairwise
 from typing import Any
 
@@ -21,6 +24,11 @@ _READBACK_UNAVAILABLE_COVERAGE = frozenset(
 SCOPES = frozenset({"DIFF", "FULL"})
 MAX_FINDINGS = 10_000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+# A SHA-256 digest as the readback and the verdict write it (Q on #480: one pattern).
+SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# A finding's enclosing scope: the smallest function or class whose lines hold it. It
+# is the content identity M17's debt ledger matches, whatever the line number (#389).
+ENCLOSING_KINDS = frozenset({"function", "class"})
 _OWNER_SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 _REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -142,6 +150,73 @@ def _tool_identity(value: object) -> dict[str, str] | None:
     return result
 
 
+def _enclosing(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise AnalyzerReadbackError("finding enclosing scope must be an object")
+    if set(value) != {"kind", "name", "sha256"}:
+        raise AnalyzerReadbackError(
+            "finding enclosing scope has missing or unknown fields"
+        )
+    kind = _required_text(value["kind"], "finding enclosing kind")
+    if kind not in ENCLOSING_KINDS:
+        raise AnalyzerReadbackError("finding enclosing kind is unsupported")
+    digest = _required_text(value["sha256"], "finding enclosing sha256")
+    if SHA256_DIGEST.fullmatch(digest) is None:
+        raise AnalyzerReadbackError("finding enclosing sha256 must be 64 lowercase hex")
+    return {
+        "kind": kind,
+        "name": _required_text(value["name"], "finding enclosing name"),
+        "sha256": digest,
+    }
+
+
+def enclosing_scope(source: str, line: int) -> dict[str, str] | None:
+    """The smallest function or class of Python `source` whose lines hold `line`, as a
+    finding's `enclosing`: its kind, its name and the SHA-256 of its exact lines,
+    decorators included. None at module level, past the source, or when it does not
+    parse: such a finding is never matched to inherited debt."""
+
+    return scope_reader(source)(line)
+
+
+def scope_reader(source: str) -> Callable[[int], dict[str, str] | None]:
+    """`enclosing_scope` for each line of `source`, from one parse (Revix on #480).
+    The lines are Python's own, split only at a line feed, a carriage return or
+    both, and hashed with their endings: a Unicode line separator inside a literal
+    is part of its line (Codex on #480)."""
+
+    # Python reads past a leading UTF-8 BOM, and so does the scope (cubic on #480).
+    source = source.removeprefix("\ufeff")
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return lambda _line: None
+    scopes: list[tuple[int, int, str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            kind = "function"
+        elif isinstance(node, ast.ClassDef):
+            kind = "class"
+        else:
+            continue
+        first = min([node.lineno, *(item.lineno for item in node.decorator_list)])
+        scopes.append((first, node.end_lineno or node.lineno, kind, node.name))
+    lines = io.StringIO(source, newline="").readlines()
+
+    def scope_of(line: int) -> dict[str, str] | None:
+        holding = [scope for scope in scopes if scope[0] <= line <= scope[1]]
+        if not holding:
+            return None
+        first, last, kind, name = min(holding, key=lambda scope: scope[1] - scope[0])
+        text = "".join(lines[first - 1 : last])
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return {"kind": kind, "name": name, "sha256": digest}
+
+    return scope_of
+
+
 def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
     finding: dict[str, Any] = {
         "id": _required_text(value.get("id"), "finding id"),
@@ -157,6 +232,9 @@ def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
     location = _range(value.get("range"))
     if location is not None:
         finding["range"] = location
+    enclosing = _enclosing(value.get("enclosing"))
+    if enclosing is not None:
+        finding["enclosing"] = enclosing
     provenance = _provenance(value.get("provenance"))
     if provenance:
         finding["provenance"] = provenance

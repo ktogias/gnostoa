@@ -12,12 +12,14 @@ import json
 import re
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import yaml
 
+from tests.merge_admission_support import CONFIGURATION, debt_entry, debt_finding
 from tests.merge_evidence_github_support import (
     ACTIONS,
     API,
@@ -93,6 +95,7 @@ def _readback(
     pull: int = 300,
     completeness: str | None = None,
     native_mode: str | None = None,
+    native: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     complete = status == "COMPLETE"
     if completeness is None:
@@ -130,6 +133,7 @@ def _readback(
         run_state="SUCCESS" if complete else "UNKNOWN",
         coverage_record=record,
         findings=findings,
+        native=native,
     )
 
 
@@ -3894,17 +3898,40 @@ class ProjectRiskActivationTests(unittest.TestCase):
 
 def _admitted(
     declaration: dict[str, Any],
-    bundle: dict[str, Any],
+    bundle: dict[str, Any] | None,
     change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
-    """The merge decision on one head under `declaration`, with `bundle` as its
-    analyzer readback, the gate green, and the body's class `change_class` if given:
+    """The merge decision on one head under `declaration`, with `bundle`, if any, as
+    its analyzer readback, the gate green, and the body's class `change_class` if given:
     the evidence and the failed criteria. Module-level, so each class's tests call
-    it without reaching into another's private member (#461's own inventory)."""
+    it without reaching into another's private member (#461's own inventory). A
+    `ledger` is the protected target's analyzer debt ledger (#389)."""
+    evidence, verdict = _decision(declaration, bundle, change_class, ledger=ledger)
+    failed = {
+        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
+    }
+    return evidence, failed
+
+
+def _decision(
+    declaration: dict[str, Any],
+    bundle: dict[str, Any] | None,
+    change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`_admitted`'s evidence and its whole verdict, every criterion and what it
+    carries for approval (Claude on #480)."""
     with tempfile.TemporaryDirectory() as directory:
         project = _project(Path(directory))
         path = project / "policy" / "assurance-evidence.yaml"
         path.write_text(yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8")
+        if ledger is not None:
+            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
+                yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8"
+            )
         # The gate passed on the exact head, so every check item is
         # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
         gate = {
@@ -3926,10 +3953,7 @@ def _admitted(
     verdict = merge_admission.evaluate(
         evidence, declaration=loaded, change_policy=_policy()
     )
-    failed = {
-        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
-    }
-    return evidence, failed
+    return evidence, verdict
 
 
 class DeepSourceRetirementTests(unittest.TestCase):
@@ -4178,6 +4202,435 @@ class AnalyzerClaimsCoverageTests(unittest.TestCase):
         policy = _policy()
         with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
             merge_admission.evaluate(evidence, declaration=loaded, change_policy=policy)
+
+
+# The protected target's analyzer debt ledger (#389, the M17 transition).
+_LEDGER_ERRORS = (
+    merge_evidence_github.MergeEvidenceError,
+    assurance_completeness.AssuranceCompletenessError,
+)
+LEDGER_DOCUMENT: dict[str, Any] = {
+    "schema_version": "1.0",
+    "id": "example.analyzer-debt-ledger",
+    "version": "0.1.0",
+    "entries": [debt_entry()],
+}
+
+
+# The project inventory's run-bound configuration, as its adapter states it: the
+# protected profile's digest, bound to its own run (owner 6620829215 §2).
+_PROFILE = "sha256:" + "b" * 64
+# The finding's own producer's effective identity, as the inventory adapter states it
+# (owner 6621293483 §1).
+_PRODUCER = "sha256:" + "e" * 64
+
+
+def _complete_bundle(
+    *codacy: dict[str, Any],
+    sonarcloud: tuple[dict[str, Any], ...] = (),
+    inventory_diff: tuple[dict[str, Any], ...] = (),
+    inventory_full: tuple[dict[str, Any], ...] = (),
+    profile: str = _PROFILE,
+    binding: str = "BOUND",
+    producers: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """A bound bundle of the active providers whose every readback is complete, with
+    `codacy` in Codacy's pull-request read and `sonarcloud` in SonarCloud's, neither
+    of which states a configuration, and `inventory_diff` and `inventory_full` in
+    the inventory's two reads, under `profile`. DeepSource gives none: it is retired
+    as merge evidence (Decision 0130)."""
+    bound = {
+        "profile": profile,
+        "source_binding": binding,
+        "tree": "c" * 40,
+        "producers": {"python": _PRODUCER} if producers is None else dict(producers),
+    }
+    return _bundle(
+        _readback("codacy", "DIFF", *codacy),
+        _readback(*SONAR, *sonarcloud),
+        _inventory("DIFF", *inventory_diff, native=bound),
+        _inventory("FULL", *inventory_full, native=bound),
+    )
+
+
+class DebtLedgerTests(unittest.TestCase):
+    """The ledger: a closed, versioned declaration read only from the protected
+    target, carried as evidence with each finding's enclosing scope, and matched
+    by the verdict (#389, the M17 transition)."""
+
+    def test_the_ledger_is_a_closed_versioned_declaration(self) -> None:
+        self.assertEqual(
+            [debt_entry()], merge_evidence_github.parse_debt_ledger(LEDGER_DOCUMENT)
+        )
+        self.assertEqual(
+            [],
+            merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, "entries": []}),
+        )
+        for name, change in (
+            ("another schema", {"schema_version": "2.0"}),
+            ("an unknown key", {"extra": 1}),
+            ("no id", {"id": ""}),
+            ("entries that are not a list", {"entries": {}}),
+            (
+                "an entry the verdict refuses",
+                {"entries": [debt_entry(aspect="security")]},
+            ),
+            ("two entries with one id", {"entries": [debt_entry(), debt_entry()]}),
+        ):
+            with self.subTest(name), self.assertRaises(_LEDGER_ERRORS):
+                merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, **change})
+        missing = copy.deepcopy(LEDGER_DOCUMENT)
+        del missing["entries"]
+        with self.assertRaises(_LEDGER_ERRORS):
+            merge_evidence_github.parse_debt_ledger(missing)
+
+    def test_a_missing_ledger_is_none_and_the_repository_s_ships_empty(self) -> None:
+        """Not activated: the transition adds no entry."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertIsNone(
+                merge_evidence_github.load_debt_ledger(
+                    root / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=root
+                )
+            )
+        self.assertEqual(
+            [],
+            merge_evidence_github.load_debt_ledger(
+                ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=ROOT
+            ),
+        )
+
+    def test_the_command_reads_the_ledger_from_the_project_root_only(self) -> None:
+        """The candidate's own ledger in its diff changes nothing; without one on
+        the protected target the ledger is UNAVAILABLE, and M17 is what it was."""
+        candidate = {
+            "filename": "policy/analyzer-debt-ledger.yaml",
+            "status": "added",
+            "sha": "b" * 40,
+            "patch": "@@ -0,0 +1 @@\n+entries: []",
+            "additions": 1,
+            "deletions": 0,
+            "changes": 1,
+        }
+        replies = _replies()
+        replies[COMPARE] = _comparison(
+            [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], [candidate]
+        )
+        text = json.dumps(_snapshot(replies))
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            code, out, err = _run(project, text)
+            self.assertEqual(0, code, err)
+            bootstrap = json.loads(out)
+            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
+                yaml.safe_dump(LEDGER_DOCUMENT), encoding="utf-8"
+            )
+            code, out, err = _run(project, text)
+            self.assertEqual(0, code, err)
+            protected = json.loads(out)
+            (project / "policy" / "other-ledger.yaml").write_text(
+                yaml.safe_dump({**LEDGER_DOCUMENT, "entries": []}), encoding="utf-8"
+            )
+            code, out, err = _run(
+                project, text, "--debt-ledger", "policy/other-ledger.yaml"
+            )
+            self.assertEqual(0, code, err)
+            other = json.loads(out)
+        self.assertEqual(
+            {"coverage": "UNAVAILABLE", "entries": []}, bootstrap["analyzer_debt"]
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": [debt_entry()]},
+            protected["analyzer_debt"],
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": []}, other["analyzer_debt"]
+        )
+
+    def test_an_inherited_finding_meets_m17_end_to_end(self) -> None:
+        """Through `evidence_for` and `merge_admission.evaluate`: an inventory finding
+        under its run-bound profile keeps its scope and configuration in the
+        evidence, and the protected ledger's entry for it means M17 does not fail on
+        it. Another scope, a raised severity (owner 6620829215 §1), another profile,
+        a provider that states no configuration (§2), or no ledger, does."""
+        raw = {
+            k: v
+            for k, v in debt_finding().items()
+            if k not in ("item", "configuration")
+        }
+        entry = debt_entry(item="project-full", configuration=CONFIGURATION)
+        ledger = {**LEDGER_DOCUMENT, "entries": [entry]}
+        # The identity merge evidence derives: adapter, profile, producer.
+        self.assertEqual(
+            f"gnostoa-inventory-fake/v1@{_PROFILE}/python@{_PRODUCER}", CONFIGURATION
+        )
+        inventory = _complete_bundle(inventory_full=(raw,))
+        unresolved = ["1 unresolved analyzer finding"]
+        for name, given, bundle, m17 in (
+            ("the entry", ledger, inventory, None),
+            (
+                "another scope",
+                {**ledger, "entries": [{**entry, "enclosing_sha256": "e" * 64}]},
+                inventory,
+                unresolved,
+            ),
+            (
+                "a raised severity",
+                ledger,
+                _complete_bundle(inventory_full=({**raw, "severity": "CRITICAL"},)),
+                unresolved,
+            ),
+            (
+                "another profile",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), profile="sha256:" + "d" * 64),
+                unresolved,
+            ),
+            (
+                "a profile not bound to its run",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), binding="UNBOUND"),
+                unresolved,
+            ),
+            (
+                # The entry pins the identity a non-digest profile would give, so only
+                # the digest check refuses it.
+                "a profile that is no digest",
+                {
+                    **ledger,
+                    "entries": [
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@latest/python@{_PRODUCER}",
+                        }
+                    ],
+                },
+                _complete_bundle(inventory_full=(raw,), profile="latest"),
+                unresolved,
+            ),
+            # Owner 6621293483 §1: the finding's own producer, proved and the same.
+            (
+                "another producer version",
+                ledger,
+                _complete_bundle(
+                    inventory_full=(raw,), producers={"python": "sha256:" + "f" * 64}
+                ),
+                unresolved,
+            ),
+            (
+                "an unproved producer",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), producers={}),
+                unresolved,
+            ),
+            (
+                "a producer identity that is no digest",
+                {
+                    **ledger,
+                    "entries": [
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@{_PROFILE}/python@abc",
+                        }
+                    ],
+                },
+                _complete_bundle(inventory_full=(raw,), producers={"python": "abc"}),
+                unresolved,
+            ),
+            (
+                "a provider that states no configuration",
+                {**ledger, "entries": [{**entry, "item": "codacy"}]},
+                _complete_bundle(raw),
+                unresolved,
+            ),
+            ("no ledger", None, inventory, unresolved),
+        ):
+            with self.subTest(name):
+                evidence, failed = _admitted(
+                    _section_c_declaration(), bundle, "critical", ledger=given
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual(debt_finding()["enclosing"], listed["enclosing"])
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(m17, failed.get("M17"))
+
+
+def _shipped_ledger() -> dict[str, Any]:
+    """The analyzer debt ledger this repository ships, which `_admitted` puts on the
+    protected target: empty until the owner approves an entry (Decision 0129)."""
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER).read_text(encoding="utf-8")
+    )
+    return document
+
+
+# A finding a ledger entry could match: an inventory full-run finding with its
+# enclosing scope, under its run-bound profile and producer (Decision 0129).
+_MATCHABLE = {
+    k: v for k, v in debt_finding().items() if k not in ("item", "configuration")
+}
+
+
+class EmptyLedgerAdmissionTests(unittest.TestCase):
+    """The owner's checks before #480 merges (#389, 6658166252, Option B), end to end
+    through `evidence_for` and `merge_admission.evaluate` on the active providers'
+    evidence, under the ledger this repository ships, which is empty: missing or
+    incomplete required evidence still denies, and so does every obtained finding,
+    new, worsened, unmatched or security, in every class."""
+
+    _CLASSES = ("mechanical", "normal", "normative", "critical")
+
+    def _admit(
+        self, bundle: dict[str, Any] | None, change_class: str
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """The evidence and the failed criteria under the shipped ledger, which the
+        evidence must carry as read and empty, and the verdict match nothing in."""
+        declaration = _section_c_declaration()
+        evidence, failed = _admitted(
+            declaration, bundle, change_class, ledger=_shipped_ledger()
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": []}, evidence["analyzer_debt"]
+        )
+        verdict = merge_admission.evaluate(
+            evidence,
+            declaration=assurance_completeness.parse_declaration(declaration),
+            change_policy=_policy(),
+        )
+        self.assertEqual([], verdict["for_approval"]["inherited_findings"])
+        self.assertEqual([], verdict["for_approval"]["resolved_debt"])
+        return evidence, failed
+
+    def test_missing_or_incomplete_required_evidence_still_denies(self) -> None:
+        codacy, sonar = _readback("codacy", "DIFF"), _readback(*SONAR)
+        diff, full = _inventory_readbacks()
+        for name, bundle in (
+            ("no analyzer readback", None),
+            ("another head's readback", _bundle_for(head=PREVIOUS)),
+            ("no Codacy read", _bundle(sonar, diff, full)),
+            (
+                "Codacy unavailable",
+                _bundle(
+                    _readback("codacy", "DIFF", status="UNAVAILABLE"), sonar, diff, full
+                ),
+            ),
+            (
+                "SonarCloud's inventory unavailable",
+                _bundle(codacy, _readback(*SONAR, status="UNAVAILABLE"), diff, full),
+            ),
+            ("no inventory diff read", _bundle(codacy, sonar, full)),
+            ("no inventory full read", _bundle(codacy, sonar, diff)),
+            (
+                "a partial inventory diff read",
+                _bundle(codacy, sonar, _inventory_incomplete("DIFF"), full),
+            ),
+            (
+                "a partial inventory full read",
+                _bundle(codacy, sonar, diff, _inventory_incomplete("FULL")),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, failed = self._admit(bundle, change_class)
+                    self.assertIn("M2-M8", failed)
+                    self.assertIn(
+                        "analyzer finding coverage follows the required evidence, "
+                        "which is INCOMPLETE",
+                        failed.get("M17", []),
+                    )
+
+    def test_every_obtained_finding_still_denies(self) -> None:
+        worsened = {
+            **_MATCHABLE,
+            "id": "issue-worse",
+            "message": "`f` has a cyclomatic complexity of 17",
+            "severity": "MAJOR",
+        }
+        security = {**_MATCHABLE, "id": "issue-security", "category": "SECURITY"}
+        new = {**FINDING, "id": "issue-new"}
+        everything = _complete_bundle(
+            {**FINDING, "id": "issue-codacy"},
+            sonarcloud=({**FINDING, "id": "issue-sonar"},),
+            inventory_diff=(new,),
+            inventory_full=(_MATCHABLE, worsened, security),
+        )
+        for name, bundle, count in (
+            (
+                "a new finding on a changed path",
+                _complete_bundle(inventory_diff=(new,)),
+                1,
+            ),
+            ("a worsened finding", _complete_bundle(inventory_full=(worsened,)), 1),
+            # Its identity is complete, so only the empty ledger leaves it unmatched.
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+                1,
+            ),
+            ("a security finding", _complete_bundle(inventory_full=(security,)), 1),
+            ("a Codacy finding", _complete_bundle(FINDING), 1),
+            ("a SonarCloud finding", _complete_bundle(sonarcloud=(FINDING,)), 1),
+            ("all of them", everything, 6),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    evidence, failed = self._admit(bundle, change_class)
+                    listed = evidence["analyzer_findings"]["findings"]
+                    self.assertEqual(count, len(listed))
+                    self.assertNotIn("M2-M8", failed)
+                    plural = "" if count == 1 else "s"
+                    self.assertEqual(
+                        [f"{count} unresolved analyzer finding{plural}"], failed["M17"]
+                    )
+        # The finding an entry could match carries every part of its identity.
+        evidence, _ = self._admit(
+            _complete_bundle(inventory_full=(_MATCHABLE,)), "normal"
+        )
+        self.assertEqual(
+            [("project-full", CONFIGURATION, debt_finding()["enclosing"])],
+            [
+                (f["item"], f.get("configuration"), f.get("enclosing"))
+                for f in evidence["analyzer_findings"]["findings"]
+            ],
+        )
+
+    def test_the_shipped_ledger_changes_no_verdict(self) -> None:
+        """Against no ledger at all, under which M17 is what it was before the ledger
+        (`DebtLedgerM17Tests.test_without_a_ledger_m17_is_as_it_was`): the whole
+        verdict is the same, every criterion's status and reasons and everything it
+        carries for approval (Claude on #480), while the shipped ledger is read."""
+        for name, bundle in (
+            ("complete, finding nothing", _complete_bundle()),
+            (
+                "a partial inventory full read",
+                _bundle(
+                    _readback("codacy", "DIFF"),
+                    _readback(*SONAR),
+                    _inventory("DIFF"),
+                    _inventory_incomplete("FULL"),
+                ),
+            ),
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    self._admit(bundle, change_class)
+                    read, shipped = _decision(
+                        _section_c_declaration(),
+                        bundle,
+                        change_class,
+                        ledger=_shipped_ledger(),
+                    )
+                    _, without = _decision(
+                        _section_c_declaration(), bundle, change_class
+                    )
+                    self.assertEqual(
+                        {"coverage": "COMPLETE", "entries": []}, read["analyzer_debt"]
+                    )
+                    self.assertEqual(without, shipped)
 
 
 if __name__ == "__main__":

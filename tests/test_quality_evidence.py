@@ -963,6 +963,26 @@ class DiagnosticInventoryTests(_DiagnosticInventoryFixture):
         self.assertEqual("gnostoa-diagnostic-inventory/v3", inventory["schema"])
         self.assertEqual("EXPERIMENTAL", inventory["status"])
 
+    def test_a_producer_s_own_security_rules_carry_the_security_category(self) -> None:
+        """Codex on #480: M17's ledger guard reads a finding's category, so the
+        inventory gives its producers' own security classification: Ruff's
+        flake8-bandit S rules and every secrets finding, and nothing else."""
+        finding = _original(self.module, "_diagnostic_finding")
+        for tool, code, category in (
+            ("ruff", "S106", "security"),
+            ("ruff", "S307", "security"),
+            ("secrets", "Secret Keyword", "security"),
+            ("ruff", "SLF001", None),
+            ("ruff", "SIM117", None),
+            # S and ASCII digits only: another script's digits are no bandit code.
+            ("ruff", "S\u0661\u0660\u0666", None),
+            ("mypy", "import-not-found", None),
+            ("complexity", "cc", None),
+        ):
+            with self.subTest(tool=tool, code=code):
+                record = finding(tool, code, "tools/x.py", (3, 1, 3, 9), "m", {})
+                self.assertEqual(category, record.get("category"))
+
     def test_a_non_mapped_diagnostic_and_a_second_rule_on_one_line_stay_distinct(
         self,
     ) -> None:

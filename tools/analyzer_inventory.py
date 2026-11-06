@@ -18,8 +18,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .analyzer_readback import AnalyzerReadbackError, build_readback, coverage
-from .quality_evidence import DIAGNOSTIC_SCHEMA
+from .analyzer_readback import (
+    SHA256_DIGEST,
+    AnalyzerReadbackError,
+    build_readback,
+    coverage,
+)
+from .quality_evidence import DIAGNOSTIC_SCHEMA, LAUNCHED_PRODUCERS
 from .review_model import canonical_digest
 
 PROVIDER = "gnostoa-inventory"
@@ -100,6 +105,7 @@ def readbacks(
             "profile": _mapping(profile, "profile").get("digest"),
             "source_binding": source.get("source_binding"),
             "tree": source.get("tree"),
+            "producers": _producer_identities(inventory),
         },
     }
     diff_gap = gap or (_NO_COMPARISON if changed is None else None)
@@ -107,6 +113,97 @@ def readbacks(
         _readback("DIFF", "DIFF_LOCAL", diff_gap, touched, common),
         _readback("FULL", "FULL_RUN", gap, rest, common),
     ]
+
+
+def _producer_identities(inventory: Mapping[str, Any]) -> dict[str, str]:
+    """Each producer's effective identity, from the inventory's own provenance (owner
+    6621293483 §1): a digest over its invocations' version, settings and environment.
+    A producer is left out when any invocation lacks a version or, launched as a
+    process, was not observed with its environment equal at both ends; its findings
+    then match no ledger entry."""
+
+    configuration = inventory.get("configuration")
+    settings = configuration if isinstance(configuration, Mapping) else {}
+    found: dict[str, list[dict[str, Any]] | None] = {}
+    records = inventory.get("producers")
+    for record in records if isinstance(records, list) else ():
+        if not isinstance(record, Mapping) or not isinstance(
+            record.get("producer"), str
+        ):
+            continue
+        name = record["producer"]
+        identity = _invocation_identity(record, settings.get(name))
+        known = found.get(name, [])
+        if identity is None:
+            found[name] = None
+        elif known is not None:
+            found[name] = [*known, identity]
+    return {
+        name: canonical_digest(sorted(identities, key=lambda i: str(i["invocation"])))
+        for name, identities in sorted(found.items())
+        if identities
+    }
+
+
+def _invocation_identity(
+    record: Mapping[str, Any], own_settings: object
+) -> dict[str, Any] | None:
+    """One invocation's version, settings and environment, or None when unproved.
+    Which producers are launched with an observed environment is the inventory's own
+    declaration, the one its source binding reads, never a record's shape (Revix and
+    cubic on #480). Such a producer's settings are its argv before the `--` its
+    builder puts before the file list, and its environment must be observed equal
+    before and after it. Any other producer is proved only in process: it launches
+    nothing, so its record carries neither an argv nor an observation, and its
+    settings are its own configuration, such as complexity's. Another process
+    producer, such as shellcheck, is unproved."""
+
+    version = record.get("version")
+    if not isinstance(version, str) or not version:
+        return None
+    identity: dict[str, Any] = {
+        "invocation": record.get("invocation"),
+        "version": version,
+    }
+    argv = record.get("argv")
+    environment = record.get("environment_observation")
+    if record["producer"] not in LAUNCHED_PRODUCERS:
+        if argv is not None or environment is not None:
+            return None
+        identity["settings"] = own_settings
+        return identity
+    observed = _observed_environment(environment)
+    if (
+        observed is None
+        or not isinstance(argv, list)
+        or not all(isinstance(a, str) for a in argv)
+        or "--" not in argv
+    ):
+        return None
+    identity["settings"] = argv[: argv.index("--")]
+    identity["environment"] = observed
+    return identity
+
+
+def _observed_environment(environment: object) -> dict[str, Any] | None:
+    """A launched run's environment, observed equal at both ends: its interpreter and
+    its after observation's digest. None when the observation, its interpreter or a
+    digest is missing (Revix and cubic on #480)."""
+    if (
+        not isinstance(environment, Mapping)
+        or environment.get("status") != "endpoints_equal"
+    ):
+        return None
+    interpreter = environment.get("interpreter")
+    after = environment.get("after")
+    digest = after.get("sha256") if isinstance(after, Mapping) else None
+    if (
+        not isinstance(interpreter, Mapping)
+        or not isinstance(digest, str)
+        or SHA256_DIGEST.fullmatch(digest) is None
+    ):
+        return None
+    return {"interpreter": interpreter, "after": digest}
 
 
 def _readback(

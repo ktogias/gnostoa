@@ -131,6 +131,7 @@ inherited, copied or loaded by adopting projects.
 - [Bound three capsule functions by one extraction each](decisions/0126-bound-three-capsule-functions-by-one-extraction-each.md)
 - [Bound the spec's control parser and the handoff's source walk](decisions/0127-bound-the-spec-control-parser-and-the-handoff-walk.md)
 - [Give the tests one import model, and repair their typing and private access](decisions/0128-give-the-tests-one-import-model-and-repair-their-typing-and-private-access.md)
+- [Match inherited analyzer debt against a protected ledger that ships empty](decisions/0129-match-inherited-analyzer-debt-against-a-protected-ledger.md)
 - [Retire DeepSource as merge evidence, and give every class the project inventory's claims](decisions/0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md)
 - [Resolve git on the one trusted lookup, the leaf the repository's tools share](decisions/0131-resolve-git-on-the-one-trusted-lookup.md)
 - [Coalesce merge-admission requests by pull request, and publish each head's check one at a time](decisions/0133-coalesce-merge-admission-requests-by-pull-request.md)
