@@ -670,6 +670,13 @@ class DispositionEdgeTests(unittest.TestCase):
                     "body": _disposition(finding),
                 },
             ),
+            # Claude on #485: in the approval's own second, another approval without
+            # the block leaves it not every latest review's, so it is not honoured.
+            (
+                "in an approval beside another in the same second, without it",
+                _disposition(finding),
+                {**later, "state": "APPROVED", "submitted_at": "2026-09-19T16:40:02Z"},
+            ),
             # Claude and CodeAnt on #485: in the approval's own second, a review that is
             # no approval makes the latest review ambiguous, so nothing is honoured.
             (

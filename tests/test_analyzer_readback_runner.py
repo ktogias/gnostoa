@@ -12,6 +12,7 @@ import os
 import secrets
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import tempfile
+import time
 import traceback
 import unittest
 import urllib.request
@@ -59,9 +60,17 @@ class _GitHubFake:
     def __init__(self, responses: dict[str, Any]) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        # Each read's deadline, as the runner's client takes it (PAO on #485).
+        self.deadlines: dict[str, list[float | None]] = {}
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         self.calls.append(url)
+        self.deadlines.setdefault(url, []).append(deadline)
+        # As the shared client refuses a read past its deadline, before any request.
+        if deadline is not None and time.monotonic() >= deadline:
+            raise runner.RunnerError("GitHub API read deadline reached")
         value = self.responses[url]
         if isinstance(value, BaseException):
             raise value
@@ -2081,16 +2090,18 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         reads too, so none starts after their deadline, and the head's reads stay.
         Each base read here takes 200 s of a fake clock."""
         now = [0.0]
-        starts: list[str] = []
+        starts: list[tuple[float, float | None]] = []
         root = "https://api.github.com/repos/ktogias/gnostoa"
 
         class SlowBase(_GitHubFake):
-            def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
                 if "/compare/" in url or MERGE_BASE in url:
-                    if now[0] >= OPTIONAL_DEADLINE:
-                        starts.append(url)
+                    starts.append((now[0], deadline))
                     now[0] += 200.0
-                return super().get(url)
+                return answer
 
         urls = _github_urls()
         github = SlowBase(
@@ -2129,7 +2140,12 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
                 sonarcloud=None,
                 observed_at=OBSERVED,
             )
-        self.assertEqual([], starts)
+        # Each base read is given the deadline, so the client refuses the one past it
+        # (PAO on #485: github_rest's deadline, not a wrapper's).
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
         self.assertEqual(
             [("deepsource", "FULL"), ("deepsource", "DIFF")],
             [
@@ -2138,6 +2154,107 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
                 if r["provider"] == "deepsource"
             ],
         )
+
+    def test_the_optional_scope_reads_stop_at_the_deadline(self) -> None:
+        """Codex and PAO on #485: the scope reads of DeepSource's findings are its
+        optional reads too, given their deadline, so past it a finding keeps no scope
+        and stays unknown; the declared items' reads are given none. Each file read
+        here takes 100 s of a fake clock."""
+        now = [0.0]
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        paths = [f"tools/m{n}.py" for n in range(4)]
+        source = "def f():\n    return 1\n"
+        starts: list[tuple[float, float | None]] = []
+
+        class SlowContents(_GitHubFake):
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
+                if "/contents/" in url:
+                    starts.append((now[0], deadline))
+                    now[0] += 100.0
+                return answer
+
+        urls = _github_urls()
+        file_answer = {
+            "type": "file",
+            "encoding": "base64",
+            "size": len(source),
+            "content": base64.b64encode(source.encode()).decode(),
+        }
+        github = SlowContents(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **{f"{root}/contents/{path}?ref={HEAD}": file_answer for path in paths},
+            }
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {
+                "check-python": check_page(
+                    [
+                        {**issue(f"i{n}", 2), "path": path}
+                        for n, path in enumerate(paths)
+                    ]
+                )
+            },
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
+        [full] = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+        ]
+        scoped = ["enclosing" in f for f in full["findings"]]
+        self.assertEqual(3, sum(scoped))
+        self.assertIn(False, scoped)
+        # The declared items' reads are given no deadline.
+        self.assertEqual(
+            {None},
+            {
+                given
+                for url, deadlines in github.deadlines.items()
+                if "/contents/" not in url
+                for given in deadlines
+            },
+        )
+
+    def test_the_client_refuses_a_read_past_its_deadline(self) -> None:
+        """PAO on #485: the runner's client reads through github_rest's own
+        deadline, so a read past it is refused before any request."""
+        client = runner.GitHubReadClient("synthetic-bound-reader")
+        with (
+            patch.object(
+                http.client.HTTPSConnection,
+                "connect",
+                side_effect=AssertionError("network forbidden"),
+            ) as connect,
+            self.assertRaisesRegex(runner.RunnerError, "deadline"),
+        ):
+            client.get(
+                "https://api.github.com/repos/ktogias/gnostoa/pulls/312",
+                deadline=time.monotonic() - 1.0,
+            )
+        connect.assert_not_called()
 
     def test_only_the_readback_step_receives_the_optional_provider_s_token(
         self,
