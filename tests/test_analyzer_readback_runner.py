@@ -2242,6 +2242,10 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         """PAO on #485: the runner's client reads through github_rest's own
         deadline, so a read past it is refused before any request."""
         client = runner.GitHubReadClient("synthetic-bound-reader")
+        url = "https://api.github.com/repos/ktogias/gnostoa/pulls/312"
+        # The deadline is read before the assertion block, so the block holds one
+        # call that can raise (SonarCloud python:S5778 on #485).
+        past = time.monotonic() - 1.0
         with (
             patch.object(
                 http.client.HTTPSConnection,
@@ -2250,10 +2254,7 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             ) as connect,
             self.assertRaisesRegex(runner.RunnerError, "deadline"),
         ):
-            client.get(
-                "https://api.github.com/repos/ktogias/gnostoa/pulls/312",
-                deadline=time.monotonic() - 1.0,
-            )
+            client.get(url, deadline=past)
         connect.assert_not_called()
 
     def test_only_the_readback_step_receives_the_optional_provider_s_token(
