@@ -31,6 +31,9 @@ sources:
   - id: pao-dismissal
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6673563051
     title: "PAO's ruling: a ledger dismissal stays under Decision 0129's strict match"
+  - id: pao-semantics
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6673640776
+    title: "PAO's ruling: an applicable optional finding denies until it is resolved"
   - id: exit
     resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
     title: The DeepSource exit, whose no-acquisition rule this amends
@@ -74,7 +77,8 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
    adds its applicable findings to the findings M17 lists, tagged by provider. A finding is
    applicable when it lies in a file the change request changes (source `pao-scope`). Its
    findings on untouched files are recorded in the bundle, but they do not enter the
-   verdict. A read for another head is recorded as `STALE` and adds none.
+   verdict. M17 evaluates an applicable one exactly as it does any finding it lists, with no
+   separate reducer, so an open one denies until it is resolved (source `pao-semantics`). A read for another head is recorded as `STALE` and adds none.
 4. **A finding stays open until disposed of on evidence.** A fix removes it from the head's
    complete report. A dismissal is an entry in the protected debt ledger (Decision 0129): read
    only from protected `main`, strictly matched, never self-asserted by the candidate. A clean
