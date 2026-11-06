@@ -559,13 +559,27 @@ def _admitted(
     change_class: str | None = None,
     *,
     ledger: dict[str, Any] | None = None,
+    review_body: str | None = None,
+    extra_reviews: tuple[dict[str, Any], ...] = (),
+    files: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     """The merge decision on one head under `declaration`, with `bundle`, if any, as
     its analyzer readback, the gate green, and the body's class `change_class` if given:
     the evidence and the failed criteria. Module-level, so each class's tests call
     it without reaching into another's private member (#461's own inventory). A
-    `ledger` is the protected target's analyzer debt ledger (#389)."""
-    evidence, verdict = _decision(declaration, bundle, change_class, ledger=ledger)
+    `ledger` is the protected target's analyzer debt ledger (#389). `review_body` is
+    the owner's approving review's text, `extra_reviews` are further GitHub reviews
+    on the first page, and `files` replaces the comparison's changed files (#389
+    Track 2's dispositions and baseline)."""
+    evidence, verdict = _decision(
+        declaration,
+        bundle,
+        change_class,
+        ledger=ledger,
+        review_body=review_body,
+        extra_reviews=extra_reviews,
+        files=files,
+    )
     failed = {
         c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
     }
@@ -578,6 +592,9 @@ def _decision(
     change_class: str | None = None,
     *,
     ledger: dict[str, Any] | None = None,
+    review_body: str | None = None,
+    extra_reviews: tuple[dict[str, Any], ...] = (),
+    files: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """`_admitted`'s evidence and its whole verdict, every criterion and what it
     carries for approval (Claude on #480)."""
@@ -601,6 +618,14 @@ def _decision(
         if change_class is not None:
             replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
                 "- Class: `normative`", f"- Class: `{change_class}`"
+            )
+        reviews = replies[f"{API}/pulls/300/reviews?per_page=100"][0]
+        if review_body is not None:
+            reviews[0]["body"] = review_body
+        reviews.extend(copy.deepcopy(list(extra_reviews)))
+        if files is not None:
+            replies[COMPARE] = _comparison(
+                [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], files
             )
         snapshot = _snapshot(replies)
         evidence = merge_evidence_github.evidence_for(

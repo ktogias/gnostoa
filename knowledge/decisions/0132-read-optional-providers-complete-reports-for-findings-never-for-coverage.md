@@ -136,23 +136,26 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 ## Verification
 
-- **RED first:** 11 acceptance tests fail on `main`
-  `6b6c8501` for the missing behaviour: 10 in `tests/test_optional_reports.py`, because `main`
-  refuses whole a bundle that carries DeepSource's readback (the first 8 failed the same way on
-  `794a1eee`), and 1 in `tests/test_analyzer_readback_runner.py`, because the readback refuses a
-  DeepSource reader.
+- **RED first:** 19 acceptance tests fail on `main` `6b6c8501` for the missing behaviour:
+  18 in `tests/test_optional_reports.py`, where `main` refuses whole a bundle that carries
+  DeepSource's readback, or refuses the `BASE` scope its base read needs; and 1 in
+  `tests/test_analyzer_readback_runner.py`, where the readback refuses a DeepSource reader.
 - **They cover:**
   - an unavailable optional source with its aspects covered;
   - a complete optional report that never covers a missing required item;
   - a report-only finding listed and denying, and its closure when the head's report no longer lists it;
   - a stale report counted as stale;
   - a failed run recorded as failed and finding nothing, against a findings-bearing run, which is a finding;
-  - a finding on an untouched file kept out of the verdict;
+  - a finding on an unmodified file kept out of the verdict;
   - a finding in both the report and an inline comment, listed once;
-  - beside an optional report, the ledger dismissing the inventory's configuration-bound
-    finding and leaving the optional one open, whether an entry names it or not;
-  - at the pre-merge cut, the optional full read under the adapter's existing page bound: a
-    report that never ends is recorded as an `ERROR` read after exactly that many pages.
+  - the ledger dismissing only a configuration-bound finding, beside an optional report;
+  - at the pre-merge cut, the optional full read under the adapter's existing page bound;
+  - against the merge base: a proven unchanged legacy finding listed and not denying; a
+    regression outside the edited lines, and a match in a changed scope, introduced and
+    denying; a missing or incomplete base read leaving the finding unknown and denying;
+  - an independent approver's disposition at the head closing its finding; the author's
+    disposition, one for another commit, a provider's suppression or false-positive mark,
+    and a disposition of another rule, each leaving it open.
 
 ## Consequences
 
