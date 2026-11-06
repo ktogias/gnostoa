@@ -108,7 +108,7 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 ## Verification
 
-- **RED first:** `tests/test_optional_reports.py`'s 8 acceptance tests fail on `main`
+- **RED first:** `tests/test_optional_reports.py`'s 10 acceptance tests fail on `main`
   `6b6c8501`, as on `794a1eee`, for the missing behaviour: `main` refuses whole a bundle that
   carries DeepSource's readback.
 - **They cover:**
@@ -117,6 +117,8 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - a report-only finding listed and denying, and its closure when the head's report no longer lists it;
   - a stale report counted as stale;
   - a failed run recorded as failed and finding nothing, against a findings-bearing run, which is a finding;
-  - a finding on an untouched file kept out of the verdict.
-- **Still to add:** duplicate report and comment observations; the bounded read at the
-  pre-merge evidence cut; and a configuration-bound finding dismissed through the ledger.
+  - a finding on an untouched file kept out of the verdict;
+  - a finding in both the report and an inline comment, listed once;
+  - beside an optional report, the ledger dismissing the inventory's configuration-bound
+    finding and leaving the optional one open, whether an entry names it or not.
+- **Still to add:** the bounded read at the pre-merge evidence cut.

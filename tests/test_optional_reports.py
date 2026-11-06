@@ -1,22 +1,27 @@
 """The optional-report slice's acceptance tests (#389: the owner's 6652941418 and 6659619541; Ariadne #14
-6652945562; PAO 6657812185 §2.1): written RED on main 794a1eee, before any implementation.
+6652945562; PAO 6657812185 §2.1): written RED on main 794a1eee, before any implementation, and RED
+again on main 6b6c8501.
 
 An optional provider's read is recorded, never required: missing or failed, it leaves every declared aspect to
 the qualified evidence that covers it. Complete for the exact head, its findings, report-only ones included,
-are listed for disposition like any other analyzer finding. A fix at the head closes one; an evidence-backed
-dismissal goes through the protected debt ledger (#480) and is pinned once that lands."""
+are listed for disposition like any other analyzer finding. A fix at the head closes one. An evidence-backed
+dismissal goes through the protected debt ledger (Decision 0129), which matches only a configuration-bound
+finding, so an optional provider's closes only by a fix (PAO 6673563051, Option (a))."""
 
 from __future__ import annotations
 
 import unittest
 from typing import Any
 
+from tests.merge_admission_support import CONFIGURATION, debt_entry, debt_finding
 from tests.merge_evidence_github_support import (
     FINDING,
     HEAD,
+    LEDGER_DOCUMENT,
     SONAR,
     _admitted,
     _bundle,
+    _complete_bundle,
     _inventory,
     _readback,
     _section_c_declaration,
@@ -163,6 +168,45 @@ class DuplicateObservationTests(unittest.TestCase):
                 if f["id"] == identity
             ],
         )
+
+
+class ConfigurationBoundDismissalTests(unittest.TestCase):
+    """D4 under PAO 6673563051's Option (a): beside an optional report, the protected ledger
+    dismisses only a configuration-bound finding (Decision 0129). The inventory's is inherited;
+    the optional provider's states no run-bound configuration, so it stays open and denies,
+    whether an entry names it or not."""
+
+    def test_the_ledger_dismisses_only_a_configuration_bound_finding(self) -> None:
+        raw = {
+            k: v
+            for k, v in debt_finding().items()
+            if k not in ("item", "configuration")
+        }
+        inherited = debt_entry(item="project-full", configuration=CONFIGURATION)
+        naming_optional = debt_entry(
+            id="debt-optional",
+            item="deepsource-full",
+            rule=REPORT_ONLY["rule"],
+            path=REPORT_ONLY["path"],
+            message=REPORT_ONLY["message"],
+            severity=REPORT_ONLY["severity"],
+        )
+        for name, entries in (
+            ("the inventory finding's entry", [inherited]),
+            ("and an entry naming the optional finding", [inherited, naming_optional]),
+        ):
+            with self.subTest(name):
+                bundle = _complete_bundle(inventory_full=(raw,))
+                bundle["readbacks"].insert(
+                    0, _readback("deepsource", "FULL", REPORT_ONLY)
+                )
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    bundle,
+                    "critical",
+                    ledger={**LEDGER_DOCUMENT, "entries": entries},
+                )
+                self.assertEqual(["1 unresolved analyzer finding"], failed.get("M17"))
 
 
 class MandatoryCoverageTests(unittest.TestCase):
