@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Read optional providers' complete reports for findings, never for coverage
-description: "The optional-report slice of #389 (Ariadne #14): an optional provider's read is recorded in the analyzer bundle under its own protected status, between required and retired. Missing, failed or stale, it changes no claim: each declared aspect keeps the qualified evidence that covers it. Complete for the exact head, its findings, report-only ones included, join the findings M17 lists, so each stays open until a fix removes it from the head's report or, for a finding with a run-bound configuration identity, an evidence-backed dismissal enters the protected debt ledger (Decision 0129). DeepSource moves from retired to optional; Decision 0130's no-acquisition rule is amended for findings only."
+description: "The optional-report slice of #389 (Ariadne #14): an optional provider's read is recorded in the analyzer bundle under its own protected status, between required and retired. Missing, failed or stale, it changes no claim: each declared aspect keeps the qualified evidence that covers it. Complete for the exact head, its findings in the files the change modifies, report-only ones included, are compared with the provider's complete read for the merge base: a pre-existing one, with an unchanged enclosing scope, stays listed and does not deny; an introduced or unknown one joins the findings M17 lists and stays open until a fix removes it or an independent eligible approver's false-positive disposition names it at the exact head. DeepSource moves from retired to optional; Decision 0130's no-acquisition rule is amended for findings only."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -34,6 +34,12 @@ sources:
   - id: pao-semantics
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6673640776
     title: "PAO's ruling: an applicable optional finding denies until it is resolved"
+  - id: owner-revision
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6676021682
+    title: "The owner's revision: a verified disposition, a baseline differential, a scoped token"
+  - id: pao-revision
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6676228030
+    title: "PAO's rulings: the disposition in an eligible approval, comparability without a run-bound configuration"
   - id: exit
     resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
     title: The DeepSource exit, whose no-acquisition rule this amends
@@ -73,38 +79,60 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 2. **An optional readback is recorded, never required.** The evidence lists each optional
    read's provider, scope, coverage and reason (`analyzer_optional`). It maps to no declared
    item, so missing, failed or partial, it changes no claim.
-3. **Exact head and applicable scope only.** A complete optional read for the subject's head
-   adds its applicable findings to the findings M17 lists, tagged by provider. A finding is
-   applicable when it lies in a file the change request changes (source `pao-scope`). Its
-   findings on untouched files are recorded in the bundle, but they do not enter the
-   verdict. M17 evaluates an applicable one exactly as it does any finding it lists, with no
-   separate reducer, so an open one denies until it is resolved (source `pao-semantics`). A
+3. **What the change introduces or worsens decides, against the merge base.** A complete
+   optional read for the subject's head is applicable in the files the change request
+   modifies (source `pao-scope`); its findings elsewhere are recorded in the bundle and do not
+   enter the verdict. The readback also acquires the same provider's complete read for the
+   pull request's merge base, under the same bounds, as that provider's `BASE` readback, and
+   hashes each base finding's enclosing scope at the base. Each applicable head finding is then
+   (sources `owner-revision`, `pao-revision`):
+   - **pre-existing** when the base read is complete for the exact merge base and holds a
+     finding with the same rule, path and message whose enclosing scope, hashed at the base,
+     is byte-identical to its own, hashed at the head. It stays listed, with
+     `configuration_provenance: unproven` when the provider states no run-bound configuration,
+     and it does not deny;
+   - **introduced** when no base finding matches, a regression on a line the change did not
+     edit included;
+   - **unknown** when the base read is missing, incomplete or for another commit. Absence of
+     comparable evidence never establishes pre-existence.
+
+   M17 evaluates an introduced or unknown finding exactly as it does any finding it lists,
+   with no separate reducer, so it denies until it is resolved (source `pao-semantics`). A
    finding the provider shows both in its complete report and in an inline comment is one
    finding, by the provider's native id, with both provenances in the bundle (source
-   `lineage`, row L6). A read for another head is recorded as `STALE` and adds none.
-4. **A finding stays open until disposed of on evidence.** A fix removes it from the head's
-   complete report. A dismissal is an entry in the protected debt ledger (Decision 0129): read
-   only from protected `main`, strictly matched, never self-asserted by the candidate. A clean
-   result from another provider disposes of nothing. Decision 0129 governs that match strictly:
-   only a finding with a run-bound configuration identity can meet an entry. DeepSource's
-   capability discovery is `CURRENT_NOT_RUN_BOUND`, so its findings close only by a fix
+   `lineage`, row L6). A head read for another commit is recorded as `STALE` and adds none.
+4. **A finding stays open until a verified fix or a verified false-positive disposition.** A
+   fix removes it from the head's complete report. A false-positive disposition is a closed
+   `gnostoa:disposition:v1` block in a native review that is the latest, `APPROVED` review at
+   the exact head by a required approver who is neither the change's declarer nor its author,
+   the eligibility M16 already applies (source `pao-revision`). It names the provider, the
+   observation's native id, the rule, the path, the enclosing scope hash or the line, the head
+   commit and an evidence reference, and it disposes only of the finding it names exactly. A
+   push unbinds it. A provider's own mark (`FALSE_POSITIVE`, `ACCEPTED`, `suppressed`, an
+   Ignore), a resolved thread, or a clean result from another provider disposes of nothing.
+   A disposition is no debt entry and waives nothing beyond its head: the protected ledger and
+   Decision 0129's run-bound configuration requirement are unchanged, and only a
+   configuration-bound finding can meet a ledger entry, so a DeepSource finding never does
    (source `pao-dismissal`).
 5. **Decision 0130 §3 is amended for findings only.** The readback may acquire an optional
-   provider's complete report, with its own credential, under the readback's existing bounds.
-   Its reads never become merge coverage.
+   provider's complete reports, for the head and the merge base, with its own credential, used
+   only by the protected readback workflow's job in the `analyzer-readback` environment, findings
+   only, under the readback's existing bounds (source `owner-revision`). The head-only scope
+   reader is generalized to read either commit under the same bounds, not duplicated. Its reads
+   never become merge coverage.
 
 ## Limits
 
-- **Only configuration-bound findings can be dismissed** (Decision 0129, on `main` since #480).
-  A DeepSource finding closes only by a fix. The dismissal case is shown on a configuration-bound
-  finding, the project inventory's. That narrows the owner's acceptance case, and the owner's
-  admission confirms it.
+- **A ledger entry dismisses only a configuration-bound finding** (Decision 0129). A DeepSource
+  finding closes by a fix or by a verified false-positive disposition at its head, never by a
+  ledger entry.
+- **Pre-existence of a DeepSource finding rests on an unproven configuration.** Its runs state no
+  configuration of their own, so a base and a head read could differ in configuration unseen. The
+  evidence records `configuration_provenance: unproven` beside each such classification.
 - **Report-only findings reach the reviewers through M17's listing.** They are not posted as
   inline comments.
-- **Applicability is at the changed files,** by PAO's ruling. The owner's admission confirms
-  it, or narrows it to the changed lines. With files, a touched file brings the provider's
-  existing findings in that file into review. With lines, only findings on the lines the
-  change adds or modifies come in.
+- **The base read costs a second report read per optional provider,** within the same bounds,
+  for every pull request that modifies a file the provider reports on.
 
 ## Verification
 
@@ -130,9 +158,11 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 - A missing, failed or stale DeepSource read no longer holds a merge: each declared aspect
   keeps the qualified evidence that covers it.
-- A complete DeepSource report for the exact head is read again. Its applicable findings,
-  report-only ones included, deny like any other listed finding until a fix removes them.
-- A DeepSource finding cannot be waived through the ledger while its runs state no
-  configuration of their own, so a finding the owner accepts has to be fixed instead.
-- The readback acquires DeepSource's report again, under its existing bounds and its own
-  credential, so the token comes back to the readback's workflow.
+- A complete DeepSource report for the exact head is read again, with the merge base's. What a
+  change introduces or worsens in the files it modifies denies until fixed or disposed of; a
+  finding the base already holds in an unchanged scope stays visible and does not deny.
+- A false positive needs an independent eligible approver's disposition at the exact head,
+  with its evidence. Nothing waives a finding across pull requests except Decision 0129's
+  ledger, which a DeepSource finding cannot meet.
+- `DEEPSOURCE_API_TOKEN`, already in the `analyzer-readback` environment, is used by the
+  readback's job alone, for findings only.
