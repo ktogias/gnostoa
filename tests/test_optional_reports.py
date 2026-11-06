@@ -559,7 +559,8 @@ class ClassificationEdgeTests(unittest.TestCase):
     """Decision 0132 item 3 at its edges: a base read for another commit, a severity
     outside the provider's order, a lesser one, and a finding with no scope."""
 
-    def _baseline(self, head: dict[str, Any], base: dict[str, Any]) -> str:
+    @staticmethod
+    def _baseline(head: dict[str, Any], base: dict[str, Any]) -> str:
         bundle = _with_reads(_readback("deepsource", "FULL", head), base)
         evidence, _ = _admitted(_section_c_declaration(), bundle, files=MODIFIED)
         baseline: str = _listed(evidence, head["id"])["baseline"]

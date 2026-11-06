@@ -113,8 +113,9 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
    `gnostoa:disposition:v1` block in a native review that is the latest, `APPROVED` review at
    the exact head by a required approver who is neither the change's declarer nor its author,
    the eligibility M16 already applies (source `pao-revision`). It names the provider, the
-   observation's native id, the rule, the path, the enclosing scope hash or the line, the head
-   commit and an evidence reference, and it disposes only of the finding it names exactly. A
+   observation's native id, the rule (null for a finding listed with none, as an inline
+   comment's is), the path, the enclosing scope hash or the line, the head commit and an
+   evidence reference, and it disposes only of the finding it names exactly. A
    push unbinds it. A provider's own mark (`FALSE_POSITIVE`, `ACCEPTED`, `suppressed`, an
    Ignore), a resolved thread, or a clean result from another provider disposes of nothing.
    A disposition is no debt entry and waives nothing beyond its head: the protected ledger and

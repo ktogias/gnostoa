@@ -422,7 +422,8 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
        until a false-positive disposition names it. The disposition is a block in the
        latest `APPROVED` review at the exact head by a required approver who is
        neither the declarer nor the author, one field per line, each a JSON value,
-       the locator either `scope_hash` or `line`:
+       the locator either `scope_hash` or `line`, and `rule` `null` for a finding
+       listed with none, as an inline comment's is:
        ```text
        <!-- gnostoa:disposition:v1
        provider: "deepsource"

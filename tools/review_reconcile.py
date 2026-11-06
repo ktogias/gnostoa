@@ -34,8 +34,9 @@ _MAX_CHECK_LABEL_BYTES = 128
 _THREAD_EVIDENCE_MAX_PROBE = (1 << 64) - 1
 # A false-positive disposition (Decision 0132 item 4): a closed block in a review's
 # text, one `key: <JSON value>` line per field, naming one finding at one commit by
-# its enclosing scope's hash or its line. Only an eligible approval's counts; that is
-# the merge verdict's to judge (M17, with M16's eligibility).
+# its enclosing scope's hash or its line, and its rule, or null for a finding listed
+# with none. Only an eligible approval's counts; that is the merge verdict's to judge
+# (M17, with M16's eligibility).
 DISPOSITION_MARKER = "<!-- gnostoa:disposition:v1\n"
 _DISPOSITION_END = "-->"
 _DISPOSITION_KEYS = frozenset(
@@ -64,14 +65,17 @@ def _string(value: object, label: str) -> str:
 def disposition(value: object, label: str) -> dict[str, Any]:
     """A false-positive disposition's closed fields: its provider, the finding's
     native id, rule and path, the commit, an evidence reference, and exactly one
-    locator, the enclosing scope's SHA-256 or a positive line."""
+    locator, the enclosing scope's SHA-256 or a positive line. The rule is null for
+    a finding its provider lists with none, as an inline comment's is."""
 
     record = _mapping(value, label)
     locators = _DISPOSITION_LOCATORS & set(record)
     if set(record) - locators != _DISPOSITION_KEYS or len(locators) != 1:
         raise ReconciliationInputError(f"{label} has missing or unknown fields")
-    for key in sorted(_DISPOSITION_KEYS):
+    for key in sorted(_DISPOSITION_KEYS - {"rule"}):
         _string(record[key], f"{label}.{key}")
+    if record["rule"] is not None:
+        _string(record["rule"], f"{label}.rule")
     _sha(record["commit_id"], f"{label}.commit_id")
     if "scope_hash" in record and not SHA256_DIGEST.fullmatch(
         _string(record["scope_hash"], f"{label}.scope_hash")
@@ -113,15 +117,23 @@ def parse_dispositions(text: str) -> list[dict[str, Any]]:
 
 
 def _disposition_block(block: str) -> dict[str, Any] | None:
+    # Imported here, as the readback's strict readers import it: it needs the runtime
+    # lock, which this module's other importers do not all install.
+    from .review_check import assert_document_depth, strict_json_loads
+
     fields: dict[str, Any] = {}
     for line in block.splitlines():
         key, separator, raw = line.partition(": ")
         if not separator or key in fields:
             return None
         try:
-            fields[key] = json.loads(raw)
+            # Strict and bounded: a value nested past the parser's bound is refused,
+            # never raised (Revix on #485, strict-bounded-json-parsing).
+            value = strict_json_loads(raw, label="a disposition field")
+            assert_document_depth(value, "a disposition field")
         except ValueError:
             return None
+        fields[key] = value
     try:
         return disposition(fields, "disposition")
     except ReconciliationInputError:
