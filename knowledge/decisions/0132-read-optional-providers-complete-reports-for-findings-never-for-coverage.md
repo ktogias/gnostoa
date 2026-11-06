@@ -78,7 +78,10 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
    applicable when it lies in a file the change request changes (source `pao-scope`). Its
    findings on untouched files are recorded in the bundle, but they do not enter the
    verdict. M17 evaluates an applicable one exactly as it does any finding it lists, with no
-   separate reducer, so an open one denies until it is resolved (source `pao-semantics`). A read for another head is recorded as `STALE` and adds none.
+   separate reducer, so an open one denies until it is resolved (source `pao-semantics`). A
+   finding the provider shows both in its complete report and in an inline comment is one
+   finding, by the provider's native id, with both provenances in the bundle (source
+   `lineage`, row L6). A read for another head is recorded as `STALE` and adds none.
 4. **A finding stays open until disposed of on evidence.** A fix removes it from the head's
    complete report. A dismissal is an entry in the protected debt ledger (Decision 0129): read
    only from protected `main`, strictly matched, never self-asserted by the candidate. A clean

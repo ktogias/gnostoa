@@ -123,6 +123,48 @@ class ReportOnlyFindingTests(unittest.TestCase):
         )
 
 
+class DuplicateObservationTests(unittest.TestCase):
+    """D7: one finding per provider-native identity, across the provider's complete report
+    and its inline comment, with both provenances (lineage L6)."""
+
+    def test_a_finding_in_the_report_and_in_an_inline_comment_is_listed_once(
+        self,
+    ) -> None:
+        identity = REPORT_ONLY["id"]
+        in_report = {
+            **REPORT_ONLY,
+            "native_ref": identity,
+            "provenance": [{"surface": "deepsource-graphql", "reference": "check-1"}],
+        }
+        # As the provider's inline comment carries it: its id from the comment's marker,
+        # and only the fields a comment states.
+        in_comment = {
+            "id": identity,
+            "message": REPORT_ONLY["message"],
+            "state": "open",
+            "native_ref": identity,
+            "path": REPORT_ONLY["path"],
+            "provenance": [
+                {
+                    "surface": "github-inline",
+                    "reference": "https://github.com/ktogias/gnostoa/pull/300#discussion_r1",
+                }
+            ],
+        }
+        bundle = _with_optional(_readback("deepsource", "FULL", in_report))
+        bundle["readbacks"].insert(0, _readback("deepsource", "DIFF", in_comment))
+        evidence, failed = _admitted(_section_c_declaration(), bundle)
+        self.assertIn("M17", failed)
+        self.assertEqual(
+            [identity],
+            [
+                f["id"]
+                for f in evidence["analyzer_findings"]["findings"]
+                if f["id"] == identity
+            ],
+        )
+
+
 class MandatoryCoverageTests(unittest.TestCase):
     """D2: an optional report never stands in for a required item that is missing."""
 
