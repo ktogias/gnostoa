@@ -25,6 +25,11 @@ from urllib.parse import parse_qs, urlsplit
 import yaml
 
 from tests.deepsource_fakes import GraphQLFake, check, check_page, issue, run_page
+from tests.merge_evidence_github_support import (
+    _admitted,
+    _bundle,
+    _section_c_declaration,
+)
 from tools import analyzer_deepsource, analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
@@ -1830,6 +1835,263 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             ["z.py"],
             [path for path, finding in findings.items() if "enclosing" in finding],
         )
+
+
+class AlternateOptionalProviderRunnerTests(unittest.TestCase):
+    """Item 2's pre-production falsifier (#389, owner 6681151037).
+
+    The registry is the proposed trusted binding, not a new production authority.
+    The real collector must invoke the alternate native adapter. Creating the
+    registry attribute in the test lets the current collector run to an assertion
+    failure rather than fail on an unavailable import or a new keyword argument.
+    """
+
+    @staticmethod
+    def _collect(adapter: _RestExportOptionalAdapter) -> dict[str, Any]:
+        # The common merge-evidence fixture owns pull request 300. Bind collection
+        # to that same subject, rather than rewriting a collected readback later.
+        urls = {
+            name: url.replace("/312", "/300") for name, url in _github_urls().items()
+        }
+        source = _RestExportOptionalAdapter.source.encode()
+        github = _GitHubFake(
+            {
+                urls["pr"]: {**_pr(), "base": {"sha": TIP}},
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+                **_merge_base_answers(),
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/merge_admission.py?ref={HEAD}"
+                ): {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source).decode(),
+                },
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/merge_admission.py?ref={MERGE_BASE}"
+                ): {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source).decode(),
+                },
+            }
+        )
+        with patch.object(
+            runner, "OPTIONAL_ADAPTERS", {adapter.name: adapter}, create=True
+        ):
+            return runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                requested_head=HEAD,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=_RestExportOptionalAdapter.observed_at,
+            )
+
+    @staticmethod
+    def _evaluate(
+        collected: dict[str, Any],
+        *,
+        review_body: str | None = None,
+        required_complete: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """Only the alternate stream comes from this collector fixture. Required
+        coverage comes independently from the existing complete-evidence fixture;
+        it is not granted by the optional adapter or inferred from a clean report.
+        The real evidence builder and M17 run with registration DATA patched only.
+        """
+        parsed = analyzer_readback.parse_bundle(collected)
+        bundle = _bundle() if required_complete else parsed
+        if required_complete:
+            bundle["readbacks"].extend(
+                readback
+                for readback in parsed["readbacks"]
+                if readback["provider"] == _RestExportOptionalAdapter.name
+            )
+        with (
+            patch.dict(
+                "tools.merge_evidence_github._OPTIONAL_ANALYZERS",
+                {_RestExportOptionalAdapter.name: "0132"},
+            ),
+            patch.dict(
+                "tools.merge_evidence_github._OPTIONAL_SEVERITIES",
+                {_RestExportOptionalAdapter.name: ("MINOR", "MAJOR", "CRITICAL")},
+            ),
+            patch(
+                "tools.merge_evidence_github._UNPROVEN_CONFIGURATION",
+                frozenset({_RestExportOptionalAdapter.name}),
+            ),
+        ):
+            return _admitted(_section_c_declaration(), bundle, review_body=review_body)
+
+    def test_an_alternate_native_report_reaches_the_existing_bundle(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        parsed = analyzer_readback.parse_bundle(bundle)
+        [report] = [r for r in parsed["readbacks"] if r["provider"] == adapter.name]
+        self.assertEqual("COMPLETE", report["coverage"]["status"])
+        self.assertEqual("ALT-SEC-101", report["findings"][0]["rule"])
+        self.assertEqual("MAJOR", report["findings"][0]["severity"])
+        self.assertEqual("REST_EXPORT", report["native_mode"])
+        evidence, failed = self._evaluate(bundle)
+        self.assertIn("M17", failed)
+        [finding] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("alt-observation-1", finding["id"])
+        self.assertEqual("unknown", finding["baseline"])
+
+    def test_an_alternate_outage_is_retained_as_a_readback(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=False)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        parsed = analyzer_readback.parse_bundle(bundle)
+        [report] = [r for r in parsed["readbacks"] if r["provider"] == adapter.name]
+        self.assertEqual("BOUND", parsed["subject_binding"])
+        self.assertEqual("ERROR", report["coverage"]["status"])
+        self.assertEqual([], report["findings"])
+        evidence, failed = self._evaluate(bundle)
+        self.assertEqual({"M13", "M15"}, set(failed))
+        self.assertEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+
+    def test_an_alternate_same_occurrence_reaches_m17_as_pre_existing(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True, with_baseline=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        evidence, failed = self._evaluate(bundle)
+        self.assertEqual({"M13", "M15"}, set(failed))
+        [finding] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("pre_existing", finding["baseline"])
+        self.assertEqual("unproven", finding["configuration_provenance"])
+
+    def test_a_complete_alternate_report_covers_no_missing_required_item(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        evidence, failed = self._evaluate(bundle, required_complete=False)
+        self.assertIn("M17", failed)
+        self.assertNotEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+
+    def test_an_independent_disposition_names_the_collected_alternate_finding(
+        self,
+    ) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        fields = {
+            "provider": adapter.name,
+            "native_id": "alt-observation-1",
+            "rule": "ALT-SEC-101",
+            "path": "tools/merge_admission.py",
+            "line": 2,
+            "commit_id": HEAD,
+            "evidence_ref": "https://example.invalid/alternate-disposition-evidence",
+        }
+        lines = "".join(
+            f"{key}: {json.dumps(value)}\n" for key, value in fields.items()
+        )
+        review = "<!-- gnostoa:disposition:v1\n" + lines + "-->\n"
+        _, failed = self._evaluate(bundle, review_body=review)
+        self.assertEqual({"M13", "M15"}, set(failed))
+
+
+class _RestExportOptionalAdapter:
+    """A different native wire shape, translated into the existing v1 contract.
+
+    This fixture is an architectural falsifier, not a qualified replacement for
+    a deployed security provider. No run-bound configuration claim is invented.
+    """
+
+    name = "alt-security"
+    source = "def f():\n    return 1\n"
+    observed_at = "2026-09-19T16:40:50Z"
+
+    def __init__(self, *, available: bool, with_baseline: bool = False) -> None:
+        self.available = available
+        self.with_baseline = with_baseline
+        self.calls = 0
+
+    def readback(self, **context: Any) -> list[dict[str, Any]]:
+        self.calls += 1
+        native = json.loads(
+            '{"scan_state":"finished","observations":[{"detector":"ALT-SEC-101",'
+            '"source":{"file":"tools/merge_admission.py","row":2},'
+            '"rating":2,"summary":"unsafe fixture operation"}]}'
+        )
+        findings = (
+            [
+                {
+                    "id": "alt-observation-1",
+                    "rule": observation["detector"],
+                    "path": observation["source"]["file"],
+                    "range": {"start_line": observation["source"]["row"]},
+                    "severity": {1: "MINOR", 2: "MAJOR", 3: "CRITICAL"}[
+                        observation["rating"]
+                    ],
+                    "message": observation["summary"],
+                    "enclosing": analyzer_readback.enclosing_scope(
+                        self.source, observation["source"]["row"]
+                    ),
+                }
+                for observation in native["observations"]
+            ]
+            if self.available
+            else []
+        )
+        coverage = analyzer_readback.coverage(
+            "COMPLETE" if self.available else "ERROR",
+            pages=1,
+            count=len(findings),
+            total=len(findings) if self.available else None,
+            reason=None if self.available else "SERVICE_UNAVAILABLE",
+        )
+        readbacks = [
+            analyzer_readback.build_readback(
+                provider=self.name,
+                adapter="rest-export-fixture/v1",
+                repository=context.get("repository", "ktogias/gnostoa"),
+                pull_number=context.get("pull_request", 300),
+                requested_head=context.get("head_sha", HEAD),
+                observed_head=HEAD if self.available else None,
+                analysis_id="alt-scan/fixture-1",
+                scope="FULL",
+                completeness="FULL_RUN" if self.available else "READBACK_UNAVAILABLE",
+                native_mode="REST_EXPORT",
+                observed_at=self.observed_at,
+                run_state="SUCCESS" if self.available else "FAILURE",
+                coverage_record=coverage,
+                findings=findings,
+                native={"report_shape": "rest-export/v1"},
+            )
+        ]
+        if self.with_baseline:
+            readbacks.append(
+                analyzer_readback.parse_readback(
+                    {
+                        **readbacks[0],
+                        "scope": "BASE",
+                        "requested_head": MERGE_BASE,
+                        "observed_head": MERGE_BASE,
+                        "analysis_id": "alt-scan/baseline-1",
+                    }
+                )
+            )
+        return readbacks
 
 
 class DeepSourceOptionalReadTests(unittest.TestCase):

@@ -431,8 +431,9 @@ class ExactOccurrenceTests(unittest.TestCase):
     base occurrence accounts only for the head occurrence at its own place in the
     byte-identical scope, however edits above the scope move the absolute lines."""
 
+    @staticmethod
     def _baseline(
-        self, head: dict[str, Any], base: dict[str, Any]
+        head: dict[str, Any], base: dict[str, Any]
     ) -> tuple[str, dict[str, list[str]]]:
         bundle = _with_reads(_readback("deepsource", "FULL", head), _base(base))
         evidence, failed = _admitted(_section_c_declaration(), bundle, files=MODIFIED)
@@ -518,24 +519,32 @@ class FalsePositiveDispositionTests(unittest.TestCase):
         )
         self.assertEqual(BASELINE, set(failed))
 
-    def test_a_disposition_by_the_author_is_rejected(self) -> None:
+    def test_a_disposition_from_outside_the_required_approvers_is_rejected(
+        self,
+    ) -> None:
+        """Claude on #485: only a required approver's block can dispose, so an
+        approval at the head naming the finding exactly, by the author or by another
+        reviewer, disposes of nothing. The author's exclusion as an approver is
+        `DispositionEdgeTests`'."""
         finding = _observed("fp-1", 300, SCOPE)
-        authors = {
-            "id": 11,
-            "user": {"login": AUTHOR},
-            "state": "COMMENTED",
-            "submitted_at": "2026-09-19T16:40:03Z",
-            "commit_id": HEAD,
-            "html_url": "https://example.invalid/review/11",
-            "body": _disposition(finding),
-        }
-        _, failed = _admitted(
-            _section_c_declaration(),
-            _with_reads(_readback("deepsource", "FULL", finding)),
-            files=MODIFIED,
-            extra_reviews=(authors,),
-        )
-        self.assertIn("M17", failed)
+        for login in (AUTHOR, "another-reviewer"):
+            with self.subTest(login=login):
+                review = {
+                    "id": 11,
+                    "user": {"login": login},
+                    "state": "APPROVED",
+                    "submitted_at": "2026-09-19T16:40:03Z",
+                    "commit_id": HEAD,
+                    "html_url": "https://example.invalid/review/11",
+                    "body": _disposition(finding),
+                }
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    _with_reads(_readback("deepsource", "FULL", finding)),
+                    files=MODIFIED,
+                    extra_reviews=(review,),
+                )
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
 
     def test_a_disposition_for_another_commit_is_unbound(self) -> None:
         finding = _observed("fp-1", 300, SCOPE)

@@ -23,6 +23,7 @@ from .analyzer_readback import (
     coverage,
     deduplicate_findings,
     normalize_repository,
+    parse_readback,
 )
 from .review_model import canonical_digest, canonical_json
 
@@ -2049,3 +2050,182 @@ MAX_RESPONSE_BYTES = _MAX_RESPONSE_BYTES
 DeepSourceRedirectHandler = _DeepSourceRedirectHandler
 DiscoveryIncomplete = _DiscoveryIncomplete
 validate_api_url = _validate_api_url
+
+
+def _deepsource_status_projection(
+    statuses: list[Mapping[str, Any]],
+    checks: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    projected: list[Mapping[str, Any]] = [_status_entry(item) for item in statuses]
+    for check in checks:
+        entry = _check_run_entry(check)
+        if entry is not None:
+            projected.append(entry)
+    return projected
+
+
+def _status_entry(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A commit status as DeepSource's adapter reads it, with its creator."""
+    creator = item.get("creator")
+    creator_map = creator if isinstance(creator, Mapping) else {}
+    return {
+        "context": item.get("context"),
+        "state": item.get("state"),
+        "target_url": item.get("target_url"),
+        "source_kind": "commit_status",
+        "creator_login": creator_map.get("login"),
+        "creator_type": creator_map.get("type"),
+    }
+
+
+def _check_run_entry(check: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """A DeepSource check run as its adapter reads it, or None for any other run and
+    one that names no run page."""
+    name = check.get("name")
+    details = check.get("details_url")
+    if not isinstance(name, str) or not name.startswith("DeepSource:"):
+        return None
+    if not isinstance(details, str) or not details:
+        return None
+    conclusion = check.get("conclusion")
+    status = check.get("status")
+    state = conclusion if isinstance(conclusion, str) and conclusion else status
+    app = check.get("app")
+    app_map = app if isinstance(app, Mapping) else {}
+    return {
+        "context": name,
+        "state": state or "pending",
+        "target_url": details,
+        "source_kind": "check_run",
+        "app_slug": app_map.get("slug"),
+    }
+
+
+def _deepsource_comments(
+    comments: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    result: list[Mapping[str, Any]] = []
+    for comment in comments:
+        result.append(
+            {
+                "body": comment.get("body"),
+                "path": comment.get("path"),
+                "line": comment.get("line") or comment.get("original_line"),
+                "commit_id": comment.get("commit_id"),
+                "original_commit_id": comment.get("original_commit_id"),
+                "url": comment.get("html_url") or comment.get("url"),
+                "author_login": (
+                    comment.get("user", {}).get("login")
+                    if isinstance(comment.get("user"), Mapping)
+                    else None
+                ),
+                "author_type": (
+                    comment.get("user", {}).get("type")
+                    if isinstance(comment.get("user"), Mapping)
+                    else None
+                ),
+            }
+        )
+    return result
+
+
+class _Deadlined:
+    """An optional provider's reader under one overall deadline, on the monotonic
+    clock: past it, a request is refused as the provider's own read failure, and a
+    request in flight is bounded by it, which the client applies (cubic on #485)."""
+
+    def __init__(self, reader: DeadlineGraphQLReader, deadline: float) -> None:
+        self._reader = reader
+        self._deadline = deadline
+
+    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+        if time.monotonic() >= self._deadline:
+            raise ProviderReadFailure(
+                "DEADLINE", "DeepSource's optional reads passed their deadline"
+            )
+        return self._reader.graphql(query, variables, deadline=self._deadline)
+
+
+def _deepsource_full(
+    deepsource: GraphQLReader,
+    run_uid: object,
+    common: Mapping[str, Any],
+) -> dict[str, Any]:
+    """DeepSource's full report for the commit `common` requests, through its one
+    associated run; with no single run, an ambiguous read of nothing."""
+
+    if isinstance(run_uid, str):
+        return read_full_run(deepsource, run_uid=run_uid, **common)
+    return build_readback(
+        provider="deepsource",
+        adapter="deepsource-graphql/v1",
+        **common,
+        observed_head=None,
+        analysis_id=None,
+        scope="FULL",
+        completeness="AMBIGUOUS",
+        native_mode="FULL_RUN",
+        run_state="UNKNOWN",
+        coverage_record=coverage(
+            "INCOMPLETE", pages=0, count=0, reason="RUN_ASSOCIATION_AMBIGUOUS"
+        ),
+        findings=[],
+    )
+
+
+class DeepSourceAdapter:
+    """The optional native acquisition adapter, emitting existing v1 readbacks.
+    GitHub transport and scope budgets are inherited through the acquisition port;
+    run association, native projections and GraphQL remain owned here.
+    """
+
+    name = "deepsource"
+
+    def __init__(self, reader: DeadlineGraphQLReader) -> None:
+        self._reader = reader
+
+    def readback(
+        self,
+        *,
+        repository: str,
+        pull_request: int,
+        head_sha: str,
+        observed_at: str,
+        deadline: float,
+        native_context: Mapping[str, Any],
+        base_sha: str | None = None,
+        scope_reader: Any = None,
+    ) -> list[dict[str, Any]]:
+        common: dict[str, Any] = {
+            "repository": repository,
+            "pull_number": pull_request,
+            "requested_head": head_sha,
+            "observed_at": observed_at,
+        }
+        statuses, checks, comments = native_context["projection"]
+        bounded = _Deadlined(self._reader, deadline)
+        diff_local = diff_local_from_github(
+            **common,
+            observed_head=head_sha,
+            statuses=_deepsource_status_projection(statuses, checks),
+            comments=_deepsource_comments(comments),
+        )
+        readbacks = [
+            _deepsource_full(bounded, diff_local.get("analysis_id"), common),
+            diff_local,
+        ]
+        try:
+            _, merge_base = native_context["merge_base"](deadline=deadline)
+            base_statuses = native_context["statuses"](merge_base, deadline=deadline)
+            base_checks = native_context["check_runs"](merge_base, deadline=deadline)
+        except native_context["read_error"]:
+            return readbacks
+        base = {**common, "requested_head": merge_base}
+        association = diff_local_from_github(
+            **base,
+            observed_head=merge_base,
+            statuses=_deepsource_status_projection(base_statuses, base_checks),
+            comments=[],
+        )
+        full = _deepsource_full(bounded, association.get("analysis_id"), base)
+        return [*readbacks, parse_readback({**full, "scope": "BASE"})]

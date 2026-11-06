@@ -403,83 +403,6 @@ def _review_comments(
     )
 
 
-def _deepsource_status_projection(
-    statuses: list[Mapping[str, Any]],
-    checks: list[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    projected: list[Mapping[str, Any]] = [_status_entry(item) for item in statuses]
-    for check in checks:
-        entry = _check_run_entry(check)
-        if entry is not None:
-            projected.append(entry)
-    return projected
-
-
-def _status_entry(item: Mapping[str, Any]) -> Mapping[str, Any]:
-    """A commit status as DeepSource's adapter reads it, with its creator."""
-    creator = item.get("creator")
-    creator_map = creator if isinstance(creator, Mapping) else {}
-    return {
-        "context": item.get("context"),
-        "state": item.get("state"),
-        "target_url": item.get("target_url"),
-        "source_kind": "commit_status",
-        "creator_login": creator_map.get("login"),
-        "creator_type": creator_map.get("type"),
-    }
-
-
-def _check_run_entry(check: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """A DeepSource check run as its adapter reads it, or None for any other run and
-    one that names no run page."""
-    name = check.get("name")
-    details = check.get("details_url")
-    if not isinstance(name, str) or not name.startswith("DeepSource:"):
-        return None
-    if not isinstance(details, str) or not details:
-        return None
-    conclusion = check.get("conclusion")
-    status = check.get("status")
-    state = conclusion if isinstance(conclusion, str) and conclusion else status
-    app = check.get("app")
-    app_map = app if isinstance(app, Mapping) else {}
-    return {
-        "context": name,
-        "state": state or "pending",
-        "target_url": details,
-        "source_kind": "check_run",
-        "app_slug": app_map.get("slug"),
-    }
-
-
-def _deepsource_comments(
-    comments: list[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    result: list[Mapping[str, Any]] = []
-    for comment in comments:
-        result.append(
-            {
-                "body": comment.get("body"),
-                "path": comment.get("path"),
-                "line": comment.get("line") or comment.get("original_line"),
-                "commit_id": comment.get("commit_id"),
-                "original_commit_id": comment.get("original_commit_id"),
-                "url": comment.get("html_url") or comment.get("url"),
-                "author_login": (
-                    comment.get("user", {}).get("login")
-                    if isinstance(comment.get("user"), Mapping)
-                    else None
-                ),
-                "author_type": (
-                    comment.get("user", {}).get("type")
-                    if isinstance(comment.get("user"), Mapping)
-                    else None
-                ),
-            }
-        )
-    return result
-
-
 def _unavailable_readback(
     *,
     provider: str,
@@ -678,7 +601,8 @@ def collect_bundle(
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
-    deepsource: analyzer_deepsource.DeadlineGraphQLReader | None = None,
+    optional_adapters: Mapping[str, OptionalReportAdapter] | None = None,
+    **optional_clients: Any,
 ) -> dict[str, Any]:
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
@@ -699,7 +623,7 @@ def collect_bundle(
         }
 
     # The bundle's GitHub projection of the subject, as its v1 contract states it,
-    # which DeepSource's optional DIFF read reads (Decision 0132).
+    # available to registered optional adapters (Decision 0132).
     statuses = _statuses(github, repository, requested)
     checks = _check_runs(github, repository, requested)
     comments = _review_comments(github, repository, pull_number)
@@ -765,15 +689,12 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        # The declared items' scopes first, under the shared bound; then DeepSource's
-        # optional reads, whose own scope reads are under their deadline (Decision 0132).
+        # Required scopes spend from the shared bounds before optional providers.
         "readbacks": [
             *_with_enclosing(
                 [
                     codacy_readback,
                     sonarcloud_readback,
-                    # The project's own inventory, when the workflow gives it, bound to
-                    # its job's outputs (#389 A0-MP1 slice 3). The workflow always does.
                     *(
                         []
                         if inventory is None
@@ -796,57 +717,75 @@ def collect_bundle(
                 functools.partial(_commit_source, github, repository, budget),
                 readers,
             ),
-            # Without its credential nothing is read from DeepSource.
-            *(
-                []
-                if deepsource is None
-                else _deepsource_readbacks(
-                    github,
-                    deepsource,
-                    pull,
-                    (statuses, checks, comments),
-                    {
-                        "repository": repository,
-                        "pull_number": pull_number,
-                        "requested_head": requested,
-                        "observed_at": observed,
-                    },
-                    (budget, readers),
-                )
+            *_optional_readbacks(
+                _registered_adapters(optional_adapters, optional_clients),
+                github,
+                pull,
+                (statuses, checks, comments),
+                {
+                    "repository": repository,
+                    "pull_number": pull_number,
+                    "requested_head": requested,
+                    "observed_at": observed,
+                },
+                (budget, readers),
             ),
         ],
     }
 
 
-# DeepSource's optional reads, the head's report and the merge base's, share one overall
-# deadline well inside the readback job's 15 minutes. No request starts after it, so a slow
-# provider ends its read as an ERROR, which changes nothing, never the job, which would
-# hold every merge (CodeAnt on #485).
+# Registered optional reads share one deadline; native clients enforce it.
 _OPTIONAL_DEADLINE_SECONDS = 240.0
 
 
-class _Deadlined:
-    """An optional provider's reader under one overall deadline, on the monotonic
-    clock: past it, a request is refused as the provider's own read failure, and a
-    request in flight is bounded by it, which the client applies (cubic on #485)."""
+class OptionalReportAdapter(Protocol):
+    name: str
 
-    def __init__(
-        self, reader: analyzer_deepsource.DeadlineGraphQLReader, deadline: float
-    ) -> None:
-        self._reader = reader
-        self._deadline = deadline
-
-    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
-        if time.monotonic() >= self._deadline:
-            raise analyzer_deepsource.ProviderReadFailure(
-                "DEADLINE", "DeepSource's optional reads passed their deadline"
-            )
-        return self._reader.graphql(query, variables, deadline=self._deadline)
+    def readback(
+        self,
+        *,
+        repository: str,
+        pull_request: int,
+        head_sha: str,
+        observed_at: str,
+        deadline: float,
+        native_context: Mapping[str, Any],
+        base_sha: str | None = None,
+        scope_reader: Any = None,
+    ) -> list[dict[str, Any]]: ...
 
 
-def _deepsource_readbacks(
+# Runtime bindings are trusted source, never supplied by a candidate document.
+OPTIONAL_ADAPTERS: dict[str, OptionalReportAdapter] = {}
+_OPTIONAL_CLIENT_FACTORIES: dict[str, Callable[[Any], OptionalReportAdapter]] = {
+    "deepsource": analyzer_deepsource.DeepSourceAdapter,
+}
+
+
+def _registered_adapters(
+    adapters: Mapping[str, OptionalReportAdapter] | None,
+    clients: Mapping[str, Any],
+) -> dict[str, OptionalReportAdapter]:
+    """Compose explicit bindings and the existing client-keyword calling route.
+    Native client selection stays here, outside the common collector.
+    """
+    registered = dict(OPTIONAL_ADAPTERS if adapters is None else adapters)
+    for name, client in clients.items():
+        factory = _OPTIONAL_CLIENT_FACTORIES.get(name)
+        if factory is None:
+            raise TypeError("unknown optional provider client")
+        if client is not None:
+            if name in registered:
+                raise RunnerError("optional provider has two runtime bindings")
+            registered[name] = factory(client)
+    if any(adapter.name != name for name, adapter in registered.items()):
+        raise RunnerError("optional provider binding is inconsistent")
+    return registered
+
+
+def _optional_readbacks(
+    adapters: Mapping[str, OptionalReportAdapter],
     github: GitHubReader,
-    deepsource: analyzer_deepsource.DeadlineGraphQLReader,
     pull: Mapping[str, Any],
     projection: tuple[
         list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
@@ -854,92 +793,42 @@ def _deepsource_readbacks(
     common: Mapping[str, Any],
     scopes: tuple[_ScopeBudget, _ScopeReaders],
 ) -> list[dict[str, Any]]:
-    """DeepSource's optional reads (Decision 0132), findings only and never coverage:
-    the head's report and inline comments, and the report for the Pull Request's
-    merge base, as its `BASE` read, through the run the merge base's own DeepSource
-    check names. A merge base GitHub does not give is not read, so the head's
-    findings stay unknown. Every read, its findings' scope reads included, is under
-    one deadline, which github_rest and DeepSource's client apply (PAO on #485)."""
-
+    """Invoke registered native adapters, retaining canonical records and shared
+    scope bounds. Neither provider selection nor native translation lives here.
+    """
+    if not adapters:
+        return []
     deadline = time.monotonic() + _OPTIONAL_DEADLINE_SECONDS
     budget, readers = scopes
-    return _with_enclosing(
-        _deepsource_reads(github, deepsource, pull, projection, common, deadline),
-        functools.partial(
-            _commit_source, github, common["repository"], budget, deadline=deadline
-        ),
-        readers,
-    )
-
-
-def _deepsource_reads(
-    github: GitHubReader,
-    deepsource: analyzer_deepsource.DeadlineGraphQLReader,
-    pull: Mapping[str, Any],
-    projection: tuple[
-        list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
-    ],
-    common: Mapping[str, Any],
-    deadline: float,
-) -> list[dict[str, Any]]:
-    """DeepSource's head and merge-base reads, before their findings' scopes."""
-
-    statuses, checks, comments = projection
-    bounded = _Deadlined(deepsource, deadline)
-    diff_local = analyzer_deepsource.diff_local_from_github(
-        **common,
-        observed_head=common["requested_head"],
-        statuses=_deepsource_status_projection(statuses, checks),
-        comments=_deepsource_comments(comments),
-    )
-    readbacks = [
-        _deepsource_full(bounded, diff_local.get("analysis_id"), common),
-        diff_local,
-    ]
     repository = common["repository"]
-    try:
-        _, merge_base = _merge_base(github, repository, pull, deadline=deadline)
-        base_statuses = _statuses(github, repository, merge_base, deadline=deadline)
-        base_checks = _check_runs(github, repository, merge_base, deadline=deadline)
-    except RunnerError:
-        return readbacks
-    base = {**common, "requested_head": merge_base}
-    # The adapter's own association of a commit with one run, from its statuses.
-    association = analyzer_deepsource.diff_local_from_github(
-        **base,
-        observed_head=merge_base,
-        statuses=_deepsource_status_projection(base_statuses, base_checks),
-        comments=[],
+    source_of = functools.partial(
+        _commit_source, github, repository, budget, deadline=deadline
     )
-    full = _deepsource_full(bounded, association.get("analysis_id"), base)
-    return [*readbacks, parse_readback({**full, "scope": "BASE"})]
-
-
-def _deepsource_full(
-    deepsource: analyzer_deepsource.GraphQLReader,
-    run_uid: object,
-    common: Mapping[str, Any],
-) -> dict[str, Any]:
-    """DeepSource's full report for the commit `common` requests, through its one
-    associated run; with no single run, an ambiguous read of nothing."""
-
-    if isinstance(run_uid, str):
-        return analyzer_deepsource.read_full_run(deepsource, run_uid=run_uid, **common)
-    return build_readback(
-        provider="deepsource",
-        adapter="deepsource-graphql/v1",
-        **common,
-        observed_head=None,
-        analysis_id=None,
-        scope="FULL",
-        completeness="AMBIGUOUS",
-        native_mode="FULL_RUN",
-        run_state="UNKNOWN",
-        coverage_record=coverage(
-            "INCOMPLETE", pages=0, count=0, reason="RUN_ASSOCIATION_AMBIGUOUS"
-        ),
-        findings=[],
-    )
+    native_context = {
+        "projection": projection,
+        "merge_base": functools.partial(_merge_base, github, repository, pull),
+        "statuses": functools.partial(_statuses, github, repository),
+        "check_runs": functools.partial(_check_runs, github, repository),
+        "read_error": RunnerError,
+    }
+    result: list[dict[str, Any]] = []
+    for name, adapter in adapters.items():
+        records = [
+            parse_readback(record)
+            for record in adapter.readback(
+                repository=repository,
+                pull_request=common["pull_number"],
+                head_sha=common["requested_head"],
+                observed_at=common["observed_at"],
+                deadline=deadline,
+                native_context=native_context,
+                scope_reader=source_of,
+            )
+        ]
+        if any(record["provider"] != name for record in records):
+            raise RunnerError("optional adapter returned another provider's record")
+        result.extend(_with_enclosing(records, source_of, readers))
+    return result
 
 
 def _assert_secret_free(serialized: str, secrets: list[str]) -> None:
