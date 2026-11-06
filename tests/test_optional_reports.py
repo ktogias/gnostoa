@@ -35,7 +35,7 @@ from tests.merge_evidence_github_support import (
     _section_c_declaration,
     _snapshot,
 )
-from tools import analyzer_readback, merge_admission
+from tools import analyzer_readback, merge_admission, merge_evidence_github
 from tools.assurance_completeness import AssuranceCompletenessError, parse_declaration
 from tools.review_reconcile import MAX_DISPOSITIONS, parse_dispositions
 
@@ -660,6 +660,15 @@ class DispositionEdgeTests(unittest.TestCase):
                     "body": _disposition(finding),
                 },
             ),
+            (
+                "in the approver's earlier review, before their approval",
+                None,
+                {
+                    **later,
+                    "submitted_at": "2026-09-19T16:39:00Z",
+                    "body": _disposition(finding),
+                },
+            ),
         ):
             with self.subTest(name):
                 _, failed = _admitted(
@@ -790,7 +799,7 @@ class DispositionBlockTests(unittest.TestCase):
             ("a line of 0", block.replace(scope, "line: 0\n")),
             ("a line as text", block.replace(scope, 'line: "300"\n')),
             ("an empty rule", block.replace(json.dumps(FINDING["rule"]), '""')),
-            ("an unterminated block", block.replace("-->", "")),
+            ("an unterminated block", block.replace("-->\n", "")),
         ):
             with self.subTest(name):
                 self.assertEqual([], parse_dispositions(text))
@@ -865,6 +874,15 @@ class OptionalEvidenceContractTests(unittest.TestCase):
             AssuranceCompletenessError, "has missing or unknown fields"
         ):
             _failed(evidence)
+
+    def test_a_repeated_optional_read_is_refused(self) -> None:
+        bundle = _with_optional(_readback("deepsource", "FULL"))
+        bundle["readbacks"].insert(0, _readback("deepsource", "FULL"))
+        with self.assertRaisesRegex(
+            merge_evidence_github.MergeEvidenceError,
+            "repeats the readback \\('deepsource', 'FULL'\\)",
+        ):
+            _evidence(analyzer=bundle)
 
     def test_optional_reads_that_are_no_list_are_refused(self) -> None:
         evidence = self._evidence()
