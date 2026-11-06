@@ -853,6 +853,15 @@ class DispositionBlockTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual([], parse_dispositions(text))
 
+    def test_an_unterminated_block_leaves_the_next_one_readable(self) -> None:
+        """cubic on #485: an unterminated block ends where the next one starts, so
+        only it is left out."""
+        block = _disposition(self._FINDING)
+        self.assertEqual(
+            parse_dispositions(block),
+            parse_dispositions(block.replace("-->\n", "") + block),
+        )
+
     def test_a_block_written_in_github_s_form_is_read(self) -> None:
         block = _disposition(self._FINDING)
         self.assertEqual(
@@ -889,6 +898,12 @@ class OptionalEvidenceContractTests(unittest.TestCase):
             evidence["analyzer_optional"][0].update(changes)
             return evidence
 
+        def without(key: str) -> dict[str, Any]:
+            evidence = self._evidence()
+            [entry] = evidence["analyzer_findings"]["findings"]
+            del entry[key]
+            return evidence
+
         def review(dispositions: Any) -> dict[str, Any]:
             evidence = self._evidence()
             evidence["reviews"][0]["dispositions"] = dispositions
@@ -899,6 +914,14 @@ class OptionalEvidenceContractTests(unittest.TestCase):
             ("an unknown baseline", finding(baseline="waived")),
             ("an unknown provenance", finding(configuration_provenance="proven")),
             ("a provider that is no text", finding(provider=1)),
+            # cubic on #485: a class against the merge base is an optional
+            # provider's finding's alone, and a provenance a pre-existing one's.
+            ("a baseline without its provider", without("provider")),
+            ("a provider without its baseline", without("baseline")),
+            (
+                "a provenance on a finding that is not pre-existing",
+                finding(configuration_provenance="unproven"),
+            ),
             ("an unknown optional coverage", read(coverage="CLEAN")),
             ("an unknown optional field", read(extra="x")),
             ("dispositions that are no array", review({})),

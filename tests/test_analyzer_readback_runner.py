@@ -1986,6 +1986,60 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             ],
         )
 
+    def test_the_optional_reads_stop_at_their_overall_deadline(self) -> None:
+        """CodeAnt on #485: a slow provider's reads end at one overall deadline, well
+        inside the readback job's limit, as an ERROR read; no request starts after
+        it. Each request here takes 100 s of a fake clock."""
+        now = [0.0]
+        cursors = [None, *(str(n) for n in range(1, analyzer_deepsource.MAX_PAGES + 5))]
+
+        class Slow(GraphQLFake):
+            def graphql(
+                self, query: str, variables: Mapping[str, Any]
+            ) -> Mapping[str, Any]:
+                now[0] += 100.0
+                return super().graphql(query, variables)
+
+        reader = Slow(
+            {
+                ("run", None): run_page(),
+                **{
+                    ("check-python", cursor): check_page(
+                        [issue(f"i{n}", n + 1)],
+                        total=1000,
+                        has_next=True,
+                        cursor=str(n + 1),
+                    )
+                    for n, cursor in enumerate(cursors)
+                },
+            }
+        )
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        github = self._github(
+            **{f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError("x")}
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(
+            ["ERROR"],
+            [
+                r["coverage"]["status"]
+                for r in bundle["readbacks"]
+                if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+            ],
+        )
+        self.assertLess(len(reader.calls), 10)
+
     def test_only_the_readback_step_receives_the_optional_provider_s_token(
         self,
     ) -> None:
