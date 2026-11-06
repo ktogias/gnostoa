@@ -126,7 +126,11 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 5. **Decision 0130 §3 is amended for findings only.** The readback may acquire an optional
    provider's complete reports, for the head and the merge base, with its own credential, used
    only by the protected readback workflow's job in the `analyzer-readback` environment, findings
-   only, under the readback's existing bounds (source `owner-revision`). The head-only scope
+   only, under the readback's existing bounds (source `owner-revision`). Its reads, the merge
+   base's GitHub reads and its findings' scope reads included, share one overall deadline well
+   inside the readback job's limit, which DeepSource's client and `tools/github_rest.py` apply;
+   past it a read ends as an `ERROR`, which changes nothing, and a finding left without a scope
+   stays `unknown`. The declared items' reads are given no deadline. The head-only scope
    reader is generalized to read either commit under the same bounds, not duplicated. Its reads
    never become merge coverage.
 

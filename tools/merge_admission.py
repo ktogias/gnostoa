@@ -640,12 +640,13 @@ def _honoured(
         ):
             continue
         newest = max(r["second"] for r in own)
+        tied = [review["dispositions"] for review in own if review["second"] == newest]
+        # Within one second no review is later than another, so a disposition counts
+        # only when every review there carries it (Claude on #485).
         honoured.extend(
             {**found, "approver": approver}
-            for review in own
-            if review["second"] == newest
-            for found in review["dispositions"]
-            if found["commit_id"] == head
+            for found in tied[0]
+            if found["commit_id"] == head and all(found in other for other in tied[1:])
         )
     return honoured
 

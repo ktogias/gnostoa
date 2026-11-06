@@ -55,7 +55,9 @@ class RunnerError(RuntimeError):
 
 
 class GitHubReader(Protocol):
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]: ...
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]: ...
 
 
 def _now() -> str:
@@ -70,6 +72,8 @@ def _runner_message(error: github_rest.GitHubError) -> str:
         return "GitHub API returned invalid JSON"
     if isinstance(error, github_rest.OutsideOrigin):
         return "GitHub API URL is outside the admitted origin"
+    if isinstance(error, github_rest.DeadlineReached):
+        return "GitHub API read deadline reached"
     if error.status is not None:
         return f"GitHub API HTTP {error.status}"
     if str(error) == "GitHub request failed validation":
@@ -142,10 +146,16 @@ class GitHubReadClient(github_rest.GitHubRestClient):
         """Return a client for the job's token; this runner takes no other options."""
         return cls(os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", ""))
 
-    def get(self, url: str) -> tuple[Any, dict[str, str]]:
-        """Return one GET's document and headers, failing as this runner's error."""
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, dict[str, str]]:
+        """Return one GET's document and headers, failing as this runner's error.
+        With a deadline, an optional read's, the shared client bounds the request by
+        it and refuses one past it (PAO on #485)."""
         try:
-            return super().get(url)
+            if deadline is None:
+                return super().get(url)
+            return super().read_page(url, deadline=deadline)
         except github_rest.GitHubError as error:
             raise RunnerError(_runner_message(error)) from error
 
@@ -184,11 +194,21 @@ def _next_url(headers: Mapping[str, str]) -> str | None:
     return _validate_github_url(match.group(1))
 
 
+def _get(
+    client: GitHubReader, url: str, deadline: float | None
+) -> tuple[Any, Mapping[str, str]]:
+    """One read: an optional one's with its deadline, a declared item's as before."""
+    if deadline is None:
+        return client.get(url)
+    return client.get(url, deadline=deadline)
+
+
 def _collect_pages(
     client: GitHubReader,
     first_url: str,
     *,
     extract: Any,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     url: str | None = first_url
     items: list[Mapping[str, Any]] = []
@@ -196,7 +216,7 @@ def _collect_pages(
     while url is not None:
         if pages >= _MAX_PAGES:
             raise RunnerError("GitHub pagination exceeded bounded page count")
-        payload, headers = client.get(url)
+        payload, headers = _get(client, url, deadline)
         raw_items = extract(payload)
         if not isinstance(raw_items, list):
             raise RunnerError("GitHub paginated payload is malformed")
@@ -239,22 +259,32 @@ def _pull_head(client: GitHubReader, repository: str, pull_number: int) -> str:
 
 
 def _statuses(
-    client: GitHubReader, repository: str, head: str
+    client: GitHubReader,
+    repository: str,
+    head: str,
+    *,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     return _collect_pages(
         client,
         f"{_API_ROOT}/repos/{repository}/commits/{head}/statuses?per_page=100",
         extract=_list_payload,
+        deadline=deadline,
     )
 
 
 def _check_runs(
-    client: GitHubReader, repository: str, head: str
+    client: GitHubReader,
+    repository: str,
+    head: str,
+    *,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     return _collect_pages(
         client,
         f"{_API_ROOT}/repos/{repository}/commits/{head}/check-runs?per_page=100",
         extract=_check_runs_payload,
+        deadline=deadline,
     )
 
 
@@ -535,11 +565,17 @@ class _ScopeBudget:
 
 
 def _commit_source(
-    github: GitHubReader, repository: str, budget: _ScopeBudget, commit: str, path: str
+    github: GitHubReader,
+    repository: str,
+    budget: _ScopeBudget,
+    commit: str,
+    path: str,
+    *,
+    deadline: float | None = None,
 ) -> str | None:
     """One file's text at an exact commit, the head's or the merge base's (Decision
     0132), as GitHub's contents API returns it: a file, in base64, within the bounds
-    and UTF-8. Anything else is None."""
+    and UTF-8. Anything else is None. An optional read's is under its deadline."""
 
     if not budget.request():
         return None
@@ -548,7 +584,7 @@ def _commit_source(
         f"?ref={commit}"
     )
     try:
-        document, _ = github.get(url)
+        document, _ = _get(github, url, deadline)
     except RunnerError:
         return None
     if (
@@ -607,14 +643,15 @@ def _finding_scope(
 
 
 def _with_enclosing(
-    readbacks: list[dict[str, Any]], source_of: Callable[[str, str], str | None]
+    readbacks: list[dict[str, Any]],
+    source_of: Callable[[str, str], str | None],
+    readers: _ScopeReaders,
 ) -> list[dict[str, Any]]:
     """Each readback, its Python findings given their enclosing scopes at the commit
     it read, the head or the merge base: each file is read and parsed once per
-    commit, and a readback is rebuilt through its own contract only when one of its
-    findings gained a scope."""
+    commit, across the calls that share `readers`, and a readback is rebuilt through
+    its own contract only when one of its findings gained a scope."""
 
-    readers: _ScopeReaders = {}
     result = []
     for readback in readbacks:
         findings, changed = [], False
@@ -713,6 +750,8 @@ def collect_bundle(
             "readbacks": [],
         }
 
+    budget = _ScopeBudget()
+    readers: _ScopeReaders = {}
     return {
         "schema": BUNDLE_SCHEMA,
         "repository": repository,
@@ -726,52 +765,56 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": _with_enclosing(
-            [
-                codacy_readback,
-                sonarcloud_readback,
-                # The project's own inventory, when the workflow gives it, bound to its
-                # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
-                *(
-                    []
-                    if inventory is None
-                    else inventory_bundle_readbacks(
-                        inventory.document,
-                        expected_sha256=inventory.expected_sha256,
-                        result=inventory.result,
-                        attempt=inventory.attempt,
-                        run_attempt=inventory.run_attempt,
-                        repository=repository,
-                        pull_number=pull_number,
-                        requested_head=requested,
-                        tree=functools.partial(
-                            _commit_tree, github, repository, requested
-                        ),
-                        observed_at=observed,
-                    )
-                ),
-                # DeepSource's optional reads, last, so the declared items' scopes are
-                # read first under the shared bound (Decision 0132). Without its
-                # credential nothing is read from it.
-                *(
-                    []
-                    if deepsource is None
-                    else _deepsource_readbacks(
-                        github,
-                        deepsource,
-                        pull,
-                        (statuses, checks, comments),
-                        {
-                            "repository": repository,
-                            "pull_number": pull_number,
-                            "requested_head": requested,
-                            "observed_at": observed,
-                        },
-                    )
-                ),
-            ],
-            functools.partial(_commit_source, github, repository, _ScopeBudget()),
-        ),
+        # The declared items' scopes first, under the shared bound; then DeepSource's
+        # optional reads, whose own scope reads are under their deadline (Decision 0132).
+        "readbacks": [
+            *_with_enclosing(
+                [
+                    codacy_readback,
+                    sonarcloud_readback,
+                    # The project's own inventory, when the workflow gives it, bound to
+                    # its job's outputs (#389 A0-MP1 slice 3). The workflow always does.
+                    *(
+                        []
+                        if inventory is None
+                        else inventory_bundle_readbacks(
+                            inventory.document,
+                            expected_sha256=inventory.expected_sha256,
+                            result=inventory.result,
+                            attempt=inventory.attempt,
+                            run_attempt=inventory.run_attempt,
+                            repository=repository,
+                            pull_number=pull_number,
+                            requested_head=requested,
+                            tree=functools.partial(
+                                _commit_tree, github, repository, requested
+                            ),
+                            observed_at=observed,
+                        )
+                    ),
+                ],
+                functools.partial(_commit_source, github, repository, budget),
+                readers,
+            ),
+            # Without its credential nothing is read from DeepSource.
+            *(
+                []
+                if deepsource is None
+                else _deepsource_readbacks(
+                    github,
+                    deepsource,
+                    pull,
+                    (statuses, checks, comments),
+                    {
+                        "repository": repository,
+                        "pull_number": pull_number,
+                        "requested_head": requested,
+                        "observed_at": observed,
+                    },
+                    (budget, readers),
+                )
+            ),
+        ],
     }
 
 
@@ -801,21 +844,6 @@ class _Deadlined:
         return self._reader.graphql(query, variables, deadline=self._deadline)
 
 
-class _DeadlinedGitHub:
-    """GitHub's reader for the merge base's reads, which are DeepSource's optional
-    reads too, under their deadline: past it, a request is refused as a read that
-    failed, so the head's reads stay (cubic on #485)."""
-
-    def __init__(self, reader: GitHubReader, deadline: float) -> None:
-        self._reader = reader
-        self._deadline = deadline
-
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
-        if time.monotonic() >= self._deadline:
-            raise RunnerError("DeepSource's optional reads passed their deadline")
-        return self._reader.get(url)
-
-
 def _deepsource_readbacks(
     github: GitHubReader,
     deepsource: analyzer_deepsource.DeadlineGraphQLReader,
@@ -824,15 +852,39 @@ def _deepsource_readbacks(
         list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
     ],
     common: Mapping[str, Any],
+    scopes: tuple[_ScopeBudget, _ScopeReaders],
 ) -> list[dict[str, Any]]:
     """DeepSource's optional reads (Decision 0132), findings only and never coverage:
     the head's report and inline comments, and the report for the Pull Request's
     merge base, as its `BASE` read, through the run the merge base's own DeepSource
     check names. A merge base GitHub does not give is not read, so the head's
-    findings stay unknown."""
+    findings stay unknown. Every read, its findings' scope reads included, is under
+    one deadline, which github_rest and DeepSource's client apply (PAO on #485)."""
+
+    deadline = time.monotonic() + _OPTIONAL_DEADLINE_SECONDS
+    budget, readers = scopes
+    return _with_enclosing(
+        _deepsource_reads(github, deepsource, pull, projection, common, deadline),
+        functools.partial(
+            _commit_source, github, common["repository"], budget, deadline=deadline
+        ),
+        readers,
+    )
+
+
+def _deepsource_reads(
+    github: GitHubReader,
+    deepsource: analyzer_deepsource.DeadlineGraphQLReader,
+    pull: Mapping[str, Any],
+    projection: tuple[
+        list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
+    ],
+    common: Mapping[str, Any],
+    deadline: float,
+) -> list[dict[str, Any]]:
+    """DeepSource's head and merge-base reads, before their findings' scopes."""
 
     statuses, checks, comments = projection
-    deadline = time.monotonic() + _OPTIONAL_DEADLINE_SECONDS
     bounded = _Deadlined(deepsource, deadline)
     diff_local = analyzer_deepsource.diff_local_from_github(
         **common,
@@ -844,11 +896,11 @@ def _deepsource_readbacks(
         _deepsource_full(bounded, diff_local.get("analysis_id"), common),
         diff_local,
     ]
-    base_github = _DeadlinedGitHub(github, deadline)
+    repository = common["repository"]
     try:
-        _, merge_base = _merge_base(base_github, common["repository"], pull)
-        base_statuses = _statuses(base_github, common["repository"], merge_base)
-        base_checks = _check_runs(base_github, common["repository"], merge_base)
+        _, merge_base = _merge_base(github, repository, pull, deadline=deadline)
+        base_statuses = _statuses(github, repository, merge_base, deadline=deadline)
+        base_checks = _check_runs(github, repository, merge_base, deadline=deadline)
     except RunnerError:
         return readbacks
     base = {**common, "requested_head": merge_base}
@@ -1040,14 +1092,20 @@ def inventory_base(
 
 
 def _merge_base(
-    client: GitHubReader, repository: str, pull: Mapping[str, Any]
+    client: GitHubReader,
+    repository: str,
+    pull: Mapping[str, Any],
+    *,
+    deadline: float | None = None,
 ) -> tuple[str, str]:
     """The Pull Request's base branch tip and its merge base with its head, as
     GitHub's comparison names it. A comparison that names none is refused."""
     head = _pull_side(pull, "head")
     tip = _pull_side(pull, "base")
-    document, _ = client.get(
-        f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1"
+    document, _ = _get(
+        client,
+        f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1",
+        deadline,
     )
     merge_base = _mapping(
         _mapping(document, "GitHub comparison").get("merge_base_commit"),
