@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Read optional providers' complete reports for findings, never for coverage
-description: "The optional-report slice of #389 (Ariadne #14): an optional provider's read is recorded in the analyzer bundle under its own protected status, between required and retired. Missing, failed or stale, it changes no claim: each declared aspect keeps the qualified evidence that covers it. Complete for the exact head, its findings, report-only ones included, join the findings M17 lists, so each stays open until a fix removes it from the head's report or an evidence-backed dismissal enters the protected debt ledger (Decision 0129). DeepSource moves from retired to optional; Decision 0130's no-acquisition rule is amended for findings only."
+description: "The optional-report slice of #389 (Ariadne #14): an optional provider's read is recorded in the analyzer bundle under its own protected status, between required and retired. Missing, failed or stale, it changes no claim: each declared aspect keeps the qualified evidence that covers it. Complete for the exact head, its findings, report-only ones included, join the findings M17 lists, so each stays open until a fix removes it from the head's report or, for a finding with a run-bound configuration identity, an evidence-backed dismissal enters the protected debt ledger (Decision 0129). DeepSource moves from retired to optional; Decision 0130's no-acquisition rule is amended for findings only."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -28,6 +28,9 @@ sources:
   - id: pao-scope
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6662582106
     title: "PAO's clarification: an applicable finding lies in a changed file"
+  - id: pao-dismissal
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6673563051
+    title: "PAO's ruling: a ledger dismissal stays under Decision 0129's strict match"
   - id: exit
     resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
     title: The DeepSource exit, whose no-acquisition rule this amends
@@ -75,14 +78,20 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 4. **A finding stays open until disposed of on evidence.** A fix removes it from the head's
    complete report. A dismissal is an entry in the protected debt ledger (Decision 0129): read
    only from protected `main`, strictly matched, never self-asserted by the candidate. A clean
-   result from another provider disposes of nothing.
+   result from another provider disposes of nothing. Decision 0129 governs that match strictly:
+   only a finding with a run-bound configuration identity can meet an entry. DeepSource's
+   capability discovery is `CURRENT_NOT_RUN_BOUND`, so its findings close only by a fix
+   (source `pao-dismissal`).
 5. **Decision 0130 §3 is amended for findings only.** The readback may acquire an optional
    provider's complete report, with its own credential, under the readback's existing bounds.
    Its reads never become merge coverage.
 
 ## Limits
 
-- **Dismissal needs Decision 0129's ledger,** so this lands after #480.
+- **Only configuration-bound findings can be dismissed** (Decision 0129, on `main` since #480).
+  A DeepSource finding closes only by a fix. The dismissal case is shown on a configuration-bound
+  finding, the project inventory's. That narrows the owner's acceptance case, and the owner's
+  admission confirms it.
 - **Report-only findings reach the reviewers through M17's listing.** They are not posted as
   inline comments.
 - **Applicability is at the changed files,** by PAO's ruling. The owner's admission confirms
@@ -92,9 +101,15 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 ## Verification
 
-- **RED first:** `tests/test_optional_reports.py`'s four acceptance tests fail on `main`
-  `794a1eee` for the missing behaviour.
-- **They cover:** an unavailable optional source with its aspects covered; a report-only
-  finding listed and denying; its closure when the head's report no longer lists it; and a
-  stale report counted as stale.
-- **The dismissal case** is added once Decision 0129 is on `main`.
+- **RED first:** `tests/test_optional_reports.py`'s 8 acceptance tests fail on `main`
+  `6b6c8501`, as on `794a1eee`, for the missing behaviour: `main` refuses whole a bundle that
+  carries DeepSource's readback.
+- **They cover:**
+  - an unavailable optional source with its aspects covered;
+  - a complete optional report that never covers a missing required item;
+  - a report-only finding listed and denying, and its closure when the head's report no longer lists it;
+  - a stale report counted as stale;
+  - a failed run recorded as failed and finding nothing, against a findings-bearing run, which is a finding;
+  - a finding on an untouched file kept out of the verdict.
+- **Still to add:** duplicate report and comment observations; the bounded read at the
+  pre-merge evidence cut; and a configuration-bound finding dismissed through the ledger.
