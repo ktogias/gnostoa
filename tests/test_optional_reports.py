@@ -317,6 +317,38 @@ class BaselineApplicabilityTests(unittest.TestCase):
         self.assertIn("M17", failed)
         self.assertEqual("introduced", _listed(evidence, "legacy-1")["baseline"])
 
+    def test_an_additional_occurrence_in_a_matching_scope_denies(self) -> None:
+        """The owner's 6676472012: one base occurrence never accounts for two at the
+        head, so neither is pre-existing and both deny until resolved."""
+        base = _base(_observed("legacy-1", 300, SCOPE))
+        head = _readback(
+            "deepsource",
+            "FULL",
+            _observed("legacy-1", 300, SCOPE),
+            _observed("legacy-2", 304, SCOPE),
+        )
+        evidence, failed = _admitted(
+            _section_c_declaration(), _with_reads(head, base), files=MODIFIED
+        )
+        self.assertIn("M17", failed)
+        self.assertEqual(
+            ["introduced", "introduced"],
+            [_listed(evidence, i)["baseline"] for i in ("legacy-1", "legacy-2")],
+        )
+
+    def test_a_severity_increase_on_a_matched_occurrence_denies(self) -> None:
+        """The owner's 6676472012: the same occurrence, worse than at the base, is no
+        longer pre-existing and denies until resolved."""
+        base = _base(_observed("legacy-1", 300, SCOPE, severity="MAJOR"))
+        head = _readback(
+            "deepsource", "FULL", _observed("legacy-1", 300, SCOPE, severity="CRITICAL")
+        )
+        evidence, failed = _admitted(
+            _section_c_declaration(), _with_reads(head, base), files=MODIFIED
+        )
+        self.assertIn("M17", failed)
+        self.assertEqual("introduced", _listed(evidence, "legacy-1")["baseline"])
+
     def test_a_missing_or_incomplete_base_read_leaves_the_finding_unknown(
         self,
     ) -> None:

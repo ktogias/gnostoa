@@ -40,6 +40,9 @@ sources:
   - id: pao-revision
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6676228030
     title: "PAO's rulings: the disposition in an eligible approval, comparability without a run-bound configuration"
+  - id: owner-admission
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6676472012
+    title: "The owner's admission: the same occurrence, one to one, and no worsening"
   - id: exit
     resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
     title: The DeepSource exit, whose no-acquisition rule this amends
@@ -86,13 +89,17 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
    pull request's merge base, under the same bounds, as that provider's `BASE` readback, and
    hashes each base finding's enclosing scope at the base. Each applicable head finding is then
    (sources `owner-revision`, `pao-revision`):
-   - **pre-existing** when the base read is complete for the exact merge base and holds a
-     finding with the same rule, path and message whose enclosing scope, hashed at the base,
-     is byte-identical to its own, hashed at the head. It stays listed, with
+   - **pre-existing** when the base read is complete for the exact merge base and holds the
+     same occurrence, one to one, no worse (source `owner-admission`). Head and base findings
+     are grouped by rule, path, message and enclosing scope, each scope hashed at its own
+     commit, and a group's scope must be byte-identical at both. Its head occurrences are
+     pre-existing only when the base group holds as many, paired in line order, and none is
+     more severe than its pair in the provider's own severity order. One base occurrence never
+     accounts for two at the head. A pre-existing finding stays listed, with
      `configuration_provenance: unproven` when the provider states no run-bound configuration,
      and it does not deny;
-   - **introduced** when no base finding matches, a regression on a line the change did not
-     edit included;
+   - **introduced** when no base group corresponds, or its count or a severity differs for the
+     worse, a regression on a line the change did not edit included;
    - **unknown** when the base read is missing, incomplete or for another commit. Absence of
      comparable evidence never establishes pre-existence.
 
@@ -131,6 +138,9 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   evidence records `configuration_provenance: unproven` beside each such classification.
 - **Report-only findings reach the reviewers through M17's listing.** They are not posted as
   inline comments.
+- **A partial fix keeps the rest of its group blocking.** When the head has fewer occurrences
+  in a group than the base, which one remains is not established, so the remaining ones stay
+  introduced until fixed or disposed of.
 - **The base read costs a second report read per optional provider,** within the same bounds,
   for every pull request that modifies a file the provider reports on.
 
@@ -152,7 +162,9 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - at the pre-merge cut, the optional full read under the adapter's existing page bound;
   - against the merge base: a proven unchanged legacy finding listed and not denying; a
     regression outside the edited lines, and a match in a changed scope, introduced and
-    denying; a missing or incomplete base read leaving the finding unknown and denying;
+    denying; an additional occurrence in a matching scope, and a severity increase on a
+    matched occurrence, each introduced and denying; a missing or incomplete base read
+    leaving the finding unknown and denying;
   - an independent approver's disposition at the head closing its finding; the author's
     disposition, one for another commit, a provider's suppression or false-positive mark,
     and a disposition of another rule, each leaving it open.
