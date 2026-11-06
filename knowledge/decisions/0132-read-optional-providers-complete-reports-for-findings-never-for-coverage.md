@@ -108,9 +108,11 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
 
 ## Verification
 
-- **RED first:** `tests/test_optional_reports.py`'s 10 acceptance tests fail on `main`
-  `6b6c8501`, as on `794a1eee`, for the missing behaviour: `main` refuses whole a bundle that
-  carries DeepSource's readback.
+- **RED first:** 11 acceptance tests fail on `main`
+  `6b6c8501` for the missing behaviour: 10 in `tests/test_optional_reports.py`, because `main`
+  refuses whole a bundle that carries DeepSource's readback (the first 8 failed the same way on
+  `794a1eee`), and 1 in `tests/test_analyzer_readback_runner.py`, because the readback refuses a
+  DeepSource reader.
 - **They cover:**
   - an unavailable optional source with its aspects covered;
   - a complete optional report that never covers a missing required item;
@@ -120,5 +122,6 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - a finding on an untouched file kept out of the verdict;
   - a finding in both the report and an inline comment, listed once;
   - beside an optional report, the ledger dismissing the inventory's configuration-bound
-    finding and leaving the optional one open, whether an entry names it or not.
-- **Still to add:** the bounded read at the pre-merge evidence cut.
+    finding and leaving the optional one open, whether an entry names it or not;
+  - at the pre-merge cut, the optional full read under the adapter's existing page bound: a
+    report that never ends is recorded as an `ERROR` read after exactly that many pages.

@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
+from tests.deepsource_fakes import GraphQLFake, check_page, issue, run_page
 from tools import analyzer_deepsource, analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
@@ -1884,6 +1885,76 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             "A retired provider's statuses and check runs are not read: "
             "DeepSource's, such as `DeepSource: Python` (Decision 0130)",
             runbook,
+        )
+
+
+class OptionalDeepSourceRunnerTests(unittest.TestCase):
+    """Track 2's bounded read (#389 lineage D8/L8; the owner's 6652941418): the optional
+    DeepSource full read runs at the pre-merge cut under the readback's existing bounds.
+    A report that pages past the adapter's bound is recorded as an ERROR read, and the
+    read goes no further than the bound."""
+
+    def test_the_optional_full_read_stops_at_the_adapter_s_page_bound(self) -> None:
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {
+                    "check_runs": [
+                        {
+                            "name": "DeepSource: Python",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "details_url": (
+                                "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                                f"{RUN_UID}/python/"
+                            ),
+                            "app": {"slug": "deepsource-io"},
+                        }
+                    ]
+                },
+                urls["comments"]: [],
+            }
+        )
+        bound = analyzer_deepsource.MAX_PAGES
+        # A full report that never ends: every page names a next one.
+        cursors = [None, *(str(n) for n in range(1, bound + 5))]
+        reader = GraphQLFake(
+            {
+                ("run", None): run_page(),
+                **{
+                    ("check-python", cursor): check_page(
+                        [issue(f"i{n}", n + 1)],
+                        total=1000,
+                        has_next=True,
+                        cursor=str(n + 1),
+                    )
+                    for n, cursor in enumerate(cursors)
+                },
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(
+            ["ERROR"],
+            [
+                r["coverage"]["status"]
+                for r in bundle["readbacks"]
+                if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+            ],
+        )
+        self.assertEqual(
+            bound,
+            sum(1 for _, values in reader.calls if values.get("id") == "check-python"),
         )
 
 
