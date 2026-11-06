@@ -233,7 +233,8 @@ class ReportOnlyFindingTests(unittest.TestCase):
 
 class DuplicateObservationTests(unittest.TestCase):
     """D7: one finding per provider-native identity, across the provider's complete report
-    and its inline comment, with both provenances (lineage L6)."""
+    and its inline comment (lineage L6). The evidence lists it once, as the report records
+    it; the bundle keeps both observations, each with its provenance."""
 
     def test_a_finding_in_the_report_and_in_an_inline_comment_is_listed_once(
         self,
@@ -264,9 +265,9 @@ class DuplicateObservationTests(unittest.TestCase):
         evidence, failed = _admitted(_section_c_declaration(), bundle)
         self.assertIn("M17", failed)
         self.assertEqual(
-            [identity],
+            [("deepsource-full", REPORT_ONLY["rule"])],
             [
-                f["id"]
+                (f["item"], f.get("rule"))
                 for f in evidence["analyzer_findings"]["findings"]
                 if f["id"] == identity
             ],
@@ -286,23 +287,22 @@ class ConfigurationBoundDismissalTests(unittest.TestCase):
             if k not in ("item", "configuration")
         }
         inherited = debt_entry(item="project-full", configuration=CONFIGURATION)
-        naming_optional = debt_entry(
-            id="debt-optional",
-            item="deepsource-full",
-            rule=REPORT_ONLY["rule"],
-            path=REPORT_ONLY["path"],
-            message=REPORT_ONLY["message"],
-            severity=REPORT_ONLY["severity"],
-        )
+        # The optional finding is the entry's in every field but the configuration,
+        # which an entry always has and an optional provider's readback never states
+        # (CodeAnt on #485): only that keeps them apart. Its path is a changed file's.
+        optional = {
+            k: v
+            for k, v in debt_finding(id="optional-1", path=REPORT_ONLY["path"]).items()
+            if k not in ("item", "configuration")
+        }
+        naming_optional = debt_entry(id="debt-optional", path=REPORT_ONLY["path"])
         for name, entries in (
             ("the inventory finding's entry", [inherited]),
             ("and an entry naming the optional finding", [inherited, naming_optional]),
         ):
             with self.subTest(name):
                 bundle = _complete_bundle(inventory_full=(raw,))
-                bundle["readbacks"].insert(
-                    0, _readback("deepsource", "FULL", REPORT_ONLY)
-                )
+                bundle["readbacks"].insert(0, _readback("deepsource", "FULL", optional))
                 _, failed = _admitted(
                     _section_c_declaration(),
                     bundle,
@@ -670,6 +670,17 @@ class DispositionEdgeTests(unittest.TestCase):
                     "body": _disposition(finding),
                 },
             ),
+            # Claude and CodeAnt on #485: in the approval's own second, a review that is
+            # no approval makes the latest review ambiguous, so nothing is honoured.
+            (
+                "in the approver's other review in the approval's second",
+                None,
+                {
+                    **later,
+                    "submitted_at": "2026-09-19T16:40:02Z",
+                    "body": _disposition(finding),
+                },
+            ),
         ):
             with self.subTest(name):
                 _, failed = _admitted(
@@ -953,6 +964,17 @@ class OptionalEvidenceContractTests(unittest.TestCase):
         with self.assertRaisesRegex(
             merge_evidence_github.MergeEvidenceError,
             "repeats the readback \\('deepsource', 'FULL'\\)",
+        ):
+            _evidence(analyzer=bundle)
+
+    def test_a_required_provider_s_merge_base_read_is_refused(self) -> None:
+        """Claude on #485: a bound bundle's `BASE` read names the merge base, so only
+        an optional provider may give one; a required provider's is unknown."""
+        bundle = _required()
+        bundle["readbacks"].insert(0, _readback("codacy", "BASE", head=MERGE_BASE))
+        with self.assertRaisesRegex(
+            merge_evidence_github.MergeEvidenceError,
+            "has an unknown readback \\('codacy', 'BASE'\\)",
         ):
             _evidence(analyzer=bundle)
 

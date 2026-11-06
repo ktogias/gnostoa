@@ -1501,8 +1501,9 @@ class GnostoaDecisionParityTests(unittest.TestCase):
         coverage reason, and only where M2-M8 already fails.
 
         Every class diverges by design, as NORMAL already did under section C (#389
-        A0-MP1 slice 3, 6381812211): DeepSource is no class's merge evidence (Decision
-        0130; optional since Decision 0132), so with the project's inventory complete
+        A0-MP1 slice 3, 6381812211): DeepSource is no class's required coverage evidence
+        (Decision 0130; since Decision 0132 an optional provider, read for findings
+        only), so with the project's inventory complete
         each class gets 1.0's decision as if DeepSource were complete. The project's
         items are therefore
         not in the 1.0 enumeration, which has no such item (Amazon Q on #461): this

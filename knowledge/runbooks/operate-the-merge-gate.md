@@ -409,16 +409,21 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    - Every fix is a new head, so a new seal and new review requests follow.
    - The pre-merge check and the exact-head analyzer readback must both be clean:
      `BOUND`; every applicable claim of protected `main`'s declaration met; and 0
-     findings obtained from any source, a partial one or one no claim needed
-     included. With its singleton claims (#389 F2), an applicable claim is met when
-     its one item is `COMPLETE`:
+     unresolved findings obtained from any source, a partial one or one no claim
+     needed included. A pre-existing or disposed optional finding stays listed and
+     does not count (below). With its singleton claims (#389 F2), an applicable claim
+     is met when its one item is `COMPLETE`:
      - **Every merging class:** Codacy, SonarCloud, and the project's own inventory,
        DIFF and FULL (#389 A0-MP1; Decision 0130).
      - **DeepSource is optional** (Decision 0132): it covers no claim, and a missing,
        failed or stale read of it changes nothing. Its complete report for the exact
        head adds its findings in the files the change modifies, each compared with
        its complete report for the merge base. A pre-existing one stays listed and
-       does not deny. An introduced or unknown one denies until a fix removes it, or
+       does not deny: the base read holds the same occurrence, one to one and no more
+       severe, in a byte-identical enclosing scope. Its pre-existence rests on an
+       unproven configuration, which the evidence records as
+       `configuration_provenance: unproven`, so the comparison is no proof that the
+       base ran the same rules. An introduced or unknown one denies until a fix removes it, or
        until a false-positive disposition names it. The disposition is a block in the
        latest `APPROVED` review at the exact head by a required approver who is
        neither the declarer nor the author, one field per line, each a JSON value,

@@ -97,7 +97,8 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
      more severe than its pair in the provider's own severity order. One base occurrence never
      accounts for two at the head. A pre-existing finding stays listed, with
      `configuration_provenance: unproven` when the provider states no run-bound configuration,
-     and it does not deny;
+     and on a complete read of the required evidence it does not deny; on an incomplete one
+     it counts, as the ledger's matches do;
    - **introduced** when no base group corresponds, or its count or a severity differs for the
      worse, a regression on a line the change did not edit included;
    - **unknown** when the base read is missing, incomplete or for another commit. Absence of

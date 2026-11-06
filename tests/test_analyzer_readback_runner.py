@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
-from tests.deepsource_fakes import GraphQLFake, check_page, issue, run_page
+from tests.deepsource_fakes import GraphQLFake, check, check_page, issue, run_page
 from tools import analyzer_deepsource, analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
@@ -1885,10 +1885,17 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         )
         reader = _RunsByUid(
             {
-                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
-                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+                HEAD_RUN: run_page(
+                    uid=HEAD_RUN, head=HEAD, checks=[check("check-head")]
+                ),
+                BASE_RUN: run_page(
+                    uid=BASE_RUN, head=MERGE_BASE, checks=[check("check-base")]
+                ),
             },
-            check_page([issue("i1", 2)]),
+            {
+                "check-head": check_page([issue("i1", 2)], identifier="check-head"),
+                "check-base": check_page([issue("b1", 2)], identifier="check-base"),
+            },
         )
         bundle = runner.collect_bundle(
             github,
@@ -1911,6 +1918,12 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
                 for s in ("FULL", "BASE")
             ],
         )
+        # Each report is its own run's: the head's issue at the head, the base's at the
+        # base.
+        self.assertEqual(
+            [["i1"], ["b1"]],
+            [[f["id"] for f in reads[s]["findings"]] for s in ("FULL", "BASE")],
+        )
         # The base finding's scope is read at the merge base, the head's at the head.
         [base_finding] = reads["BASE"]["findings"]
         self.assertEqual(
@@ -1932,7 +1945,8 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             },
         )
         reader = _RunsByUid(
-            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)}, check_page([issue("i1", 2)])
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([issue("i1", 2)])},
         )
         bundle = runner.collect_bundle(
             github,
@@ -1954,29 +1968,40 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         )
 
     def test_the_command_reads_deepsource_with_its_credential(self) -> None:
+        """The command builds DeepSource's client from its credential in the
+        environment, and the credential leaks nowhere (cubic on #485). Only the
+        client's requests are answered here."""
         urls = _github_urls()
         github = self._github(
             **{urls["sonar_checks"]: {"total_count": 0, "check_runs": []}}
         )
         reader = _RunsByUid(
-            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)}, check_page([])
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([])},
         )
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "readback.json"
             with (
-                patch.dict(os.environ, {}, clear=True),
+                patch.dict(
+                    os.environ,
+                    {DEEPSOURCE_ENV: "synthetic-deepsource-credential"},
+                    clear=True,
+                ),
                 patch.object(
                     runner.GitHubReadClient, "from_environment", return_value=github
                 ),
                 patch.object(
                     runner.analyzer_deepsource.DeepSourceGraphQLClient,
-                    "from_environment",
-                    return_value=reader,
-                ),
+                    "graphql",
+                    side_effect=reader.graphql,
+                ) as requests,
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 self.assertEqual(0, _main(output))
-            document = json.loads(output.read_text(encoding="utf-8"))
+            serialized = output.read_text(encoding="utf-8")
+            document = json.loads(serialized)
+        self.assertNotIn("synthetic-deepsource-credential", serialized)
+        self.assertLess(0, requests.call_count)
         self.assertEqual(
             [("deepsource", "FULL", "COMPLETE"), ("deepsource", "DIFF", "COMPLETE")],
             [
@@ -2090,6 +2115,20 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             "reads instead (Decisions 0130 and 0132)",
             runbook,
         )
+        # The verdict's own check items name no DeepSource check either (CodeAnt on
+        # #485): the pre-merge check is not versioned, the manifest is.
+        manifest = yaml.safe_load(
+            (ROOT / "policy" / "merge-required-checks.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [],
+            [
+                item["name"]
+                for items in manifest["requirements"].values()
+                for item in items.values()
+                if "deepsource" in item["name"].casefold()
+            ],
+        )
 
 
 # Decision 0132's base read: the Pull Request's base branch tip, its merge base with
@@ -2112,18 +2151,19 @@ def _deepsource_check(run: str) -> dict[str, Any]:
 
 
 class _RunsByUid:
-    """DeepSource with one run per commit, answered by its uid, and one check page for
-    every check."""
+    """DeepSource with one run per commit, answered by its uid, and each check's page
+    by the check's id: an id it does not hold is refused, as the provider would not
+    answer another run's check (Claude on #485)."""
 
     def __init__(
-        self, runs: Mapping[str, dict[str, Any]], checks: dict[str, Any]
+        self, runs: Mapping[str, dict[str, Any]], checks: Mapping[str, dict[str, Any]]
     ) -> None:
         self.runs, self.checks = runs, checks
 
     def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
         if "AnalyzerRun" in query:
             return self.runs[variables["runUid"]]
-        return self.checks
+        return self.checks[variables["id"]]
 
 
 class OptionalDeepSourceRunnerTests(unittest.TestCase):

@@ -82,7 +82,8 @@ qualified remedy (sources `owner-scope`, `owner-target`).
      and a declared item without a COMPLETE receipt denies. A retired provider gives none,
      and no item is declared for it.
    - Merge evidence keeps a protected table of retired providers, each with its Decision:
-     `deepsource`, 0130. A bound or unbound bundle that carries a retired provider's
+     `deepsource`, 0130, until Decision 0132 moved it to the optional providers, so the
+     table now names none. A bound or unbound bundle that carries a retired provider's
      readback is refused as retired, never read as an unknown readback.
    - The evidence always names the retired providers (`analyzer_retired`, possibly none),
      and the verdict requires that record and lists it for the approver
@@ -133,7 +134,8 @@ qualified remedy (sources `owner-scope`, `owner-target`).
   another qualified provider, a change of its own.
 - **DeepSource's inherited findings** are no longer acquired. That neither disposes of
   them nor proves a replacement; the design record reconciles them by aspect (source
-  `design`).
+  `design`). Decision 0132 reads them again, for findings only: one in a file a change
+  modifies is compared with the merge base's read, and never covers a claim.
 
 ## Verification
 
@@ -151,7 +153,8 @@ qualified remedy (sources `owner-scope`, `owner-target`).
 - **Every class is admitted on Codacy, SonarCloud, CodeQL, the required checks and the
   project inventory.** DeepSource's status may still appear on a pull request. Neither
   the verdict nor the normal merge's pre-merge check reads it, as the runbook
-  (`operate-the-merge-gate.md`, step 5) now says.
+  (`operate-the-merge-gate.md`, step 5) now says. Since Decision 0132 the readback reads
+  DeepSource's reports again, for findings only, never for coverage.
 - **The project inventory's findings deny every class,** as M17 has always counted every
   finding obtained, and so will the four families' once they are active.
 - **Rollback:** reverting this change restores the declaration, the acquisition and the
