@@ -1089,6 +1089,9 @@ guardrails:
       - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_an_obtained_finding_still_denies_every_class
       - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_a_retired_provider_s_readback_is_refused_as_retired
       - tests/test_merge_evidence_github.py::DeepSourceRetirementTests.test_the_evidence_records_the_retirement
+      - tests/test_merge_evidence_github.py::OptionalUnknownSeverityOrderTests.test_distinct_unknown_labels_fail_closed_for_each_input_order
+      - tests/test_merge_evidence_github.py::OptionalUnknownSeverityOrderTests.test_unknown_rank_collisions_stay_open_through_canonical_evidence
+      - tests/test_merge_evidence_github.py::OptionalUnknownSeverityOrderTests.test_unambiguous_unknown_labels_keep_existing_equality_behavior
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_a_qualified_alternative_meets_m17_through_the_verdict
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_any_obtained_finding_still_denies
       - tests/test_merge_evidence_github.py::AnalyzerClaimsCoverageTests.test_f1_already_meets_m2_m8_under_the_alternative

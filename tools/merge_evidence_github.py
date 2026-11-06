@@ -2071,6 +2071,16 @@ def _no_worse(
     if not here or len(here) != len(there):
         return False
     order = _OPTIONAL_SEVERITIES.get(provider, ())
+    # Unranked labels sort together. A collision of distinct labels at one place
+    # cannot establish no worsening; unambiguous equal labels keep their identity.
+    unranked = {
+        (finding["enclosing"]["scope_line"], finding.get("severity"))
+        for group in (here, there)
+        for finding in group
+        if finding.get("severity") not in order
+    }
+    if len(unranked) != len({place for place, _ in unranked}):
+        return False
     key = partial(_place, order)
     pairs = zip(sorted(here, key=key), sorted(there, key=key), strict=True)
     for now, before in pairs:

@@ -3786,6 +3786,99 @@ class ProjectRiskActivationTests(unittest.TestCase):
 _RETIRED = {"retired-provider": "0130"}
 
 
+class OptionalUnknownSeverityOrderTests(unittest.TestCase):
+    """Router6689135669: unknown-rank collisions cannot establish no worsening."""
+
+    @staticmethod
+    def _findings() -> list[dict[str, Any]]:
+        return [
+            {
+                **FINDING,
+                "id": f"unknown-{index}",
+                "severity": severity,
+                "range": {"start_line": 2},
+                "enclosing": {
+                    "kind": "function",
+                    "name": "f",
+                    "sha256": "d" * 64,
+                    "scope_line": 1,
+                },
+            }
+            for index, severity in enumerate(("UNKNOWN-A", "UNKNOWN-B"))
+        ]
+
+    @staticmethod
+    def _compared(
+        head: list[dict[str, Any]], base: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        merge_base = _comparison([], [])[0]["merge_base_commit"]["sha"]
+        bundle = _bundle()
+        bundle["readbacks"].extend(
+            [
+                _readback("deepsource", "FULL", *head),
+                _readback("deepsource", "BASE", *base, head=merge_base),
+            ]
+        )
+        return _admitted(
+            _section_c_declaration(),
+            analyzer_readback.parse_bundle(bundle),
+            files=[
+                {
+                    "filename": FINDING["path"],
+                    "status": "modified",
+                    "patch": "@@ -1,2 +1,2 @@\n-old\n+new",
+                }
+            ],
+        )
+
+    def test_distinct_unknown_labels_fail_closed_for_each_input_order(self) -> None:
+        findings = self._findings()
+        for head in (findings, list(reversed(findings))):
+            for base in (findings, list(reversed(findings))):
+                with self.subTest(
+                    head=[f["severity"] for f in head],
+                    base=[f["severity"] for f in base],
+                ):
+                    evidence, failed = self._compared(head, base)
+                    self.assertEqual(
+                        "COMPLETE", evidence["analyzer_findings"]["coverage"]
+                    )
+                    self.assertIn("M17", failed)
+
+    def test_unambiguous_unknown_labels_keep_existing_equality_behavior(self) -> None:
+        first, second = self._findings()
+        groups = [
+            [first],
+            [first, {**first, "id": "same-label-again"}],
+            [first, {**second, "enclosing": {**second["enclosing"], "scope_line": 2}}],
+        ]
+        for group in groups:
+            with self.subTest(group=group):
+                evidence, failed = self._compared(group, list(reversed(group)))
+                self.assertEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+                self.assertNotIn("M17", failed)
+                self.assertEqual(
+                    ["pre_existing"] * len(group),
+                    [f["baseline"] for f in evidence["analyzer_findings"]["findings"]],
+                )
+
+    def test_unknown_rank_collisions_stay_open_through_canonical_evidence(self) -> None:
+        findings = self._findings()
+        for reverse in (False, True):
+            base_order = list(reversed(findings)) if reverse else findings
+            for new_ids in (False, True):
+                base = [
+                    {**finding, **({"id": f"base-{index}"} if new_ids else {})}
+                    for index, finding in enumerate(base_order)
+                ]
+                with self.subTest(reverse=reverse, new_ids=new_ids):
+                    evidence, failed = self._compared(findings, base)
+                    self.assertEqual(
+                        "COMPLETE", evidence["analyzer_findings"]["coverage"]
+                    )
+                    self.assertIn("M17", failed)
+
+
 class DeepSourceRetirementTests(unittest.TestCase):
     """The DeepSource exit (#389, owner 6625223543; Decision 0130), end to end through
     `evidence_for` and `merge_admission.evaluate`: the project inventory's claims stand
