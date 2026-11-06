@@ -32,26 +32,35 @@ from tests.merge_evidence_github_support import (
     DECLARER,
     EDITS,
     FILES,
+    FINDING,
     HEAD,
     REQUIRED,
     REQUIRED_CHECKS,
     ROOT,
+    SONAR,
     SUITE_OF,
+    _admitted,
     _authorities,
+    _bundle,
     _check_run,
     _closing,
     _commit,
     _comparison,
+    _decision,
     _edits,
     _evidence,
     _failed,
     _green_checks,
     _green_suites,
+    _inventory,
+    _inventory_readbacks,
     _merge_evidence_guardrail,
     _policy,
     _project,
+    _readback,
     _replies,
     _run,
+    _section_c_declaration,
     _snapshot,
     _suite,
     _suites,
@@ -85,96 +94,8 @@ PREVIOUS = "d" * 40
 # here, as GitHub keeps for every App but Actions, which has one per workflow run.
 
 
-def _readback(
-    provider: str,
-    scope: str,
-    *findings: dict[str, Any],
-    status: str = "COMPLETE",
-    head: str = HEAD,
-    repository: str = "ktogias/gnostoa",
-    pull: int = 300,
-    completeness: str | None = None,
-    native_mode: str | None = None,
-    native: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    complete = status == "COMPLETE"
-    if completeness is None:
-        # As the producer marks them: Codacy's and SonarCloud's reads are full runs,
-        # and a retired DeepSource's diff read, which only the retirement tests
-        # build, diff-local (Decision 0130).
-        local = (provider, scope) == ("deepsource", "DIFF")
-        completeness = "DIFF_LOCAL" if local else "FULL_RUN"
-    if native_mode is None:
-        # Each producer's own native mode (CodeAnt and Cubic on #461): Codacy's and
-        # SonarCloud's pull-request analyses; DeepSource's and the inventory's
-        # diff-local and full reads.
-        native_mode = (
-            "PULL_REQUEST"
-            if provider in ("codacy", "sonarcloud")
-            else "DIFF_LOCAL"
-            if completeness == "DIFF_LOCAL"
-            else "FULL_RUN"
-        )
-    record: dict[str, Any] = {"status": status, "pages": 1, "count": len(findings)}
-    if not complete:
-        record["reason"] = "AUTH_UNAVAILABLE"
-    return analyzer_readback.build_readback(
-        provider=provider,
-        adapter=f"{provider}-fake/v1",
-        repository=repository,
-        pull_number=pull,
-        requested_head=head,
-        observed_head=head if complete else None,
-        analysis_id=None,
-        scope=scope,
-        completeness=completeness if complete else "AUTH_UNAVAILABLE",
-        native_mode=native_mode,
-        observed_at="2026-09-19T16:40:50Z",
-        run_state="SUCCESS" if complete else "UNKNOWN",
-        coverage_record=record,
-        findings=findings,
-        native=native,
-    )
-
-
-def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
-    """The authenticated readback's bundle for the snapshot's pull request; by
-    default its four readbacks are complete and find nothing: Codacy's, SonarCloud's
-    and, since #389 A0-MP1 slice 3, the project inventory's two. DeepSource gives
-    none: it is retired as merge evidence (Decision 0130)."""
-
-    bundle: dict[str, Any] = {
-        "schema": analyzer_readback.BUNDLE_SCHEMA,
-        "repository": "ktogias/gnostoa",
-        "pull_number": 300,
-        "requested_head": HEAD,
-        "observed_head": HEAD,
-        "observed_at": "2026-09-19T16:40:50Z",
-        "subject_binding": "BOUND",
-        "github_projection": {"statuses": 0, "check_runs": 5, "review_comments": 0},
-        "readbacks": list(readbacks)
-        or [
-            _readback("codacy", "DIFF"),
-            _readback(*SONAR),
-            *_inventory_readbacks(),
-        ],
-    }
-    bundle.update(changes)
-    return bundle
-
-
-def _inventory_readbacks() -> tuple[dict[str, Any], dict[str, Any]]:
-    """The project inventory's two complete readbacks, as #460's adapter marks them:
-    DIFF diff-local, FULL a full run, in completeness and native mode alike, built
-    by the one inventory fixture (#389 A0-MP1 slice 3; CodeAnt on #461)."""
-
-    return (_inventory("DIFF"), _inventory("FULL"))
-
-
 ANALYZER_ITEMS = ("codacy",)
 ANALYZERS = (("codacy", "DIFF"),)
-# SonarCloud's inventory gives the `sonarcloud` requirement's own item (1b.3c).
-SONAR = ("sonarcloud", "DIFF")
 
 
 def _bundle_for(**subject: Any) -> dict[str, Any]:
@@ -2764,16 +2685,6 @@ class GuardrailRegistrationTests(unittest.TestCase):
         self.assertIn("tools/cli.py", _merge_evidence_guardrail()["implementation"])
 
 
-FINDING = {
-    "id": "issue-1",
-    "message": "Reimport 'x'",
-    "rule": "PYL-W0404",
-    "severity": "MAJOR",
-    "path": "tests/test_x.py",
-    "state": "open",
-}
-
-
 class AnalyzerReceiptTests(unittest.TestCase):
     """1b.3b-2, admitted by the owner (#407, 6101607240): the authenticated
     analyzer readback gives the analyzer items their receipts, whatever its
@@ -3756,34 +3667,6 @@ _PROJECT_ITEMS = (
 )
 
 
-def _section_c_declaration() -> dict[str, Any]:
-    """Gnostoa's own declaration: Codacy stays `analyzer-readback`'s, and the
-    project's inventory gives `project-risk-readback`, NORMAL's alone under
-    6381812211 section C and every class's since Decision 0130, which retires
-    DeepSource's requirement and claims."""
-
-    document: dict[str, Any] = yaml.safe_load(
-        (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
-    )
-    return document
-
-
-def _inventory(scope: str, *findings: dict[str, Any], **changes: Any) -> dict[str, Any]:
-    """One of the project inventory's two readbacks, as #460's adapter builds them:
-    DIFF is diff-local, FULL a full run, in completeness and native mode alike
-    (CodeAnt on #461)."""
-
-    kind = "DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN"
-    return _readback(
-        "gnostoa-inventory",
-        scope,
-        *findings,
-        completeness=kind,
-        native_mode=kind,
-        **changes,
-    )
-
-
 def _inventory_incomplete(scope: str) -> dict[str, Any]:
     """An inventory readback that is not complete, as the real run gives it
     (6399343052): the requested head's run, AMBIGUOUS, its coverage INCOMPLETE with
@@ -3894,66 +3777,6 @@ class ProjectRiskActivationTests(unittest.TestCase):
                 self.assertEqual("project-full", listed["item"])
                 self.assertNotIn("M2-M8", failed)
                 self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
-
-
-def _admitted(
-    declaration: dict[str, Any],
-    bundle: dict[str, Any] | None,
-    change_class: str | None = None,
-    *,
-    ledger: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, list[str]]]:
-    """The merge decision on one head under `declaration`, with `bundle`, if any, as
-    its analyzer readback, the gate green, and the body's class `change_class` if given:
-    the evidence and the failed criteria. Module-level, so each class's tests call
-    it without reaching into another's private member (#461's own inventory). A
-    `ledger` is the protected target's analyzer debt ledger (#389)."""
-    evidence, verdict = _decision(declaration, bundle, change_class, ledger=ledger)
-    failed = {
-        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
-    }
-    return evidence, failed
-
-
-def _decision(
-    declaration: dict[str, Any],
-    bundle: dict[str, Any] | None,
-    change_class: str | None = None,
-    *,
-    ledger: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """`_admitted`'s evidence and its whole verdict, every criterion and what it
-    carries for approval (Claude on #480)."""
-    with tempfile.TemporaryDirectory() as directory:
-        project = _project(Path(directory))
-        path = project / "policy" / "assurance-evidence.yaml"
-        path.write_text(yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8")
-        if ledger is not None:
-            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
-                yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8"
-            )
-        # The gate passed on the exact head, so every check item is
-        # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
-        gate = {
-            **_check_run(60, "SonarCloud Code Analysis", 12526),
-            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
-        }
-        replies = _replies(
-            **{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})}
-        )
-        if change_class is not None:
-            replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
-                "- Class: `normative`", f"- Class: `{change_class}`"
-            )
-        snapshot = _snapshot(replies)
-        evidence = merge_evidence_github.evidence_for(
-            snapshot, project_root=project, analyzer_readback=bundle
-        )
-        loaded = assurance_completeness.load_declaration(path, project_root=project)
-    verdict = merge_admission.evaluate(
-        evidence, declaration=loaded, change_policy=_policy()
-    )
-    return evidence, verdict
 
 
 class DeepSourceRetirementTests(unittest.TestCase):

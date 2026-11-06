@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from tests.test_merge_evidence_github import (
+from tests.merge_evidence_github_support import (
     FINDING,
     HEAD,
     SONAR,
