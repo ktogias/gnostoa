@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import yaml
 
+from tests.merge_admission_support import debt_entry
 from tests.review_reconcile_l1_support import (
     adapter_fixture,
     complete_replies_fixture,
@@ -610,3 +611,49 @@ def _decision(
         evidence, declaration=loaded, change_policy=_policy()
     )
     return evidence, verdict
+
+
+LEDGER_DOCUMENT: dict[str, Any] = {
+    "schema_version": "1.0",
+    "id": "example.analyzer-debt-ledger",
+    "version": "0.1.0",
+    "entries": [debt_entry()],
+}
+
+
+# The project inventory's run-bound configuration, as its adapter states it: the
+# protected profile's digest, bound to its own run (owner 6620829215 §2).
+_PROFILE = "sha256:" + "b" * 64
+
+
+# The finding's own producer's effective identity, as the inventory adapter states it
+# (owner 6621293483 §1).
+_PRODUCER = "sha256:" + "e" * 64
+
+
+def _complete_bundle(
+    *codacy: dict[str, Any],
+    sonarcloud: tuple[dict[str, Any], ...] = (),
+    inventory_diff: tuple[dict[str, Any], ...] = (),
+    inventory_full: tuple[dict[str, Any], ...] = (),
+    profile: str = _PROFILE,
+    binding: str = "BOUND",
+    producers: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """A bound bundle of the active providers whose every readback is complete, with
+    `codacy` in Codacy's pull-request read and `sonarcloud` in SonarCloud's, neither
+    of which states a configuration, and `inventory_diff` and `inventory_full` in
+    the inventory's two reads, under `profile`. DeepSource gives none: it is retired
+    as merge evidence (Decision 0130)."""
+    bound = {
+        "profile": profile,
+        "source_binding": binding,
+        "tree": "c" * 40,
+        "producers": {"python": _PRODUCER} if producers is None else dict(producers),
+    }
+    return _bundle(
+        _readback("codacy", "DIFF", *codacy),
+        _readback(*SONAR, *sonarcloud),
+        _inventory("DIFF", *inventory_diff, native=bound),
+        _inventory("FULL", *inventory_full, native=bound),
+    )

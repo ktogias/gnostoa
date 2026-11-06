@@ -12,7 +12,6 @@ import json
 import re
 import tempfile
 import unittest
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -21,6 +20,8 @@ import yaml
 
 from tests.merge_admission_support import CONFIGURATION, debt_entry, debt_finding
 from tests.merge_evidence_github_support import (
+    _PRODUCER,
+    _PROFILE,
     ACTIONS,
     API,
     BODY,
@@ -34,6 +35,7 @@ from tests.merge_evidence_github_support import (
     FILES,
     FINDING,
     HEAD,
+    LEDGER_DOCUMENT,
     REQUIRED,
     REQUIRED_CHECKS,
     ROOT,
@@ -46,6 +48,7 @@ from tests.merge_evidence_github_support import (
     _closing,
     _commit,
     _comparison,
+    _complete_bundle,
     _decision,
     _edits,
     _evidence,
@@ -4032,48 +4035,6 @@ _LEDGER_ERRORS = (
     merge_evidence_github.MergeEvidenceError,
     assurance_completeness.AssuranceCompletenessError,
 )
-LEDGER_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.0",
-    "id": "example.analyzer-debt-ledger",
-    "version": "0.1.0",
-    "entries": [debt_entry()],
-}
-
-
-# The project inventory's run-bound configuration, as its adapter states it: the
-# protected profile's digest, bound to its own run (owner 6620829215 §2).
-_PROFILE = "sha256:" + "b" * 64
-# The finding's own producer's effective identity, as the inventory adapter states it
-# (owner 6621293483 §1).
-_PRODUCER = "sha256:" + "e" * 64
-
-
-def _complete_bundle(
-    *codacy: dict[str, Any],
-    sonarcloud: tuple[dict[str, Any], ...] = (),
-    inventory_diff: tuple[dict[str, Any], ...] = (),
-    inventory_full: tuple[dict[str, Any], ...] = (),
-    profile: str = _PROFILE,
-    binding: str = "BOUND",
-    producers: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """A bound bundle of the active providers whose every readback is complete, with
-    `codacy` in Codacy's pull-request read and `sonarcloud` in SonarCloud's, neither
-    of which states a configuration, and `inventory_diff` and `inventory_full` in
-    the inventory's two reads, under `profile`. DeepSource gives none: it is retired
-    as merge evidence (Decision 0130)."""
-    bound = {
-        "profile": profile,
-        "source_binding": binding,
-        "tree": "c" * 40,
-        "producers": {"python": _PRODUCER} if producers is None else dict(producers),
-    }
-    return _bundle(
-        _readback("codacy", "DIFF", *codacy),
-        _readback(*SONAR, *sonarcloud),
-        _inventory("DIFF", *inventory_diff, native=bound),
-        _inventory("FULL", *inventory_full, native=bound),
-    )
 
 
 class DebtLedgerTests(unittest.TestCase):
