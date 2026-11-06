@@ -125,3 +125,14 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
     finding and leaving the optional one open, whether an entry names it or not;
   - at the pre-merge cut, the optional full read under the adapter's existing page bound: a
     report that never ends is recorded as an `ERROR` read after exactly that many pages.
+
+## Consequences
+
+- A missing, failed or stale DeepSource read no longer holds a merge: each declared aspect
+  keeps the qualified evidence that covers it.
+- A complete DeepSource report for the exact head is read again. Its applicable findings,
+  report-only ones included, deny like any other listed finding until a fix removes them.
+- A DeepSource finding cannot be waived through the ledger while its runs state no
+  configuration of their own, so a finding the owner accepts has to be fixed instead.
+- The readback acquires DeepSource's report again, under its existing bounds and its own
+  credential, so the token comes back to the readback's workflow.
