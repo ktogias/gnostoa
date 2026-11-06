@@ -1994,22 +1994,11 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
     ]
     configuration = discovery["configuration"]
     rules = discovery["ignore_rules"]
-    return build_capability(
-        provider="deepsource",
-        adapter=_CAPABILITY_ADAPTER,
-        repository=discovery["repository"],
-        observed_at=discovery["observed_at"],
-        binding=discovery["binding"],
-        coverage=discovery["coverage"],
-        configuration={
-            k: v for k, v in configuration.items() if k in {"state", "digest"}
-        },
-        activated=discovery["activated"],
-        enabled={
-            "status": "UNREAD" if enabled is None else "COMPLETE",
-            "analyzers": None
-            if enabled is None
-            else [
+    enabled_record: dict[str, Any] = {"status": "UNREAD", "analyzers": None}
+    if enabled is not None:
+        enabled_record = {
+            "status": "COMPLETE",
+            "analyzers": [
                 {
                     "id": entry["shortcode"],
                     "version": entry["version"],
@@ -2017,13 +2006,12 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
                 }
                 for entry in enabled
             ],
-        },
-        catalogues=catalogues,
-        ignore_rules={
-            "status": "UNREAD" if rules is None else "COMPLETE",
-            "rules": None
-            if rules is None
-            else [
+        }
+    ignore_record: dict[str, Any] = {"status": "UNREAD", "rules": None}
+    if rules is not None:
+        ignore_record = {
+            "status": "COMPLETE",
+            "rules": [
                 {
                     "id": rule["id"],
                     "rule": rule["issue"],
@@ -2035,7 +2023,21 @@ def capability_record(discovery: Mapping[str, Any]) -> dict[str, Any]:
                 }
                 for rule in rules
             ],
+        }
+    return build_capability(
+        provider="deepsource",
+        adapter=_CAPABILITY_ADAPTER,
+        repository=discovery["repository"],
+        observed_at=discovery["observed_at"],
+        binding=discovery["binding"],
+        coverage=discovery["coverage"],
+        configuration={
+            k: v for k, v in configuration.items() if k in {"state", "digest"}
         },
+        activated=discovery["activated"],
+        enabled=enabled_record,
+        catalogues=catalogues,
+        ignore_rules=ignore_record,
         unknown=discovery["unknown"],
         native={"schema": discovery["schema"]},
     )
