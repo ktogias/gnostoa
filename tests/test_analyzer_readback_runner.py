@@ -2236,6 +2236,8 @@ class _RunsByUid:
         self, runs: Mapping[str, dict[str, Any]], checks: Mapping[str, dict[str, Any]]
     ) -> None:
         self.runs, self.checks = runs, checks
+        # The deadline each request is given, as DeepSource's client takes it.
+        self.deadlines: list[float | None] = []
 
     def graphql(
         self,
@@ -2244,7 +2246,7 @@ class _RunsByUid:
         *,
         deadline: float | None = None,
     ) -> Mapping[str, Any]:
-        del deadline
+        self.deadlines.append(deadline)
         if "AnalyzerRun" in query:
             return self.runs[variables["runUid"]]
         return self.checks[variables["id"]]
