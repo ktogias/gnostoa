@@ -2382,20 +2382,7 @@ class OptionalDeepSourceRunnerTests(unittest.TestCase):
             {
                 urls["pr"]: [_pr(), _pr()],
                 urls["statuses"]: [],
-                urls["checks"]: {
-                    "check_runs": [
-                        {
-                            "name": "DeepSource: Python",
-                            "status": "completed",
-                            "conclusion": "failure",
-                            "details_url": (
-                                "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                                f"{RUN_UID}/python/"
-                            ),
-                            "app": {"slug": "deepsource-io"},
-                        }
-                    ]
-                },
+                urls["checks"]: {"check_runs": [_deepsource_check(RUN_UID)]},
                 urls["comments"]: [],
                 # The readback reads the reported file for its findings' scopes; here
                 # GitHub does not give it.
