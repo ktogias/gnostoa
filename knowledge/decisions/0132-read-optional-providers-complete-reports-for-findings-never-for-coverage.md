@@ -173,15 +173,21 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - a base read for another commit, a severity outside the provider's order, and a finding
     with no scope, each leaving the finding unknown or introduced; a lesser severity
     pre-existing;
-  - a disposition by its line, listed for the approver; one in an approval its approver
-    later superseded, and one naming a required provider's finding, each closing nothing;
-  - a malformed disposition block left out, and at most 100 read from one review;
+  - a disposition by its line, listed for the approver; one naming another provider,
+    finding, path, scope or line; one in an approval its approver later superseded, in
+    their later review that is no approval, or in their later approval of another commit;
+    one by an approver who is the author or the declarer; and one naming a required
+    provider's finding, each closing nothing;
+  - under claims that are not met, a pre-existing and a disposed finding each still
+    counting, as the ledger's rule is;
+  - a malformed disposition block left out, a block written with CRLF line ends read,
+    and at most 100 read from one review;
   - an unknown baseline, provenance, optional coverage or field, and a malformed
     disposition, each refused by the verdict as corrupt evidence;
-  - in the readback: without its credential nothing read from DeepSource; the head's and
-    the merge base's reports each read at its own commit, the base's scopes at the base;
-    a merge base GitHub does not give left unread; and the token reaching the readback
-    step alone.
+  - in the readback: without its credential nothing read from DeepSource, and with it
+    the command reading it; the head's and the merge base's reports each read at its
+    own commit, the base's scopes at the base; a merge base GitHub does not give left
+    unread; and the token reaching the readback step alone.
 
 ## Consequences
 

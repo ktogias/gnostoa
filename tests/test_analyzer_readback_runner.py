@@ -1953,6 +1953,39 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             ],
         )
 
+    def test_the_command_reads_deepsource_with_its_credential(self) -> None:
+        urls = _github_urls()
+        github = self._github(
+            **{urls["sonar_checks"]: {"total_count": 0, "check_runs": []}}
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)}, check_page([])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "readback.json"
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(
+                    runner.GitHubReadClient, "from_environment", return_value=github
+                ),
+                patch.object(
+                    runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                    "from_environment",
+                    return_value=reader,
+                ),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(0, _main(output))
+            document = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [("deepsource", "FULL", "COMPLETE"), ("deepsource", "DIFF", "COMPLETE")],
+            [
+                (r["provider"], r["scope"], r["coverage"]["status"])
+                for r in document["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
+
     def test_only_the_readback_step_receives_the_optional_provider_s_token(
         self,
     ) -> None:

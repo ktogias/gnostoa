@@ -10,6 +10,7 @@ finding, so an optional provider's closes only by a fix (PAO 6673563051, Option 
 
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 from typing import Any
@@ -29,11 +30,13 @@ from tests.merge_evidence_github_support import (
     _evidence,
     _failed,
     _inventory,
+    _policy,
     _readback,
     _section_c_declaration,
+    _snapshot,
 )
-from tools import analyzer_readback
-from tools.assurance_completeness import AssuranceCompletenessError
+from tools import analyzer_readback, merge_admission
+from tools.assurance_completeness import AssuranceCompletenessError, parse_declaration
 from tools.review_reconcile import MAX_DISPOSITIONS, parse_dispositions
 
 # A finding that only the provider's full report shows: no inline comment carries it. It lies
@@ -445,6 +448,33 @@ class FalsePositiveDispositionTests(unittest.TestCase):
             ("the provider's suppression", {**finding, "state": "suppressed"}, None),
             ("a false-positive mark", {**finding, "state": "false_positive"}, None),
             ("a disposition of another rule", finding, _disposition(finding, rule="X")),
+            (
+                "a disposition of another provider",
+                finding,
+                _disposition(finding, provider="codacy"),
+            ),
+            (
+                "a disposition of another finding",
+                finding,
+                _disposition(finding, native_id="fp-2"),
+            ),
+            (
+                "a disposition of another path",
+                finding,
+                _disposition(finding, path="tools/other.py"),
+            ),
+            (
+                "a disposition of another scope",
+                finding,
+                _disposition(finding, scope_hash=CHANGED),
+            ),
+            (
+                "a disposition of another line",
+                finding,
+                _disposition(finding).replace(
+                    f'scope_hash: "{SCOPE}"\n', "line: 301\n"
+                ),
+            ),
         ):
             with self.subTest(name):
                 _, failed = _admitted(
@@ -453,7 +483,7 @@ class FalsePositiveDispositionTests(unittest.TestCase):
                     files=MODIFIED,
                     review_body=body,
                 )
-                self.assertIn("M17", failed)
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
 
 
 class MandatoryCoverageTests(unittest.TestCase):
@@ -599,9 +629,7 @@ class DispositionEdgeTests(unittest.TestCase):
             ["fp-1"], [d["native_id"] for d in evidence["reviews"][0]["dispositions"]]
         )
 
-    def test_a_disposition_in_an_approval_the_approver_later_superseded_is_unbound(
-        self,
-    ) -> None:
+    def test_a_disposition_outside_the_latest_approval_is_unbound(self) -> None:
         finding = _observed("fp-1", 300, SCOPE)
         later = {
             "id": 12,
@@ -611,14 +639,98 @@ class DispositionEdgeTests(unittest.TestCase):
             "commit_id": HEAD,
             "html_url": "https://example.invalid/review/12",
         }
-        _, failed = _admitted(
+        for name, approval, review in (
+            (
+                "in an approval its approver later superseded",
+                _disposition(finding),
+                later,
+            ),
+            (
+                "in the approver's later review, no approval",
+                None,
+                {**later, "body": _disposition(finding)},
+            ),
+            (
+                "in the approver's later approval of another commit",
+                None,
+                {
+                    **later,
+                    "state": "APPROVED",
+                    "commit_id": "0" * 40,
+                    "body": _disposition(finding),
+                },
+            ),
+        ):
+            with self.subTest(name):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    _with_reads(_readback("deepsource", "FULL", finding)),
+                    files=MODIFIED,
+                    review_body=approval,
+                    extra_reviews=(review,),
+                )
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_an_approver_who_is_the_author_or_the_declarer_disposes_of_nothing(
+        self,
+    ) -> None:
+        """M16's own exclusion: the same evidence, its approver made the change's
+        author or declarer, disposes of nothing."""
+        finding = _observed("fp-1", 300, SCOPE)
+        evidence, verdict = _decision(
             _section_c_declaration(),
             _with_reads(_readback("deepsource", "FULL", finding)),
             files=MODIFIED,
             review_body=_disposition(finding),
-            extra_reviews=(later,),
         )
-        self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+        self.assertEqual(
+            BASELINE, {c["id"] for c in verdict["criteria"] if c["status"] == "FAIL"}
+        )
+        declaration = parse_declaration(_section_c_declaration())
+        for party in ("author", "declarer"):
+            with self.subTest(party=party):
+                changed = copy.deepcopy(evidence)
+                changed["authorities"][party] = changed["reviews"][0]["reviewer"]
+                verdict = merge_admission.evaluate(
+                    changed, declaration=declaration, change_policy=_policy()
+                )
+                [m17] = [c for c in verdict["criteria"] if c["id"] == "M17"]
+                self.assertEqual(["1 unresolved analyzer finding"], m17["reasons"])
+
+    def test_an_incomplete_read_sets_nothing_aside(self) -> None:
+        """As the ledger's rule is, only a complete read is matched: under claims
+        that are not met, a pre-existing and a disposed finding each still count."""
+        legacy = _observed("legacy-1", 300, SCOPE)
+        disposed = _observed("fp-1", 310, SCOPE, message="Another finding")
+        for name, codacy, expected in (
+            ("complete", _readback("codacy", "DIFF"), None),
+            (
+                "incomplete",
+                _readback(
+                    "codacy",
+                    "DIFF",
+                    status="UNAVAILABLE",
+                    completeness="AUTH_UNAVAILABLE",
+                ),
+                "2 unresolved analyzer findings",
+            ),
+        ):
+            with self.subTest(name):
+                bundle = _bundle(
+                    _base(legacy),
+                    _readback("deepsource", "FULL", legacy, disposed),
+                    codacy,
+                    _readback(*SONAR),
+                    _inventory("DIFF"),
+                    _inventory("FULL"),
+                )
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    bundle,
+                    files=MODIFIED,
+                    review_body=_disposition(disposed),
+                )
+                self.assertEqual(expected, (failed.get("M17") or [None])[-1])
 
     def test_a_disposition_never_closes_a_required_provider_s_finding(self) -> None:
         finding = _observed("codacy-1", 300, SCOPE)
@@ -683,6 +795,14 @@ class DispositionBlockTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual([], parse_dispositions(text))
 
+    def test_a_block_written_in_github_s_form_is_read(self) -> None:
+        block = _disposition(self._FINDING)
+        self.assertEqual(
+            parse_dispositions(block),
+            parse_dispositions(block.replace("\n", "\r\n")),
+        )
+        self.assertEqual(1, len(parse_dispositions(block.replace("\n", "\r\n"))))
+
     def test_a_review_yields_at_most_the_bound(self) -> None:
         text = _disposition(self._FINDING) * (MAX_DISPOSITIONS + 1)
         self.assertEqual(MAX_DISPOSITIONS, len(parse_dispositions(text)))
@@ -729,6 +849,22 @@ class OptionalEvidenceContractTests(unittest.TestCase):
         ):
             with self.subTest(name), self.assertRaises(AssuranceCompletenessError):
                 _failed(evidence)
+
+    def test_a_snapshot_s_malformed_disposition_is_refused_by_the_verdict(
+        self,
+    ) -> None:
+        """Merge evidence passes a review's dispositions on as L1 read them; the
+        verdict, which reads them, refuses a malformed one."""
+        snapshot = _snapshot()
+        snapshot["reviews"][0]["dispositions"] = [{"provider": "deepsource"}]
+        evidence = _evidence(snapshot)
+        self.assertEqual(
+            [{"provider": "deepsource"}], evidence["reviews"][0]["dispositions"]
+        )
+        with self.assertRaisesRegex(
+            AssuranceCompletenessError, "has missing or unknown fields"
+        ):
+            _failed(evidence)
 
     def test_optional_reads_that_are_no_list_are_refused(self) -> None:
         evidence = self._evidence()

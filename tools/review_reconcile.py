@@ -94,8 +94,10 @@ def dispositions(value: object, label: str) -> list[dict[str, Any]]:
 
 def parse_dispositions(text: str) -> list[dict[str, Any]]:
     """The well-formed disposition blocks in a review's text, in order, at most
-    MAX_DISPOSITIONS. A malformed block disposes of nothing, so it is left out."""
+    MAX_DISPOSITIONS. A malformed block disposes of nothing, so it is left out. A text
+    written in a web form ends its lines in CRLF, read as LF."""
 
+    text = text.replace("\r\n", "\n")
     found: list[dict[str, Any]] = []
     start = text.find(DISPOSITION_MARKER)
     while start != -1 and len(found) < MAX_DISPOSITIONS:
@@ -352,8 +354,6 @@ def _normalize_review(
     effective = review.get("effective")
     if effective is not None and type(effective) is not bool:
         raise ReconciliationInputError("review.effective must be a boolean")
-    if "dispositions" in review:
-        dispositions(review["dispositions"], "review.dispositions")
 
     review_observation_ids.add(observation_id)
     return review
