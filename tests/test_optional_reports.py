@@ -396,6 +396,72 @@ class BaselineApplicabilityTests(unittest.TestCase):
                 self.assertEqual("unknown", _listed(evidence, "legacy-1")["baseline"])
 
 
+# A module whose function `f` holds the findings below: at the merge base, and at a
+# head that adds three lines above it, so the scope's bytes stay identical while every
+# absolute line moves (the owner's 6681151037).
+SOURCE = (
+    "def g():\n"
+    "    return 1\n"
+    "\n"
+    "\n"
+    "def f(value):\n"
+    "    first = value + 1\n"
+    "    second = value + 2\n"
+    "    third = value + 3\n"
+    "    return first, second, third\n"
+)
+SHIFTED = "import os\n\n\n" + SOURCE
+
+
+def _produced(identity: str, line: int, source: str) -> dict[str, Any]:
+    """A provider's finding in LEGACY at `line` of `source`, its enclosing scope given by
+    the readback's own producer, as the runner gives it at the commit it reads."""
+    enclosing = analyzer_readback.scope_reader(source)(line)
+    assert enclosing is not None
+    return {**_observed(identity, line, SCOPE), "enclosing": enclosing}
+
+
+class ExactOccurrenceTests(unittest.TestCase):
+    """The owner's 6681151037, on the admitted same-occurrence rule (6676472012): a
+    base occurrence accounts only for the head occurrence at its own place in the
+    byte-identical scope, however edits above the scope move the absolute lines."""
+
+    def _baseline(
+        self, head: dict[str, Any], base: dict[str, Any]
+    ) -> tuple[str, dict[str, list[str]]]:
+        bundle = _with_reads(_readback("deepsource", "FULL", head), _base(base))
+        evidence, failed = _admitted(_section_c_declaration(), bundle, files=MODIFIED)
+        return _listed(evidence, head["id"])["baseline"], failed
+
+    def test_another_place_in_the_same_scope_is_introduced_and_denies(self) -> None:
+        base, head = _produced("legacy-1", 6, SOURCE), _produced("legacy-1", 8, SOURCE)
+        self.assertEqual(base["enclosing"]["sha256"], head["enclosing"]["sha256"])
+        baseline, failed = self._baseline(head, base)
+        self.assertEqual("introduced", baseline)
+        self.assertIn("M17", failed)
+
+    def test_the_same_place_moved_by_lines_above_its_scope_is_pre_existing(
+        self,
+    ) -> None:
+        base, head = _produced("legacy-1", 6, SOURCE), _produced("legacy-1", 9, SHIFTED)
+        self.assertEqual(base["enclosing"]["sha256"], head["enclosing"]["sha256"])
+        baseline, failed = self._baseline(head, base)
+        self.assertEqual(BASELINE, set(failed))
+        self.assertEqual("pre_existing", baseline)
+
+    def test_an_occurrence_whose_place_in_its_scope_is_unknown_stays_unknown(
+        self,
+    ) -> None:
+        # The scope's hash alone, which names no place in the scope.
+        legacy = {
+            **_observed("legacy-1", 300, SCOPE),
+            "enclosing": {"kind": "function", "name": "f", "sha256": SCOPE},
+        }
+        baseline, failed = self._baseline(legacy, legacy)
+        self.assertEqual("unknown", baseline)
+        self.assertIn("M17", failed)
+
+
 class FalsePositiveDispositionTests(unittest.TestCase):
     """The owner's 6676021682 item 1 and PAO's 6676228030 P1: a false-positive
     disposition is a closed block in the latest APPROVED review at the exact head by a
