@@ -699,6 +699,30 @@ class DispositionEdgeTests(unittest.TestCase):
                 )
                 self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
 
+    def test_a_disposition_in_the_latest_approval_after_an_earlier_review_closes(
+        self,
+    ) -> None:
+        """Only the latest second's reviews count, so an earlier review without the
+        block leaves the latest approval's disposition standing (the kill-check of
+        f9cc4d45)."""
+        finding = _observed("fp-1", 300, SCOPE)
+        earlier = {
+            "id": 12,
+            "user": {"login": "ktogias"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-19T16:39:00Z",
+            "commit_id": HEAD,
+            "html_url": "https://example.invalid/review/12",
+        }
+        _, failed = _admitted(
+            _section_c_declaration(),
+            _with_reads(_readback("deepsource", "FULL", finding)),
+            files=MODIFIED,
+            review_body=_disposition(finding),
+            extra_reviews=(earlier,),
+        )
+        self.assertEqual(BASELINE, set(failed))
+
     def test_an_approver_who_is_the_author_or_the_declarer_disposes_of_nothing(
         self,
     ) -> None:
