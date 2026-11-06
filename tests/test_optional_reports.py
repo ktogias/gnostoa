@@ -739,7 +739,8 @@ class DispositionEdgeTests(unittest.TestCase):
                     files=MODIFIED,
                     review_body=_disposition(disposed),
                 )
-                self.assertEqual(expected, (failed.get("M17") or [None])[-1])
+                reasons = failed.get("M17", [])
+                self.assertEqual(expected, reasons[-1] if reasons else None)
 
     def test_a_disposition_never_closes_a_required_provider_s_finding(self) -> None:
         finding = _observed("codacy-1", 300, SCOPE)
