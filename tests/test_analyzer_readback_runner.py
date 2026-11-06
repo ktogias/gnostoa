@@ -1874,13 +1874,7 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         github = self._github(
             {"head": {"sha": HEAD}, "base": {"sha": TIP}},
             **{
-                f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
-                    "merge_base_commit": {"sha": MERGE_BASE}
-                },
-                f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
-                f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
-                    "check_runs": [_deepsource_check(BASE_RUN)]
-                },
+                **_merge_base_answers(),
                 f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError(
                     "not found"
                 ),
@@ -2091,7 +2085,6 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         Each base read here takes 200 s of a fake clock."""
         now = [0.0]
         starts: list[tuple[float, float | None]] = []
-        root = "https://api.github.com/repos/ktogias/gnostoa"
 
         class SlowBase(_GitHubFake):
             def get(
@@ -2113,13 +2106,7 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
                 urls["statuses"]: [],
                 urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
                 urls["comments"]: [],
-                f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
-                    "merge_base_commit": {"sha": MERGE_BASE}
-                },
-                f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
-                f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
-                    "check_runs": [_deepsource_check(BASE_RUN)]
-                },
+                **_merge_base_answers(),
             }
         )
         reader = _RunsByUid(
@@ -2154,6 +2141,65 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
                 if r["provider"] == "deepsource"
             ],
         )
+
+    def test_the_merge_base_s_deepsource_read_stops_at_the_deadline(self) -> None:
+        """Claude on #485: the merge base's DeepSource read is an optional read too, so
+        one that would start past the deadline is refused before any request and ends
+        as an ERROR, and the bundle and the head's reads stay. Each base GitHub read
+        here takes 100 s of a fake clock, so that read would start at 300 s."""
+        now = [0.0]
+
+        class SlowBase(_GitHubFake):
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
+                if "/compare/" in url or MERGE_BASE in url:
+                    now[0] += 100.0
+                return answer
+
+        urls = _github_urls()
+        github = SlowBase(
+            {
+                urls["pr"]: [
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                ],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **_merge_base_answers(),
+            }
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
+                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+            },
+            {"check-python": check_page([])},
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(
+            [("FULL", "COMPLETE"), ("DIFF", "COMPLETE"), ("BASE", "ERROR")],
+            [
+                (r["scope"], r["coverage"]["status"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
+        # Only the head's run was read, each request given the deadline.
+        self.assertEqual({OPTIONAL_DEADLINE}, set(reader.deadlines))
 
     def test_the_optional_scope_reads_stop_at_the_deadline(self) -> None:
         """Codex and PAO on #485: the scope reads of DeepSource's findings are its
@@ -2342,6 +2388,21 @@ def _deepsource_check(run: str) -> dict[str, Any]:
         "conclusion": "failure",
         "details_url": f"https://app.deepsource.com/gh/ktogias/gnostoa/run/{run}/python/",
         "app": {"slug": "deepsource-io"},
+    }
+
+
+def _merge_base_answers() -> dict[str, Any]:
+    """GitHub's answers for the merge base of HEAD over TIP: the comparison naming it,
+    and its statuses and checks, which name DeepSource's run there."""
+    root = "https://api.github.com/repos/ktogias/gnostoa"
+    return {
+        f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
+            "merge_base_commit": {"sha": MERGE_BASE}
+        },
+        f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
+        f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
+            "check_runs": [_deepsource_check(BASE_RUN)]
+        },
     }
 
 
