@@ -2484,9 +2484,11 @@ class _OrderedGitHub(_GitHubFake):
         super().__init__(responses)
         self.events = events
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         self.events.append(url)
-        return super().get(url)
+        return super().get(url, deadline=deadline)
 
 
 def _main(output: Path) -> int:
@@ -2779,9 +2781,11 @@ class _SequencedGitHub(_GitHubFake):
         super().__init__(responses)
         self.sequenced = {url: list(values) for url, values in sequenced.items()}
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         if url not in self.sequenced:
-            return super().get(url)
+            return super().get(url, deadline=deadline)
         self.calls.append(url)
         if not self.sequenced[url]:
             raise AssertionError(f"no remaining fake responses for {url}")
