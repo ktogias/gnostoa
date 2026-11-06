@@ -1693,7 +1693,10 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             )
         self.assertEqual(1, parse.call_count)
         self.assertEqual([url], read)
-        self.assertEqual(findings["def"]["enclosing"], findings["body"]["enclosing"])
+        # One scope, at its first and its second line.
+        scopes = [findings[identity]["enclosing"] for identity in ("def", "body")]
+        self.assertEqual(scopes[0]["sha256"], scopes[1]["sha256"])
+        self.assertEqual([1, 2], [scope["scope_line"] for scope in scopes])
 
     def test_a_stub_file_is_python_too(self) -> None:
         """CodeAnt on #480: a finding in a `.pyi` stub gets its scope."""

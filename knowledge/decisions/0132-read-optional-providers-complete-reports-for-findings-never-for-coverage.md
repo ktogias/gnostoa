@@ -43,6 +43,12 @@ sources:
   - id: owner-admission
     resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6676472012
     title: "The owner's admission: the same occurrence, one to one, and no worsening"
+  - id: owner-occurrence
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6681151037
+    title: "The owner's direction: the same occurrence, by its place in a byte-identical scope"
+  - id: pao-occurrence
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6681312300
+    title: "PAO's ruling: the finding's line within its scope, failing closed to unknown"
   - id: exit
     resource: ./0130-retire-deepsource-as-merge-evidence-and-give-every-class-the-project-inventory.md
     title: The DeepSource exit, whose no-acquisition rule this amends
@@ -92,17 +98,21 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
    - **pre-existing** when the base read is complete for the exact merge base and holds the
      same occurrence, one to one, no worse (source `owner-admission`). Head and base findings
      are grouped by rule, path, message and enclosing scope, each scope hashed at its own
-     commit, and a group's scope must be byte-identical at both. Its head occurrences are
-     pre-existing only when the base group holds as many, paired in line order, and none is
-     more severe than its pair in the provider's own severity order. One base occurrence never
-     accounts for two at the head. A pre-existing finding stays listed, with
+     commit, and a group's scope must be byte-identical at both. Each occurrence is placed by
+     its line within its scope, 1 at the scope's first line (`scope_line`), which edits outside
+     the scope do not move (sources `owner-occurrence`, `pao-occurrence`). Its head
+     occurrences are pre-existing only when the base group holds as many at each place, and
+     none is more severe than its pair in the provider's own severity order. One base
+     occurrence never accounts for two at the head, nor for one at another place in its
+     scope. A pre-existing finding stays listed, with
      `configuration_provenance: unproven` when the provider states no run-bound configuration,
      and on a complete read of the required evidence it does not deny; on an incomplete one
      it counts, as the ledger's matches do;
    - **introduced** when no base group corresponds, or its count or a severity differs for the
      worse, a regression on a line the change did not edit included;
-   - **unknown** when the base read is missing, incomplete or for another commit. Absence of
-     comparable evidence never establishes pre-existence.
+   - **unknown** when the base read is missing, incomplete or for another commit, or when an
+     occurrence of the group, at the head or the base, names no place in its scope. Absence
+     of comparable evidence never establishes pre-existence.
 
    M17 evaluates an introduced or unknown finding exactly as it does any finding it lists,
    with no separate reducer, so it denies until it is resolved (source `pao-semantics`). A
@@ -174,6 +184,10 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
     denying; an additional occurrence in a matching scope, and a severity increase on a
     matched occurrence, each introduced and denying; a missing or incomplete base read
     leaving the finding unknown and denying;
+  - by each finding's place in its scope, the scope given by the readback's own producer
+    over source at each commit (source `owner-occurrence`): another place in the same
+    scope introduced and denying; the same place, moved by lines added above its scope,
+    pre-existing; a scope that names no place leaving the finding unknown;
   - an independent approver's disposition at the head closing its finding; the author's
     disposition, one for another commit, a provider's suppression or false-positive mark,
     and a disposition of another rule, each leaving it open.
@@ -195,7 +209,8 @@ disposition in the analyzer evidence domain; and 0130's no-acquisition rule amen
   - in the readback: without its credential nothing read from DeepSource, and with it
     the command reading it; the head's and the merge base's reports each read at its
     own commit, the base's scopes at the base; a merge base GitHub does not give left
-    unread; and the token reaching the readback step alone.
+    unread; the merge base's DeepSource read, past the deadline, ending as an `ERROR` with
+    the head's reads kept; and the token reaching the readback step alone.
 
 ## Consequences
 

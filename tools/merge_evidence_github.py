@@ -26,6 +26,7 @@ import json
 import re
 import string
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -1995,7 +1996,11 @@ def _classified(
     entries = []
     for item, finding in observed:
         key = _occurrence_key(finding)
-        if base is None or key is None:
+        if (
+            base is None
+            or key is None
+            or not _placed(groups[key], at_base.get(key, []))
+        ):
             baseline = "unknown"
         elif _no_worse(provider, groups[key], at_base.get(key, [])):
             baseline = "pre_existing"
@@ -2035,24 +2040,42 @@ def _occurrence_key(finding: Mapping[str, Any]) -> tuple[str, ...] | None:
     return (rule, path, finding["message"], enclosing["sha256"])
 
 
+def _placed(*groups: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether each occurrence names its place in its byte-identical scope. Without
+    one, no correspondence is proven, so the finding stays unknown (the owner's
+    6681151037; PAO 6681312300: fail closed)."""
+
+    return all(
+        "scope_line" in finding["enclosing"] for group in groups for finding in group
+    )
+
+
+def _place(order: Sequence[str], finding: Mapping[str, Any]) -> tuple[int, int]:
+    """A placed occurrence's order: its line in its scope, then its severity's rank,
+    an unknown one last, so the occurrences at one place pair least to least."""
+
+    severity = finding.get("severity")
+    rank = order.index(severity) if severity in order else len(order)
+    return finding["enclosing"]["scope_line"], rank
+
+
 def _no_worse(
     provider: str,
     here: Sequence[Mapping[str, Any]],
     there: Sequence[Mapping[str, Any]],
 ) -> bool:
-    """Whether a group's head occurrences are the base's, one to one: as many, paired
-    in line order, none more severe than its pair (the owner's 6676472012)."""
+    """Whether a group's head occurrences are the base's, one to one: as many at each
+    place in the byte-identical scope, wherever the scope moved, and none more severe
+    than its pair (the owner's 6676472012 and 6681151037)."""
 
     if not here or len(here) != len(there):
         return False
     order = _OPTIONAL_SEVERITIES.get(provider, ())
-
-    def line(finding: Mapping[str, Any]) -> int:
-        start: int = (finding.get("range") or {}).get("start_line", 0)
-        return start
-
-    pairs = zip(sorted(here, key=line), sorted(there, key=line), strict=True)
+    key = partial(_place, order)
+    pairs = zip(sorted(here, key=key), sorted(there, key=key), strict=True)
     for now, before in pairs:
+        if now["enclosing"]["scope_line"] != before["enclosing"]["scope_line"]:
+            return False
         severity, baseline = now.get("severity"), before.get("severity")
         if severity == baseline:
             continue

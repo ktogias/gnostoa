@@ -69,13 +69,18 @@ AUTHOR = "gnostoa-agent-user"
 
 def _observed(identity: str, line: int, scope: str, **changes: Any) -> dict[str, Any]:
     """A provider's finding in LEGACY at `line`, in the function whose scope hashes to
-    `scope`."""
+    `scope` and starts at line 300, so the finding's place in it is `line` - 299."""
     return {
         **FINDING,
         "id": identity,
         "path": LEGACY,
         "range": {"start_line": line, "start_column": 1},
-        "enclosing": {"kind": "function", "name": "f", "sha256": scope},
+        "enclosing": {
+            "kind": "function",
+            "name": "f",
+            "sha256": scope,
+            "scope_line": line - 299,
+        },
         **changes,
     }
 
@@ -458,6 +463,40 @@ class ExactOccurrenceTests(unittest.TestCase):
             "enclosing": {"kind": "function", "name": "f", "sha256": SCOPE},
         }
         baseline, failed = self._baseline(legacy, legacy)
+        self.assertEqual("unknown", baseline)
+        self.assertIn("M17", failed)
+
+    def test_occurrences_at_one_place_pair_least_to_least(self) -> None:
+        """Two head occurrences at one place are no worse than the base's two there,
+        whichever order each read lists them in."""
+
+        def at(identity: str, severity: str) -> dict[str, Any]:
+            return {**_produced(identity, 6, SOURCE), "severity": severity}
+
+        head = _readback(
+            "deepsource", "FULL", at("legacy-1", "MAJOR"), at("legacy-2", "MINOR")
+        )
+        base = _base(at("base-1", "MINOR"), at("base-2", "MAJOR"))
+        evidence, failed = _admitted(
+            _section_c_declaration(), _with_reads(head, base), files=MODIFIED
+        )
+        self.assertEqual(
+            ["pre_existing", "pre_existing"],
+            [_listed(evidence, i)["baseline"] for i in ("legacy-1", "legacy-2")],
+        )
+        self.assertEqual(BASELINE, set(failed))
+
+    def test_a_base_occurrence_without_its_place_leaves_the_head_s_unknown(
+        self,
+    ) -> None:
+        head = _produced("legacy-1", 6, SOURCE)
+        base = {
+            **head,
+            "enclosing": {
+                k: v for k, v in head["enclosing"].items() if k != "scope_line"
+            },
+        }
+        baseline, failed = self._baseline(head, base)
         self.assertEqual("unknown", baseline)
         self.assertIn("M17", failed)
 

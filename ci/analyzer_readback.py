@@ -614,7 +614,7 @@ def _commit_source(
         return None
 
 
-_ScopeReaders = dict[tuple[str, str], Callable[[int], dict[str, str] | None] | None]
+_ScopeReaders = dict[tuple[str, str], Callable[[int], dict[str, Any] | None] | None]
 
 
 def _finding_scope(
@@ -622,7 +622,7 @@ def _finding_scope(
     commit: str,
     readers: _ScopeReaders,
     source_of: Callable[[str, str], str | None],
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     """A Python finding's enclosing scope at `commit`, its file read and parsed at
     most once into `readers`; None for any other finding, or one already scoped."""
 

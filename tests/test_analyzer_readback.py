@@ -222,7 +222,8 @@ class EnclosingScopeTests(unittest.TestCase):
         return hashlib.sha256("".join(lines[first - 1 : last]).encode()).hexdigest()
 
     def test_the_smallest_enclosing_function_or_class_holds_the_line(self) -> None:
-        """Its lines, decorators included, are what is hashed."""
+        """Its lines, decorators included, are what is hashed, and the finding's place
+        among them is its line there, 1 at the first (Decision 0132)."""
 
         cases = {
             4: ("function", "outer", 4, 8),
@@ -234,7 +235,12 @@ class EnclosingScopeTests(unittest.TestCase):
         for line, (kind, name, first, last) in cases.items():
             with self.subTest(line=line):
                 self.assertEqual(
-                    {"kind": kind, "name": name, "sha256": self._digest(first, last)},
+                    {
+                        "kind": kind,
+                        "name": name,
+                        "sha256": self._digest(first, last),
+                        "scope_line": line - first + 1,
+                    },
                     analyzer_readback.enclosing_scope(self.SOURCE, line),
                 )
 
@@ -254,6 +260,7 @@ class EnclosingScopeTests(unittest.TestCase):
                 "kind": "function",
                 "name": "f",
                 "sha256": hashlib.sha256(b"def f():\r    return 2\r").hexdigest(),
+                "scope_line": 2,
             },
             analyzer_readback.enclosing_scope("x = 1\rdef f():\r    return 2\r", 3),
         )
@@ -266,6 +273,7 @@ class EnclosingScopeTests(unittest.TestCase):
             "kind": "function",
             "name": "fetch",
             "sha256": hashlib.sha256(b"async def fetch():\n    return 1\n").hexdigest(),
+            "scope_line": 2,
         }
         self.assertEqual(expected, analyzer_readback.enclosing_scope(source, 5))
         self.assertEqual(
@@ -284,11 +292,15 @@ class EnclosingScopeTests(unittest.TestCase):
                 self.assertIsNone(analyzer_readback.enclosing_scope(source, line))
 
     def test_a_finding_keeps_a_closed_enclosing_scope(self) -> None:
+        """A scope names its finding's place in it, or, from an older bundle, no place,
+        which still parses (PAO 6681312300)."""
         scope = {"kind": "function", "name": "outer", "sha256": "a" * 64}
-        finding = analyzer_readback.normalize_finding(
-            {"id": "f", "message": "m", "enclosing": scope}
-        )
-        self.assertEqual(scope, finding["enclosing"])
+        for kept in (scope, {**scope, "scope_line": 3}):
+            with self.subTest(kept=kept):
+                finding = analyzer_readback.normalize_finding(
+                    {"id": "f", "message": "m", "enclosing": kept}
+                )
+                self.assertEqual(kept, finding["enclosing"])
         for bad in (
             {**scope, "kind": "module"},
             {**scope, "sha256": "A" * 64},
@@ -296,6 +308,13 @@ class EnclosingScopeTests(unittest.TestCase):
             {**scope, "extra": "x"},
             {"kind": "function", "name": "outer"},
             {**scope, "name": ""},
+            {**scope, "scope_line": 0},
+            {**scope, "scope_line": -1},
+            {**scope, "scope_line": True},
+            {**scope, "scope_line": "3"},
+            {**scope, "scope_line": 3.0},
+            {**scope, "scope_line": None},
+            {"kind": "function", "name": "outer", "scope_line": 3},
             "outer",
         ):
             with (
