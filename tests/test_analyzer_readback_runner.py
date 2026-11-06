@@ -2113,6 +2113,60 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             }
         )
 
+    def _inline_finding(self, line: int | None) -> dict[str, Any]:
+        urls = _github_urls()
+        github = self._github(
+            **{
+                urls["comments"]: [
+                    {
+                        "body": "<!-- DeepSource: id=inline-location --> finding",
+                        "path": "tools/example.py",
+                        "line": line,
+                        "original_line": 2,
+                        "commit_id": HEAD,
+                        "original_commit_id": HEAD,
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    }
+                ],
+                "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                f"tools/example.py?ref={HEAD}": runner.RunnerError("not found"),
+            }
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([])},
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        [diff] = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("deepsource", "DIFF")
+        ]
+        [finding] = diff["findings"]
+        return finding
+
+    def test_an_invalid_current_comment_line_does_not_borrow_its_original_place(
+        self,
+    ) -> None:
+        # Q 4494099874: preserve the finding, but a supplied invalid current line
+        # cannot become a valid range through an unrelated historical line.
+        finding = self._inline_finding(0)
+        self.assertEqual("inline-location", finding["id"])
+        self.assertNotIn("range", finding)
+
+    def test_an_absent_current_comment_line_uses_its_original_place(self) -> None:
+        finding = self._inline_finding(None)
+        self.assertEqual(2, finding["range"]["start_line"])
+
     def test_without_its_credential_nothing_is_read_from_deepsource(self) -> None:
         github = self._github()
         bundle = runner.collect_bundle(

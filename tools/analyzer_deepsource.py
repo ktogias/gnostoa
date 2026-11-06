@@ -27,6 +27,7 @@ from .analyzer_readback import (
 )
 from .review_model import canonical_digest, canonical_json
 
+_GRAPHQL_ADAPTER = "deepsource-graphql/v1"
 _API_ROOT = "https://api.deepsource.com"
 _GRAPHQL_URL = f"{_API_ROOT}/graphql/"
 _TOKEN_ENV = "DEEPSOURCE_API_TOKEN"  # nosec B105 -- environment variable name, not a credential
@@ -674,7 +675,7 @@ def _full_readback(
 ) -> dict[str, Any]:
     return build_readback(
         provider="deepsource",
-        adapter="deepsource-graphql/v1",
+        adapter=_GRAPHQL_ADAPTER,
         repository=common["repository"],
         pull_number=common["pull_number"],
         requested_head=common["requested_head"],
@@ -1357,7 +1358,7 @@ def read_full_run(
         observed = observed_at or _now()
         return build_readback(
             provider="deepsource",
-            adapter="deepsource-graphql/v1",
+            adapter=_GRAPHQL_ADAPTER,
             repository=repository,
             pull_number=pull_number,
             requested_head=requested_head,
@@ -2110,7 +2111,11 @@ def _deepsource_comments(
             {
                 "body": comment.get("body"),
                 "path": comment.get("path"),
-                "line": comment.get("line") or comment.get("original_line"),
+                "line": (
+                    comment.get("line")
+                    if comment.get("line") is not None
+                    else comment.get("original_line")
+                ),
                 "commit_id": comment.get("commit_id"),
                 "original_commit_id": comment.get("original_commit_id"),
                 "url": comment.get("html_url") or comment.get("url"),
@@ -2158,7 +2163,7 @@ def _deepsource_full(
         return read_full_run(deepsource, run_uid=run_uid, **common)
     return build_readback(
         provider="deepsource",
-        adapter="deepsource-graphql/v1",
+        adapter=_GRAPHQL_ADAPTER,
         **common,
         observed_head=None,
         analysis_id=None,
@@ -2193,8 +2198,6 @@ class DeepSourceAdapter:
         observed_at: str,
         deadline: float,
         native_context: Mapping[str, Any],
-        base_sha: str | None = None,
-        scope_reader: Any = None,
     ) -> list[dict[str, Any]]:
         common: dict[str, Any] = {
             "repository": repository,

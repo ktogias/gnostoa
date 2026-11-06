@@ -750,8 +750,6 @@ class OptionalReportAdapter(Protocol):
         observed_at: str,
         deadline: float,
         native_context: Mapping[str, Any],
-        base_sha: str | None = None,
-        scope_reader: Any = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -822,7 +820,6 @@ def _optional_readbacks(
                 observed_at=common["observed_at"],
                 deadline=deadline,
                 native_context=native_context,
-                scope_reader=source_of,
             )
         ]
         if any(record["provider"] != name for record in records):
