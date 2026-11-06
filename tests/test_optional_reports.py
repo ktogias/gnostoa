@@ -742,6 +742,49 @@ class DispositionEdgeTests(unittest.TestCase):
                 reasons = failed.get("M17", [])
                 self.assertEqual(expected, reasons[-1] if reasons else None)
 
+    def test_a_block_naming_no_rule_disposes_of_only_a_finding_listed_with_none(
+        self,
+    ) -> None:
+        """Codex on #485: an inline comment's finding carries no rule, so a block
+        names it with `rule: null`, by its native id, path and line. A block naming a
+        rule never matches it, and a block naming none never matches a finding that
+        has one."""
+        listed = _observed("fp-1", 300, SCOPE)
+        inline = {k: v for k, v in listed.items() if k not in ("rule", "enclosing")}
+        by_line = _disposition(listed).replace(
+            f'scope_hash: "{SCOPE}"\n', "line: 300\n"
+        )
+        no_rule = by_line.replace(json.dumps(FINDING["rule"]), "null")
+        for name, read, body, expected in (
+            (
+                "an inline finding, a block naming no rule",
+                ("DIFF", inline),
+                no_rule,
+                None,
+            ),
+            (
+                "an inline finding, a block naming a rule",
+                ("DIFF", inline),
+                by_line,
+                ["1 unresolved analyzer finding"],
+            ),
+            (
+                "a finding with a rule, a block naming none",
+                ("FULL", listed),
+                no_rule,
+                ["1 unresolved analyzer finding"],
+            ),
+        ):
+            with self.subTest(name):
+                scope, finding = read
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    _with_reads(_readback("deepsource", scope, finding)),
+                    files=MODIFIED,
+                    review_body=body,
+                )
+                self.assertEqual(expected, failed.get("M17"))
+
     def test_a_disposition_never_closes_a_required_provider_s_finding(self) -> None:
         finding = _observed("codacy-1", 300, SCOPE)
         bundle = _bundle(
@@ -801,6 +844,10 @@ class DispositionBlockTests(unittest.TestCase):
             ("a line as text", block.replace(scope, 'line: "300"\n')),
             ("an empty rule", block.replace(json.dumps(FINDING["rule"]), '""')),
             ("an unterminated block", block.replace("-->\n", "")),
+            (
+                "a value nested past the parser's bound",
+                block.replace('provider: "deepsource"', "provider: " + "[" * 50_000),
+            ),
         ):
             with self.subTest(name):
                 self.assertEqual([], parse_dispositions(text))
