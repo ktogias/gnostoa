@@ -867,6 +867,13 @@ class DispositionBlockTests(unittest.TestCase):
                 "a value nested past the parser's bound",
                 block.replace('provider: "deepsource"', "provider: " + "[" * 50_000),
             ),
+            # Closed, it is parsed, and nested past the depth bound (cubic on #485).
+            (
+                "a value nested past the depth bound",
+                block.replace(
+                    'provider: "deepsource"', "provider: " + "[" * 100 + "]" * 100
+                ),
+            ),
         ):
             with self.subTest(name):
                 self.assertEqual([], parse_dispositions(text))

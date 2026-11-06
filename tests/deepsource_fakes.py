@@ -22,7 +22,15 @@ class GraphQLFake:
         self.responses = responses
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        # A deadline-bound reader's keyword, as the DeepSource client takes it.
+        del deadline
         values = dict(variables)
         self.calls.append((query, values))
         name = "run" if "AnalyzerRun" in query else str(values.get("id"))

@@ -2014,14 +2014,21 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
     def test_the_optional_reads_stop_at_their_overall_deadline(self) -> None:
         """CodeAnt on #485: a slow provider's reads end at one overall deadline, well
         inside the readback job's limit, as an ERROR read; no request starts after
-        it. Each request here takes 100 s of a fake clock."""
+        it. Each request here takes 100 s of a fake clock. The client is given the
+        deadline, so a request in flight stops at it too (cubic on #485)."""
         now = [0.0]
         cursors = [None, *(str(n) for n in range(1, analyzer_deepsource.MAX_PAGES + 5))]
+        starts: list[tuple[float, float | None]] = []
 
         class Slow(GraphQLFake):
             def graphql(
-                self, query: str, variables: Mapping[str, Any]
+                self,
+                query: str,
+                variables: Mapping[str, Any],
+                *,
+                deadline: float | None = None,
             ) -> Mapping[str, Any]:
+                starts.append((now[0], deadline))
                 now[0] += 100.0
                 return super().graphql(query, variables)
 
@@ -2064,6 +2071,73 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
             ],
         )
         self.assertLess(len(reader.calls), 10)
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
+
+    def test_the_merge_base_reads_stop_at_the_optional_deadline(self) -> None:
+        """cubic on #485: the merge base's GitHub reads are DeepSource's optional
+        reads too, so none starts after their deadline, and the head's reads stay.
+        Each base read here takes 200 s of a fake clock."""
+        now = [0.0]
+        starts: list[str] = []
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+
+        class SlowBase(_GitHubFake):
+            def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+                if "/compare/" in url or MERGE_BASE in url:
+                    if now[0] >= OPTIONAL_DEADLINE:
+                        starts.append(url)
+                    now[0] += 200.0
+                return super().get(url)
+
+        urls = _github_urls()
+        github = SlowBase(
+            {
+                urls["pr"]: [
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                ],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
+                    "merge_base_commit": {"sha": MERGE_BASE}
+                },
+                f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
+                f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
+                    "check_runs": [_deepsource_check(BASE_RUN)]
+                },
+            }
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
+                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+            },
+            {"check-python": check_page([])},
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual([], starts)
+        self.assertEqual(
+            [("deepsource", "FULL"), ("deepsource", "DIFF")],
+            [
+                (r["provider"], r["scope"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
 
     def test_only_the_readback_step_receives_the_optional_provider_s_token(
         self,
@@ -2131,6 +2205,9 @@ class DeepSourceOptionalReadTests(unittest.TestCase):
         )
 
 
+# DeepSource's optional reads' overall deadline, on a fake clock that starts at 0
+# (CodeAnt on #485).
+OPTIONAL_DEADLINE = 240.0
 # Decision 0132's base read: the Pull Request's base branch tip, its merge base with
 # the head, and DeepSource's run for each commit.
 TIP = "b" * 40
@@ -2160,7 +2237,14 @@ class _RunsByUid:
     ) -> None:
         self.runs, self.checks = runs, checks
 
-    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        del deadline
         if "AnalyzerRun" in query:
             return self.runs[variables["runUid"]]
         return self.checks[variables["id"]]
