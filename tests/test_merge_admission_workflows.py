@@ -161,9 +161,11 @@ READBACK_CALL = "./.github/workflows/analyzer-readback.yml"
 # workflow's environment secrets resolve to an empty string unless its caller passes
 # each by name (GitHub, "Reuse workflows", read 2026-10-13; #407 6151068319), so the
 # call forwards exactly these, each by its own name, and never `inherit` (#407
-# 6154772083). DeepSource's is not among them: it is retired as merge evidence
-# (Decision 0130).
-ANALYZER_SECRETS = frozenset({"CODACY_API_TOKEN", "SONAR_TOKEN"})
+# 6154772083). DeepSource's is among them again: it is optional, read for findings
+# only (Decision 0132).
+ANALYZER_SECRETS = frozenset(
+    {"DEEPSOURCE_API_TOKEN", "CODACY_API_TOKEN", "SONAR_TOKEN"}
+)
 
 
 def _selector(name: str) -> str:

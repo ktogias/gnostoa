@@ -3782,11 +3782,16 @@ class ProjectRiskActivationTests(unittest.TestCase):
                 self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
 
 
+# A provider the retired table names, as DeepSource was before Decision 0132.
+_RETIRED = {"retired-provider": "0130"}
+
+
 class DeepSourceRetirementTests(unittest.TestCase):
     """The DeepSource exit (#389, owner 6625223543; Decision 0130), end to end through
     `evidence_for` and `merge_admission.evaluate`: the project inventory's claims stand
-    for every class, DeepSource is retired rather than unavailable, and a missing or
-    partial inventory, or any obtained finding, still denies."""
+    for every class, and a missing or partial inventory, or any obtained finding,
+    still denies. Decision 0132 moves DeepSource from retired to optional; the retired
+    state stays, protected and recorded, for any provider its table names."""
 
     _CLASSES = ("mechanical", "normal", "normative", "critical")
 
@@ -3866,20 +3871,34 @@ class DeepSourceRetirementTests(unittest.TestCase):
     def test_a_retired_provider_s_readback_is_refused_as_retired(self) -> None:
         """Not as an unknown readback: retirement is a protected, recorded state."""
         for scope in ("DIFF", "FULL"):
-            with self.subTest(scope=scope):
+            with (
+                self.subTest(scope=scope),
+                patch.object(merge_evidence_github, "_RETIRED_ANALYZERS", _RETIRED),
+            ):
                 bundle = self._without_deepsource()
-                bundle["readbacks"].insert(0, _readback("deepsource", scope))
+                bundle["readbacks"].insert(0, _readback("retired-provider", scope))
                 with self.assertRaisesRegex(
                     merge_evidence_github.MergeEvidenceError,
-                    "deepsource is retired as merge evidence \\(Decision 0130\\)",
+                    "retired-provider is retired as merge evidence \\(Decision 0130\\)",
                 ):
                     _evidence(analyzer=bundle)
 
     def test_the_evidence_records_the_retirement(self) -> None:
-        evidence = _evidence(analyzer=self._without_deepsource())
+        with patch.object(merge_evidence_github, "_RETIRED_ANALYZERS", _RETIRED):
+            evidence = _evidence(analyzer=self._without_deepsource())
         self.assertEqual(
-            [{"provider": "deepsource", "decision": "0130"}],
+            [{"provider": "retired-provider", "decision": "0130"}],
             evidence["analyzer_retired"],
+        )
+        # DeepSource is optional, not retired (Decision 0132): its read is recorded
+        # apart, and the evidence retires no provider of its own.
+        bundle = self._without_deepsource()
+        bundle["readbacks"].insert(0, _readback("deepsource", "FULL"))
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual([], evidence["analyzer_retired"])
+        self.assertEqual(
+            [{"provider": "deepsource", "scope": "FULL", "coverage": "COMPLETE"}],
+            evidence["analyzer_optional"],
         )
 
 

@@ -25,11 +25,16 @@ from tests.merge_evidence_github_support import (
     _bundle,
     _comparison,
     _complete_bundle,
+    _decision,
+    _evidence,
+    _failed,
     _inventory,
     _readback,
     _section_c_declaration,
 )
 from tools import analyzer_readback
+from tools.assurance_completeness import AssuranceCompletenessError
+from tools.review_reconcile import MAX_DISPOSITIONS, parse_dispositions
 
 # A finding that only the provider's full report shows: no inline comment carries it. It lies
 # in a file the change request changes (the fixture's FILES), so it applies (PAO 6662582106).
@@ -191,8 +196,30 @@ class ReportOnlyFindingTests(unittest.TestCase):
         self.assertEqual(BASELINE, set(failed))
 
     def test_a_report_for_another_head_contributes_no_finding(self) -> None:
-        """D6: a stale report is recorded as stale, never read as the head's."""
-        stale = _readback("deepsource", "FULL", REPORT_ONLY, head="0" * 40)
+        """D6: a stale report is recorded as stale, never read as the head's. As the
+        DeepSource adapter records one: the head requested, another commit's run
+        observed, and the read ambiguous (`SUBJECT_MISMATCH`)."""
+        stale = analyzer_readback.build_readback(
+            provider="deepsource",
+            adapter="deepsource-fake/v1",
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            requested_head=HEAD,
+            observed_head="0" * 40,
+            analysis_id=None,
+            scope="FULL",
+            completeness="AMBIGUOUS",
+            native_mode="FULL_RUN",
+            observed_at="2026-09-19T16:40:50Z",
+            run_state="SUCCESS",
+            coverage_record={
+                "status": "INCOMPLETE",
+                "pages": 1,
+                "count": 1,
+                "reason": "SUBJECT_MISMATCH",
+            },
+            findings=(REPORT_ONLY,),
+        )
         evidence, failed = _admitted(_section_c_declaration(), _with_optional(stale))
         self.assertEqual(BASELINE, set(failed))
         self.assertEqual(
@@ -496,6 +523,220 @@ class ApplicabilityTests(unittest.TestCase):
         self.assertEqual(
             ["deepsource"], [o["provider"] for o in evidence["analyzer_optional"]]
         )
+
+
+class ClassificationEdgeTests(unittest.TestCase):
+    """Decision 0132 item 3 at its edges: a base read for another commit, a severity
+    outside the provider's order, a lesser one, and a finding with no scope."""
+
+    def _baseline(self, head: dict[str, Any], base: dict[str, Any]) -> str:
+        bundle = _with_reads(_readback("deepsource", "FULL", head), base)
+        evidence, _ = _admitted(_section_c_declaration(), bundle, files=MODIFIED)
+        baseline: str = _listed(evidence, head["id"])["baseline"]
+        return baseline
+
+    def test_a_base_read_for_another_commit_leaves_the_finding_unknown(self) -> None:
+        legacy = _observed("legacy-1", 300, SCOPE)
+        stale = _readback("deepsource", "BASE", legacy, head="f" * 40)
+        self.assertEqual("unknown", self._baseline(legacy, stale))
+
+    def test_only_a_known_severity_no_worse_than_the_base_s_is_pre_existing(
+        self,
+    ) -> None:
+        for name, now, before, expected in (
+            ("a lesser severity", "MINOR", "MAJOR", "pre_existing"),
+            ("a severity outside the order", "BLOCKER", "MAJOR", "introduced"),
+            ("a base severity outside the order", "MAJOR", "BLOCKER", "introduced"),
+        ):
+            with self.subTest(name):
+                head = _observed("legacy-1", 300, SCOPE, severity=now)
+                base = _base(_observed("legacy-1", 300, SCOPE, severity=before))
+                self.assertEqual(expected, self._baseline(head, base))
+
+    def test_a_finding_with_no_enclosing_scope_is_unknown(self) -> None:
+        legacy = {
+            k: v
+            for k, v in _observed("legacy-1", 300, SCOPE).items()
+            if k != "enclosing"
+        }
+        self.assertEqual("unknown", self._baseline(legacy, _base(legacy)))
+
+
+class DispositionEdgeTests(unittest.TestCase):
+    """Decision 0132 item 4 at its edges: the line locator, a later review that is
+    not an approval, a required provider's finding, and the verdict's listing."""
+
+    def test_a_disposition_by_its_line_closes_its_finding_and_is_listed(self) -> None:
+        finding = _observed("fp-1", 300, SCOPE)
+        body = _disposition(finding).replace(f'scope_hash: "{SCOPE}"\n', "line: 300\n")
+        evidence, verdict = _decision(
+            _section_c_declaration(),
+            _with_reads(_readback("deepsource", "FULL", finding)),
+            files=MODIFIED,
+            review_body=body,
+        )
+        self.assertEqual(
+            BASELINE, {c["id"] for c in verdict["criteria"] if c["status"] == "FAIL"}
+        )
+        self.assertEqual(
+            [
+                {
+                    "item": "deepsource-full",
+                    "id": "fp-1",
+                    "approver": "ktogias",
+                    "evidence_ref": (
+                        "https://github.com/ktogias/gnostoa/pull/300#issuecomment-2"
+                    ),
+                }
+            ],
+            verdict["for_approval"]["disposed_findings"],
+        )
+        self.assertEqual(
+            [{"provider": "deepsource", "scope": "FULL", "coverage": "COMPLETE"}],
+            verdict["for_approval"]["optional_analyzers"],
+        )
+        self.assertEqual(
+            ["fp-1"], [d["native_id"] for d in evidence["reviews"][0]["dispositions"]]
+        )
+
+    def test_a_disposition_in_an_approval_the_approver_later_superseded_is_unbound(
+        self,
+    ) -> None:
+        finding = _observed("fp-1", 300, SCOPE)
+        later = {
+            "id": 12,
+            "user": {"login": "ktogias"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-19T16:41:00Z",
+            "commit_id": HEAD,
+            "html_url": "https://example.invalid/review/12",
+        }
+        _, failed = _admitted(
+            _section_c_declaration(),
+            _with_reads(_readback("deepsource", "FULL", finding)),
+            files=MODIFIED,
+            review_body=_disposition(finding),
+            extra_reviews=(later,),
+        )
+        self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_a_disposition_never_closes_a_required_provider_s_finding(self) -> None:
+        finding = _observed("codacy-1", 300, SCOPE)
+        bundle = _bundle(
+            _readback("codacy", "DIFF", finding),
+            _readback(*SONAR),
+            _inventory("DIFF"),
+            _inventory("FULL"),
+        )
+        _, failed = _admitted(
+            _section_c_declaration(),
+            bundle,
+            files=MODIFIED,
+            review_body=_disposition(finding, provider="codacy"),
+        )
+        self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+
+class DispositionBlockTests(unittest.TestCase):
+    """The closed `gnostoa:disposition:v1` block (Decision 0132 item 4): a malformed
+    one disposes of nothing, so it is left out, and a review's text yields at most
+    MAX_DISPOSITIONS."""
+
+    _FINDING = _observed("fp-1", 300, SCOPE)
+
+    def test_a_well_formed_block_gives_its_fields(self) -> None:
+        self.assertEqual(
+            [
+                {
+                    "provider": "deepsource",
+                    "native_id": "fp-1",
+                    "rule": FINDING["rule"],
+                    "path": LEGACY,
+                    "scope_hash": SCOPE,
+                    "commit_id": HEAD,
+                    "evidence_ref": (
+                        "https://github.com/ktogias/gnostoa/pull/300#issuecomment-2"
+                    ),
+                }
+            ],
+            parse_dispositions(_disposition(self._FINDING)),
+        )
+
+    def test_a_malformed_block_is_left_out(self) -> None:
+        block = _disposition(self._FINDING)
+        scope = f'scope_hash: "{SCOPE}"\n'
+        for name, text in (
+            ("an unknown field", block.replace(scope, scope + 'note: "x"\n')),
+            ("a missing field", block.replace('provider: "deepsource"\n', "")),
+            ("both locators", block.replace(scope, scope + "line: 300\n")),
+            ("no locator", block.replace(scope, "")),
+            ("a repeated field", block.replace(scope, scope + scope)),
+            ("a value that is not JSON", block.replace(scope, "scope_hash: d\n")),
+            ("a line that is no field", block.replace(scope, scope + "loose text\n")),
+            ("a commit that is not exact", block.replace(HEAD, HEAD[:39])),
+            ("a scope that is no digest", block.replace(SCOPE, SCOPE[:63])),
+            ("a line of 0", block.replace(scope, "line: 0\n")),
+            ("a line as text", block.replace(scope, 'line: "300"\n')),
+            ("an empty rule", block.replace(json.dumps(FINDING["rule"]), '""')),
+            ("an unterminated block", block.replace("-->", "")),
+        ):
+            with self.subTest(name):
+                self.assertEqual([], parse_dispositions(text))
+
+    def test_a_review_yields_at_most_the_bound(self) -> None:
+        text = _disposition(self._FINDING) * (MAX_DISPOSITIONS + 1)
+        self.assertEqual(MAX_DISPOSITIONS, len(parse_dispositions(text)))
+
+
+class OptionalEvidenceContractTests(unittest.TestCase):
+    """The verdict's closed contract for what Decision 0132 adds to the evidence: an
+    unknown value in an optional finding, an optional read or a disposition is
+    corrupt evidence, refused, never read as absent."""
+
+    @staticmethod
+    def _evidence() -> dict[str, Any]:
+        return _evidence(
+            analyzer=_with_optional(_readback("deepsource", "FULL", REPORT_ONLY))
+        )
+
+    def test_unknown_optional_values_are_refused(self) -> None:
+        def finding(**changes: Any) -> dict[str, Any]:
+            evidence = self._evidence()
+            [entry] = evidence["analyzer_findings"]["findings"]
+            entry.update(changes)
+            return evidence
+
+        def read(**changes: Any) -> dict[str, Any]:
+            evidence = self._evidence()
+            evidence["analyzer_optional"][0].update(changes)
+            return evidence
+
+        def review(dispositions: Any) -> dict[str, Any]:
+            evidence = self._evidence()
+            evidence["reviews"][0]["dispositions"] = dispositions
+            return evidence
+
+        valid = parse_dispositions(_disposition(_observed("fp-1", 300, SCOPE)))
+        for name, evidence in (
+            ("an unknown baseline", finding(baseline="waived")),
+            ("an unknown provenance", finding(configuration_provenance="proven")),
+            ("a provider that is no text", finding(provider=1)),
+            ("an unknown optional coverage", read(coverage="CLEAN")),
+            ("an unknown optional field", read(extra="x")),
+            ("dispositions that are no array", review({})),
+            ("a disposition with both locators", review([{**valid[0], "line": 3}])),
+            ("too many dispositions", review(valid * (MAX_DISPOSITIONS + 1))),
+        ):
+            with self.subTest(name), self.assertRaises(AssuranceCompletenessError):
+                _failed(evidence)
+
+    def test_optional_reads_that_are_no_list_are_refused(self) -> None:
+        evidence = self._evidence()
+        evidence["analyzer_optional"] = {}
+        with self.assertRaisesRegex(
+            AssuranceCompletenessError, "analyzer_optional must be a list"
+        ):
+            _failed(evidence)
 
 
 if __name__ == "__main__":

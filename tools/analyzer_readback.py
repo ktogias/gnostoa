@@ -21,7 +21,10 @@ COMPLETENESS_STATES = frozenset(
 _READBACK_UNAVAILABLE_COVERAGE = frozenset(
     {"PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
-SCOPES = frozenset({"DIFF", "FULL"})
+# A provider's read of the change (DIFF), of the whole tree (FULL), or of the pull
+# request's merge base (BASE), which only an optional provider gives, so its findings
+# there can be compared with the head's (Decision 0132).
+SCOPES = frozenset({"DIFF", "FULL", "BASE"})
 MAX_FINDINGS = 10_000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 # A SHA-256 digest as the readback and the verdict write it (Q on #480: one pattern).
@@ -926,11 +929,11 @@ def _check_bound(
     for key in sorted(projection):
         _nonnegative_int(projection[key], f"bundle projection {key}")
     for readback in readbacks:
-        if (
-            readback["repository"],
-            readback["pull_number"],
-            readback["requested_head"],
-        ) != subject:
+        # A merge-base read names the base, not the head (Decision 0132); its
+        # repository and pull request are still the subject's.
+        own = (readback["repository"], readback["pull_number"])
+        head = readback["requested_head"]
+        if own != subject[:2] or (readback["scope"] != "BASE" and head != subject[2]):
             raise AnalyzerReadbackError("a readback is not the bundle's subject")
 
 

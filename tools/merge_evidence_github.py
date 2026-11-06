@@ -100,7 +100,23 @@ _ANALYZER_COMPLETENESS = {
 # The providers retired as merge evidence, each with its Decision: protected here,
 # so a bundle that still carries one's readback is refused as retired, never read as
 # an unknown or an unavailable readback, and the evidence names each (Decision 0130).
-_RETIRED_ANALYZERS = {"deepsource": "0130"}
+# DeepSource has moved to the optional providers (Decision 0132).
+_RETIRED_ANALYZERS: dict[str, str] = {}
+# The providers read as optional, each with its Decision (Decision 0132). An optional
+# read maps to no declared item, so missing, failed, partial or stale it changes no
+# claim. A complete read of the exact head adds the findings it holds in the files the
+# change modifies, each classified against the provider's read of the merge base.
+_OPTIONAL_ANALYZERS = {"deepsource": "0132"}
+# The head's reads, the full report first, so a finding its inline comment repeats
+# keeps the report's record (lineage L6).
+_OPTIONAL_HEAD_SCOPES = ("FULL", "DIFF")
+# Each optional provider's own severity order, least severe first. A pre-existing
+# occurrence is no more severe than its pair at the merge base (the owner's 6676472012),
+# and a different severity outside the order establishes nothing.
+_OPTIONAL_SEVERITIES = {"deepsource": ("MINOR", "MAJOR", "CRITICAL")}
+# The optional providers whose runs state no configuration of their own: a
+# pre-existing classification of theirs rests on an unproven one (PAO 6676228030, P2).
+_UNPROVEN_CONFIGURATION = frozenset({"deepsource"})
 _ANALYZER_PRODUCER = "gnostoa.merge-evidence-github/analyzer-readback"
 _ANALYZER_LABEL = "analyzer readback"
 # As the readback normalized them; its provenance and native metadata stay in the
@@ -1638,6 +1654,11 @@ def _reviews(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             "state": item["recommendation_state"],
             "commit_id": item["head_commit"],
             "submitted_at": item["observed_at"],
+            # Its false-positive dispositions, which M17 honours only in an eligible
+            # approval at the head (Decision 0132 item 4).
+            **(
+                {"dispositions": item["dispositions"]} if "dispositions" in item else {}
+            ),
         }
         for item in items
     ]
@@ -1698,8 +1719,11 @@ def evidence_from_snapshot(
     change_class, links = _change_control(provider["body"], decisions, repository)
     _proven_work_items(document, links["work_items"], repository)
     state = "merged" if provider["merged"] else provider["state"]
-    analyzer_receipts, analyzer_findings = _analyzer_evidence(
-        analyzer_readback, subject
+    analyzer_receipts, analyzer_findings, analyzer_optional = _analyzer_evidence(
+        analyzer_readback,
+        subject,
+        frozenset(item["path"] for item in files),
+        provider["comparison"]["commit_sha"],
     )
     return {
         "subject": subject_of(subject),
@@ -1730,6 +1754,7 @@ def evidence_from_snapshot(
         "suppressions": _suppressions(files, suppression_markers),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
+        "analyzer_optional": analyzer_optional,
         "analyzer_debt": _analyzer_debt(debt_ledger),
         "analyzer_retired": [
             {"provider": name, "decision": decision}
@@ -1815,8 +1840,11 @@ def _bound_to(bundle: Mapping[str, Any], subject: Mapping[str, Any]) -> bool:
 
 
 def _analyzer_evidence(
-    value: object, subject: Mapping[str, Any]
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    value: object,
+    subject: Mapping[str, Any],
+    changed: frozenset[str] = frozenset(),
+    merge_base: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     """The analyzer items' receipts and the findings, from the authenticated
     readback's bundle (1b.3b-2; the owner's rule, #407 6096770145).
 
@@ -1824,10 +1852,11 @@ def _analyzer_evidence(
     readback's own coverage, whatever its findings: they stay explicit, every one
     unresolved, for M17. A bundle that is not gives every item `INCOMPLETE`; a
     readback that is missing gives its item none, so the reducer reports it
-    `MISSING`. Without a bundle the findings are `UNAVAILABLE`."""
+    `MISSING`. Without a bundle the findings are `UNAVAILABLE`. An optional
+    provider's reads are recorded apart, and add the findings Decision 0132 admits."""
 
     if value is None:
-        return [], {"coverage": "UNAVAILABLE", "findings": []}
+        return [], {"coverage": "UNAVAILABLE", "findings": []}, []
     try:
         bundle = parse_bundle(value)
         _check_times(bundle)
@@ -1836,7 +1865,7 @@ def _analyzer_evidence(
         raise MergeEvidenceError(f"the {_ANALYZER_LABEL} is invalid: {exc}") from exc
     # Before the binding, so a bundle for another subject is still refused when its
     # readbacks break the contract (Codex on #417).
-    readbacks = _readbacks_by_item(bundle["readbacks"])
+    readbacks, optional = _readbacks_by_item(bundle["readbacks"])
     if not _bound_to(bundle, subject):
         provenance = {"subject_binding": bundle["subject_binding"], "bound": False}
         receipts = [
@@ -1845,7 +1874,7 @@ def _analyzer_evidence(
             )
             for pair in _ANALYZER_ITEMS.values()
         ]
-        return receipts, {"coverage": "INCOMPLETE", "findings": []}
+        return receipts, {"coverage": "INCOMPLETE", "findings": []}, []
     receipts, findings = [], []
     for (requirement, item), readback in readbacks.items():
         receipts.append(
@@ -1867,10 +1896,153 @@ def _analyzer_evidence(
     complete = len(readbacks) == len(_ANALYZER_ITEMS) and all(
         r["status"] == "COMPLETE" for r in receipts
     )
-    return receipts, {
-        "coverage": "COMPLETE" if complete else "INCOMPLETE",
-        "findings": findings,
+    records, admitted = _optional_evidence(
+        optional, subject["head_commit"], changed, merge_base
+    )
+    findings.extend(admitted)
+    return (
+        receipts,
+        {"coverage": "COMPLETE" if complete else "INCOMPLETE", "findings": findings},
+        records,
+    )
+
+
+def _optional_evidence(
+    optional: Mapping[tuple[str, str], Mapping[str, Any]],
+    head: str,
+    changed: frozenset[str],
+    merge_base: str | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Each optional read's record, and the findings its complete reads of the exact
+    head hold in the files the change modifies, each classified against the
+    provider's complete read of the merge base (Decision 0132)."""
+
+    records = [
+        _optional_record(pair, readback, head, merge_base)
+        for pair, readback in sorted(optional.items())
+    ]
+    coverage = {(r["provider"], r["scope"]): r["coverage"] for r in records}
+    findings: list[dict[str, Any]] = []
+    for provider in sorted({name for name, _ in optional}):
+        observed: dict[str, tuple[str, Mapping[str, Any]]] = {}
+        for scope in _OPTIONAL_HEAD_SCOPES:
+            if coverage.get((provider, scope)) != "COMPLETE":
+                continue
+            item = f"{provider}-{scope.lower()}"
+            for finding in optional[(provider, scope)]["findings"]:
+                if finding.get("path") in changed:
+                    observed.setdefault(finding["id"], (item, finding))
+        base = optional.get((provider, "BASE"))
+        if base is None or coverage[(provider, "BASE")] != "COMPLETE":
+            base = None
+        findings.extend(
+            _classified(
+                provider,
+                list(observed.values()),
+                None if base is None else base["findings"],
+            )
+        )
+    return records, findings
+
+
+def _optional_record(
+    pair: tuple[str, str],
+    readback: Mapping[str, Any],
+    head: str,
+    merge_base: str | None,
+) -> dict[str, Any]:
+    """An optional read's provider, scope, coverage and reason. A read of another
+    commit than its own, the head's or the merge base's, is `STALE`."""
+
+    provider, scope = pair
+    expected = merge_base if scope == "BASE" else head
+    observed = readback.get("observed_head")
+    stale = readback["requested_head"] != expected or observed not in (None, expected)
+    record = {
+        "provider": provider,
+        "scope": scope,
+        "coverage": "STALE" if stale else readback["coverage"]["status"],
     }
+    if readback["coverage"].get("reason") is not None:
+        record["reason"] = readback["coverage"]["reason"]
+    return record
+
+
+def _classified(
+    provider: str,
+    observed: list[tuple[str, Mapping[str, Any]]],
+    base: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """The listed entries of a provider's applicable head findings. Each is
+    pre-existing, introduced or unknown against its complete read of the merge base,
+    `base`, or None when there is none (the owner's 6676021682 and 6676472012)."""
+
+    groups: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
+    for _, finding in observed:
+        key = _occurrence_key(finding)
+        if key is not None:
+            groups.setdefault(key, []).append(finding)
+    at_base: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
+    for finding in base or ():
+        key = _occurrence_key(finding)
+        if key is not None:
+            at_base.setdefault(key, []).append(finding)
+    entries = []
+    for item, finding in observed:
+        key = _occurrence_key(finding)
+        if base is None or key is None:
+            baseline = "unknown"
+        elif _no_worse(provider, groups[key], at_base.get(key, [])):
+            baseline = "pre_existing"
+        else:
+            baseline = "introduced"
+        entry = {"item": item, "id": finding["id"], "message": finding["message"]}
+        entry.update({k: finding[k] for k in _FINDING_FIELDS if k in finding})
+        entry["provider"] = provider
+        entry["baseline"] = baseline
+        if baseline == "pre_existing" and provider in _UNPROVEN_CONFIGURATION:
+            entry["configuration_provenance"] = "unproven"
+        entries.append(entry)
+    return entries
+
+
+def _occurrence_key(finding: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """The group an occurrence belongs to: its rule, path, message and enclosing
+    scope. Without a rule, a path or a scope, no group, so no correspondence."""
+
+    enclosing = finding.get("enclosing")
+    rule, path = finding.get("rule"), finding.get("path")
+    if not isinstance(enclosing, Mapping) or rule is None or path is None:
+        return None
+    return (rule, path, finding["message"], enclosing["sha256"])
+
+
+def _no_worse(
+    provider: str,
+    here: Sequence[Mapping[str, Any]],
+    there: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Whether a group's head occurrences are the base's, one to one: as many, paired
+    in line order, none more severe than its pair (the owner's 6676472012)."""
+
+    if not here or len(here) != len(there):
+        return False
+    order = _OPTIONAL_SEVERITIES.get(provider, ())
+
+    def line(finding: Mapping[str, Any]) -> int:
+        start: int = (finding.get("range") or {}).get("start_line", 0)
+        return start
+
+    pairs = zip(sorted(here, key=line), sorted(there, key=line), strict=True)
+    for now, before in pairs:
+        severity, baseline = now.get("severity"), before.get("severity")
+        if severity == baseline:
+            continue
+        if severity not in order or baseline not in order:
+            return False
+        if order.index(severity) > order.index(baseline):
+            return False
+    return True
 
 
 def _check_times(bundle: Mapping[str, Any]) -> None:
@@ -1884,11 +2056,15 @@ def _check_times(bundle: Mapping[str, Any]) -> None:
 
 def _readbacks_by_item(
     readbacks: Sequence[dict[str, Any]],
-) -> dict[tuple[str, str], dict[str, Any]]:
-    """A bound bundle's readbacks by the (requirement, item) each stands for. An
-    unknown or a repeated readback fails the run."""
+) -> tuple[
+    dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], dict[str, Any]]
+]:
+    """A bound bundle's readbacks by the (requirement, item) each stands for, and an
+    optional provider's by its (provider, scope). An unknown or a repeated readback
+    fails the run, a merge-base read of a required provider among them."""
 
     by_item: dict[tuple[str, str], dict[str, Any]] = {}
+    optional: dict[tuple[str, str], dict[str, Any]] = {}
     for readback in readbacks:
         pair = (readback["provider"], readback["scope"])
         if pair[0] in _RETIRED_ANALYZERS:
@@ -1896,6 +2072,13 @@ def _readbacks_by_item(
                 f"the {_ANALYZER_LABEL} carries the readback {pair}, but {pair[0]} is "
                 f"retired as merge evidence (Decision {_RETIRED_ANALYZERS[pair[0]]})"
             )
+        if pair[0] in _OPTIONAL_ANALYZERS:
+            if pair in optional:
+                raise MergeEvidenceError(
+                    f"the {_ANALYZER_LABEL} repeats the readback {pair}"
+                )
+            optional[pair] = readback
+            continue
         if pair not in _ANALYZER_ITEMS:
             raise MergeEvidenceError(
                 f"the {_ANALYZER_LABEL} has an unknown readback {pair}"
@@ -1905,7 +2088,7 @@ def _readbacks_by_item(
                 f"the {_ANALYZER_LABEL} repeats the readback {pair}"
             )
         by_item[_ANALYZER_ITEMS[pair]] = readback
-    return by_item
+    return by_item, optional
 
 
 def _analyzer_item_status(item: str, readback: Mapping[str, Any]) -> str:

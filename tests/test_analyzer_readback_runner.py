@@ -36,6 +36,7 @@ OBSERVED = "2026-09-23T14:00:00Z"
 # SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
 SONAR_ENV = "SONAR_TOKEN"
 CODACY_ENV = "CODACY_API_TOKEN"
+DEEPSOURCE_ENV = "DEEPSOURCE_API_TOKEN"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
@@ -689,8 +690,9 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
 
     def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
         """A malformed Codacy credential reads AUTH_UNAVAILABLE and leaks nowhere,
-        while SonarCloud's valid read stays complete. DeepSource, its peer before, is
-        retired as merge evidence (Decision 0130)."""
+        while SonarCloud's valid read stays complete. A malformed DeepSource
+        credential leaks nowhere either, and with it nothing is read from DeepSource,
+        which is optional (Decision 0132)."""
         events: list[str] = []
         urls = _github_urls()
         sonar_check = {
@@ -718,7 +720,10 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
             with (
                 patch.dict(
                     os.environ,
-                    {CODACY_ENV: "synthetic-optional-credential\n"},
+                    {
+                        CODACY_ENV: "synthetic-optional-credential\n",
+                        DEEPSOURCE_ENV: "synthetic-optional-credential\n",
+                    },
                     clear=True,
                 ),
                 patch.object(
@@ -748,6 +753,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
         readbacks = {item["provider"]: item for item in document["readbacks"]}
         self.assertEqual("AUTH_UNAVAILABLE", readbacks["codacy"]["completeness"])
         self.assertEqual("COMPLETE", readbacks["sonarcloud"]["coverage"]["status"])
+        self.assertNotIn("deepsource", readbacks)
         connect.assert_not_called()
 
 
@@ -1496,6 +1502,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         acquire = steps[read]
         expected = (
             ("GITHUB_TOKEN", "github.token"),
+            ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
             ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
             ("SONAR_TOKEN", "secrets.SONAR_TOKEN"),
             ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
@@ -1813,26 +1820,29 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         )
 
 
-class DeepSourceRetirementRunnerTests(unittest.TestCase):
-    """The DeepSource exit (#389, owner 6625223543; Decision 0130): the runner
-    acquires nothing from DeepSource, and a reader handed to it is refused, so
-    retirement is explicit rather than an unavailable read."""
+class DeepSourceOptionalReadTests(unittest.TestCase):
+    """DeepSource is optional (Decision 0132, amending 0130's exit): with its
+    credential the runner reads its report and comments for the head and its report
+    for the merge base, findings only; without it, nothing. Its token reaches the
+    readback step alone."""
 
     @staticmethod
-    def _github() -> _GitHubFake:
+    def _github(pull: dict[str, Any] | None = None, **more: Any) -> _GitHubFake:
         urls = _github_urls()
         return _GitHubFake(
             {
-                urls["pr"]: [_pr(), _pr()],
+                urls["pr"]: [pull or _pr(), pull or _pr()],
                 urls["statuses"]: [],
-                urls["checks"]: {"check_runs": []},
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
                 urls["comments"]: [],
+                **more,
             }
         )
 
-    def test_the_bundle_has_no_deepsource_readback(self) -> None:
+    def test_without_its_credential_nothing_is_read_from_deepsource(self) -> None:
+        github = self._github()
         bundle = runner.collect_bundle(
-            self._github(),
+            github,
             repository="ktogias/gnostoa",
             pull_number=312,
             requested_head=HEAD,
@@ -1845,47 +1855,188 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             [("codacy", "DIFF"), ("sonarcloud", "DIFF")],
             [(r["provider"], r["scope"]) for r in bundle["readbacks"]],
         )
+        self.assertEqual([], [url for url in github.calls if "/compare/" in url])
 
-    def test_a_deepsource_reader_is_refused_as_retired(self) -> None:
-        github, reader = self._github(), cast(Any, _deepsource_fake())
-        with self.assertRaisesRegex(
-            runner.RunnerError, "DeepSource is retired as merge evidence"
-        ):
-            runner.collect_bundle(
-                github,
-                repository="ktogias/gnostoa",
-                pull_number=312,
-                requested_head=HEAD,
-                deepsource=reader,
-                codacy=None,
-                sonarcloud=None,
-                observed_at=OBSERVED,
-            )
-
-    def test_no_workflow_passes_the_retired_provider_s_token(self) -> None:
-        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    def test_it_reads_the_head_and_the_merge_base_each_at_its_own_commit(
+        self,
+    ) -> None:
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        source = "def f():\n    return 1\n"
+        github = self._github(
+            {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+            **{
+                f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
+                    "merge_base_commit": {"sha": MERGE_BASE}
+                },
+                f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
+                f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
+                    "check_runs": [_deepsource_check(BASE_RUN)]
+                },
+                f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError(
+                    "not found"
+                ),
+                f"{root}/contents/tools/example.py?ref={MERGE_BASE}": {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source.encode()).decode(),
+                },
+            },
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
+                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+            },
+            check_page([issue("i1", 2)]),
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        reads = {
+            r["scope"]: r for r in bundle["readbacks"] if r["provider"] == "deepsource"
+        }
+        self.assertEqual(["BASE", "DIFF", "FULL"], sorted(reads))
         self.assertEqual(
-            [],
+            [(HEAD, "COMPLETE"), (MERGE_BASE, "COMPLETE")],
             [
-                path.name
-                for path in sorted(workflows.glob("*.yml"))
-                if "DEEPSOURCE_API_TOKEN" in path.read_text(encoding="utf-8")
+                (reads[s]["requested_head"], reads[s]["coverage"]["status"])
+                for s in ("FULL", "BASE")
+            ],
+        )
+        # The base finding's scope is read at the merge base, the head's at the head.
+        [base_finding] = reads["BASE"]["findings"]
+        self.assertEqual(
+            analyzer_readback.scope_reader(source)(2), base_finding["enclosing"]
+        )
+        self.assertNotIn("enclosing", reads["FULL"]["findings"][0])
+
+    def test_a_merge_base_github_does_not_give_is_not_read(self) -> None:
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        github = self._github(
+            {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+            **{
+                f"{root}/compare/{TIP}...{HEAD}?per_page=1": runner.RunnerError(
+                    "unavailable"
+                ),
+                f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError(
+                    "not found"
+                ),
+            },
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)}, check_page([issue("i1", 2)])
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(
+            [("deepsource", "FULL"), ("deepsource", "DIFF")],
+            [
+                (r["provider"], r["scope"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
             ],
         )
 
-    def test_the_pre_merge_check_reads_no_retired_provider_s_status(self) -> None:
+    def test_only_the_readback_step_receives_the_optional_provider_s_token(
+        self,
+    ) -> None:
+        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        self.assertEqual(
+            ["analyzer-readback.yml", "merge-admission.yml"],
+            [
+                path.name
+                for path in sorted(workflows.glob("*.yml"))
+                if DEEPSOURCE_ENV in path.read_text(encoding="utf-8")
+            ],
+        )
+        readback = yaml.safe_load(
+            (workflows / "analyzer-readback.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [("readback", "readback")],
+            [
+                (job_id, step.get("id"))
+                for job_id, job in readback["jobs"].items()
+                for step in job.get("steps", [])
+                if DEEPSOURCE_ENV in json.dumps(step)
+            ],
+        )
+        admission = yaml.safe_load(
+            (workflows / "merge-admission.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            ["./.github/workflows/analyzer-readback.yml"],
+            [
+                job["uses"]
+                for job in admission["jobs"].values()
+                if DEEPSOURCE_ENV in json.dumps(job)
+            ],
+        )
+
+    def test_the_pre_merge_check_reads_no_optional_provider_s_status(self) -> None:
         # Otherwise DeepSource's red status would still gate every merge through the
-        # normal merge's pre-merge check (Decision 0130).
+        # normal merge's pre-merge check (Decisions 0130 and 0132).
         runbook = " ".join(
             (ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md")
             .read_text(encoding="utf-8")
             .split()
         )
         self.assertIn(
-            "A retired provider's statuses and check runs are not read: "
-            "DeepSource's, such as `DeepSource: Python` (Decision 0130)",
+            "An optional provider's statuses and check runs are not read: "
+            "DeepSource's, such as `DeepSource: Python`, whose findings the readback "
+            "reads instead (Decisions 0130 and 0132)",
             runbook,
         )
+
+
+# Decision 0132's base read: the Pull Request's base branch tip, its merge base with
+# the head, and DeepSource's run for each commit.
+TIP = "b" * 40
+MERGE_BASE = "c" * 40
+HEAD_RUN = RUN_UID
+BASE_RUN = "1d3ac274-af9f-54cf-ce9c-b04365bb3859"
+
+
+def _deepsource_check(run: str) -> dict[str, Any]:
+    """DeepSource's check run for a commit, naming its run."""
+    return {
+        "name": "DeepSource: Python",
+        "status": "completed",
+        "conclusion": "failure",
+        "details_url": f"https://app.deepsource.com/gh/ktogias/gnostoa/run/{run}/python/",
+        "app": {"slug": "deepsource-io"},
+    }
+
+
+class _RunsByUid:
+    """DeepSource with one run per commit, answered by its uid, and one check page for
+    every check."""
+
+    def __init__(
+        self, runs: Mapping[str, dict[str, Any]], checks: dict[str, Any]
+    ) -> None:
+        self.runs, self.checks = runs, checks
+
+    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+        if "AnalyzerRun" in query:
+            return self.runs[variables["runUid"]]
+        return self.checks
 
 
 class OptionalDeepSourceRunnerTests(unittest.TestCase):
@@ -1915,6 +2066,12 @@ class OptionalDeepSourceRunnerTests(unittest.TestCase):
                     ]
                 },
                 urls["comments"]: [],
+                # The readback reads the reported file for its findings' scopes; here
+                # GitHub does not give it.
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/example.py?ref={HEAD}"
+                ): runner.RunnerError("not found"),
             }
         )
         bound = analyzer_deepsource.MAX_PAGES

@@ -14,6 +14,7 @@ from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
+    parse_dispositions,
     parse_projection_comment,
     render_projection,
 )
@@ -629,7 +630,7 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         return None
     if submitted_at is None:
         raise ProviderReadError("submitted GitHub review has no submitted_at")
-    return {
+    review: dict[str, Any] = {
         "observation_id": f"github-review-{review_id}",
         "reviewer_id": _reviewer_id(item.get("user"), "review.user", review_id),
         "recommendation_state": state,
@@ -637,6 +638,13 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         "head_commit": _optional_sha(item.get("commit_id"), "review.commit_id"),
         "source_url": _optional_text(item.get("html_url")),
     }
+    # Its false-positive dispositions, from its bounded text (Decision 0132 item 4):
+    # only a review that carries one has the field.
+    body, _ = _bounded_body(item.get("body"))
+    found = parse_dispositions(body)
+    if found:
+        review["dispositions"] = found
+    return review
 
 
 def _mark_effective_reviews(

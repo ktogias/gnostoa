@@ -17,6 +17,7 @@ from typing import Any, NamedTuple, Protocol
 
 from tools import (
     analyzer_codacy,
+    analyzer_deepsource,
     analyzer_sonarcloud,
     github_events,
     github_rest,
@@ -371,6 +372,76 @@ def _review_comments(
     )
 
 
+def _deepsource_status_projection(
+    statuses: list[Mapping[str, Any]],
+    checks: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    projected: list[Mapping[str, Any]] = []
+    for item in statuses:
+        creator = item.get("creator")
+        creator_map = creator if isinstance(creator, Mapping) else {}
+        projected.append(
+            {
+                "context": item.get("context"),
+                "state": item.get("state"),
+                "target_url": item.get("target_url"),
+                "source_kind": "commit_status",
+                "creator_login": creator_map.get("login"),
+                "creator_type": creator_map.get("type"),
+            }
+        )
+    for check in checks:
+        name = check.get("name")
+        details = check.get("details_url")
+        if not isinstance(name, str) or not name.startswith("DeepSource:"):
+            continue
+        if not isinstance(details, str) or not details:
+            continue
+        conclusion = check.get("conclusion")
+        status = check.get("status")
+        state = conclusion if isinstance(conclusion, str) and conclusion else status
+        app = check.get("app")
+        app_map = app if isinstance(app, Mapping) else {}
+        projected.append(
+            {
+                "context": name,
+                "state": state or "pending",
+                "target_url": details,
+                "source_kind": "check_run",
+                "app_slug": app_map.get("slug"),
+            }
+        )
+    return projected
+
+
+def _deepsource_comments(
+    comments: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    result: list[Mapping[str, Any]] = []
+    for comment in comments:
+        result.append(
+            {
+                "body": comment.get("body"),
+                "path": comment.get("path"),
+                "line": comment.get("line") or comment.get("original_line"),
+                "commit_id": comment.get("commit_id"),
+                "original_commit_id": comment.get("original_commit_id"),
+                "url": comment.get("html_url") or comment.get("url"),
+                "author_login": (
+                    comment.get("user", {}).get("login")
+                    if isinstance(comment.get("user"), Mapping)
+                    else None
+                ),
+                "author_type": (
+                    comment.get("user", {}).get("type")
+                    if isinstance(comment.get("user"), Mapping)
+                    else None
+                ),
+            }
+        )
+    return result
+
+
 def _unavailable_readback(
     *,
     provider: str,
@@ -455,16 +526,18 @@ class _ScopeBudget:
         return True
 
 
-def _head_source(
-    github: GitHubReader, repository: str, head: str, path: str, budget: _ScopeBudget
+def _commit_source(
+    github: GitHubReader, repository: str, budget: _ScopeBudget, commit: str, path: str
 ) -> str | None:
-    """One file's text at the exact head, as GitHub's contents API returns it: a
-    file, in base64, within the bounds and UTF-8. Anything else is None."""
+    """One file's text at an exact commit, the head's or the merge base's (Decision
+    0132), as GitHub's contents API returns it: a file, in base64, within the bounds
+    and UTF-8. Anything else is None."""
 
     if not budget.request():
         return None
     url = (
-        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}?ref={head}"
+        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}"
+        f"?ref={commit}"
     )
     try:
         document, _ = github.get(url)
@@ -497,16 +570,17 @@ def _head_source(
         return None
 
 
-_ScopeReaders = dict[str, Callable[[int], dict[str, str] | None] | None]
+_ScopeReaders = dict[tuple[str, str], Callable[[int], dict[str, str] | None] | None]
 
 
 def _finding_scope(
     finding: Mapping[str, Any],
+    commit: str,
     readers: _ScopeReaders,
-    source_of: Callable[[str], str | None],
+    source_of: Callable[[str, str], str | None],
 ) -> dict[str, str] | None:
-    """A Python finding's enclosing scope, its file read and parsed at most once
-    into `readers`; None for any other finding, or one already scoped."""
+    """A Python finding's enclosing scope at `commit`, its file read and parsed at
+    most once into `readers`; None for any other finding, or one already scoped."""
 
     path = finding.get("path")
     line = (finding.get("range") or {}).get("start_line")
@@ -517,26 +591,28 @@ def _finding_scope(
         or not isinstance(line, int)
     ):
         return None
-    if path not in readers:
-        source = source_of(path)
-        readers[path] = None if source is None else scope_reader(source)
-    reader = readers[path]
+    if (commit, path) not in readers:
+        source = source_of(commit, path)
+        readers[(commit, path)] = None if source is None else scope_reader(source)
+    reader = readers[(commit, path)]
     return None if reader is None else reader(line)
 
 
 def _with_enclosing(
-    readbacks: list[dict[str, Any]], source_of: Callable[[str], str | None]
+    readbacks: list[dict[str, Any]], source_of: Callable[[str, str], str | None]
 ) -> list[dict[str, Any]]:
-    """Each readback, its Python findings given their enclosing scopes: each file is
-    read and parsed once, and a readback is rebuilt through its own contract only
-    when one of its findings gained a scope."""
+    """Each readback, its Python findings given their enclosing scopes at the commit
+    it read, the head or the merge base: each file is read and parsed once per
+    commit, and a readback is rebuilt through its own contract only when one of its
+    findings gained a scope."""
 
     readers: _ScopeReaders = {}
     result = []
     for readback in readbacks:
         findings, changed = [], False
+        commit = readback["requested_head"]
         for finding in readback["findings"]:
-            scope = _finding_scope(finding, readers, source_of)
+            scope = _finding_scope(finding, commit, readers, source_of)
             findings.append(
                 finding if scope is None else {**finding, "enclosing": scope}
             )
@@ -557,21 +633,13 @@ def collect_bundle(
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
-    deepsource: None = None,
+    deepsource: analyzer_deepsource.GraphQLReader | None = None,
 ) -> dict[str, Any]:
-    # DeepSource is retired as merge evidence (Decision 0130): nothing is read from
-    # it, and a reader handed in is refused, so retirement is never an unavailable
-    # read. The keyword stays only for the callers that pass None, until the
-    # cleanup after the exit.
-    if deepsource is not None:
-        raise RunnerError(
-            "DeepSource is retired as merge evidence (Decision 0130): "
-            "the readback reads nothing from it"
-        )
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
     observed = observed_at or _now()
-    initial_head = _pull_head(github, repository, pull_number)
+    pull = _pull(github, repository, pull_number)
+    initial_head = _pull_side(pull, "head")
     if initial_head != requested:
         return {
             "schema": BUNDLE_SCHEMA,
@@ -585,9 +653,8 @@ def collect_bundle(
             "readbacks": [],
         }
 
-    # The bundle's GitHub projection of the subject, as its v1 contract states it.
-    # Only DeepSource's retired DIFF read used it (Decision 0130); the bundle's next
-    # version drops it, with these reads.
+    # The bundle's GitHub projection of the subject, as its v1 contract states it,
+    # which DeepSource's optional DIFF read reads (Decision 0132).
     statuses = _statuses(github, repository, requested)
     checks = _check_runs(github, repository, requested)
     comments = _review_comments(github, repository, pull_number)
@@ -675,12 +742,100 @@ def collect_bundle(
                         observed_at=observed,
                     )
                 ),
+                # DeepSource's optional reads, last, so the declared items' scopes are
+                # read first under the shared bound (Decision 0132). Without its
+                # credential nothing is read from it.
+                *(
+                    []
+                    if deepsource is None
+                    else _deepsource_readbacks(
+                        github,
+                        deepsource,
+                        pull,
+                        (statuses, checks, comments),
+                        {
+                            "repository": repository,
+                            "pull_number": pull_number,
+                            "requested_head": requested,
+                            "observed_at": observed,
+                        },
+                    )
+                ),
             ],
-            functools.partial(
-                _head_source, github, repository, requested, budget=_ScopeBudget()
-            ),
+            functools.partial(_commit_source, github, repository, _ScopeBudget()),
         ),
     }
+
+
+def _deepsource_readbacks(
+    github: GitHubReader,
+    deepsource: analyzer_deepsource.GraphQLReader,
+    pull: Mapping[str, Any],
+    projection: tuple[
+        list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
+    ],
+    common: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """DeepSource's optional reads (Decision 0132), findings only and never coverage:
+    the head's report and inline comments, and the report for the Pull Request's
+    merge base, as its `BASE` read, through the run the merge base's own DeepSource
+    check names. A merge base GitHub does not give is not read, so the head's
+    findings stay unknown."""
+
+    statuses, checks, comments = projection
+    diff_local = analyzer_deepsource.diff_local_from_github(
+        **common,
+        observed_head=common["requested_head"],
+        statuses=_deepsource_status_projection(statuses, checks),
+        comments=_deepsource_comments(comments),
+    )
+    readbacks = [
+        _deepsource_full(deepsource, diff_local.get("analysis_id"), common),
+        diff_local,
+    ]
+    try:
+        _, merge_base = _merge_base(github, common["repository"], pull)
+        base_statuses = _statuses(github, common["repository"], merge_base)
+        base_checks = _check_runs(github, common["repository"], merge_base)
+    except RunnerError:
+        return readbacks
+    base = {**common, "requested_head": merge_base}
+    # The adapter's own association of a commit with one run, from its statuses.
+    association = analyzer_deepsource.diff_local_from_github(
+        **base,
+        observed_head=merge_base,
+        statuses=_deepsource_status_projection(base_statuses, base_checks),
+        comments=[],
+    )
+    full = _deepsource_full(deepsource, association.get("analysis_id"), base)
+    return [*readbacks, parse_readback({**full, "scope": "BASE"})]
+
+
+def _deepsource_full(
+    deepsource: analyzer_deepsource.GraphQLReader,
+    run_uid: object,
+    common: Mapping[str, Any],
+) -> dict[str, Any]:
+    """DeepSource's full report for the commit `common` requests, through its one
+    associated run; with no single run, an ambiguous read of nothing."""
+
+    if isinstance(run_uid, str):
+        return analyzer_deepsource.read_full_run(deepsource, run_uid=run_uid, **common)
+    return build_readback(
+        provider="deepsource",
+        adapter="deepsource-graphql/v1",
+        **common,
+        observed_head=None,
+        analysis_id=None,
+        scope="FULL",
+        completeness="AMBIGUOUS",
+        native_mode="FULL_RUN",
+        run_state="UNKNOWN",
+        coverage_record=coverage(
+            "INCOMPLETE", pages=0, count=0, reason="RUN_ASSOCIATION_AMBIGUOUS"
+        ),
+        findings=[],
+    )
 
 
 def _assert_secret_free(serialized: str, secrets: list[str]) -> None:
@@ -724,6 +879,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         github = GitHubReadClient.from_environment()
+        # DeepSource is optional (Decision 0132): without its credential, nothing is
+        # read from it.
+        try:
+            deepsource: analyzer_deepsource.GraphQLReader | None = (
+                analyzer_deepsource.DeepSourceGraphQLClient.from_environment()
+            )
+        except analyzer_deepsource.ProviderReadFailure:
+            deepsource = None
         try:
             codacy: analyzer_codacy.JsonReader | None = (
                 analyzer_codacy.CodacyRestClient.from_environment()
@@ -743,6 +906,7 @@ def main(argv: list[str] | None = None) -> int:
             requested_head=args.head,
             codacy=codacy,
             sonarcloud=sonarcloud,
+            deepsource=deepsource,
             inventory=(
                 None
                 if args.inventory_result is None
@@ -818,9 +982,17 @@ def inventory_base(
     once the Pull Request still has that head (Decisions 0091 and 0107). A comparison
     that names no merge base is refused."""
     pull = _pull(client, repository, pull_number)
-    head = _pull_side(pull, "head")
-    if head != requested_head:
+    if _pull_side(pull, "head") != requested_head:
         raise RunnerError("the Pull Request's head is no longer the requested head")
+    return _merge_base(client, repository, pull)
+
+
+def _merge_base(
+    client: GitHubReader, repository: str, pull: Mapping[str, Any]
+) -> tuple[str, str]:
+    """The Pull Request's base branch tip and its merge base with its head, as
+    GitHub's comparison names it. A comparison that names none is refused."""
+    head = _pull_side(pull, "head")
     tip = _pull_side(pull, "base")
     document, _ = client.get(
         f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1"
