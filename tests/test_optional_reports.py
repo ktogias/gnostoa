@@ -855,6 +855,13 @@ class DispositionBlockTests(unittest.TestCase):
             ("a line of 0", block.replace(scope, "line: 0\n")),
             ("a line as text", block.replace(scope, 'line: "300"\n')),
             ("an empty rule", block.replace(json.dumps(FINDING["rule"]), '""')),
+            # A field the rule's own check does not read (the kill-check of 65297b2a).
+            (
+                "an empty evidence reference",
+                block.replace(
+                    '"https://github.com/ktogias/gnostoa/pull/300#issuecomment-2"', '""'
+                ),
+            ),
             ("an unterminated block", block.replace("-->\n", "")),
             (
                 "a value nested past the parser's bound",
@@ -909,6 +916,18 @@ class OptionalEvidenceContractTests(unittest.TestCase):
             evidence["analyzer_optional"][0].update(changes)
             return evidence
 
+        def pre_existing(**changes: Any) -> dict[str, Any]:
+            legacy = {**_observed("legacy-1", 300, SCOPE), "path": REPORT_ONLY["path"]}
+            evidence = _evidence(
+                analyzer=_with_reads(
+                    _readback("deepsource", "FULL", legacy), _base(legacy)
+                )
+            )
+            [entry] = evidence["analyzer_findings"]["findings"]
+            self.assertEqual("pre_existing", entry["baseline"])
+            entry.update(changes)
+            return evidence
+
         def without(key: str) -> dict[str, Any]:
             evidence = self._evidence()
             [entry] = evidence["analyzer_findings"]["findings"]
@@ -923,7 +942,9 @@ class OptionalEvidenceContractTests(unittest.TestCase):
         valid = parse_dispositions(_disposition(_observed("fp-1", 300, SCOPE)))
         for name, evidence in (
             ("an unknown baseline", finding(baseline="waived")),
-            ("an unknown provenance", finding(configuration_provenance="proven")),
+            # On a pre-existing finding, the only one a provenance is for, so the
+            # value alone is refused (the kill-check of 65297b2a).
+            ("an unknown provenance", pre_existing(configuration_provenance="proven")),
             ("a provider that is no text", finding(provider=1)),
             # cubic on #485: a class against the merge base is an optional
             # provider's finding's alone, and a provenance a pre-existing one's.
