@@ -109,6 +109,12 @@ def parse_dispositions(text: str) -> list[dict[str, Any]]:
         end = text.find(_DISPOSITION_END, begin)
         if end == -1:
             break
+        following = text.find(DISPOSITION_MARKER, begin)
+        if following != -1 and following < end:
+            # Unterminated, it ends where the next block starts: only it is left out
+            # (cubic on #485).
+            start = following
+            continue
         record = _disposition_block(text[begin:end])
         if record is not None:
             found.append(record)

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -767,6 +768,31 @@ def collect_bundle(
     }
 
 
+# DeepSource's optional reads, the head's report and the merge base's, share one overall
+# deadline well inside the readback job's 15 minutes. No request starts after it, so a slow
+# provider ends its read as an ERROR, which changes nothing, never the job, which would
+# hold every merge (CodeAnt on #485).
+_OPTIONAL_DEADLINE_SECONDS = 240.0
+
+
+class _Deadlined:
+    """An optional provider's reader under one overall deadline, on the monotonic
+    clock: past it, a request is refused as the provider's own read failure."""
+
+    def __init__(
+        self, reader: analyzer_deepsource.GraphQLReader, deadline: float
+    ) -> None:
+        self._reader = reader
+        self._deadline = deadline
+
+    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+        if time.monotonic() >= self._deadline:
+            raise analyzer_deepsource.ProviderReadFailure(
+                "DEADLINE", "DeepSource's optional reads passed their deadline"
+            )
+        return self._reader.graphql(query, variables)
+
+
 def _deepsource_readbacks(
     github: GitHubReader,
     deepsource: analyzer_deepsource.GraphQLReader,
@@ -783,6 +809,7 @@ def _deepsource_readbacks(
     findings stay unknown."""
 
     statuses, checks, comments = projection
+    deepsource = _Deadlined(deepsource, time.monotonic() + _OPTIONAL_DEADLINE_SECONDS)
     diff_local = analyzer_deepsource.diff_local_from_github(
         **common,
         observed_head=common["requested_head"],

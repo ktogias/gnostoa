@@ -747,6 +747,13 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
     provenance = evidence.get("configuration_provenance", "unproven")
     if provenance not in _CONFIGURATION_PROVENANCES:
         raise AssuranceCompletenessError(f"{label} has an unknown provenance")
+    # A class against the merge base is an optional provider's finding's alone, and a
+    # provenance a pre-existing one's (cubic on #485).
+    if ("provider" in evidence) != ("baseline" in evidence):
+        raise AssuranceCompletenessError(f"{label} has a provider or baseline alone")
+    baseline = evidence.get("baseline")
+    if "configuration_provenance" in evidence and baseline != "pre_existing":
+        raise AssuranceCompletenessError(f"{label} has a provenance it cannot have")
     fields = {k: v for k, v in finding.items() if k not in evidence}
     try:
         normalized = normalize_finding(fields)
