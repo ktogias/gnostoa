@@ -641,7 +641,7 @@ def collect_bundle(
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
-    deepsource: analyzer_deepsource.GraphQLReader | None = None,
+    deepsource: analyzer_deepsource.DeadlineGraphQLReader | None = None,
 ) -> dict[str, Any]:
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
@@ -784,10 +784,11 @@ _OPTIONAL_DEADLINE_SECONDS = 240.0
 
 class _Deadlined:
     """An optional provider's reader under one overall deadline, on the monotonic
-    clock: past it, a request is refused as the provider's own read failure."""
+    clock: past it, a request is refused as the provider's own read failure, and a
+    request in flight is bounded by it, which the client applies (cubic on #485)."""
 
     def __init__(
-        self, reader: analyzer_deepsource.GraphQLReader, deadline: float
+        self, reader: analyzer_deepsource.DeadlineGraphQLReader, deadline: float
     ) -> None:
         self._reader = reader
         self._deadline = deadline
@@ -797,12 +798,27 @@ class _Deadlined:
             raise analyzer_deepsource.ProviderReadFailure(
                 "DEADLINE", "DeepSource's optional reads passed their deadline"
             )
-        return self._reader.graphql(query, variables)
+        return self._reader.graphql(query, variables, deadline=self._deadline)
+
+
+class _DeadlinedGitHub:
+    """GitHub's reader for the merge base's reads, which are DeepSource's optional
+    reads too, under their deadline: past it, a request is refused as a read that
+    failed, so the head's reads stay (cubic on #485)."""
+
+    def __init__(self, reader: GitHubReader, deadline: float) -> None:
+        self._reader = reader
+        self._deadline = deadline
+
+    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+        if time.monotonic() >= self._deadline:
+            raise RunnerError("DeepSource's optional reads passed their deadline")
+        return self._reader.get(url)
 
 
 def _deepsource_readbacks(
     github: GitHubReader,
-    deepsource: analyzer_deepsource.GraphQLReader,
+    deepsource: analyzer_deepsource.DeadlineGraphQLReader,
     pull: Mapping[str, Any],
     projection: tuple[
         list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
@@ -816,7 +832,8 @@ def _deepsource_readbacks(
     findings stay unknown."""
 
     statuses, checks, comments = projection
-    deepsource = _Deadlined(deepsource, time.monotonic() + _OPTIONAL_DEADLINE_SECONDS)
+    deadline = time.monotonic() + _OPTIONAL_DEADLINE_SECONDS
+    bounded = _Deadlined(deepsource, deadline)
     diff_local = analyzer_deepsource.diff_local_from_github(
         **common,
         observed_head=common["requested_head"],
@@ -824,13 +841,14 @@ def _deepsource_readbacks(
         comments=_deepsource_comments(comments),
     )
     readbacks = [
-        _deepsource_full(deepsource, diff_local.get("analysis_id"), common),
+        _deepsource_full(bounded, diff_local.get("analysis_id"), common),
         diff_local,
     ]
+    base_github = _DeadlinedGitHub(github, deadline)
     try:
-        _, merge_base = _merge_base(github, common["repository"], pull)
-        base_statuses = _statuses(github, common["repository"], merge_base)
-        base_checks = _check_runs(github, common["repository"], merge_base)
+        _, merge_base = _merge_base(base_github, common["repository"], pull)
+        base_statuses = _statuses(base_github, common["repository"], merge_base)
+        base_checks = _check_runs(base_github, common["repository"], merge_base)
     except RunnerError:
         return readbacks
     base = {**common, "requested_head": merge_base}
@@ -841,7 +859,7 @@ def _deepsource_readbacks(
         statuses=_deepsource_status_projection(base_statuses, base_checks),
         comments=[],
     )
-    full = _deepsource_full(deepsource, association.get("analysis_id"), base)
+    full = _deepsource_full(bounded, association.get("analysis_id"), base)
     return [*readbacks, parse_readback({**full, "scope": "BASE"})]
 
 
@@ -916,7 +934,7 @@ def main(argv: list[str] | None = None) -> int:
         # DeepSource is optional (Decision 0132): without its credential, nothing is
         # read from it.
         try:
-            deepsource: analyzer_deepsource.GraphQLReader | None = (
+            deepsource: analyzer_deepsource.DeadlineGraphQLReader | None = (
                 analyzer_deepsource.DeepSourceGraphQLClient.from_environment()
             )
         except analyzer_deepsource.ProviderReadFailure:

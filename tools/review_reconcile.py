@@ -62,7 +62,7 @@ def _string(value: object, label: str) -> str:
     return value
 
 
-def disposition(value: object, label: str) -> dict[str, Any]:
+def _disposition(value: object, label: str) -> dict[str, Any]:
     """A false-positive disposition's closed fields: its provider, the finding's
     native id, rule and path, the commit, an evidence reference, and exactly one
     locator, the enclosing scope's SHA-256 or a positive line. The rule is null for
@@ -93,7 +93,7 @@ def dispositions(value: object, label: str) -> list[dict[str, Any]]:
         raise ReconciliationInputError(
             f"{label} must be an array of at most {MAX_DISPOSITIONS}"
         )
-    return [disposition(item, f"{label}[{index}]") for index, item in enumerate(value)]
+    return [_disposition(item, f"{label}[{index}]") for index, item in enumerate(value)]
 
 
 def parse_dispositions(text: str) -> list[dict[str, Any]]:
@@ -141,7 +141,7 @@ def _disposition_block(block: str) -> dict[str, Any] | None:
             return None
         fields[key] = value
     try:
-        return disposition(fields, "disposition")
+        return _disposition(fields, "disposition")
     except ReconciliationInputError:
         return None
 
