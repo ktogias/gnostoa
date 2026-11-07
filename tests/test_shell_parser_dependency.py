@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
@@ -2031,27 +2032,63 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         """In a Git checkout the tracked files are read, wherever they sit, and an
         untracked one is not; the runtime image's source manifest stands in for Git
         where there is none."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / ".husky").mkdir()
-            (root / ".husky" / "hook").write_text("#!/bin/sh\ngit a\n", "utf-8")
-            (root / "scratch").write_text("#!/bin/sh\ngit b\n", "utf-8")
-            git = [
-                trusted_executable("git"),
-                "-c",
-                "init.defaultBranch=main",
-                "-C",
-                str(root),
-            ]
-            for argv in (["init", "-q"], ["add", ".husky/hook"]):
-                subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
-            self.assertEqual({".husky/hook"}, set(_shell_surfaces(root)))
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "listed").write_text("#!/bin/sh\ngit c\n", "utf-8")
-            (root / "unlisted").write_text("#!/bin/sh\ngit d\n", "utf-8")
-            (root / ".gnostoa-source-files").write_bytes(b"listed\0")
-            self.assertEqual({"listed"}, set(_shell_surfaces(root)))
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("GIT_")
+        }
+        env.update(
+            GIT_CONFIG_GLOBAL="/dev/null",
+            GIT_CONFIG_SYSTEM="/dev/null",
+            GIT_CONFIG_NOSYSTEM="1",
+        )
+        with patch.dict(os.environ, env, clear=True):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".husky").mkdir()
+                (root / ".husky" / "hook").write_text("#!/bin/sh\ngit a\n", "utf-8")
+                (root / "scratch").write_text("#!/bin/sh\ngit b\n", "utf-8")
+                git = [
+                    trusted_executable("git"),
+                    "-c",
+                    "init.defaultBranch=main",
+                    "-C",
+                    str(root),
+                ]
+                for argv in (["init", "-q"], ["add", ".husky/hook"]):
+                    subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
+                self.assertEqual({".husky/hook"}, set(_shell_surfaces(root)))
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "listed").write_text("#!/bin/sh\ngit c\n", "utf-8")
+                (root / "unlisted").write_text("#!/bin/sh\ngit d\n", "utf-8")
+                (root / ".gnostoa-source-files").write_bytes(b"listed\0")
+                self.assertEqual({"listed"}, set(_shell_surfaces(root)))
+
+    def test_checkout_fixture_does_not_write_caller_selected_git_state(self) -> None:
+        """The checkout fixture cannot create Git state outside its own directory."""
+        for variable in ("GIT_DIR", "GIT_INDEX_FILE"):
+            with (
+                self.subTest(variable=variable),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                foreign = Path(directory) / "foreign"
+                environment = {
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": directory,
+                    "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_CONFIG_SYSTEM": "/dev/null",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    variable: str(foreign),
+                }
+                result = unittest.TestResult()
+                case = type(self)("test_a_checkout_s_tracked_files_are_the_universe")
+                with patch.dict("os.environ", environment, clear=True):
+                    case.run(result)
+                self.assertFalse(
+                    foreign.exists(), "fixture wrote caller-selected Git state"
+                )
+                self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
 
     def test_nested_gitlab_script_lists_are_flattened_and_others_fail(self) -> None:
         """GitLab flattens nested `script` arrays (anchors and aliases build them)
