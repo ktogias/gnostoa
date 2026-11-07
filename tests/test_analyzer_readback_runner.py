@@ -12,6 +12,7 @@ import os
 import secrets
 import subprocess  # nosec B404 -- test-only boundary; the argv below is literal
 import tempfile
+import time
 import traceback
 import unittest
 import urllib.request
@@ -23,6 +24,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
+from tests.deepsource_fakes import GraphQLFake, check, check_page, issue, run_page
+from tests.merge_evidence_github_support import (
+    _admitted,
+    _bundle,
+    _section_c_declaration,
+)
 from tools import analyzer_deepsource, analyzer_readback, github_events
 from tools.analyzer_readback import canonical_json
 
@@ -35,6 +42,7 @@ OBSERVED = "2026-09-23T14:00:00Z"
 # SonarCloud's credential variable, by name only (Codacy's Bandit B105 on #424).
 SONAR_ENV = "SONAR_TOKEN"
 CODACY_ENV = "CODACY_API_TOKEN"
+DEEPSOURCE_ENV = "DEEPSOURCE_API_TOKEN"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
@@ -57,9 +65,17 @@ class _GitHubFake:
     def __init__(self, responses: dict[str, Any]) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        # Each read's deadline, as the runner's client takes it (PAO on #485).
+        self.deadlines: dict[str, list[float | None]] = {}
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         self.calls.append(url)
+        self.deadlines.setdefault(url, []).append(deadline)
+        # As the shared client refuses a read past its deadline, before any request.
+        if deadline is not None and time.monotonic() >= deadline:
+            raise runner.RunnerError("GitHub API read deadline reached")
         value = self.responses[url]
         if isinstance(value, BaseException):
             raise value
@@ -688,8 +704,9 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
 
     def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
         """A malformed Codacy credential reads AUTH_UNAVAILABLE and leaks nowhere,
-        while SonarCloud's valid read stays complete. DeepSource, its peer before, is
-        retired as merge evidence (Decision 0130)."""
+        while SonarCloud's valid read stays complete. A malformed DeepSource
+        credential leaks nowhere either, and with it nothing is read from DeepSource,
+        which is optional (Decision 0132)."""
         events: list[str] = []
         urls = _github_urls()
         sonar_check = {
@@ -717,7 +734,10 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
             with (
                 patch.dict(
                     os.environ,
-                    {CODACY_ENV: "synthetic-optional-credential\n"},
+                    {
+                        CODACY_ENV: "synthetic-optional-credential\n",
+                        DEEPSOURCE_ENV: "synthetic-optional-credential\n",
+                    },
                     clear=True,
                 ),
                 patch.object(
@@ -747,6 +767,7 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
         readbacks = {item["provider"]: item for item in document["readbacks"]}
         self.assertEqual("AUTH_UNAVAILABLE", readbacks["codacy"]["completeness"])
         self.assertEqual("COMPLETE", readbacks["sonarcloud"]["coverage"]["status"])
+        self.assertNotIn("deepsource", readbacks)
         connect.assert_not_called()
 
 
@@ -1495,6 +1516,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         acquire = steps[read]
         expected = (
             ("GITHUB_TOKEN", "github.token"),
+            ("DEEPSOURCE_API_TOKEN", "secrets.DEEPSOURCE_API_TOKEN"),
             ("CODACY_API_TOKEN", "secrets.CODACY_API_TOKEN"),
             ("SONAR_TOKEN", "secrets.SONAR_TOKEN"),
             ("PULL_NUMBER", "steps.subject.outputs.pull_number"),
@@ -1676,7 +1698,10 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
             )
         self.assertEqual(1, parse.call_count)
         self.assertEqual([url], read)
-        self.assertEqual(findings["def"]["enclosing"], findings["body"]["enclosing"])
+        # One scope, at its first and its second line.
+        scopes = [findings[identity]["enclosing"] for identity in ("def", "body")]
+        self.assertEqual(scopes[0]["sha256"], scopes[1]["sha256"])
+        self.assertEqual([1, 2], [scope["scope_line"] for scope in scopes])
 
     def test_a_stub_file_is_python_too(self) -> None:
         """CodeAnt on #480: a finding in a `.pyi` stub gets its scope."""
@@ -1812,26 +1837,340 @@ class EnclosingScopeRunnerTests(unittest.TestCase):
         )
 
 
-class DeepSourceRetirementRunnerTests(unittest.TestCase):
-    """The DeepSource exit (#389, owner 6625223543; Decision 0130): the runner
-    acquires nothing from DeepSource, and a reader handed to it is refused, so
-    retirement is explicit rather than an unavailable read."""
+class AlternateOptionalProviderRunnerTests(unittest.TestCase):
+    """Item 2's pre-production falsifier (#389, owner 6681151037).
+
+    The registry is the proposed trusted binding, not a new production authority.
+    The real collector must invoke the alternate native adapter. Creating the
+    registry attribute in the test lets the current collector run to an assertion
+    failure rather than fail on an unavailable import or a new keyword argument.
+    """
 
     @staticmethod
-    def _github() -> _GitHubFake:
-        urls = _github_urls()
-        return _GitHubFake(
+    def _collect(adapter: _RestExportOptionalAdapter) -> dict[str, Any]:
+        # The common merge-evidence fixture owns pull request 300. Bind collection
+        # to that same subject, rather than rewriting a collected readback later.
+        urls = {
+            name: url.replace("/312", "/300") for name, url in _github_urls().items()
+        }
+        source = _RestExportOptionalAdapter.source.encode()
+        github = _GitHubFake(
             {
-                urls["pr"]: [_pr(), _pr()],
+                urls["pr"]: {**_pr(), "base": {"sha": TIP}},
                 urls["statuses"]: [],
                 urls["checks"]: {"check_runs": []},
                 urls["comments"]: [],
+                **_merge_base_answers(),
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/merge_admission.py?ref={HEAD}"
+                ): {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source).decode(),
+                },
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/merge_admission.py?ref={MERGE_BASE}"
+                ): {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source).decode(),
+                },
+            }
+        )
+        with patch.object(
+            runner, "OPTIONAL_ADAPTERS", {adapter.name: adapter}, create=True
+        ):
+            return runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                requested_head=HEAD,
+                codacy=None,
+                sonarcloud=None,
+                observed_at=_RestExportOptionalAdapter.observed_at,
+            )
+
+    @staticmethod
+    def _evaluate(
+        collected: dict[str, Any],
+        *,
+        review_body: str | None = None,
+        required_complete: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """Only the alternate stream comes from this collector fixture. Required
+        coverage comes independently from the existing complete-evidence fixture;
+        it is not granted by the optional adapter or inferred from a clean report.
+        The real evidence builder and M17 run with registration DATA patched only.
+        """
+        parsed = analyzer_readback.parse_bundle(collected)
+        bundle = _bundle() if required_complete else parsed
+        if required_complete:
+            bundle["readbacks"].extend(
+                readback
+                for readback in parsed["readbacks"]
+                if readback["provider"] == _RestExportOptionalAdapter.name
+            )
+        with (
+            patch.dict(
+                "tools.merge_evidence_github._OPTIONAL_ANALYZERS",
+                {_RestExportOptionalAdapter.name: "0132"},
+            ),
+            patch.dict(
+                "tools.merge_evidence_github._OPTIONAL_SEVERITIES",
+                {_RestExportOptionalAdapter.name: ("MINOR", "MAJOR", "CRITICAL")},
+            ),
+            patch(
+                "tools.merge_evidence_github._UNPROVEN_CONFIGURATION",
+                frozenset({_RestExportOptionalAdapter.name}),
+            ),
+        ):
+            return _admitted(_section_c_declaration(), bundle, review_body=review_body)
+
+    def test_an_alternate_native_report_reaches_the_existing_bundle(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        parsed = analyzer_readback.parse_bundle(bundle)
+        [report] = [r for r in parsed["readbacks"] if r["provider"] == adapter.name]
+        self.assertEqual("COMPLETE", report["coverage"]["status"])
+        self.assertEqual("ALT-SEC-101", report["findings"][0]["rule"])
+        self.assertEqual("MAJOR", report["findings"][0]["severity"])
+        self.assertEqual("REST_EXPORT", report["native_mode"])
+        evidence, failed = self._evaluate(bundle)
+        self.assertIn("M17", failed)
+        [finding] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("alt-observation-1", finding["id"])
+        self.assertEqual("unknown", finding["baseline"])
+
+    def test_an_alternate_outage_is_retained_as_a_readback(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=False)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        parsed = analyzer_readback.parse_bundle(bundle)
+        [report] = [r for r in parsed["readbacks"] if r["provider"] == adapter.name]
+        self.assertEqual("BOUND", parsed["subject_binding"])
+        self.assertEqual("ERROR", report["coverage"]["status"])
+        self.assertEqual([], report["findings"])
+        evidence, failed = self._evaluate(bundle)
+        self.assertEqual({"M13", "M15"}, set(failed))
+        self.assertEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+
+    def test_an_alternate_same_occurrence_reaches_m17_as_pre_existing(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True, with_baseline=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        evidence, failed = self._evaluate(bundle)
+        self.assertEqual({"M13", "M15"}, set(failed))
+        [finding] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("pre_existing", finding["baseline"])
+        self.assertEqual("unproven", finding["configuration_provenance"])
+
+    def test_a_complete_alternate_report_covers_no_missing_required_item(self) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        evidence, failed = self._evaluate(bundle, required_complete=False)
+        self.assertIn("M17", failed)
+        self.assertNotEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+
+    def test_an_independent_disposition_names_the_collected_alternate_finding(
+        self,
+    ) -> None:
+        adapter = _RestExportOptionalAdapter(available=True)
+        bundle = self._collect(adapter)
+        self.assertEqual(
+            1, adapter.calls, "collector did not invoke registered adapter"
+        )
+        fields = {
+            "provider": adapter.name,
+            "native_id": "alt-observation-1",
+            "rule": "ALT-SEC-101",
+            "path": "tools/merge_admission.py",
+            "line": 2,
+            "commit_id": HEAD,
+            "evidence_ref": "https://example.invalid/alternate-disposition-evidence",
+        }
+        lines = "".join(
+            f"{key}: {json.dumps(value)}\n" for key, value in fields.items()
+        )
+        review = "<!-- gnostoa:disposition:v1\n" + lines + "-->\n"
+        _, failed = self._evaluate(bundle, review_body=review)
+        self.assertEqual({"M13", "M15"}, set(failed))
+
+
+class _RestExportOptionalAdapter:
+    """A different native wire shape, translated into the existing v1 contract.
+
+    This fixture is an architectural falsifier, not a qualified replacement for
+    a deployed security provider. No run-bound configuration claim is invented.
+    """
+
+    name = "alt-security"
+    source = "def f():\n    return 1\n"
+    observed_at = "2026-09-19T16:40:50Z"
+
+    def __init__(self, *, available: bool, with_baseline: bool = False) -> None:
+        self.available = available
+        self.with_baseline = with_baseline
+        self.calls = 0
+
+    def readback(self, **context: Any) -> list[dict[str, Any]]:
+        self.calls += 1
+        native = json.loads(
+            '{"scan_state":"finished","observations":[{"detector":"ALT-SEC-101",'
+            '"source":{"file":"tools/merge_admission.py","row":2},'
+            '"rating":2,"summary":"unsafe fixture operation"}]}'
+        )
+        findings = (
+            [
+                {
+                    "id": "alt-observation-1",
+                    "rule": observation["detector"],
+                    "path": observation["source"]["file"],
+                    "range": {"start_line": observation["source"]["row"]},
+                    "severity": {1: "MINOR", 2: "MAJOR", 3: "CRITICAL"}[
+                        observation["rating"]
+                    ],
+                    "message": observation["summary"],
+                    "enclosing": analyzer_readback.enclosing_scope(
+                        self.source, observation["source"]["row"]
+                    ),
+                }
+                for observation in native["observations"]
+            ]
+            if self.available
+            else []
+        )
+        coverage = analyzer_readback.coverage(
+            "COMPLETE" if self.available else "ERROR",
+            pages=1,
+            count=len(findings),
+            total=len(findings) if self.available else None,
+            reason=None if self.available else "SERVICE_UNAVAILABLE",
+        )
+        readbacks = [
+            analyzer_readback.build_readback(
+                provider=self.name,
+                adapter="rest-export-fixture/v1",
+                repository=context.get("repository", "ktogias/gnostoa"),
+                pull_number=context.get("pull_request", 300),
+                requested_head=context.get("head_sha", HEAD),
+                observed_head=HEAD if self.available else None,
+                analysis_id="alt-scan/fixture-1",
+                scope="FULL",
+                completeness="FULL_RUN" if self.available else "READBACK_UNAVAILABLE",
+                native_mode="REST_EXPORT",
+                observed_at=self.observed_at,
+                run_state="SUCCESS" if self.available else "FAILURE",
+                coverage_record=coverage,
+                findings=findings,
+                native={"report_shape": "rest-export/v1"},
+            )
+        ]
+        if self.with_baseline:
+            readbacks.append(
+                analyzer_readback.parse_readback(
+                    {
+                        **readbacks[0],
+                        "scope": "BASE",
+                        "requested_head": MERGE_BASE,
+                        "observed_head": MERGE_BASE,
+                        "analysis_id": "alt-scan/baseline-1",
+                    }
+                )
+            )
+        return readbacks
+
+
+class DeepSourceOptionalReadTests(unittest.TestCase):
+    """DeepSource is optional (Decision 0132, amending 0130's exit): with its
+    credential the runner reads its report and comments for the head and its report
+    for the merge base, findings only; without it, nothing. Its token reaches the
+    readback step alone."""
+
+    @staticmethod
+    def _github(pull: dict[str, Any] | None = None, **more: Any) -> _GitHubFake:
+        urls = _github_urls()
+        return _GitHubFake(
+            {
+                urls["pr"]: [pull or _pr(), pull or _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **more,
             }
         )
 
-    def test_the_bundle_has_no_deepsource_readback(self) -> None:
+    def _inline_finding(self, line: int | None) -> dict[str, Any]:
+        urls = _github_urls()
+        github = self._github(
+            **{
+                urls["comments"]: [
+                    {
+                        "body": "<!-- DeepSource: id=inline-location --> finding",
+                        "path": "tools/example.py",
+                        "line": line,
+                        "original_line": 2,
+                        "commit_id": HEAD,
+                        "original_commit_id": HEAD,
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    }
+                ],
+                "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                f"tools/example.py?ref={HEAD}": runner.RunnerError("not found"),
+            }
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([])},
+        )
         bundle = runner.collect_bundle(
-            self._github(),
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        [diff] = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("deepsource", "DIFF")
+        ]
+        [finding] = diff["findings"]
+        return finding
+
+    def test_an_invalid_current_comment_line_does_not_borrow_its_original_place(
+        self,
+    ) -> None:
+        # Q 4494099874: preserve the finding, but a supplied invalid current line
+        # cannot become a valid range through an unrelated historical line.
+        finding = self._inline_finding(0)
+        self.assertEqual("inline-location", finding["id"])
+        self.assertNotIn("range", finding)
+
+    def test_an_absent_current_comment_line_uses_its_original_place(self) -> None:
+        finding = self._inline_finding(None)
+        self.assertEqual(2, finding["range"]["start_line"])
+
+    def test_without_its_credential_nothing_is_read_from_deepsource(self) -> None:
+        github = self._github()
+        bundle = runner.collect_bundle(
+            github,
             repository="ktogias/gnostoa",
             pull_number=312,
             requested_head=HEAD,
@@ -1844,46 +2183,633 @@ class DeepSourceRetirementRunnerTests(unittest.TestCase):
             [("codacy", "DIFF"), ("sonarcloud", "DIFF")],
             [(r["provider"], r["scope"]) for r in bundle["readbacks"]],
         )
+        self.assertEqual([], [url for url in github.calls if "/compare/" in url])
 
-    def test_a_deepsource_reader_is_refused_as_retired(self) -> None:
-        github, reader = self._github(), cast(Any, _deepsource_fake())
-        with self.assertRaisesRegex(
-            runner.RunnerError, "DeepSource is retired as merge evidence"
-        ):
-            runner.collect_bundle(
+    def test_it_reads_the_head_and_the_merge_base_each_at_its_own_commit(
+        self,
+    ) -> None:
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        source = "def f():\n    return 1\n"
+        github = self._github(
+            {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+            **{
+                **_merge_base_answers(),
+                f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError(
+                    "not found"
+                ),
+                f"{root}/contents/tools/example.py?ref={MERGE_BASE}": {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(source),
+                    "content": base64.b64encode(source.encode()).decode(),
+                },
+            },
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(
+                    uid=HEAD_RUN, head=HEAD, checks=[check("check-head")]
+                ),
+                BASE_RUN: run_page(
+                    uid=BASE_RUN, head=MERGE_BASE, checks=[check("check-base")]
+                ),
+            },
+            {
+                "check-head": check_page([issue("i1", 2)], identifier="check-head"),
+                "check-base": check_page([issue("b1", 2)], identifier="check-base"),
+            },
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        reads = {
+            r["scope"]: r for r in bundle["readbacks"] if r["provider"] == "deepsource"
+        }
+        self.assertEqual(["BASE", "DIFF", "FULL"], sorted(reads))
+        self.assertEqual(
+            [(HEAD, "COMPLETE"), (MERGE_BASE, "COMPLETE")],
+            [
+                (reads[s]["requested_head"], reads[s]["coverage"]["status"])
+                for s in ("FULL", "BASE")
+            ],
+        )
+        # Each report is its own run's: the head's issue at the head, the base's at the
+        # base.
+        self.assertEqual(
+            [["i1"], ["b1"]],
+            [[f["id"] for f in reads[s]["findings"]] for s in ("FULL", "BASE")],
+        )
+        # The base finding's scope is read at the merge base, the head's at the head.
+        [base_finding] = reads["BASE"]["findings"]
+        self.assertEqual(
+            analyzer_readback.scope_reader(source)(2), base_finding["enclosing"]
+        )
+        self.assertNotIn("enclosing", reads["FULL"]["findings"][0])
+
+    def test_a_merge_base_github_does_not_give_is_not_read(self) -> None:
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        github = self._github(
+            {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+            **{
+                f"{root}/compare/{TIP}...{HEAD}?per_page=1": runner.RunnerError(
+                    "unavailable"
+                ),
+                f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError(
+                    "not found"
+                ),
+            },
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([issue("i1", 2)])},
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(
+            [("deepsource", "FULL"), ("deepsource", "DIFF")],
+            [
+                (r["provider"], r["scope"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
+
+    def test_the_command_reads_deepsource_with_its_credential(self) -> None:
+        """The command builds DeepSource's client from its credential in the
+        environment, and the credential leaks nowhere (cubic on #485). Only the
+        client's requests are answered here."""
+        urls = _github_urls()
+        github = self._github(
+            **{urls["sonar_checks"]: {"total_count": 0, "check_runs": []}}
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {"check-python": check_page([])},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "readback.json"
+            with (
+                patch.dict(
+                    os.environ,
+                    {DEEPSOURCE_ENV: "synthetic-deepsource-credential"},
+                    clear=True,
+                ),
+                patch.object(
+                    runner.GitHubReadClient, "from_environment", return_value=github
+                ),
+                patch.object(
+                    runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                    "graphql",
+                    side_effect=reader.graphql,
+                ) as requests,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(0, _main(output))
+            serialized = output.read_text(encoding="utf-8")
+            document = json.loads(serialized)
+        self.assertNotIn("synthetic-deepsource-credential", serialized)
+        self.assertLess(0, requests.call_count)
+        self.assertEqual(
+            [("deepsource", "FULL", "COMPLETE"), ("deepsource", "DIFF", "COMPLETE")],
+            [
+                (r["provider"], r["scope"], r["coverage"]["status"])
+                for r in document["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
+
+    def test_the_optional_reads_stop_at_their_overall_deadline(self) -> None:
+        """CodeAnt on #485: a slow provider's reads end at one overall deadline, well
+        inside the readback job's limit, as an ERROR read; no request starts after
+        it. Each request here takes 100 s of a fake clock. The client is given the
+        deadline, so a request in flight stops at it too (cubic on #485)."""
+        now = [0.0]
+        cursors = [None, *(str(n) for n in range(1, analyzer_deepsource.MAX_PAGES + 5))]
+        starts: list[tuple[float, float | None]] = []
+
+        class Slow(GraphQLFake):
+            def graphql(
+                self,
+                query: str,
+                variables: Mapping[str, Any],
+                *,
+                deadline: float | None = None,
+            ) -> Mapping[str, Any]:
+                starts.append((now[0], deadline))
+                now[0] += 100.0
+                return super().graphql(query, variables)
+
+        reader = Slow(
+            {
+                ("run", None): run_page(),
+                **{
+                    ("check-python", cursor): check_page(
+                        [issue(f"i{n}", n + 1)],
+                        total=1000,
+                        has_next=True,
+                        cursor=str(n + 1),
+                    )
+                    for n, cursor in enumerate(cursors)
+                },
+            }
+        )
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        github = self._github(
+            **{f"{root}/contents/tools/example.py?ref={HEAD}": runner.RunnerError("x")}
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
                 github,
                 repository="ktogias/gnostoa",
                 pull_number=312,
                 requested_head=HEAD,
-                deepsource=reader,
+                deepsource=cast(Any, reader),
                 codacy=None,
                 sonarcloud=None,
                 observed_at=OBSERVED,
             )
-
-    def test_no_workflow_passes_the_retired_provider_s_token(self) -> None:
-        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        self.assertEqual("BOUND", bundle["subject_binding"])
         self.assertEqual(
-            [],
+            ["ERROR"],
             [
-                path.name
-                for path in sorted(workflows.glob("*.yml"))
-                if "DEEPSOURCE_API_TOKEN" in path.read_text(encoding="utf-8")
+                r["coverage"]["status"]
+                for r in bundle["readbacks"]
+                if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+            ],
+        )
+        self.assertLess(len(reader.calls), 10)
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
+
+    def test_the_merge_base_reads_stop_at_the_optional_deadline(self) -> None:
+        """cubic on #485: the merge base's GitHub reads are DeepSource's optional
+        reads too, so none starts after their deadline, and the head's reads stay.
+        Each base read here takes 200 s of a fake clock."""
+        now = [0.0]
+        starts: list[tuple[float, float | None]] = []
+
+        class SlowBase(_GitHubFake):
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
+                if "/compare/" in url or MERGE_BASE in url:
+                    starts.append((now[0], deadline))
+                    now[0] += 200.0
+                return answer
+
+        urls = _github_urls()
+        github = SlowBase(
+            {
+                urls["pr"]: [
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                ],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **_merge_base_answers(),
+            }
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
+                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+            },
+            {"check-python": check_page([])},
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        # Each base read is given the deadline, so the client refuses the one past it
+        # (PAO on #485: github_rest's deadline, not a wrapper's).
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
+        self.assertEqual(
+            [("deepsource", "FULL"), ("deepsource", "DIFF")],
+            [
+                (r["provider"], r["scope"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
             ],
         )
 
-    def test_the_pre_merge_check_reads_no_retired_provider_s_status(self) -> None:
+    def test_the_merge_base_s_deepsource_read_stops_at_the_deadline(self) -> None:
+        """Claude on #485: the merge base's DeepSource read is an optional read too, so
+        one that would start past the deadline is refused before any request and ends
+        as an ERROR, and the bundle and the head's reads stay. Each base GitHub read
+        here takes 100 s of a fake clock, so that read would start at 300 s."""
+        now = [0.0]
+
+        class SlowBase(_GitHubFake):
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
+                if "/compare/" in url or MERGE_BASE in url:
+                    now[0] += 100.0
+                return answer
+
+        urls = _github_urls()
+        github = SlowBase(
+            {
+                urls["pr"]: [
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                    {"head": {"sha": HEAD}, "base": {"sha": TIP}},
+                ],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **_merge_base_answers(),
+            }
+        )
+        reader = _RunsByUid(
+            {
+                HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD),
+                BASE_RUN: run_page(uid=BASE_RUN, head=MERGE_BASE),
+            },
+            {"check-python": check_page([])},
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(
+            [("FULL", "COMPLETE"), ("DIFF", "COMPLETE"), ("BASE", "ERROR")],
+            [
+                (r["scope"], r["coverage"]["status"])
+                for r in bundle["readbacks"]
+                if r["provider"] == "deepsource"
+            ],
+        )
+        # Only the head's run was read, each request given the deadline.
+        self.assertEqual({OPTIONAL_DEADLINE}, set(reader.deadlines))
+
+    def test_the_optional_scope_reads_stop_at_the_deadline(self) -> None:
+        """Codex and PAO on #485: the scope reads of DeepSource's findings are its
+        optional reads too, given their deadline, so past it a finding keeps no scope
+        and stays unknown; the declared items' reads are given none. Each file read
+        here takes 100 s of a fake clock."""
+        now = [0.0]
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        paths = [f"tools/m{n}.py" for n in range(4)]
+        source = "def f():\n    return 1\n"
+        starts: list[tuple[float, float | None]] = []
+
+        class SlowContents(_GitHubFake):
+            def get(
+                self, url: str, *, deadline: float | None = None
+            ) -> tuple[Any, Mapping[str, str]]:
+                answer = super().get(url, deadline=deadline)
+                if "/contents/" in url:
+                    starts.append((now[0], deadline))
+                    now[0] += 100.0
+                return answer
+
+        urls = _github_urls()
+        file_answer = {
+            "type": "file",
+            "encoding": "base64",
+            "size": len(source),
+            "content": base64.b64encode(source.encode()).decode(),
+        }
+        github = SlowContents(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(HEAD_RUN)]},
+                urls["comments"]: [],
+                **{f"{root}/contents/{path}?ref={HEAD}": file_answer for path in paths},
+            }
+        )
+        reader = _RunsByUid(
+            {HEAD_RUN: run_page(uid=HEAD_RUN, head=HEAD)},
+            {
+                "check-python": check_page(
+                    [
+                        {**issue(f"i{n}", 2), "path": path}
+                        for n, path in enumerate(paths)
+                    ]
+                )
+            },
+        )
+        with patch("time.monotonic", side_effect=lambda: now[0]):
+            bundle = runner.collect_bundle(
+                github,
+                repository="ktogias/gnostoa",
+                pull_number=312,
+                requested_head=HEAD,
+                deepsource=cast(Any, reader),
+                codacy=None,
+                sonarcloud=None,
+                observed_at=OBSERVED,
+            )
+        self.assertEqual("BOUND", bundle["subject_binding"])
+        self.assertEqual(
+            [], [start for start, _ in starts if start >= OPTIONAL_DEADLINE]
+        )
+        self.assertEqual({OPTIONAL_DEADLINE}, {given for _, given in starts})
+        [full] = [
+            r
+            for r in bundle["readbacks"]
+            if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+        ]
+        scoped = ["enclosing" in f for f in full["findings"]]
+        self.assertEqual(3, sum(scoped))
+        self.assertIn(False, scoped)
+        # The declared items' reads are given no deadline.
+        self.assertEqual(
+            {None},
+            {
+                given
+                for url, deadlines in github.deadlines.items()
+                if "/contents/" not in url
+                for given in deadlines
+            },
+        )
+
+    def test_the_client_refuses_a_read_past_its_deadline(self) -> None:
+        """PAO on #485: the runner's client reads through github_rest's own
+        deadline, so a read past it is refused before any request."""
+        client = runner.GitHubReadClient("synthetic-bound-reader")
+        url = "https://api.github.com/repos/ktogias/gnostoa/pulls/312"
+        # The deadline is read before the assertion block, so the block holds one
+        # call that can raise (SonarCloud python:S5778 on #485).
+        past = time.monotonic() - 1.0
+        with (
+            patch.object(
+                http.client.HTTPSConnection,
+                "connect",
+                side_effect=AssertionError("network forbidden"),
+            ) as connect,
+            self.assertRaisesRegex(runner.RunnerError, "deadline"),
+        ):
+            client.get(url, deadline=past)
+        connect.assert_not_called()
+
+    def test_only_the_readback_step_receives_the_optional_provider_s_token(
+        self,
+    ) -> None:
+        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        self.assertEqual(
+            ["analyzer-readback.yml", "merge-admission.yml"],
+            [
+                path.name
+                for path in sorted(workflows.glob("*.yml"))
+                if DEEPSOURCE_ENV in path.read_text(encoding="utf-8")
+            ],
+        )
+        readback = yaml.safe_load(
+            (workflows / "analyzer-readback.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [("readback", "readback")],
+            [
+                (job_id, step.get("id"))
+                for job_id, job in readback["jobs"].items()
+                for step in job.get("steps", [])
+                if DEEPSOURCE_ENV in json.dumps(step)
+            ],
+        )
+        admission = yaml.safe_load(
+            (workflows / "merge-admission.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            ["./.github/workflows/analyzer-readback.yml"],
+            [
+                job["uses"]
+                for job in admission["jobs"].values()
+                if DEEPSOURCE_ENV in json.dumps(job)
+            ],
+        )
+
+    def test_the_pre_merge_check_reads_no_optional_provider_s_status(self) -> None:
         # Otherwise DeepSource's red status would still gate every merge through the
-        # normal merge's pre-merge check (Decision 0130).
+        # normal merge's pre-merge check (Decisions 0130 and 0132).
         runbook = " ".join(
             (ROOT / "knowledge" / "runbooks" / "operate-the-merge-gate.md")
             .read_text(encoding="utf-8")
             .split()
         )
         self.assertIn(
-            "A retired provider's statuses and check runs are not read: "
-            "DeepSource's, such as `DeepSource: Python` (Decision 0130)",
+            "An optional provider's statuses and check runs are not read: "
+            "DeepSource's, such as `DeepSource: Python`, whose findings the readback "
+            "reads instead (Decisions 0130 and 0132)",
             runbook,
+        )
+        # The verdict's own check items name no DeepSource check either (CodeAnt on
+        # #485): the pre-merge check is not versioned, the manifest is.
+        manifest = yaml.safe_load(
+            (ROOT / "policy" / "merge-required-checks.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [],
+            [
+                item["name"]
+                for items in manifest["requirements"].values()
+                for item in items.values()
+                if "deepsource" in item["name"].casefold()
+            ],
+        )
+
+
+# DeepSource's optional reads' overall deadline, on a fake clock that starts at 0
+# (CodeAnt on #485).
+OPTIONAL_DEADLINE = 240.0
+# Decision 0132's base read: the Pull Request's base branch tip, its merge base with
+# the head, and DeepSource's run for each commit.
+TIP = "b" * 40
+MERGE_BASE = "c" * 40
+HEAD_RUN = RUN_UID
+BASE_RUN = "1d3ac274-af9f-54cf-ce9c-b04365bb3859"
+
+
+def _deepsource_check(run: str) -> dict[str, Any]:
+    """DeepSource's check run for a commit, naming its run."""
+    return {
+        "name": "DeepSource: Python",
+        "status": "completed",
+        "conclusion": "failure",
+        "details_url": f"https://app.deepsource.com/gh/ktogias/gnostoa/run/{run}/python/",
+        "app": {"slug": "deepsource-io"},
+    }
+
+
+def _merge_base_answers() -> dict[str, Any]:
+    """GitHub's answers for the merge base of HEAD over TIP: the comparison naming it,
+    and its statuses and checks, which name DeepSource's run there."""
+    root = "https://api.github.com/repos/ktogias/gnostoa"
+    return {
+        f"{root}/compare/{TIP}...{HEAD}?per_page=1": {
+            "merge_base_commit": {"sha": MERGE_BASE}
+        },
+        f"{root}/commits/{MERGE_BASE}/statuses?per_page=100": [],
+        f"{root}/commits/{MERGE_BASE}/check-runs?per_page=100": {
+            "check_runs": [_deepsource_check(BASE_RUN)]
+        },
+    }
+
+
+class _RunsByUid:
+    """DeepSource with one run per commit, answered by its uid, and each check's page
+    by the check's id: an id it does not hold is refused, as the provider would not
+    answer another run's check (Claude on #485)."""
+
+    def __init__(
+        self, runs: Mapping[str, dict[str, Any]], checks: Mapping[str, dict[str, Any]]
+    ) -> None:
+        self.runs, self.checks = runs, checks
+        # The deadline each request is given, as DeepSource's client takes it.
+        self.deadlines: list[float | None] = []
+
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        self.deadlines.append(deadline)
+        if "AnalyzerRun" in query:
+            return self.runs[variables["runUid"]]
+        return self.checks[variables["id"]]
+
+
+class OptionalDeepSourceRunnerTests(unittest.TestCase):
+    """Track 2's bounded read (#389 lineage D8/L8; the owner's 6652941418): the optional
+    DeepSource full read runs at the pre-merge cut under the readback's existing bounds.
+    A report that pages past the adapter's bound is recorded as an ERROR read, and the
+    read goes no further than the bound."""
+
+    def test_the_optional_full_read_stops_at_the_adapter_s_page_bound(self) -> None:
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": [_deepsource_check(RUN_UID)]},
+                urls["comments"]: [],
+                # The readback reads the reported file for its findings' scopes; here
+                # GitHub does not give it.
+                (
+                    "https://api.github.com/repos/ktogias/gnostoa/contents/"
+                    f"tools/example.py?ref={HEAD}"
+                ): runner.RunnerError("not found"),
+            }
+        )
+        bound = analyzer_deepsource.MAX_PAGES
+        # A full report that never ends: every page names a next one.
+        cursors = [None, *(str(n) for n in range(1, bound + 5))]
+        reader = GraphQLFake(
+            {
+                ("run", None): run_page(),
+                **{
+                    ("check-python", cursor): check_page(
+                        [issue(f"i{n}", n + 1)],
+                        total=1000,
+                        has_next=True,
+                        cursor=str(n + 1),
+                    )
+                    for n, cursor in enumerate(cursors)
+                },
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=cast(Any, reader),
+            codacy=None,
+            sonarcloud=None,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(
+            ["ERROR"],
+            [
+                r["coverage"]["status"]
+                for r in bundle["readbacks"]
+                if (r["provider"], r["scope"]) == ("deepsource", "FULL")
+            ],
+        )
+        self.assertEqual(
+            bound,
+            sum(1 for _, values in reader.calls if values.get("id") == "check-python"),
         )
 
 
@@ -1926,9 +2852,11 @@ class _OrderedGitHub(_GitHubFake):
         super().__init__(responses)
         self.events = events
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         self.events.append(url)
-        return super().get(url)
+        return super().get(url, deadline=deadline)
 
 
 def _main(output: Path) -> int:
@@ -2221,9 +3149,11 @@ class _SequencedGitHub(_GitHubFake):
         super().__init__(responses)
         self.sequenced = {url: list(values) for url, values in sequenced.items()}
 
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]:
         if url not in self.sequenced:
-            return super().get(url)
+            return super().get(url, deadline=deadline)
         self.calls.append(url)
         if not self.sequenced[url]:
             raise AssertionError(f"no remaining fake responses for {url}")

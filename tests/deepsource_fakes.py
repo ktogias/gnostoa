@@ -21,8 +21,17 @@ class GraphQLFake:
     def __init__(self, responses: Mapping[tuple[str, str | None], Any]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # The deadline each request is given, as a deadline-bound reader takes it.
+        self.deadlines: list[float | None] = []
 
-    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+    def graphql(
+        self,
+        query: str,
+        variables: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Mapping[str, Any]:
+        self.deadlines.append(deadline)
         values = dict(variables)
         self.calls.append((query, values))
         name = "run" if "AnalyzerRun" in query else str(values.get("id"))

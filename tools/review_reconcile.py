@@ -9,6 +9,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from .analyzer_readback import SHA256_DIGEST
 from .review_model import canonical_json, parse_rfc3339
 
 _INTERNAL_SCHEMA_VERSION = "gnostoa-l1-current-state/v1"
@@ -31,6 +32,18 @@ _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
 _PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
 _THREAD_EVIDENCE_MAX_PROBE = (1 << 64) - 1
+# A false-positive disposition (Decision 0132 item 4): a closed block in a review's
+# text, one `key: <JSON value>` line per field, naming one finding at one commit by
+# its enclosing scope's hash or its line, and its rule, or null for a finding listed
+# with none. Only an eligible approval's counts; that is the merge verdict's to judge
+# (M17, with M16's eligibility).
+DISPOSITION_MARKER = "<!-- gnostoa:disposition:v1\n"
+_DISPOSITION_END = "-->"
+_DISPOSITION_KEYS = frozenset(
+    {"provider", "native_id", "rule", "path", "commit_id", "evidence_ref"}
+)
+_DISPOSITION_LOCATORS = frozenset({"scope_hash", "line"})
+MAX_DISPOSITIONS = 100
 
 
 class ReconciliationInputError(ValueError):
@@ -47,6 +60,90 @@ def _string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ReconciliationInputError(f"{label} must be a non-empty string")
     return value
+
+
+def _disposition(value: object, label: str) -> dict[str, Any]:
+    """A false-positive disposition's closed fields: its provider, the finding's
+    native id, rule and path, the commit, an evidence reference, and exactly one
+    locator, the enclosing scope's SHA-256 or a positive line. The rule is null for
+    a finding its provider lists with none, as an inline comment's is."""
+
+    record = _mapping(value, label)
+    locators = _DISPOSITION_LOCATORS & set(record)
+    if set(record) - locators != _DISPOSITION_KEYS or len(locators) != 1:
+        raise ReconciliationInputError(f"{label} has missing or unknown fields")
+    for key in sorted(_DISPOSITION_KEYS - {"rule"}):
+        _string(record[key], f"{label}.{key}")
+    if record["rule"] is not None:
+        _string(record["rule"], f"{label}.rule")
+    _sha(record["commit_id"], f"{label}.commit_id")
+    if "scope_hash" in record and not SHA256_DIGEST.fullmatch(
+        _string(record["scope_hash"], f"{label}.scope_hash")
+    ):
+        raise ReconciliationInputError(f"{label}.scope_hash must be a SHA-256 digest")
+    if "line" in record and (type(record["line"]) is not int or record["line"] < 1):
+        raise ReconciliationInputError(f"{label}.line must be a positive integer")
+    return dict(record)
+
+
+def dispositions(value: object, label: str) -> list[dict[str, Any]]:
+    """A review's dispositions, each closed, at most MAX_DISPOSITIONS."""
+
+    if not isinstance(value, list) or len(value) > MAX_DISPOSITIONS:
+        raise ReconciliationInputError(
+            f"{label} must be an array of at most {MAX_DISPOSITIONS}"
+        )
+    return [_disposition(item, f"{label}[{index}]") for index, item in enumerate(value)]
+
+
+def parse_dispositions(text: str) -> list[dict[str, Any]]:
+    """The well-formed disposition blocks in a review's text, in order, at most
+    MAX_DISPOSITIONS. A malformed block disposes of nothing, so it is left out. A text
+    written in a web form ends its lines in CRLF, read as LF."""
+
+    text = text.replace("\r\n", "\n")
+    found: list[dict[str, Any]] = []
+    start = text.find(DISPOSITION_MARKER)
+    while start != -1 and len(found) < MAX_DISPOSITIONS:
+        begin = start + len(DISPOSITION_MARKER)
+        end = text.find(_DISPOSITION_END, begin)
+        if end == -1:
+            break
+        following = text.find(DISPOSITION_MARKER, begin)
+        if following != -1 and following < end:
+            # Unterminated, it ends where the next block starts: only it is left out
+            # (cubic on #485).
+            start = following
+            continue
+        record = _disposition_block(text[begin:end])
+        if record is not None:
+            found.append(record)
+        start = text.find(DISPOSITION_MARKER, end)
+    return found
+
+
+def _disposition_block(block: str) -> dict[str, Any] | None:
+    # Imported here, as the readback's strict readers import it: it needs the runtime
+    # lock, which this module's other importers do not all install.
+    from .review_check import assert_document_depth, strict_json_loads
+
+    fields: dict[str, Any] = {}
+    for line in block.splitlines():
+        key, separator, raw = line.partition(": ")
+        if not separator or key in fields:
+            return None
+        try:
+            # Strict and bounded: a value nested past the parser's bound is refused,
+            # never raised (Revix on #485, strict-bounded-json-parsing).
+            value = strict_json_loads(raw, label="a disposition field")
+            assert_document_depth(value, "a disposition field")
+        except ValueError:
+            return None
+        fields[key] = value
+    try:
+        return _disposition(fields, "disposition")
+    except ReconciliationInputError:
+        return None
 
 
 def _optional_summary(value: object, *, limit: int = 512) -> str | None:

@@ -409,13 +409,39 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
    - Every fix is a new head, so a new seal and new review requests follow.
    - The pre-merge check and the exact-head analyzer readback must both be clean:
      `BOUND`; every applicable claim of protected `main`'s declaration met; and 0
-     findings obtained from any source, a partial one or one no claim needed
-     included. With its singleton claims (#389 F2), an applicable claim is met when
-     its one item is `COMPLETE`:
+     unresolved findings obtained from any source, a partial one or one no claim
+     needed included. A pre-existing or disposed optional finding stays listed and
+     does not count (below). With its singleton claims (#389 F2), an applicable claim
+     is met when its one item is `COMPLETE`:
      - **Every merging class:** Codacy, SonarCloud, and the project's own inventory,
-       DIFF and FULL (#389 A0-MP1; Decision 0130). DeepSource is retired as merge
-       evidence: the readback acquires nothing from it, and a bundle that still
-       carries its readback is refused as retired.
+       DIFF and FULL (#389 A0-MP1; Decision 0130).
+     - **DeepSource is optional** (Decision 0132): it covers no claim, and a missing,
+       failed or stale read of it changes nothing. Its complete report for the exact
+       head adds its findings in the files the change modifies, each compared with
+       its complete report for the merge base. A pre-existing one stays listed and
+       does not deny: the base read holds the same occurrence, one to one and no more
+       severe, in a byte-identical enclosing scope. Its pre-existence rests on an
+       unproven configuration, which the evidence records as
+       `configuration_provenance: unproven`, so the comparison is no proof that the
+       base ran the same rules. An introduced or unknown one denies until a fix removes it, or
+       until a false-positive disposition names it. The disposition is a block in the
+       latest `APPROVED` review at the exact head by a required approver who is
+       neither the declarer nor the author, one field per line, each a JSON value,
+       the locator either `scope_hash` or `line`, and `rule` `null` for a finding
+       listed with none, as an inline comment's is:
+       ```text
+       <!-- gnostoa:disposition:v1
+       provider: "deepsource"
+       native_id: "<the finding's id>"
+       rule: "<its rule>"
+       path: "<its path>"
+       scope_hash: "<its enclosing scope's SHA-256>"
+       commit_id: "<the exact head>"
+       evidence_ref: "<a link to the evidence that it is a false positive>"
+       -->
+       ```
+       A push unbinds it. A provider's own mark, a resolved thread or a clean result
+       elsewhere disposes of nothing.
 
      A degraded source is reported as it is, never as clean. A candidate's own
      declaration never governs its own merge.
@@ -425,8 +451,9 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      - the seal names the exact head;
      - every required check succeeded, by its latest run;
      - every other check run and status is green, and a green one carries no
-       annotation or analyzer finding. A retired provider's statuses and check runs
-       are not read: DeepSource's, such as `DeepSource: Python` (Decision 0130);
+       annotation or analyzer finding. An optional provider's statuses and check
+       runs are not read: DeepSource's, such as `DeepSource: Python`, whose findings
+       the readback reads instead (Decisions 0130 and 0132);
      - every review thread is resolved, read through every page;
      - no closing keyword is in what the squash merge will carry, nor in the PR's
        description. The check writes the PR's title and body, as it read them, to two

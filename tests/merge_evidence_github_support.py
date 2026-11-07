@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import io
 import shutil
+import tempfile
 import unittest
 from collections.abc import Mapping
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,12 +15,14 @@ from unittest.mock import patch
 
 import yaml
 
+from tests.merge_admission_support import debt_entry
 from tests.review_reconcile_l1_support import (
     adapter_fixture,
     complete_replies_fixture,
     paged_fake_fixture,
 )
 from tools import (
+    analyzer_readback,
     assurance_completeness,
     merge_admission,
     merge_evidence_github,
@@ -420,3 +423,262 @@ def unregistered_tests(namespace: Mapping[str, Any], path: str) -> set[str]:
         for method in unittest.defaultTestLoader.getTestCaseNames(case)
     }
     return defined - registered
+
+
+def _readback(
+    provider: str,
+    scope: str,
+    *findings: dict[str, Any],
+    status: str = "COMPLETE",
+    head: str = HEAD,
+    repository: str = "ktogias/gnostoa",
+    pull: int = 300,
+    completeness: str | None = None,
+    native_mode: str | None = None,
+    native: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    complete = status == "COMPLETE"
+    if completeness is None:
+        # As the producer marks them: Codacy's and SonarCloud's reads are full runs,
+        # and a retired DeepSource's diff read, which only the retirement tests
+        # build, diff-local (Decision 0130).
+        local = (provider, scope) == ("deepsource", "DIFF")
+        completeness = "DIFF_LOCAL" if local else "FULL_RUN"
+    if native_mode is None:
+        # Each producer's own native mode (CodeAnt and Cubic on #461): Codacy's and
+        # SonarCloud's pull-request analyses; DeepSource's and the inventory's
+        # diff-local and full reads.
+        native_mode = (
+            "PULL_REQUEST"
+            if provider in ("codacy", "sonarcloud")
+            else "DIFF_LOCAL"
+            if completeness == "DIFF_LOCAL"
+            else "FULL_RUN"
+        )
+    record: dict[str, Any] = {"status": status, "pages": 1, "count": len(findings)}
+    if not complete:
+        record["reason"] = "AUTH_UNAVAILABLE"
+    return analyzer_readback.build_readback(
+        provider=provider,
+        adapter=f"{provider}-fake/v1",
+        repository=repository,
+        pull_number=pull,
+        requested_head=head,
+        observed_head=head if complete else None,
+        analysis_id=None,
+        scope=scope,
+        completeness=completeness if complete else "AUTH_UNAVAILABLE",
+        native_mode=native_mode,
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="SUCCESS" if complete else "UNKNOWN",
+        coverage_record=record,
+        findings=findings,
+        native=native,
+    )
+
+
+def _bundle(*readbacks: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """The authenticated readback's bundle for the snapshot's pull request; by
+    default its four readbacks are complete and find nothing: Codacy's, SonarCloud's
+    and, since #389 A0-MP1 slice 3, the project inventory's two. DeepSource gives
+    none: it is retired as merge evidence (Decision 0130)."""
+
+    bundle: dict[str, Any] = {
+        "schema": analyzer_readback.BUNDLE_SCHEMA,
+        "repository": "ktogias/gnostoa",
+        "pull_number": 300,
+        "requested_head": HEAD,
+        "observed_head": HEAD,
+        "observed_at": "2026-09-19T16:40:50Z",
+        "subject_binding": "BOUND",
+        "github_projection": {"statuses": 0, "check_runs": 5, "review_comments": 0},
+        "readbacks": list(readbacks)
+        or [
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR),
+            *_inventory_readbacks(),
+        ],
+    }
+    bundle.update(changes)
+    return bundle
+
+
+def _inventory_readbacks() -> tuple[dict[str, Any], dict[str, Any]]:
+    """The project inventory's two complete readbacks, as #460's adapter marks them:
+    DIFF diff-local, FULL a full run, in completeness and native mode alike, built
+    by the one inventory fixture (#389 A0-MP1 slice 3; CodeAnt on #461)."""
+
+    return (_inventory("DIFF"), _inventory("FULL"))
+
+
+# SonarCloud's inventory gives the `sonarcloud` requirement's own item (1b.3c).
+SONAR = ("sonarcloud", "DIFF")
+
+
+FINDING = {
+    "id": "issue-1",
+    "message": "Reimport 'x'",
+    "rule": "PYL-W0404",
+    "severity": "MAJOR",
+    "path": "tests/test_x.py",
+    "state": "open",
+}
+
+
+def _section_c_declaration() -> dict[str, Any]:
+    """Gnostoa's own declaration: Codacy stays `analyzer-readback`'s, and the
+    project's inventory gives `project-risk-readback`, NORMAL's alone under
+    6381812211 section C and every class's since Decision 0130, which retires
+    DeepSource's requirement and claims."""
+
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
+    )
+    return document
+
+
+def _inventory(scope: str, *findings: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """One of the project inventory's two readbacks, as #460's adapter builds them:
+    DIFF is diff-local, FULL a full run, in completeness and native mode alike
+    (CodeAnt on #461)."""
+
+    kind = "DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN"
+    return _readback(
+        "gnostoa-inventory",
+        scope,
+        *findings,
+        completeness=kind,
+        native_mode=kind,
+        **changes,
+    )
+
+
+def _admitted(
+    declaration: dict[str, Any],
+    bundle: dict[str, Any] | None,
+    change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
+    review_body: str | None = None,
+    extra_reviews: tuple[dict[str, Any], ...] = (),
+    files: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """The merge decision on one head under `declaration`, with `bundle`, if any, as
+    its analyzer readback, the gate green, and the body's class `change_class` if given:
+    the evidence and the failed criteria. Module-level, so each class's tests call
+    it without reaching into another's private member (#461's own inventory). A
+    `ledger` is the protected target's analyzer debt ledger (#389). `review_body` is
+    the owner's approving review's text, `extra_reviews` are further GitHub reviews
+    on the first page, and `files` replaces the comparison's changed files (#389
+    Track 2's dispositions and baseline)."""
+    evidence, verdict = _decision(
+        declaration,
+        bundle,
+        change_class,
+        ledger=ledger,
+        review_body=review_body,
+        extra_reviews=extra_reviews,
+        files=files,
+    )
+    failed = {
+        c["id"]: c["reasons"] for c in verdict["criteria"] if c["status"] == "FAIL"
+    }
+    return evidence, failed
+
+
+def _decision(
+    declaration: dict[str, Any],
+    bundle: dict[str, Any] | None,
+    change_class: str | None = None,
+    *,
+    ledger: dict[str, Any] | None = None,
+    review_body: str | None = None,
+    extra_reviews: tuple[dict[str, Any], ...] = (),
+    files: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`_admitted`'s evidence and its whole verdict, every criterion and what it
+    carries for approval (Claude on #480)."""
+    with tempfile.TemporaryDirectory() as directory:
+        project = _project(Path(directory))
+        path = project / "policy" / "assurance-evidence.yaml"
+        path.write_text(yaml.safe_dump(declaration, sort_keys=False), encoding="utf-8")
+        if ledger is not None:
+            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
+                yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8"
+            )
+        # The gate passed on the exact head, so every check item is
+        # COMPLETE, as in `test_a_green_gate_s_findings_reach_m17`.
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        replies = _replies(
+            **{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})}
+        )
+        if change_class is not None:
+            replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                "- Class: `normative`", f"- Class: `{change_class}`"
+            )
+        reviews = replies[f"{API}/pulls/300/reviews?per_page=100"][0]
+        if review_body is not None:
+            reviews[0]["body"] = review_body
+        reviews.extend(copy.deepcopy(list(extra_reviews)))
+        if files is not None:
+            replies[COMPARE] = _comparison(
+                [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], files
+            )
+        snapshot = _snapshot(replies)
+        evidence = merge_evidence_github.evidence_for(
+            snapshot, project_root=project, analyzer_readback=bundle
+        )
+        loaded = assurance_completeness.load_declaration(path, project_root=project)
+    verdict = merge_admission.evaluate(
+        evidence, declaration=loaded, change_policy=_policy()
+    )
+    return evidence, verdict
+
+
+LEDGER_DOCUMENT: dict[str, Any] = {
+    "schema_version": "1.0",
+    "id": "example.analyzer-debt-ledger",
+    "version": "0.1.0",
+    "entries": [debt_entry()],
+}
+
+
+# The project inventory's run-bound configuration, as its adapter states it: the
+# protected profile's digest, bound to its own run (owner 6620829215 §2).
+_PROFILE = "sha256:" + "b" * 64
+
+
+# The finding's own producer's effective identity, as the inventory adapter states it
+# (owner 6621293483 §1).
+_PRODUCER = "sha256:" + "e" * 64
+
+
+def _complete_bundle(
+    *codacy: dict[str, Any],
+    sonarcloud: tuple[dict[str, Any], ...] = (),
+    inventory_diff: tuple[dict[str, Any], ...] = (),
+    inventory_full: tuple[dict[str, Any], ...] = (),
+    profile: str = _PROFILE,
+    binding: str = "BOUND",
+    producers: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """A bound bundle of the active providers whose every readback is complete, with
+    `codacy` in Codacy's pull-request read and `sonarcloud` in SonarCloud's, neither
+    of which states a configuration, and `inventory_diff` and `inventory_full` in
+    the inventory's two reads, under `profile`. DeepSource gives none: it is retired
+    as merge evidence (Decision 0130)."""
+    bound = {
+        "profile": profile,
+        "source_binding": binding,
+        "tree": "c" * 40,
+        "producers": {"python": _PRODUCER} if producers is None else dict(producers),
+    }
+    return _bundle(
+        _readback("codacy", "DIFF", *codacy),
+        _readback(*SONAR, *sonarcloud),
+        _inventory("DIFF", *inventory_diff, native=bound),
+        _inventory("FULL", *inventory_full, native=bound),
+    )

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -17,6 +18,7 @@ from typing import Any, NamedTuple, Protocol
 
 from tools import (
     analyzer_codacy,
+    analyzer_deepsource,
     analyzer_sonarcloud,
     github_events,
     github_rest,
@@ -53,7 +55,9 @@ class RunnerError(RuntimeError):
 
 
 class GitHubReader(Protocol):
-    def get(self, url: str) -> tuple[Any, Mapping[str, str]]: ...
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, Mapping[str, str]]: ...
 
 
 def _now() -> str:
@@ -68,6 +72,8 @@ def _runner_message(error: github_rest.GitHubError) -> str:
         return "GitHub API returned invalid JSON"
     if isinstance(error, github_rest.OutsideOrigin):
         return "GitHub API URL is outside the admitted origin"
+    if isinstance(error, github_rest.DeadlineReached):
+        return "GitHub API read deadline reached"
     if error.status is not None:
         return f"GitHub API HTTP {error.status}"
     if str(error) == "GitHub request failed validation":
@@ -140,10 +146,16 @@ class GitHubReadClient(github_rest.GitHubRestClient):
         """Return a client for the job's token; this runner takes no other options."""
         return cls(os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", ""))
 
-    def get(self, url: str) -> tuple[Any, dict[str, str]]:
-        """Return one GET's document and headers, failing as this runner's error."""
+    def get(
+        self, url: str, *, deadline: float | None = None
+    ) -> tuple[Any, dict[str, str]]:
+        """Return one GET's document and headers, failing as this runner's error.
+        With a deadline, an optional read's, the shared client bounds the request by
+        it and refuses one past it (PAO on #485)."""
         try:
-            return super().get(url)
+            if deadline is None:
+                return super().get(url)
+            return super().read_page(url, deadline=deadline)
         except github_rest.GitHubError as error:
             raise RunnerError(_runner_message(error)) from error
 
@@ -182,11 +194,21 @@ def _next_url(headers: Mapping[str, str]) -> str | None:
     return _validate_github_url(match.group(1))
 
 
+def _get(
+    client: GitHubReader, url: str, deadline: float | None
+) -> tuple[Any, Mapping[str, str]]:
+    """One read: an optional one's with its deadline, a declared item's as before."""
+    if deadline is None:
+        return client.get(url)
+    return client.get(url, deadline=deadline)
+
+
 def _collect_pages(
     client: GitHubReader,
     first_url: str,
     *,
     extract: Any,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     url: str | None = first_url
     items: list[Mapping[str, Any]] = []
@@ -194,7 +216,7 @@ def _collect_pages(
     while url is not None:
         if pages >= _MAX_PAGES:
             raise RunnerError("GitHub pagination exceeded bounded page count")
-        payload, headers = client.get(url)
+        payload, headers = _get(client, url, deadline)
         raw_items = extract(payload)
         if not isinstance(raw_items, list):
             raise RunnerError("GitHub paginated payload is malformed")
@@ -237,22 +259,32 @@ def _pull_head(client: GitHubReader, repository: str, pull_number: int) -> str:
 
 
 def _statuses(
-    client: GitHubReader, repository: str, head: str
+    client: GitHubReader,
+    repository: str,
+    head: str,
+    *,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     return _collect_pages(
         client,
         f"{_API_ROOT}/repos/{repository}/commits/{head}/statuses?per_page=100",
         extract=_list_payload,
+        deadline=deadline,
     )
 
 
 def _check_runs(
-    client: GitHubReader, repository: str, head: str
+    client: GitHubReader,
+    repository: str,
+    head: str,
+    *,
+    deadline: float | None = None,
 ) -> list[Mapping[str, Any]]:
     return _collect_pages(
         client,
         f"{_API_ROOT}/repos/{repository}/commits/{head}/check-runs?per_page=100",
         extract=_check_runs_payload,
+        deadline=deadline,
     )
 
 
@@ -455,19 +487,27 @@ class _ScopeBudget:
         return True
 
 
-def _head_source(
-    github: GitHubReader, repository: str, head: str, path: str, budget: _ScopeBudget
+def _commit_source(
+    github: GitHubReader,
+    repository: str,
+    budget: _ScopeBudget,
+    commit: str,
+    path: str,
+    *,
+    deadline: float | None = None,
 ) -> str | None:
-    """One file's text at the exact head, as GitHub's contents API returns it: a
-    file, in base64, within the bounds and UTF-8. Anything else is None."""
+    """One file's text at an exact commit, the head's or the merge base's (Decision
+    0132), as GitHub's contents API returns it: a file, in base64, within the bounds
+    and UTF-8. Anything else is None. An optional read's is under its deadline."""
 
     if not budget.request():
         return None
     url = (
-        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}?ref={head}"
+        f"{_API_ROOT}/repos/{repository}/contents/{urllib.parse.quote(path)}"
+        f"?ref={commit}"
     )
     try:
-        document, _ = github.get(url)
+        document, _ = _get(github, url, deadline)
     except RunnerError:
         return None
     if (
@@ -497,16 +537,17 @@ def _head_source(
         return None
 
 
-_ScopeReaders = dict[str, Callable[[int], dict[str, str] | None] | None]
+_ScopeReaders = dict[tuple[str, str], Callable[[int], dict[str, Any] | None] | None]
 
 
 def _finding_scope(
     finding: Mapping[str, Any],
+    commit: str,
     readers: _ScopeReaders,
-    source_of: Callable[[str], str | None],
-) -> dict[str, str] | None:
-    """A Python finding's enclosing scope, its file read and parsed at most once
-    into `readers`; None for any other finding, or one already scoped."""
+    source_of: Callable[[str, str], str | None],
+) -> dict[str, Any] | None:
+    """A Python finding's enclosing scope at `commit`, its file read and parsed at
+    most once into `readers`; None for any other finding, or one already scoped."""
 
     path = finding.get("path")
     line = (finding.get("range") or {}).get("start_line")
@@ -517,26 +558,29 @@ def _finding_scope(
         or not isinstance(line, int)
     ):
         return None
-    if path not in readers:
-        source = source_of(path)
-        readers[path] = None if source is None else scope_reader(source)
-    reader = readers[path]
+    if (commit, path) not in readers:
+        source = source_of(commit, path)
+        readers[(commit, path)] = None if source is None else scope_reader(source)
+    reader = readers[(commit, path)]
     return None if reader is None else reader(line)
 
 
 def _with_enclosing(
-    readbacks: list[dict[str, Any]], source_of: Callable[[str], str | None]
+    readbacks: list[dict[str, Any]],
+    source_of: Callable[[str, str], str | None],
+    readers: _ScopeReaders,
 ) -> list[dict[str, Any]]:
-    """Each readback, its Python findings given their enclosing scopes: each file is
-    read and parsed once, and a readback is rebuilt through its own contract only
-    when one of its findings gained a scope."""
+    """Each readback, its Python findings given their enclosing scopes at the commit
+    it read, the head or the merge base: each file is read and parsed once per
+    commit, across the calls that share `readers`, and a readback is rebuilt through
+    its own contract only when one of its findings gained a scope."""
 
-    readers: _ScopeReaders = {}
     result = []
     for readback in readbacks:
         findings, changed = [], False
+        commit = readback["requested_head"]
         for finding in readback["findings"]:
-            scope = _finding_scope(finding, readers, source_of)
+            scope = _finding_scope(finding, commit, readers, source_of)
             findings.append(
                 finding if scope is None else {**finding, "enclosing": scope}
             )
@@ -557,21 +601,14 @@ def collect_bundle(
     sonarcloud: analyzer_sonarcloud.JsonReader | None,
     observed_at: str | None = None,
     inventory: InventoryInput | None = None,
-    deepsource: None = None,
+    optional_adapters: Mapping[str, OptionalReportAdapter] | None = None,
+    **optional_clients: Any,
 ) -> dict[str, Any]:
-    # DeepSource is retired as merge evidence (Decision 0130): nothing is read from
-    # it, and a reader handed in is refused, so retirement is never an unavailable
-    # read. The keyword stays only for the callers that pass None, until the
-    # cleanup after the exit.
-    if deepsource is not None:
-        raise RunnerError(
-            "DeepSource is retired as merge evidence (Decision 0130): "
-            "the readback reads nothing from it"
-        )
     _repository(repository)
     requested = _exact_head(requested_head, "requested head")
     observed = observed_at or _now()
-    initial_head = _pull_head(github, repository, pull_number)
+    pull = _pull(github, repository, pull_number)
+    initial_head = _pull_side(pull, "head")
     if initial_head != requested:
         return {
             "schema": BUNDLE_SCHEMA,
@@ -585,9 +622,8 @@ def collect_bundle(
             "readbacks": [],
         }
 
-    # The bundle's GitHub projection of the subject, as its v1 contract states it.
-    # Only DeepSource's retired DIFF read used it (Decision 0130); the bundle's next
-    # version drops it, with these reads.
+    # The bundle's GitHub projection of the subject, as its v1 contract states it,
+    # available to registered optional adapters (Decision 0132).
     statuses = _statuses(github, repository, requested)
     checks = _check_runs(github, repository, requested)
     comments = _review_comments(github, repository, pull_number)
@@ -638,6 +674,8 @@ def collect_bundle(
             "readbacks": [],
         }
 
+    budget = _ScopeBudget()
+    readers: _ScopeReaders = {}
     return {
         "schema": BUNDLE_SCHEMA,
         "repository": repository,
@@ -651,36 +689,143 @@ def collect_bundle(
             "check_runs": len(checks),
             "review_comments": len(comments),
         },
-        "readbacks": _with_enclosing(
-            [
-                codacy_readback,
-                sonarcloud_readback,
-                # The project's own inventory, when the workflow gives it, bound to its
-                # job's outputs (#389 A0-MP1 slice 3). The workflow always does.
-                *(
-                    []
-                    if inventory is None
-                    else inventory_bundle_readbacks(
-                        inventory.document,
-                        expected_sha256=inventory.expected_sha256,
-                        result=inventory.result,
-                        attempt=inventory.attempt,
-                        run_attempt=inventory.run_attempt,
-                        repository=repository,
-                        pull_number=pull_number,
-                        requested_head=requested,
-                        tree=functools.partial(
-                            _commit_tree, github, repository, requested
-                        ),
-                        observed_at=observed,
-                    )
-                ),
-            ],
-            functools.partial(
-                _head_source, github, repository, requested, budget=_ScopeBudget()
+        # Required scopes spend from the shared bounds before optional providers.
+        "readbacks": [
+            *_with_enclosing(
+                [
+                    codacy_readback,
+                    sonarcloud_readback,
+                    *(
+                        []
+                        if inventory is None
+                        else inventory_bundle_readbacks(
+                            inventory.document,
+                            expected_sha256=inventory.expected_sha256,
+                            result=inventory.result,
+                            attempt=inventory.attempt,
+                            run_attempt=inventory.run_attempt,
+                            repository=repository,
+                            pull_number=pull_number,
+                            requested_head=requested,
+                            tree=functools.partial(
+                                _commit_tree, github, repository, requested
+                            ),
+                            observed_at=observed,
+                        )
+                    ),
+                ],
+                functools.partial(_commit_source, github, repository, budget),
+                readers,
             ),
-        ),
+            *_optional_readbacks(
+                _registered_adapters(optional_adapters, optional_clients),
+                github,
+                pull,
+                (statuses, checks, comments),
+                {
+                    "repository": repository,
+                    "pull_number": pull_number,
+                    "requested_head": requested,
+                    "observed_at": observed,
+                },
+                (budget, readers),
+            ),
+        ],
     }
+
+
+# Registered optional reads share one deadline; native clients enforce it.
+_OPTIONAL_DEADLINE_SECONDS = 240.0
+
+
+class OptionalReportAdapter(Protocol):
+    name: str
+
+    def readback(
+        self,
+        *,
+        repository: str,
+        pull_request: int,
+        head_sha: str,
+        observed_at: str,
+        deadline: float,
+        native_context: Mapping[str, Any],
+    ) -> list[dict[str, Any]]: ...
+
+
+# Runtime bindings are trusted source, never supplied by a candidate document.
+OPTIONAL_ADAPTERS: dict[str, OptionalReportAdapter] = {}
+_OPTIONAL_CLIENT_FACTORIES: dict[str, Callable[[Any], OptionalReportAdapter]] = {
+    "deepsource": analyzer_deepsource.DeepSourceAdapter,
+}
+
+
+def _registered_adapters(
+    adapters: Mapping[str, OptionalReportAdapter] | None,
+    clients: Mapping[str, Any],
+) -> dict[str, OptionalReportAdapter]:
+    """Compose explicit bindings and the existing client-keyword calling route.
+    Native client selection stays here, outside the common collector.
+    """
+    registered = dict(OPTIONAL_ADAPTERS if adapters is None else adapters)
+    for name, client in clients.items():
+        factory = _OPTIONAL_CLIENT_FACTORIES.get(name)
+        if factory is None:
+            raise TypeError("unknown optional provider client")
+        if client is not None:
+            if name in registered:
+                raise RunnerError("optional provider has two runtime bindings")
+            registered[name] = factory(client)
+    if any(adapter.name != name for name, adapter in registered.items()):
+        raise RunnerError("optional provider binding is inconsistent")
+    return registered
+
+
+def _optional_readbacks(
+    adapters: Mapping[str, OptionalReportAdapter],
+    github: GitHubReader,
+    pull: Mapping[str, Any],
+    projection: tuple[
+        list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]
+    ],
+    common: Mapping[str, Any],
+    scopes: tuple[_ScopeBudget, _ScopeReaders],
+) -> list[dict[str, Any]]:
+    """Invoke registered native adapters, retaining canonical records and shared
+    scope bounds. Neither provider selection nor native translation lives here.
+    """
+    if not adapters:
+        return []
+    deadline = time.monotonic() + _OPTIONAL_DEADLINE_SECONDS
+    budget, readers = scopes
+    repository = common["repository"]
+    source_of = functools.partial(
+        _commit_source, github, repository, budget, deadline=deadline
+    )
+    native_context = {
+        "projection": projection,
+        "merge_base": functools.partial(_merge_base, github, repository, pull),
+        "statuses": functools.partial(_statuses, github, repository),
+        "check_runs": functools.partial(_check_runs, github, repository),
+        "read_error": RunnerError,
+    }
+    result: list[dict[str, Any]] = []
+    for name, adapter in adapters.items():
+        records = [
+            parse_readback(record)
+            for record in adapter.readback(
+                repository=repository,
+                pull_request=common["pull_number"],
+                head_sha=common["requested_head"],
+                observed_at=common["observed_at"],
+                deadline=deadline,
+                native_context=native_context,
+            )
+        ]
+        if any(record["provider"] != name for record in records):
+            raise RunnerError("optional adapter returned another provider's record")
+        result.extend(_with_enclosing(records, source_of, readers))
+    return result
 
 
 def _assert_secret_free(serialized: str, secrets: list[str]) -> None:
@@ -724,6 +869,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         github = GitHubReadClient.from_environment()
+        # DeepSource is optional (Decision 0132): without its credential, nothing is
+        # read from it.
+        try:
+            deepsource: analyzer_deepsource.DeadlineGraphQLReader | None = (
+                analyzer_deepsource.DeepSourceGraphQLClient.from_environment()
+            )
+        except analyzer_deepsource.ProviderReadFailure:
+            deepsource = None
         try:
             codacy: analyzer_codacy.JsonReader | None = (
                 analyzer_codacy.CodacyRestClient.from_environment()
@@ -743,6 +896,7 @@ def main(argv: list[str] | None = None) -> int:
             requested_head=args.head,
             codacy=codacy,
             sonarcloud=sonarcloud,
+            deepsource=deepsource,
             inventory=(
                 None
                 if args.inventory_result is None
@@ -818,12 +972,26 @@ def inventory_base(
     once the Pull Request still has that head (Decisions 0091 and 0107). A comparison
     that names no merge base is refused."""
     pull = _pull(client, repository, pull_number)
-    head = _pull_side(pull, "head")
-    if head != requested_head:
+    if _pull_side(pull, "head") != requested_head:
         raise RunnerError("the Pull Request's head is no longer the requested head")
+    return _merge_base(client, repository, pull)
+
+
+def _merge_base(
+    client: GitHubReader,
+    repository: str,
+    pull: Mapping[str, Any],
+    *,
+    deadline: float | None = None,
+) -> tuple[str, str]:
+    """The Pull Request's base branch tip and its merge base with its head, as
+    GitHub's comparison names it. A comparison that names none is refused."""
+    head = _pull_side(pull, "head")
     tip = _pull_side(pull, "base")
-    document, _ = client.get(
-        f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1"
+    document, _ = _get(
+        client,
+        f"{_API_ROOT}/repos/{repository}/compare/{tip}...{head}?per_page=1",
+        deadline,
     )
     merge_base = _mapping(
         _mapping(document, "GitHub comparison").get("merge_base_commit"),

@@ -35,6 +35,7 @@ from .assurance_completeness import (
 from .check_change_policy import change_policy_issues, load_change_policy
 from .knowledge_common import KnowledgeFormatError
 from .review_model import parse_rfc3339
+from .review_reconcile import ReconciliationInputError, dispositions
 from .verdict_cli import read_json_input, run
 
 VERDICT_SCHEMA = "gnostoa-merge-admission/v1"
@@ -60,9 +61,24 @@ _EVIDENCE_KEYS = frozenset(
         "receipts",
     }
 )
-# The protected target's debt ledger (#389, the M17 transition): optional, so an older
-# input stays valid, and without it M17 is what it was.
-_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_debt"})
+# The protected target's debt ledger (#389, the M17 transition) and the optional
+# providers' reads (Decision 0132): optional, so an older input stays valid, and
+# without them M17 is what it was.
+_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_debt", "analyzer_optional"})
+_OPTIONAL_READ_KEYS = frozenset({"provider", "scope", "coverage"})
+_OPTIONAL_READ_OPTIONAL_KEYS = frozenset({"reason"})
+_OPTIONAL_COVERAGES = completeness.RECEIPT_STATUSES | frozenset({"STALE"})
+# An optional provider's finding against the merge base (Decision 0132 item 3): a
+# pre-existing one is listed and does not count; an introduced or unknown one does.
+_BASELINES = frozenset({"pre_existing", "introduced", "unknown"})
+_CONFIGURATION_PROVENANCES = frozenset({"unproven"})
+# A listed finding's fields that are the evidence's own, not the readback's.
+_EVIDENCE_FINDING_FIELDS = (
+    "configuration",
+    "provider",
+    "baseline",
+    "configuration_provenance",
+)
 _DEBT_KEYS = frozenset({"coverage", "entries"})
 _DEBT_COVERAGES = frozenset({"COMPLETE", "UNAVAILABLE"})
 _DEBT_ENTRY_KEYS = frozenset(
@@ -108,6 +124,9 @@ _LINK_KEYS = frozenset({"work_items", "decisions"})
 _CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
 _AUTHORITY_KEYS = frozenset({"declarer", "author", "required_approvers"})
 _REVIEW_KEYS = frozenset({"reviewer", "state", "commit_id", "submitted_at"})
+# A review's false-positive dispositions (Decision 0132 item 4): optional, so an older
+# input stays valid.
+_REVIEW_OPTIONAL_KEYS = frozenset({"dispositions"})
 _REVIEW_STATES = frozenset(
     {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"}
 )
@@ -137,6 +156,11 @@ _FINDING_OPTIONAL_KEYS = frozenset(
         "enclosing",
         # Its readback's run-bound configuration identity, when it states one.
         "configuration",
+        # An optional provider's finding: the provider, its class against the merge
+        # base, and the provenance of the configuration that class rests on.
+        "provider",
+        "baseline",
+        "configuration_provenance",
     }
 )
 
@@ -178,7 +202,7 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
     for index, item in enumerate(value):
         label = f"review {index}"
         review = require_mapping(item, label)
-        require_closed_keys(review, label, _REVIEW_KEYS)
+        require_closed_keys(review, label, _REVIEW_KEYS, _REVIEW_OPTIONAL_KEYS)
         state = review["state"]
         if not isinstance(state, str) or state not in _REVIEW_STATES:
             raise AssuranceCompletenessError(f"{label} has unknown state {state!r}")
@@ -201,6 +225,7 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
             raise AssuranceCompletenessError(f"{label} submitted_at: {exc}") from exc
         if state == "PENDING":
             continue
+        found = _review_dispositions(review, label)
         by_reviewer.setdefault(reviewer, []).append(
             {
                 "state": state,
@@ -208,9 +233,20 @@ def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
                 # Whole seconds: a fraction cannot order two opinions inside the
                 # second the rule leaves unordered (CodeAnt on #410).
                 "second": submitted.timeline_seconds,
+                "dispositions": found,
             }
         )
     return by_reviewer
+
+
+def _review_dispositions(review: Mapping[str, Any], label: str) -> list[dict[str, Any]]:
+    """A review's dispositions, each closed as the snapshot's contract states them
+    (Decision 0132 item 4), or none."""
+
+    try:
+        return dispositions(review.get("dispositions", []), f"{label} dispositions")
+    except ReconciliationInputError as exc:
+        raise AssuranceCompletenessError(str(exc)) from exc
 
 
 def _latest(
@@ -506,14 +542,24 @@ def _identity(record: Mapping[str, Any], enclosing: str) -> tuple[str | None, ..
 
 
 def _analyzer_findings(
-    evidence: Mapping[str, Any], claims_status: str | None
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, str]], list[str]]:
+    evidence: Mapping[str, Any],
+    claims_status: str | None,
+    honoured: list[dict[str, Any]] | None = None,
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[str],
+    list[dict[str, Any]],
+]:
     """M17: no unresolved analyzer finding. Every finding listed counts, a
     suppressed one included, with no waiver, and only a complete read of them can
     pass (the owner's rule, #407 6096770145 and 6101607240). The one exception is a
     finding that matches an entry of the protected target's debt ledger exactly, on
     a complete read: it stays listed, as inherited, and does not count (#389,
-    Decision 0129).
+    Decision 0129). On a complete read, an optional provider's finding that is
+    pre-existing at the merge base, or that an eligible approval's disposition names
+    exactly, `honoured`, stays listed and does not count either (Decision 0132).
 
     Under a 1.1 declaration the read is complete when the claims are:
     `claims_status` is the status of the completeness verdict this admission
@@ -552,11 +598,93 @@ def _analyzer_findings(
     absorbed = _inherited(findings, entries) if matchable else {}
     inherited = list(absorbed.values())
     resolved = _resolved(entries, findings, absorbed) if matchable else []
-    unresolved = len(findings) - len(inherited)
+    disposed = _disposed(findings, honoured or []) if matchable else {}
+    pre_existing = {
+        position
+        for position, finding in enumerate(findings)
+        if matchable and finding.get("baseline") == "pre_existing"
+    }
+    unresolved = len(findings) - len(set(absorbed) | set(disposed) | pre_existing)
     if unresolved:
         plural = "" if unresolved == 1 else "s"
         reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
-    return _criterion("M17", reasons), findings, inherited, resolved
+    return (
+        _criterion("M17", reasons),
+        findings,
+        inherited,
+        resolved,
+        list(disposed.values()),
+    )
+
+
+def _honoured(
+    reviews: Mapping[str, list[dict[str, Any]]],
+    head: str,
+    authorities: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """The dispositions M17 honours (Decision 0132 item 4): those in the latest
+    review of a required approver who is neither the declarer nor the author, when
+    that review is `APPROVED` at the head, as M16 reads it, and each for the head:
+    a push unbinds it. Each carries its approver."""
+
+    excluded = {authorities["declarer"], authorities["author"]}
+    honoured: list[dict[str, Any]] = []
+    for approver in authorities["required_approvers"]:
+        own = reviews.get(approver, [])
+        latest = _latest(own, None, by_commit=True)
+        if (
+            approver in excluded
+            or latest is None
+            or latest["state"] != "APPROVED"
+            or latest["commit_id"] != head
+        ):
+            continue
+        newest = max(r["second"] for r in own)
+        tied = [review["dispositions"] for review in own if review["second"] == newest]
+        # Within one second no review is later than another, so a disposition counts
+        # only when every review there carries it (Claude on #485).
+        honoured.extend(
+            {**found, "approver": approver}
+            for found in tied[0]
+            if found["commit_id"] == head and all(found in other for other in tied[1:])
+        )
+    return honoured
+
+
+def _disposed(
+    findings: list[dict[str, Any]], honoured: list[dict[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Each optional provider's finding an honoured disposition names exactly, by its
+    position: the provider, native id, rule, path, and the enclosing scope's hash or
+    the line (Decision 0132 item 4). Only a finding with a provider is named."""
+
+    disposed: dict[int, dict[str, Any]] = {}
+    for position, finding in enumerate(findings):
+        for found in honoured:
+            if _names(found, finding):
+                disposed[position] = {
+                    "item": finding["item"],
+                    "id": finding["id"],
+                    "approver": found["approver"],
+                    "evidence_ref": found["evidence_ref"],
+                }
+                break
+    return disposed
+
+
+def _names(found: Mapping[str, Any], finding: Mapping[str, Any]) -> bool:
+    if "provider" not in finding or (
+        found["provider"],
+        found["native_id"],
+        found["rule"],
+        found["path"],
+    ) != (finding["provider"], finding["id"], finding.get("rule"), finding.get("path")):
+        return False
+    if "scope_hash" in found:
+        return bool(
+            found["scope_hash"] == (finding.get("enclosing") or {}).get("sha256")
+        )
+    return bool(found["line"] == (finding.get("range") or {}).get("start_line"))
 
 
 def _inherited(
@@ -614,13 +742,25 @@ def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
     unchanged, so there is no second schema (#417 6107601240)."""
 
     item = require_text(finding["item"], f"{label} item")
-    # The evidence's own field, not the readback's: its configuration identity.
+    # The evidence's own fields, not the readback's: its configuration identity, and
+    # an optional provider's finding's provider and class against the merge base.
     evidence = {"item": item}
-    if "configuration" in finding:
-        evidence["configuration"] = require_text(
-            finding["configuration"], f"{label} configuration"
-        )
-    fields = {k: v for k, v in finding.items() if k not in ("item", "configuration")}
+    for key in _EVIDENCE_FINDING_FIELDS:
+        if key in finding:
+            evidence[key] = require_text(finding[key], f"{label} {key}")
+    if evidence.get("baseline", "unknown") not in _BASELINES:
+        raise AssuranceCompletenessError(f"{label} has an unknown baseline")
+    provenance = evidence.get("configuration_provenance", "unproven")
+    if provenance not in _CONFIGURATION_PROVENANCES:
+        raise AssuranceCompletenessError(f"{label} has an unknown provenance")
+    # A class against the merge base is an optional provider's finding's alone, and a
+    # provenance a pre-existing one's (cubic on #485).
+    if ("provider" in evidence) != ("baseline" in evidence):
+        raise AssuranceCompletenessError(f"{label} has a provider or baseline alone")
+    baseline = evidence.get("baseline")
+    if "configuration_provenance" in evidence and baseline != "pre_existing":
+        raise AssuranceCompletenessError(f"{label} has a provenance it cannot have")
+    fields = {k: v for k, v in finding.items() if k not in evidence}
     try:
         normalized = normalize_finding(fields)
     except AnalyzerReadbackError as exc:
@@ -769,11 +909,20 @@ def evaluate(
     )
     suppressions, justified = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
-    analyzer_criterion, analyzer_findings, inherited, resolved = _analyzer_findings(
-        document,
-        evidence_verdict["status"]
-        if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
-        else None,
+    optional = _optional_reads(document.get("analyzer_optional", []))
+    authority = {
+        "declarer": declarer,
+        "author": author,
+        "required_approvers": approvers,
+    }
+    analyzer_criterion, analyzer_findings, inherited, resolved, disposed = (
+        _analyzer_findings(
+            document,
+            evidence_verdict["status"]
+            if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
+            else None,
+            _honoured(reviews, head, authority),
+        )
     )
     criteria = [
         _lifecycle(document),
@@ -786,10 +935,7 @@ def evaluate(
         _class_links(document, change_class, change_policy),
         trust_root_criterion,
         _approval(
-            reviews,
-            head,
-            {"declarer": declarer, "author": author, "required_approvers": approvers},
-            _class_requirements(change_policy, change_class),
+            reviews, head, authority, _class_requirements(change_policy, change_class)
         ),
         analyzer_criterion,
     ]
@@ -808,8 +954,31 @@ def evaluate(
             "inherited_findings": inherited,
             "resolved_debt": resolved,
             "retired_analyzers": retired,
+            "disposed_findings": disposed,
+            "optional_analyzers": optional,
         },
     }
+
+
+def _optional_reads(value: object) -> list[dict[str, str]]:
+    """The optional providers' reads the evidence records (Decision 0132 item 2),
+    listed for the approver: each its provider, scope, coverage and reason. They
+    map to no declared item, so they change no claim."""
+
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_optional must be a list")
+    reads = []
+    for index, item in enumerate(value):
+        label = f"optional analyzer read {index}"
+        record = require_mapping(item, label)
+        require_closed_keys(
+            record, label, _OPTIONAL_READ_KEYS, _OPTIONAL_READ_OPTIONAL_KEYS
+        )
+        read = {key: require_text(record[key], f"{label} {key}") for key in record}
+        if read["coverage"] not in _OPTIONAL_COVERAGES:
+            raise AssuranceCompletenessError(f"{label} has an unknown coverage")
+        reads.append(read)
+    return reads
 
 
 def _retired_analyzers(value: object) -> list[dict[str, str]]:

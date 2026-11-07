@@ -21,14 +21,20 @@ COMPLETENESS_STATES = frozenset(
 _READBACK_UNAVAILABLE_COVERAGE = frozenset(
     {"PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
-SCOPES = frozenset({"DIFF", "FULL"})
+# A provider's read of the change (DIFF), of the whole tree (FULL), or of the pull
+# request's merge base (BASE), which only an optional provider gives, so its findings
+# there can be compared with the head's (Decision 0132).
+SCOPES = frozenset({"DIFF", "FULL", "BASE"})
 MAX_FINDINGS = 10_000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 # A SHA-256 digest as the readback and the verdict write it (Q on #480: one pattern).
 SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 # A finding's enclosing scope: the smallest function or class whose lines hold it. It
 # is the content identity M17's debt ledger matches, whatever the line number (#389).
+# Its `scope_line` places the finding inside it, 1 at its first line, so the same
+# occurrence is known in a byte-identical scope wherever the scope moved (Decision 0132).
 ENCLOSING_KINDS = frozenset({"function", "class"})
+_ENCLOSING_KEYS = frozenset({"kind", "name", "sha256"})
 _OWNER_SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 _REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -150,12 +156,13 @@ def _tool_identity(value: object) -> dict[str, str] | None:
     return result
 
 
-def _enclosing(value: object) -> dict[str, str] | None:
+def _enclosing(value: object) -> dict[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, Mapping):
         raise AnalyzerReadbackError("finding enclosing scope must be an object")
-    if set(value) != {"kind", "name", "sha256"}:
+    # A scope without its place still parses, and places nothing (PAO 6681312300).
+    if set(value) - {"scope_line"} != _ENCLOSING_KEYS:
         raise AnalyzerReadbackError(
             "finding enclosing scope has missing or unknown fields"
         )
@@ -165,23 +172,29 @@ def _enclosing(value: object) -> dict[str, str] | None:
     digest = _required_text(value["sha256"], "finding enclosing sha256")
     if SHA256_DIGEST.fullmatch(digest) is None:
         raise AnalyzerReadbackError("finding enclosing sha256 must be 64 lowercase hex")
-    return {
+    scope: dict[str, Any] = {
         "kind": kind,
         "name": _required_text(value["name"], "finding enclosing name"),
         "sha256": digest,
     }
+    if "scope_line" in value:
+        scope["scope_line"] = _positive_int(
+            value["scope_line"], "finding enclosing scope_line"
+        )
+    return scope
 
 
-def enclosing_scope(source: str, line: int) -> dict[str, str] | None:
+def enclosing_scope(source: str, line: int) -> dict[str, Any] | None:
     """The smallest function or class of Python `source` whose lines hold `line`, as a
-    finding's `enclosing`: its kind, its name and the SHA-256 of its exact lines,
-    decorators included. None at module level, past the source, or when it does not
-    parse: such a finding is never matched to inherited debt."""
+    finding's `enclosing`: its kind, its name, the SHA-256 of its exact lines,
+    decorators included, and `line`'s place among them. None at module level, past
+    the source, or when it does not parse: such a finding is never matched to
+    inherited debt."""
 
     return scope_reader(source)(line)
 
 
-def scope_reader(source: str) -> Callable[[int], dict[str, str] | None]:
+def scope_reader(source: str) -> Callable[[int], dict[str, Any] | None]:
     """`enclosing_scope` for each line of `source`, from one parse (Revix on #480).
     The lines are Python's own, split only at a line feed, a carriage return or
     both, and hashed with their endings: a Unicode line separator inside a literal
@@ -205,14 +218,19 @@ def scope_reader(source: str) -> Callable[[int], dict[str, str] | None]:
         scopes.append((first, node.end_lineno or node.lineno, kind, node.name))
     lines = io.StringIO(source, newline="").readlines()
 
-    def scope_of(line: int) -> dict[str, str] | None:
+    def scope_of(line: int) -> dict[str, Any] | None:
         holding = [scope for scope in scopes if scope[0] <= line <= scope[1]]
         if not holding:
             return None
         first, last, kind, name = min(holding, key=lambda scope: scope[1] - scope[0])
         text = "".join(lines[first - 1 : last])
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        return {"kind": kind, "name": name, "sha256": digest}
+        return {
+            "kind": kind,
+            "name": name,
+            "sha256": digest,
+            "scope_line": line - first + 1,
+        }
 
     return scope_of
 
@@ -926,11 +944,11 @@ def _check_bound(
     for key in sorted(projection):
         _nonnegative_int(projection[key], f"bundle projection {key}")
     for readback in readbacks:
-        if (
-            readback["repository"],
-            readback["pull_number"],
-            readback["requested_head"],
-        ) != subject:
+        # A merge-base read names the base, not the head (Decision 0132); its
+        # repository and pull request are still the subject's.
+        own = (readback["repository"], readback["pull_number"])
+        head = readback["requested_head"]
+        if own != subject[:2] or (readback["scope"] != "BASE" and head != subject[2]):
             raise AnalyzerReadbackError("a readback is not the bundle's subject")
 
 
