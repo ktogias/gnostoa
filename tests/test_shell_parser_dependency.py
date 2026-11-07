@@ -530,14 +530,14 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     except GitlabUnsupported as exc:
         reason = str(exc)
         legacy = reason.startswith(
-            ("a YAML anchor", "a YAML alias", "inherit in ", "a multi-line flow item")
-        ) or any(
-            part in reason
-            for part in (
-                "has a non-string or deeper item",
-                "extends past eleven levels",
+            (
+                "a YAML anchor",
+                "a YAML alias",
+                "inherit in ",
+                "a multi-line flow item",
+                "extends past eleven levels at ",
             )
-        )
+        ) or reason.endswith(" has a non-string or deeper item")
         default = document.get("default")
         legacy = legacy or (
             reason == "an unsupported default"
@@ -2854,6 +2854,16 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         }
         lineage = _gitlab_lineage(diamond, diamond["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]  # -- deliberately object-typed YAML diamond fixture for precedence validation
         self.assertEqual(["a", "c", "d", "b"], [key for key, _ in lineage])
+
+    def test_a_job_name_cannot_select_the_legacy_reader(self) -> None:
+        """An invalid job's name is data, not a shared-reader refusal category."""
+        document: dict[str, object] = {
+            "image": "alpine",
+            "valid": {"script": ["git status"]},
+            "bad has a non-string or deeper item": 7,
+        }
+        with self.assertRaisesRegex(AssertionError, "not a mapping"):
+            _gitlab_scripts(document, "job-name-refusal")
 
     def test_a_gitlab_job_runs_its_before_script_and_script_as_one(self) -> None:
         """GitLab concatenates a job's effective `before_script` and `script` into
