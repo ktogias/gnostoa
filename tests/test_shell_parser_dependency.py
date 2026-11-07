@@ -359,6 +359,18 @@ def _facts(scripts: list[str]) -> list[dict[str, object]]:
     for fact in answer:
         if not isinstance(fact, dict):
             raise AssertionError("the probe facts include a non-mapping")
+        if set(fact) != {"names", "errors", "heredocs"}:
+            raise AssertionError("the probe fact has unexpected fields")
+        for field in ("names", "heredocs"):
+            values = fact[field]
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) for value in values
+            ):
+                raise AssertionError(f"the probe fact {field} is not a list of strings")
+        errors = fact["errors"]
+        # bool is an int subclass, but the producer emits a node count.
+        if isinstance(errors, bool) or not isinstance(errors, int) or errors < 0:
+            raise AssertionError("the probe fact errors is not a nonnegative integer")
         facts.append(fact)
     return facts
 
@@ -1732,6 +1744,45 @@ class ShellParserDependencyTests(unittest.TestCase):
             if (ROOT / path).is_file():
                 with self.subTest(corpus_file=path):
                     self.assertIn(path, found)
+        # A separate current-parent fixture supplements the historical evidence;
+        # it never rewrites the frozen evaluation. Only byte-identical source
+        # files inherit its expected surface identities (CodeAnt on #396).
+        coverage = json.loads(
+            (ROOT / "tests/fixtures/shell_parser_corpus_coverage.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            coverage["frozen_evidence_sha256"],
+            hashlib.sha256(
+                (
+                    ROOT / "knowledge/assessments/0108-shell-parser-evaluation.json"
+                ).read_bytes()
+            ).hexdigest(),
+        )
+        self.assertEqual(
+            {script["path"] for script in evidence["scripts"]},
+            {record["path"] for record in coverage["files"]},
+        )
+        for record in coverage["files"]:
+            source = ROOT / record["path"]
+            if (
+                not source.is_file()
+                or hashlib.sha256(source.read_bytes()).hexdigest()
+                != record["source_sha256"]
+            ):
+                continue
+            expected = {
+                script["id"]: script["masked_sha256"] for script in record["surfaces"]
+            }
+            actual = {
+                name: hashlib.sha256(text.encode("utf-8")).hexdigest()
+                for name, text in surfaces.items()
+                if name.split("#", 1)[0] == record["path"]
+            }
+            self.assertEqual(
+                expected, actual, f"{record['path']}: surface identities differ"
+            )
         for kind in (
             ".github/workflows/verification.yml#",
             ".gitlab-ci.yml#",
@@ -1941,7 +1992,7 @@ class SurfaceExtractionTests(unittest.TestCase):
                 self.assertRaisesRegex(AssertionError, "probe facts"),
             ):
                 _facts([])
-        for facts in ([], [{"commands": []}]):
+        for facts in ([], [{"names": [], "errors": 0, "heredocs": []}]):
             answer = SimpleNamespace(
                 returncode=0, stdout=json.dumps({"abi": 15, "facts": facts}), stderr=""
             )
@@ -1950,6 +2001,91 @@ class SurfaceExtractionTests(unittest.TestCase):
                 patch("subprocess.run", return_value=answer),
             ):
                 self.assertEqual(facts, _facts([]))
+
+    def test_probe_fact_fields_follow_the_producer_contract(self) -> None:
+        """Malformed facts must fail before a falsy error value reaches the smoke
+        (CodeAnt on #396). Empty names and here-documents are valid lists."""
+        valid = {"names": [], "errors": 0, "heredocs": []}
+        invalid = [
+            {},
+            {"commands": []},
+            {key: value for key, value in valid.items() if key != "names"},
+            {**valid, "unexpected": []},
+            *({**valid, "names": value} for value in (None, "git", [None], [1])),
+            *(
+                {**valid, "errors": value}
+                for value in (None, "", [], False, True, 0.0, -1)
+            ),
+            *({**valid, "heredocs": value} for value in (None, "", [None], [1])),
+        ]
+        for fact in invalid:
+            answer = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"abi": 15, "facts": [fact]}),
+                stderr="",
+            )
+            with (
+                self.subTest(fact=fact),
+                patch("subprocess.run", return_value=answer),
+                self.assertRaisesRegex(AssertionError, "probe fact"),
+            ):
+                _facts(["git status"])
+        for fact in (
+            valid,
+            {"names": ["git", "git"], "errors": 2, "heredocs": ["", "text\n"]},
+        ):
+            answer = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"abi": 15, "facts": [fact]}),
+                stderr="",
+            )
+            with (
+                self.subTest(valid_fact=fact),
+                patch("subprocess.run", return_value=answer),
+            ):
+                self.assertEqual([fact], _facts(["git status"]))
+        self.assertEqual(
+            [{"names": [], "errors": 0, "heredocs": []}], _facts(["# no command\n"])
+        )
+
+    def test_corpus_smoke_rejects_omitted_or_replaced_surfaces(self) -> None:
+        """A sibling surface must not hide a missing one behind the same path
+        (CodeAnt on #396). The actual unchanged-parent workflow has two."""
+        surfaces = _shell_surfaces()
+        target = ".github/workflows/analyzer-readback.yml#0"
+        self.assertIn(target, surfaces)
+        self.assertIn(".github/workflows/analyzer-readback.yml#1", surfaces)
+        omitted = {name: text for name, text in surfaces.items() if name != target}
+        replaced = {**surfaces, target: "git status\n"}
+        method = "test_every_shell_surface_parses_without_an_unexpected_error"
+        for changed in (omitted, replaced):
+            with (
+                self.subTest(surface_count=len(changed)),
+                patch(__name__ + "._shell_surfaces", return_value=changed),
+                self.assertRaisesRegex(AssertionError, "surface identities"),
+            ):
+                getattr(ShellParserDependencyTests(method), method)()
+
+    def test_corpus_guard_keeps_changed_source_applicability_explicit(self) -> None:
+        """Older surface identities do not govern changed raw source bytes. The
+        ordinary kind and parser checks still run; this is not a completeness
+        claim for changed files."""
+        surfaces = _shell_surfaces()
+        target = ".github/workflows/analyzer-readback.yml#0"
+        changed = {name: text for name, text in surfaces.items() if name != target}
+        source = ROOT / ".github/workflows/analyzer-readback.yml"
+        read_bytes = Path.read_bytes
+
+        def after_source_edit(path: Path) -> bytes:
+            content = read_bytes(path)
+            return content + b"\n# changed source\n" if path == source else content
+
+        method = "test_every_shell_surface_parses_without_an_unexpected_error"
+        with (
+            patch.object(Path, "read_bytes", after_source_edit),
+            patch(__name__ + "._shell_surfaces", return_value=changed),
+        ):
+            getattr(ShellParserDependencyTests(method), method)()
 
     def test_a_default_shell_in_another_language_fails_closed(self) -> None:
         """A step inherits the job's or the workflow's `defaults.run.shell`
