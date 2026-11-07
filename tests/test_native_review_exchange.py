@@ -18,6 +18,10 @@ from typing import Any
 
 
 class NativeReviewExchangeTests(unittest.TestCase):
+    # Set once in setUpClass: the exchange fixture's root and the oracle's parsed inputs.
+    fixture: Path
+    inputs: dict[str, object]
+
     @classmethod
     def setUpClass(cls) -> None:
         default = Path(__file__).parent / "fixtures" / "review_exchange"
@@ -94,7 +98,11 @@ class NativeReviewExchangeTests(unittest.TestCase):
         job = self.workspace / "jobs" / job_id
         assignment = self.assignments[job_id].read_bytes()
         identity = hashlib.sha256(assignment).hexdigest()
-        stdout = self.inputs["streams"][name].encode("utf-8")
+        streams = self.inputs["streams"]
+        assert isinstance(streams, dict)
+        stream = streams[name]
+        assert isinstance(stream, str)
+        stdout = stream.encode("utf-8")
         stderr = b"synthetic native diagnostic retained\r\n"
         self.native[job_id] = stdout
         self.write(job / "spec.json", {"normalizer": adapter})

@@ -31,6 +31,9 @@ sources:
   - id: delivered-event-work-item
     resource: https://github.com/ktogias/gnostoa/issues/356
     title: Leave the mention trigger with no logic, relaying GitHub's delivered event
+  - id: request-limit-admission
+    resource: https://github.com/ktogias/gnostoa/pull/441#issuecomment-6282276006
+    title: R3-COMBINED-441-44065362-v1, the additive request_limit contract (owner-selected)
 x-project-knowledge:
   id: kit.decision.0100.separate-the-agent-review-pipeline-into-a-neutral-core-and-adapters
   owners:
@@ -272,3 +275,20 @@ in Python.
   `../r`. The value is GitHub's own `github.repository`, which cannot be a dot segment,
   so nothing reaches the gap. Tightening the grammar would change a rule, which this
   Decision does not do. It is recorded here, found by the stage-3 mutation pass.
+
+## Addendum — request time-limit metadata (#441)
+
+Request time-limit selection remains owned by `tools/github_rest.py`. An additive
+`request_limit(deadline, policy)` returns `RequestLimit(seconds, ceiling)`, selecting
+the existing `max(F, min(C, R))` seconds and the strict-cap predicate `R > C and F < C`
+from one monotonic observation for a deadline, where `C` is the policy's
+`timeout_seconds`, `F` its `min_request_seconds` and `R` the budget that remains.
+`False` covers budget or floor, with floor equality and budget/cap equality false. With
+no deadline it returns `(float(C), True)`, reads no clock and preserves the existing
+omission of the floor. `request_timeout` remains the float-returning compatibility API
+by returning `seconds`. No new accepted-policy validation or transport, error or
+worker-bound change follows. The zero-floor DeepSource consumer retains its finite,
+spent and nonpositive refusals and consumes the shared predicate instead of inferring
+the bound from a different clock observation. Baseline-pinned compatibility, one-clock
+and no-clock controls, and discriminating consumer and owner falsifiers verify the
+refinement.

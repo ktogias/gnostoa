@@ -3,16 +3,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib
+import inspect
 import json
 import os
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
 import unittest
 import zipfile
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -48,7 +51,12 @@ from tools.release_smoke import (
 )
 from tools.repository_scope import find_text_matches
 from tools.requirements_lock import locked_requirements
-from tools.validate_bundle import Issue, _validate_links, validate_bundle
+from tools.validate_bundle import (
+    Issue,
+    _canonicalise_markdown_target,
+    _validate_links,
+    validate_bundle,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -154,12 +162,17 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     "policy": "b594196b030bf1cffa5b705a687d1a1887473ebc38812880ca1a4bbd0a7d5712",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "security-fast": "c9815924f74df13b2cfa955de1ee724821331525eaa9dde671c2a2fdb60ba690",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "fast": "04d8ee084f1640ddf6fa495ab7cfae88384615eee7b3e90d7e4831972b82bf78",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "python-compatibility": "73c95ccf140298e0752c7362d6fa6b3165146789e0a9286342ba10bb95c3a121",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "python-compatibility": "38855c14b8a0a35dafb23250754bdcc50cd29fd59027e7c24e33b60921f6e79e",  # pragma: allowlist secret -- reviewed workflow-structure digest
     # Decision 0103: the suite's steps are the former regression job's after its
     # assertion; the gate's one step is that assertion, with two more results.
     "regression-suite": "1b36d5d2086758692a13b9f6c4c1506f7f4d5de9575b6d68c437c0ae035609a9",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "regression": "485b7a341e434bdc2e6b4178268b9ef4397bbed9b834d801b1e65455b4f82415",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    # #408 added the completeness reducer and the vocabulary it imports to SB2
+    # (19 -> 21 files); #407's slice 1b.2 adds the merge-admission verdict and
+    # the command-line boundary it shares (21 -> 23); slice 1b.3a adds the GitHub
+    # evidence adapter and the snapshot validator it imports (23 -> 25); slice 1b.3c
+    # adds the SonarCloud association helper merge evidence imports (25 -> 26).
+    "smoke": "e8ef872909a2838bead0ebd2b61b82e2dac76b1ee198678c81e533dcc3825c37",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended-route": "27ed1f35eb9984d3ad3e9fdf42873bb8b2c9b8bf86df8743c9ee6c3cb8da7106",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0bd52547e3e739aea968487808e533d5d5355075f8c08c81a9191f2372d4d3f3",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (
@@ -169,6 +182,64 @@ _PROTECTED_JOB_STEPS_SHA256 = {
         "d163ad17ba3f0a36107e7ce696c3e159728055140a3b7404d8afdfd3f10a1d67"  # pragma: allowlist secret -- reviewed workflow-structure digest
     ),
 }
+
+
+def _docker_run_options(
+    docker_arguments: list[str],
+) -> tuple[dict[str, int], dict[str, list[str]], int] | None:
+    """The recognized `docker run` options before the image, and the image's index;
+    None for an option this fail-closed recognizer does not know, or one with no
+    value."""
+    flag_options = {"--rm"}
+    value_options = {"--entrypoint", "--env", "--mount", "--user", "--workdir"}
+    flag_counts = {option: 0 for option in flag_options}
+    option_values: dict[str, list[str]] = {option: [] for option in value_options}
+    index = 0
+    while index < len(docker_arguments):
+        token = docker_arguments[index]
+        if token == "${GNOSTOA_CI_IMAGE}":
+            break
+        if token in flag_options:
+            flag_counts[token] += 1
+            index += 1
+            continue
+
+        option: str | None = None
+        value: str | None = None
+        if token in value_options:
+            if index + 1 >= len(docker_arguments):
+                return None
+            option = token
+            value = docker_arguments[index + 1]
+            index += 2
+        else:
+            for candidate in value_options:
+                prefix = f"{candidate}="
+                if token.startswith(prefix):
+                    option = candidate
+                    value = token.removeprefix(prefix)
+                    index += 1
+                    break
+        if option is None or not value:
+            return None
+        option_values[option].append(value)
+    return flag_counts, option_values, index
+
+
+def _approved_run_options(suite: str) -> tuple[list[str], list[str], list[str]]:
+    """The mounts, environment and user a suite's `docker run` may carry."""
+    approved_mounts = [
+        "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
+    ]
+    approved_environment: list[str] = []
+    approved_user: list[str] = []
+    if suite == "extended":
+        approved_mounts.append(
+            "type=bind,source=${RUNNER_TEMP}/gnostoa-quality-evidence,target=/evidence"
+        )
+        approved_environment = ["HOME=/tmp", "GNOSTOA_QUALITY_OUTPUT=/evidence"]
+        approved_user = ["$(id -u):$(id -g)"]
+    return approved_mounts, approved_environment, approved_user
 
 
 def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
@@ -184,61 +255,22 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
 
     # This is a fail-closed recognizer for the project's exact workflow shape,
     # not a general Docker CLI parser. Unknown run options are rejected.
-    flag_options = {"--rm"}
-    value_options = {"--entrypoint", "--env", "--mount", "--user", "--workdir"}
-    flag_counts = {option: 0 for option in flag_options}
-    option_values: dict[str, list[str]] = {option: [] for option in value_options}
     docker_arguments = tokens[2:]
-    index = 0
-    while index < len(docker_arguments):
-        token = docker_arguments[index]
-        if token == "${GNOSTOA_CI_IMAGE}":
-            break
-        if token in flag_options:
-            flag_counts[token] += 1
-            index += 1
-            continue
+    parsed = _docker_run_options(docker_arguments)
+    if parsed is None:
+        return False
+    flag_counts, option_values, index = parsed
 
-        option: str | None = None
-        value: str | None = None
-        if token in value_options:
-            if index + 1 >= len(docker_arguments):
-                return False
-            option = token
-            value = docker_arguments[index + 1]
-            index += 2
-        else:
-            for candidate in value_options:
-                prefix = f"{candidate}="
-                if token.startswith(prefix):
-                    option = candidate
-                    value = token.removeprefix(prefix)
-                    index += 1
-                    break
-        if option is None or not value:
-            return False
-        option_values[option].append(value)
-
-    command = docker_arguments[index:]
+    invocation = docker_arguments[index:]
     if (
-        len(command) != 3
-        or command[0] != "${GNOSTOA_CI_IMAGE}"
-        or command[1] not in {"-c", "-ec"}
-        or command[2] != expected_script
+        len(invocation) != 3
+        or invocation[0] != "${GNOSTOA_CI_IMAGE}"
+        or invocation[1] not in {"-c", "-ec"}
+        or invocation[2] != expected_script
     ):
         return False
 
-    approved_mounts = [
-        "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
-    ]
-    approved_environment: list[str] = []
-    approved_user: list[str] = []
-    if suite == "extended":
-        approved_mounts.append(
-            "type=bind,source=${RUNNER_TEMP}/gnostoa-quality-evidence,target=/evidence"
-        )
-        approved_environment = ["HOME=/tmp", "GNOSTOA_QUALITY_OUTPUT=/evidence"]
-        approved_user = ["$(id -u):$(id -g)"]
+    approved_mounts, approved_environment, approved_user = _approved_run_options(suite)
     return (
         flag_counts["--rm"] == 1
         and option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
@@ -628,6 +660,19 @@ class PublicationBaselineTests(unittest.TestCase):
 
         workflow = workflow_path.read_text(encoding="utf-8")
         workflow_document = load_yaml(workflow_path)
+        self._assert_verification_triggers_and_jobs(workflow, workflow_document)
+        self._assert_workflow_bypasses_are_refused(workflow_document)
+        self._assert_job_bypasses_are_refused(workflow_document)
+        self._assert_shared_suite_recognizer_cases()
+        self._assert_verification_workflow_text(workflow, workflow_document)
+        self._assert_branch_advisory(workflow_document)
+        self._assert_code_ownership(codeowners_path)
+
+    def _assert_verification_triggers_and_jobs(
+        self, workflow: str, workflow_document: dict[str, Any]
+    ) -> None:
+        """The verification workflow's triggers, its exact jobs, and their bypass refusals."""
+        by_key: dict[object, object] = dict(workflow_document.items())
         self.assertEqual(
             {
                 "pull_request": None,
@@ -636,7 +681,7 @@ class PublicationBaselineTests(unittest.TestCase):
                 "schedule": [{"cron": "17 3 * * *"}],
                 "workflow_dispatch": None,
             },
-            workflow_document[True],
+            by_key[True],
         )
         workflow_jobs = workflow_document["jobs"]
         self.assertTrue(_workflow_has_exact_contract(workflow_document))
@@ -679,6 +724,12 @@ class PublicationBaselineTests(unittest.TestCase):
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
+
+    def _assert_workflow_bypasses_are_refused(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Workflow-level bypasses lose the blocking suite or the exact contract."""
+        workflow_jobs = workflow_document["jobs"]
         self._assert_every_suite_runs_in_its_bound_job(workflow_document)
         renamed_workflow = copy.deepcopy(workflow_document)
         renamed_workflow["jobs"]["security-fast"]["name"] = "spoofed-context"
@@ -715,6 +766,12 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         extra_job_workflow["jobs"]["attacker-context"]["name"] = "regression"
         self.assertFalse(_workflow_has_exact_contract(extra_job_workflow))
+
+    def _assert_job_bypasses_are_refused(
+        self, workflow_document: dict[str, Any]
+    ) -> None:
+        """Step-, job- and condition-level bypasses lose the blocking suite."""
+        workflow_jobs = workflow_document["jobs"]
         base_job = workflow_jobs["security-fast"]
         self.assertTrue(_job_has_exact_contract(base_job, "security-fast"))
         self.assertTrue(_job_has_blocking_verification_suite(base_job, "security-fast"))
@@ -750,16 +807,16 @@ class PublicationBaselineTests(unittest.TestCase):
                             mutated_job, "security-fast"
                         )
                     )
-        for modifier in (
+        for job_modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
             {"defaults": {"run": {"shell": "bash {0} || true"}}},
             {"env": {"GNOSTOA_CI_IMAGE": "attacker-controlled:latest"}},
             {"container": "attacker-controlled:latest"},
         ):
-            with self.subTest(job_modifier=modifier):
+            with self.subTest(job_modifier=job_modifier):
                 mutated_job = copy.deepcopy(base_job)
-                mutated_job.update(modifier)
+                mutated_job.update(job_modifier)
                 # These job-key mutations exercise the exact structural contract,
                 # not the later step-modifier semantic guard.
                 self.assertFalse(_job_has_exact_contract(mutated_job, "security-fast"))
@@ -774,6 +831,9 @@ class PublicationBaselineTests(unittest.TestCase):
                 mutated = dict(workflow_jobs[suite])
                 mutated["if"] = condition
                 self.assertFalse(_job_has_blocking_verification_suite(mutated, suite))
+
+    def _assert_shared_suite_recognizer_cases(self) -> None:
+        """The fail-closed recognizer accepts only the exact shared-suite invocation."""
         self.assertTrue(
             _invokes_shared_verification_suite(
                 "./ci/verify security-fast",
@@ -876,6 +936,28 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
         )
+        accepted = (
+            "docker run --rm --entrypoint sh "
+            "--mount type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+            "--workdir /workspace ${GNOSTOA_CI_IMAGE} -ec './ci/verify fast'"
+        )
+        self.assertFalse(_invokes_shared_verification_suite(accepted, "policy"))
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                accepted.replace("--entrypoint sh", "--entrypoint bash"), "fast"
+            )
+        )
+        self.assertFalse(_invokes_shared_verification_suite(accepted + " '", "fast"))
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                accepted.replace("docker run", "docker create", 1), "fast"
+            )
+        )
+
+    def _assert_verification_workflow_text(
+        self, workflow: str, workflow_document: dict[str, Any]
+    ) -> None:
+        """The verification workflow's permissions, pins and text."""
         self.assertEqual({"contents": "read"}, workflow_document["permissions"])
         self.assertIn(
             "github.event.pull_request.number || github.ref",
@@ -894,13 +976,17 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertIn("./ci/verify fast", workflow)
         self.assertIn("docker build", workflow)
 
+    def _assert_branch_advisory(self, workflow_document: dict[str, Any]) -> None:
+        """The branch advisory is separate, read-only and blocking for its own suites."""
+        workflow_jobs = workflow_document["jobs"]
         advisory_path = ROOT / ".github" / "workflows" / "branch-advisory.yml"
         self.assertTrue(advisory_path.is_file())
         advisory_text = advisory_path.read_text(encoding="utf-8")
         advisory = load_yaml(advisory_path)
+        advisory_by_key: dict[object, object] = dict(advisory.items())
         self.assertEqual(
             {"push": {"branches-ignore": ["main"]}},
-            advisory[True],
+            advisory_by_key[True],
         )
         self.assertNotIn("pull_request:", advisory_text)
         advisory_jobs = advisory["jobs"]
@@ -929,6 +1015,8 @@ class PublicationBaselineTests(unittest.TestCase):
         guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         self.assertIn("- .github/workflows/branch-advisory.yml", guardrails)
 
+    def _assert_code_ownership(self, codeowners_path: Path) -> None:
+        """The canonical paths have accountable owners."""
         codeowners = codeowners_path.read_text(encoding="utf-8")
         for owned_path in (
             "* @ktogias",
@@ -1845,6 +1933,8 @@ class ProfileReadBoundaryTests(unittest.TestCase):
             child = project / ".knowledge" / "profile.yaml"
             child.write_text("id: child\n", encoding="utf-8")
             with self.assertRaises(TypeError):
+                # skipcq: PYL-E1125 -- deliberate: this test asserts that a call
+                # without the keyword-only project_root is refused (4405520)
                 load_profile(child)  # type: ignore[call-arg]
 
     def test_profile_without_a_parent_still_loads(self) -> None:
@@ -2140,6 +2230,8 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         bundle: Path,
         source: Path,
         target: str,
+        *,
+        during: Callable[[], object] | None = None,
     ) -> tuple[list[Issue], list[tuple[str, Path]], list[Path]]:
         issues: list[Issue] = []
         observations: list[tuple[str, Path]] = []
@@ -2151,9 +2243,27 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
         original_readlink = os.readlink
         original_resolve = Path.resolve
         original_read_text = Path.read_text
+        # Only the validator's access is observed, wherever it points: the
+        # nearest caller that is not one of these observers, the standard library
+        # or module-less code (the wrapper `autospec` generates) must belong to the
+        # validator's package. Other code in the window is not the validator's,
+        # such as coverage canonicalising a source file through
+        # `os.path.realpath` (#405, #406).
+        validator_package = _validate_links.__module__.partition(".")[0]
+
+        def by_validator() -> bool:
+            frame = inspect.currentframe()
+            while frame is not None:
+                module = frame.f_globals.get("__name__")
+                if frame.f_code not in observers and module is not None:
+                    package = module.partition(".")[0]
+                    if package not in sys.stdlib_module_names:
+                        return package == validator_package
+                frame = frame.f_back
+            return False
 
         def observed_path(value: object) -> Path | None:
-            if isinstance(value, int):
+            if isinstance(value, int) or not by_validator():
                 return None
             try:
                 return Path(value)  # type: ignore[arg-type]
@@ -2176,19 +2286,43 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 observations.append(("stat", candidate))
             return original_stat(path, *args, **kwargs)  # type: ignore[arg-type]
 
-        def observe_readlink(path: object, *args: object, **kwargs: object) -> str:
+        def observe_readlink(
+            path: str | os.PathLike[str], *, dir_fd: int | None = None
+        ) -> str:
             candidate = observed_path(path)
             if candidate is not None:
                 observations.append(("readlink", candidate))
-            return original_readlink(path, *args, **kwargs)  # type: ignore[arg-type]
+            return original_readlink(path, dir_fd=dir_fd)
 
-        def observe_resolve(path: Path, *args: object, **kwargs: object) -> Path:
-            observations.append(("resolve", path))
-            return original_resolve(path, *args, **kwargs)
+        def observe_resolve(path: Path, strict: bool = False) -> Path:
+            if observed_path(path) is not None:
+                observations.append(("resolve", path))
+            return original_resolve(path, strict)
 
-        def observe_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        observers = {
+            observer.__code__
+            for observer in (
+                by_validator,
+                observed_path,
+                observe_lstat,
+                observe_stat,
+                observe_readlink,
+                observe_resolve,
+            )
+        }
+
+        def observe_read_text(
+            path: Path, encoding: str | None = None, errors: str | None = None
+        ) -> str:
             content_reads.append(path)
-            return original_read_text(path, *args, **kwargs)
+            return original_read_text(path, encoding, errors)
+
+        def links_after_during(body: str) -> list[str]:
+            # `during` runs inside the validator's own frames, where an
+            # interpreter tracer such as coverage fires (#405).
+            if during is not None:
+                during()
+            return markdown_links(body)
 
         with (
             patch("os.lstat", side_effect=observe_lstat),
@@ -2197,6 +2331,10 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
             patch.object(Path, "resolve", autospec=True, side_effect=observe_resolve),
             patch.object(
                 Path, "read_text", autospec=True, side_effect=observe_read_text
+            ),
+            patch(
+                "tools.validate_bundle.markdown_links",
+                side_effect=links_after_during,
             ),
         ):
             _validate_links(
@@ -2250,6 +2388,53 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
                 self.assertEqual(expected, issues)
                 self.assertEqual([], observations)
                 self.assertEqual([], content_reads)
+
+    def test_interpreter_activity_in_the_window_is_not_the_validator_s(self) -> None:
+        """Only the validator's filesystem access is observed. Other code running
+        inside the validator's frames is not the validator's, absolute or relative:
+        coverage canonicalising a source file through `os.path.realpath` is an
+        example (#405; CI run 37835021142 recorded ten such `lstat` calls)."""
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _outside = self._fixture(directory)
+            target = "../../outside/probe"
+            issues, observations, content_reads = self._validate_target(
+                project,
+                bundle,
+                source,
+                target,
+                during=lambda: (
+                    os.path.realpath(os.__file__),
+                    os.path.lexists("relative-probe"),
+                ),
+            )
+            self.assertEqual(self._authority_issue(target), issues)
+            self.assertEqual([], observations)
+            self.assertEqual([], content_reads)
+
+    def test_the_validator_s_probes_outside_the_sandbox_are_observed(self) -> None:
+        """A probe by the validator's own code is observed wherever it points, so a
+        validator that resolved a target against the working directory would still
+        be caught (#406). That includes a `Path.resolve` call, whose patch runs
+        through the module-less wrapper `autospec` generates."""
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _outside = self._fixture(directory)
+            beyond = Path(directory).parent
+            missing = beyond / f"{Path(directory).name}-absent.yaml"
+
+            def validator_probes() -> None:
+                _canonicalise_markdown_target(Path(beyond.anchor), beyond)
+                with self.assertRaises(KnowledgeFormatError):
+                    load_profile(missing, project_root=project)
+
+            _issues, observations, _content_reads = self._validate_target(
+                project,
+                bundle,
+                source,
+                "../../outside/probe",
+                during=validator_probes,
+            )
+            self.assertIn(beyond, [path for _operation, path in observations])
+            self.assertIn(("resolve", missing), observations)
 
     def test_outside_symlink_target_is_not_observed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2734,9 +2919,31 @@ class ChangeControlTests(unittest.TestCase):
                 change_class["verification"]["failing_evidence"],
                 class_id,
             )
-            self.assertEqual(0, change_class["minimum_approvals"], class_id)
 
+        # Each class's approval is bound to R-main's record by its owner, the merge-gate
+        # record's test (Claude on #404: one reader of R-main, not two).
         emergency = policy["change_classes"]["emergency"]
+        self.assertEqual(0, emergency["minimum_approvals"])
+        self.assertFalse(emergency["code_owner_approval"])
+        # The maintainer step says the same, emergency included (CodeAnt and Sourcery
+        # on #404).
+        maintain = " ".join(
+            (ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "Every merge into Gnostoa's `main` except an emergency one needs the code "
+            "owner's approval",
+            maintain,
+        )
+        self.assertIn("an emergency merges through break glass", maintain)
+        # Linked, as the runbook links its other Decisions (cubic on #404).
+        self.assertIn(
+            "[`Decision 0110`](../decisions/"
+            "0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)",
+            maintain,
+        )
         self.assertEqual("required-follow-up", emergency["work_item"])
         self.assertTrue(emergency["decision_record"])
         self.assertEqual(
@@ -3004,7 +3211,10 @@ class ContinuousIntegrationTests(unittest.TestCase):
         )
         condition = regression["if"]
         self.assertEqual("always()", condition)
-        self.assertEqual(["main"], workflow[True]["push"]["branches"])
+        workflow_by_key: dict[object, object] = dict(workflow.items())
+        triggers = workflow_by_key[True]
+        assert isinstance(triggers, dict)
+        self.assertEqual(["main"], triggers["push"]["branches"])
 
         assertions = [
             step
@@ -3616,7 +3826,7 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertIn("build==1.5.0", development_lock)
         self.assertIn("pyproject-hooks==1.2.0", development_lock)
-        self.assertIn("setuptools==83.0.0", development_lock)
+        self.assertIn("setuptools==84.1.0", development_lock)
 
     def _write_runtime_lock_template_fixture(
         self,
@@ -3895,7 +4105,7 @@ runtime:
             _, source = self._write_runtime_lock_template_fixture(root, template)
             digest = public_surface_digest(source)
             image = f"registry.example.org/gnostoa@sha256:{'a' * 64}"
-            cases = (
+            cases: tuple[tuple[str, str, set[str]], ...] = (
                 (
                     "untouched",
                     template,
@@ -4336,7 +4546,18 @@ runtime:
             r"python:3\.12-slim@sha256:[a-f0-9]{64}",
         )
         self.assertIn("FROM base AS runtime", dockerfile)
-        self.assertIn("USER kit", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
+        account = re.search(
+            r"groupadd --gid (\d+) kit \\\n\s+&& useradd --uid (\d+) --gid (\d+) ",
+            dockerfile,
+        )
+        assert account is not None
+        group_id, user_id, user_group_id = account.groups()
+        self.assertEqual(group_id, user_group_id)
+        self.assertEqual(
+            ["0:0", f"{user_id}:{group_id}", "0:0", f"{user_id}:{group_id}"],
+            re.findall(r"^USER (\S+)$", dockerfile, re.M),
+        )
         self.assertIn('ENTRYPOINT ["knowledge"]', dockerfile)
         self.assertNotIn(":latest", dockerfile)
 
@@ -4353,6 +4574,7 @@ runtime:
         )
         self.assertEqual("development", definition["build"]["target"])
         self.assertEqual("kit", definition["remoteUser"])
+        self.assertEqual("kit", definition["containerUser"])
         self.assertEqual("/workspace", definition["workspaceFolder"])
 
     def test_unified_cli_exposes_supported_commands(self) -> None:

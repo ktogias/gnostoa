@@ -1,0 +1,4533 @@
+"""The GitHub evidence adapter, MA0 Phase 1b slice 1b.3a (#407).
+
+Every adapter test runs on a snapshot that L1 itself collects from the fake
+provider, which refuses any URL it was not given, so a mismatch between L1's
+contract and the adapter's fails here rather than in production.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import re
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import yaml
+
+from tests.merge_admission_support import CONFIGURATION, debt_entry, debt_finding
+from tests.merge_evidence_github_support import (
+    _PRODUCER,
+    _PROFILE,
+    ACTIONS,
+    API,
+    BODY,
+    CHECK_RUNS,
+    CHECK_SUITES,
+    CLOSING,
+    CODEQL,
+    COMPARE,
+    DECLARER,
+    EDITS,
+    FILES,
+    FINDING,
+    HEAD,
+    LEDGER_DOCUMENT,
+    REQUIRED,
+    REQUIRED_CHECKS,
+    ROOT,
+    SONAR,
+    SUITE_OF,
+    _admitted,
+    _authorities,
+    _bundle,
+    _check_run,
+    _closing,
+    _commit,
+    _comparison,
+    _complete_bundle,
+    _decision,
+    _edits,
+    _evidence,
+    _failed,
+    _green_checks,
+    _green_suites,
+    _inventory,
+    _inventory_readbacks,
+    _merge_evidence_guardrail,
+    _policy,
+    _project,
+    _readback,
+    _replies,
+    _run,
+    _section_c_declaration,
+    _snapshot,
+    _suite,
+    _suites,
+    unregistered_tests,
+)
+from tests.review_reconcile_l1_support import (
+    adapter_fixture,
+    complete_replies_fixture,
+    paged_fake_fixture,
+)
+from tools import (
+    analyzer_inventory,
+    analyzer_readback,
+    assurance_completeness,
+    merge_admission,
+    merge_evidence_github,
+    review_reconcile,
+)
+
+PREVIOUS = "d" * 40
+# The comparison of the subject's exact base and head, which L1 already reads for
+# the merge base, and the GraphQL page of the conversation's edit state.
+# The GraphQL page of the issues the merge would close (#413 round 10).
+
+
+# The check runs that give the declaration's check items (#407, 1b.3b-1): GitHub
+# Actions' required checks and GitHub Advanced Security's CodeQL.
+
+
+# Each producer's check suite on the head (Option S, #407 6143702096): one per App
+# here, as GitHub keeps for every App but Actions, which has one per workflow run.
+
+
+ANALYZER_ITEMS = ("codacy",)
+ANALYZERS = (("codacy", "DIFF"),)
+
+
+def _bundle_for(**subject: Any) -> dict[str, Any]:
+    """A bound, complete bundle for another subject than the snapshot's."""
+
+    head = subject.get("head", HEAD)
+    repository = subject.get("repository", "ktogias/gnostoa")
+    pull = subject.get("pull", 300)
+    return _bundle(
+        *[
+            _readback(p, s, head=head, repository=repository, pull=pull)
+            for p, s in (*ANALYZERS, SONAR)
+        ],
+        requested_head=head,
+        observed_head=head,
+        repository=repository,
+        pull_number=pull,
+    )
+
+
+class L1MergeEvidenceSnapshotTests(unittest.TestCase):
+    def test_the_default_snapshot_is_unchanged_and_reads_nothing_new(self) -> None:
+        """The current-state advisory keeps its reads and its keys."""
+        adapter = adapter_fixture()
+        fake = paged_fake_fixture(complete_replies_fixture(API))
+        snapshot = adapter.collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        self.assertNotIn("commits", snapshot)
+        self.assertNotIn("files", snapshot)
+        self.assertNotIn("draft", snapshot["subject"])
+        self.assertFalse(
+            any("/commits?" in url or "/files?" in url for url in fake.calls)
+        )
+        self.assertNotIn(EDITS, fake.calls)
+        self.assertNotIn(CLOSING, fake.calls)
+        self.assertNotIn("edited", snapshot["conversation"][0])
+
+    def test_merge_evidence_adds_the_pull_fields_and_two_sources(self) -> None:
+        snapshot = _snapshot()
+        subject = snapshot["subject"]
+        self.assertEqual(
+            {
+                "draft": False,
+                "merged": False,
+                "target": "main",
+                "author": "gnostoa-agent-user",
+                "body": BODY,
+                "body_truncated": False,
+            },
+            {
+                key: subject[key]
+                for key in (
+                    "draft",
+                    "merged",
+                    "target",
+                    "author",
+                    "body",
+                    "body_truncated",
+                )
+            },
+        )
+        self.assertEqual("main", subject["default_branch"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+        self.assertEqual(
+            [
+                {
+                    "sha": HEAD,
+                    "message": "Admit or deny one merge\n\nRefs #407",
+                    "message_truncated": False,
+                }
+            ],
+            snapshot["commits"],
+        )
+        self.assertEqual(
+            ["tools/merge_admission.py", "tests/test_merge_admission.py"],
+            [item["path"] for item in snapshot["files"]],
+        )
+
+    def test_a_comparison_short_of_its_total_commits_is_partial(self) -> None:
+        """A comparison lists at most 250 commits; its total says how many it has."""
+        commits = [_commit(f"{index:040x}", "x") for index in range(250)]
+        whole = _snapshot(_replies(**{COMPARE: _comparison(commits, FILES)}))
+        self.assertEqual("COMPLETE", whole["coverage"]["commits"]["status"])
+        self.assertEqual(250, len(whole["commits"]))
+        short = _snapshot(_replies(**{COMPARE: _comparison(commits, FILES, total=251)}))
+        self.assertEqual("PARTIAL", short["coverage"]["commits"]["status"])
+        self.assertEqual("commit_list_cap", short["coverage"]["commits"]["reason"])
+
+    def test_a_comparison_s_total_is_a_count(self) -> None:
+        """cubic on #413: a comparison with no commits is empty, not an error; a
+        missing or non-integer total is."""
+        empty = _snapshot(_replies(**{COMPARE: _comparison([], [])}))
+        for source in ("commits", "files"):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    {"status": "COMPLETE", "pages": 1, "count": 0},
+                    empty["coverage"][source],
+                )
+        for name, total in (("missing", None), ("text", "1"), ("negative", -1)):
+            with self.subTest(total=name):
+                reply = _comparison([_commit(HEAD, "x")], FILES)
+                if total is None:
+                    del reply[0]["total_commits"]
+                else:
+                    reply[0]["total_commits"] = total
+                snapshot = _snapshot(_replies(**{COMPARE: reply}))
+                self.assertEqual("ERROR", snapshot["coverage"]["commits"]["status"])
+                self.assertEqual("ERROR", snapshot["coverage"]["files"]["status"])
+
+    def test_the_comparison_s_file_cap_is_partial(self) -> None:
+        """GitHub lists at most 300 files on a comparison, so a list that reaches
+        300 may be cut."""
+
+        def files(count: int) -> list[dict[str, Any]]:
+            return [{"filename": f"f/{n}", "status": "added"} for n in range(count)]
+
+        commits = [_commit(HEAD, "x")]
+        whole = _snapshot(_replies(**{COMPARE: _comparison(commits, files(299))}))
+        self.assertEqual("COMPLETE", whole["coverage"]["files"]["status"])
+        self.assertEqual(299, len(whole["files"]))
+        # The owner accepted 300 as initial MA0's domain (#407, 6084981368).
+        for count in (300, 301):
+            with self.subTest(files=count):
+                capped = _snapshot(
+                    _replies(**{COMPARE: _comparison(commits, files(count))})
+                )
+                coverage = capped["coverage"]["files"]
+                self.assertEqual("PARTIAL", coverage["status"])
+                self.assertEqual("file_list_cap", coverage["reason"])
+
+    def test_a_commit_without_a_message_is_not_read(self) -> None:
+        """CodeAnt on #413: a commit message that is not a string was read as
+        an empty one, so M12 reported COMPLETE without reading it. It now fails
+        the comparison read, which the files share, so the run fails. An empty
+        string is still a message."""
+        unread = _snapshot(
+            _replies(**{COMPARE: _comparison([{"sha": HEAD, "commit": {}}], FILES)})
+        )
+        self.assertNotEqual("COMPLETE", unread["coverage"]["commits"]["status"])
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(unread)
+        empty = _snapshot(
+            _replies(**{COMPARE: _comparison([_commit(HEAD, "")], FILES)})
+        )
+        self.assertEqual("COMPLETE", empty["coverage"]["commits"]["status"])
+
+    def test_a_long_commit_message_is_bounded_and_marked(self) -> None:
+        message = "x" * 70_000
+        snapshot = _snapshot(
+            _replies(**{COMPARE: _comparison([_commit(HEAD, message)], FILES)})
+        )
+        self.assertTrue(snapshot["commits"][0]["message_truncated"])
+        # Bounded, not only flagged (cubic on #413).
+        self.assertLessEqual(
+            len(snapshot["commits"][0]["message"].encode("utf-8")), 65_536
+        )
+
+    def test_the_lists_are_the_exact_comparison_s(self) -> None:
+        """cubic and Claude on #413: the pull request's commit and file lists are
+        not bound to the head they were read with. The comparison of the
+        subject's exact base and head is a function of those two commits."""
+        commits = [_commit(PREVIOUS, "first"), _commit(HEAD, "second")]
+        files = [{"filename": "docs/x.md", "status": "modified"}]
+        fake = paged_fake_fixture(_replies(**{COMPARE: _comparison(commits, files)}))
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertEqual([PREVIOUS, HEAD], [c["sha"] for c in snapshot["commits"]])
+        self.assertEqual(["docs/x.md"], [f["path"] for f in snapshot["files"]])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["commits"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+        self.assertIn(COMPARE, fake.calls)
+        self.assertFalse(
+            any(
+                "/pulls/300/commits" in u or "/pulls/300/files" in u for u in fake.calls
+            )
+        )
+
+    def test_the_issues_the_merge_would_close_are_read(self) -> None:
+        """Codex on #413: an issue linked by hand closes on merge too, and only
+        `closingIssuesReferences` lists it (#407, 6086122133)."""
+        snapshot = _snapshot(_replies(**{CLOSING: _closing(("ktogias/gnostoa", 407))}))
+        self.assertEqual(
+            [{"repository": "ktogias/gnostoa", "number": 407}],
+            snapshot["closing_issues"],
+        )
+        self.assertEqual("COMPLETE", snapshot["coverage"]["closing_issues"]["status"])
+
+    def test_each_comment_carries_its_edit_state(self) -> None:
+        """Codex on #413: timestamps in whole seconds cannot show an edit made in
+        the second the comment was posted. GraphQL's `lastEditedAt` can."""
+        for edited_at, edited in ((None, False), ("2026-09-19T16:40:00Z", True)):
+            with self.subTest(edited=edited):
+                snapshot = _snapshot(_replies(**{EDITS: _edits((1, edited_at))}))
+                self.assertEqual(edited, snapshot["conversation"][0]["edited"])
+                self.assertEqual(
+                    "COMPLETE", snapshot["coverage"]["conversation"]["status"]
+                )
+
+    def test_a_comment_without_its_edit_state_makes_the_conversation_partial(
+        self,
+    ) -> None:
+        malformed = _edits((1, None))
+        malformed[0]["data"]["repository"]["pullRequest"]["comments"]["nodes"] = {}
+        # The first page lists the comment, but the read was cut after it.
+        cut = _edits((1, None))
+        cut[0]["data"]["repository"]["pullRequest"]["comments"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": None,
+        }
+        for name, reply in (
+            ("missing comment", _edits((2, None))),
+            ("malformed page", malformed),
+            ("cut read", cut),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot(_replies(**{EDITS: reply}))
+                coverage = snapshot["coverage"]["conversation"]
+                self.assertEqual("PARTIAL", coverage["status"])
+                self.assertEqual("comment_edits_unavailable", coverage["reason"])
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+
+    def test_a_head_that_moves_between_reads_is_refused(self) -> None:
+        """L1's collector is composed, not changed (DeepSource on #413): the pull
+        request is read again for the merge-evidence fields, and a change in
+        between fails the read, as L1 refuses a changed identity. cubic on #413:
+        the state and title too, not only the head."""
+        for name, change in (
+            ("head", {"head": {"sha": "e" * 40}}),
+            ("state", {"state": "closed"}),
+            ("title", {"title": "Fixes #12"}),
+            # CodeAnt on #413: the first read binds the number; so does this one.
+            ("number", {"number": 301}),
+        ):
+            with self.subTest(name):
+                self._assert_refused_when_second_read_differs(change)
+
+    def _assert_refused_when_second_read_differs(self, change: dict[str, Any]) -> None:
+        adapter = adapter_fixture()
+        replies = _replies()
+        fake = paged_fake_fixture(replies)
+        moved = copy.deepcopy(replies[f"{API}/pulls/300"])
+        moved[0].update(change)
+        reads = {"pull": 0}
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            if url == f"{API}/pulls/300":
+                reads["pull"] += 1
+                if reads["pull"] % 2 == 0:
+                    return moved
+            reply: tuple[Any, dict[str, str]] = original(url)
+            return reply
+
+        fake.get = get
+        with self.assertRaises(adapter.ProviderReadError):
+            adapter.collect_snapshot(
+                fake,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:41:00Z",
+                merge_evidence=True,
+            )
+
+    def test_a_description_edited_during_collection_is_paired_with_later_reads(
+        self,
+    ) -> None:
+        """CodeAnt on #413: an edit between the two pull reads cannot pair the new
+        description with reviews read before it. L1 certifies only two identical
+        passes, the second starting after the first ends."""
+        replies = _replies()
+        pull_url = f"{API}/pulls/300"
+        reviews_url = f"{API}/pulls/300/reviews?per_page=100"
+        edited = _replies()
+        edited[pull_url][0]["body"] = BODY + "\nEdited.\n"
+        for review in edited[reviews_url][0]:
+            review["state"] = "CHANGES_REQUESTED"
+        fake = paged_fake_fixture(replies)
+        reads = {"pull": 0}
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            if url == pull_url:
+                reads["pull"] += 1
+                if reads["pull"] == 2:
+                    # The body and the reviews change together, mid-pass.
+                    replies[pull_url] = edited[pull_url]
+                    replies[reviews_url] = edited[reviews_url]
+            reply: tuple[Any, dict[str, str]] = original(url)
+            return reply
+
+        fake.get = get
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        after = _snapshot(edited)
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual(after["subject"]["body"], snapshot["subject"]["body"])
+        self.assertEqual(after["reviews"], snapshot["reviews"])
+
+    def test_the_reconciler_s_snapshot_validation_accepts_the_extension(self) -> None:
+        subject, _, coverage = review_reconcile.validate_snapshot(_snapshot())
+        self.assertEqual(HEAD, subject["head_commit"])
+        self.assertEqual("COMPLETE", coverage["reviews"]["status"])
+
+
+def _owners(text: str, path: str) -> list[str] | None:
+    return merge_evidence_github.parse_codeowners(text).owners(path)
+
+
+class CodeOwnersTests(unittest.TestCase):
+    def test_the_last_matching_rule_wins(self) -> None:
+        text = "* @alice\n/docs/ @bob\n"
+        self.assertEqual(["@alice"], _owners(text, "tools/x.py"))
+        self.assertEqual(["@bob"], _owners(text, "docs/guide.md"))
+
+    def test_patterns_follow_github_s_documented_forms(self) -> None:
+        text = "\n".join(
+            [
+                "*.js @js",
+                "**/logs @anylogs",
+                "/build/logs/ @logs",
+                "docs/* @docs-direct",
+                "apps/ @apps",
+                "/scripts/run.sh @runner",
+            ]
+        )
+        cases = {
+            "web/app.js": ["@js"],
+            "build/logs/a/b.txt": ["@logs"],
+            "docs/getting-started.md": ["@docs-direct"],
+            "docs/build-app/troubleshooting.md": None,
+            "deep/apps/x.py": ["@apps"],
+            "a/b/logs/x": ["@anylogs"],
+            "scripts/run.sh": ["@runner"],
+            "other/scripts/run.sh": None,
+        }
+        for path, owners in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_double_asterisks_are_special_only_as_a_segment(self) -> None:
+        """Codex on #413: `**` matches across `/` only as a leading or middle
+        `**/` segment, gitignore's directories."""
+        text = "* @root\na/**/b @m\n**/logs @l\n"
+        cases = {
+            "a/b": ["@m"],
+            "a/x/y/b": ["@m"],
+            "logs/x": ["@l"],
+            "x/y/logs/z": ["@l"],
+            "a/x": ["@root"],
+        }
+        for path, owners in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_wildcards_only_in_github_s_documented_forms(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6095614968): GitHub documents
+        `*`, `*.ext`, a final `/*` and `**/`; `docs/guides*` gave a nested file
+        to its owner, which GitHub does not document. Any other wildcard fails
+        the run."""
+        refused = (
+            "* @alice\ndocs/guides* @bob\n",
+            "a*b/c @x\n",
+            "docs/*.md @x\n",
+            "?.js @x\n",
+            "*.j? @x\n",
+            "foo**bar @x\n",
+            "up**/down @x\n",
+            "abc/** @x\n",
+            "docs/**/*.md @x\n",
+            # `*` is documented only as the last segment.
+            "src/*/x @x\n",
+            "*/docs @x\n",
+        )
+        for text in refused:
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(text)
+        accepted = {
+            ("* @a\n", "x/y"): ["@a"],
+            ("*.js @a\n", "web/app.js"): ["@a"],
+            ("/*.js @a\n", "app.js"): ["@a"],
+            ("docs/* @a\n", "docs/x"): ["@a"],
+            ("docs/* @a\n", "docs/x/y"): None,
+            ("**/logs @a\n", "a/logs/x"): ["@a"],
+            ("a/**/b @a\n", "a/x/b"): ["@a"],
+        }
+        for (text, path), owners in accepted.items():
+            with self.subTest(text=text, path=path):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_comments_blank_lines_and_ownerless_rules(self) -> None:
+        text = "# owners\n\n* @alice\n/generated/\n"
+        self.assertEqual([], _owners(text, "generated/x"))
+        self.assertEqual(["@alice"], _owners(text, "src/x"))
+
+    def test_an_inline_comment_ends_a_rule_s_owners(self) -> None:
+        """Codex on #413: GitHub documents `*.js @js-owner #This is an inline
+        comment.`"""
+        text = "*.js @js-owner #This is an inline comment.\n/apps/ @a # @b\n"
+        self.assertEqual(["@js-owner"], _owners(text, "web/app.js"))
+        self.assertEqual(["@a"], _owners(text, "apps/x"))
+        self.assertEqual([], _owners("/apps/ # none\n", "apps/x"))
+        # Only a word that starts with `#` opens a comment.
+        self.assertEqual(["a#b@example.com"], _owners("* a#b@example.com\n", "x"))
+
+    def test_malformed_segments_are_refused(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6092909419): git
+        matches nothing for an empty or dot segment, but `//sensitive` was
+        read as `/sensitive` and could replace an earlier rule's owners."""
+        refused = (
+            "/sensitive @alice\n//sensitive @bob\n",
+            "//sensitive @alice\n",
+            "docs//x @alice\n",
+            "sensitive// @alice\n",
+            "docs/./x @alice\n",
+            "./docs @alice\n",
+            "a/../docs/x @alice\n",
+            "docs/. @alice\n",
+            ".. @alice\n",
+        )
+        for text in refused:
+            with (
+                self.subTest(text=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(text)
+        accepted = {
+            ("/sensitive @alice\n", "sensitive/x"): ["@alice"],
+            ("docs/ @alice\n", "docs/x"): ["@alice"],
+            ("**/logs @alice\n", "a/logs/x"): ["@alice"],
+            ("*.js @alice\n", "web/app.js"): ["@alice"],
+            (".github/ @alice\n", ".github/CODEOWNERS"): ["@alice"],
+            ("/.gitignore @alice\n", ".gitignore"): ["@alice"],
+        }
+        for (text, path), owners in accepted.items():
+            with self.subTest(text=text):
+                self.assertEqual(owners, _owners(text, path))
+
+    def test_syntax_github_does_not_support_is_refused(self) -> None:
+        for line in ("!/keep @alice", "/file[0-9].txt @alice", "\\#literal @alice"):
+            with (
+                self.subTest(line=line),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_codeowners(line + "\n")
+
+    def test_the_protected_target_s_file_is_found_in_github_s_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs").mkdir()
+            (root / "docs" / "CODEOWNERS").write_text("* @docs\n", encoding="utf-8")
+            (root / "CODEOWNERS").write_text("* @root\n", encoding="utf-8")
+            self.assertEqual(
+                ["@root"],
+                merge_evidence_github.load_codeowners(root).owners("x"),
+            )
+            (root / ".github").mkdir()
+            (root / ".github" / "CODEOWNERS").write_text(
+                "* @github\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                ["@github"],
+                merge_evidence_github.load_codeowners(root).owners("x"),
+            )
+
+    def test_a_file_over_github_s_limit_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CODEOWNERS").write_text(
+                "# " + "x" * (3 * 1024 * 1024) + "\n", encoding="utf-8"
+            )
+            with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                merge_evidence_github.load_codeowners(root)
+
+
+class EvidenceDocumentTests(unittest.TestCase):
+    def test_a_converged_change_fails_only_on_evidence_not_yet_produced(self) -> None:
+        """Receipts are 1b.3b's and 1b.3c's; so are suppressions and trust roots.
+        Without the analyzer readback its findings are unavailable too (M17)."""
+        evidence = _evidence()
+        self.assertEqual({"M2-M8", "M13", "M15", "M17"}, set(_failed(evidence)))
+        # The default snapshot has no SonarCloud gate, so the claims are not met
+        # and M17 says so beside M2-M8 (#389 F2, the Router's 6192443314).
+        self.assertEqual(
+            {"M2-M8", "M13", "M15", "M17"},
+            set(_failed(_evidence(analyzer=_bundle()))),
+        )
+        self.assertEqual(
+            {
+                "repository": "https://github.com/ktogias/gnostoa",
+                "change_request": {"kind": "github-pull-request", "id": "300"},
+                "head_commit": HEAD,
+            },
+            evidence["subject"],
+        )
+        self.assertEqual(
+            {
+                "state": "open",
+                "draft": False,
+                "target": "main",
+                "protected_target": "main",
+            },
+            evidence["lifecycle"],
+        )
+        self.assertEqual("normative", evidence["change_class"])
+        self.assertEqual(
+            {"work_items": ["#407", "#15"], "decisions": ["0112"]}, evidence["links"]
+        )
+        self.assertEqual(
+            {"declarer": DECLARER, "head_commit": HEAD}, evidence["declared_candidate"]
+        )
+        self.assertEqual(
+            {
+                "declarer": DECLARER,
+                "author": "gnostoa-agent-user",
+                "required_approvers": ["ktogias"],
+            },
+            evidence["authorities"],
+        )
+        self.assertEqual({"coverage": "COMPLETE", "unresolved": 0}, evidence["threads"])
+        self.assertEqual(
+            {"coverage": "COMPLETE", "found": []}, evidence["closing_references"]
+        )
+        self.assertEqual("UNAVAILABLE", evidence["suppressions"]["coverage"])
+        self.assertEqual("UNAVAILABLE", evidence["trust_root_changes"]["coverage"])
+        # The check items have receipts (1b.3b-1); M2-M8 still denies on the
+        # analyzer readback and SonarCloud.
+        self.assertEqual(
+            {("verification-checks", n) for n in REQUIRED} | {("codeql", "codeql")},
+            set(_receipt_statuses(evidence)),
+        )
+
+    def test_an_unsealed_head_denies(self) -> None:
+        """#338: the head was never declared."""
+        snapshot = _snapshot(
+            _replies(
+                **{f"{API}/issues/300/comments?per_page=100": ([], {}), EDITS: _edits()}
+            )
+        )
+        evidence = _evidence(snapshot)
+        self.assertIsNone(evidence["declared_candidate"])
+        self.assertIn("M9", _failed(evidence))
+
+    def test_only_an_unedited_seal_by_the_declarer_counts(self) -> None:
+        def comment(**changes: Any) -> dict[str, Any]:
+            return {
+                "id": 1,
+                "user": {"login": DECLARER},
+                "created_at": "2026-09-19T16:40:00Z",
+                "updated_at": "2026-09-19T16:40:00Z",
+                "body": f"Exact review candidate: {HEAD}",
+                **changes,
+            }
+
+        for name, comments in (
+            ("edited", [comment(updated_at="2026-09-19T16:40:30Z")]),
+            ("edited in its own second", [comment(edited_at="2026-09-19T16:40:00Z")]),
+            ("foreign", [comment(user={"login": "someone-else"})]),
+            ("previous head", [comment(body=f"Exact review candidate: {PREVIOUS}")]),
+            (
+                "not the first line",
+                [comment(body=f"Note\nExact review candidate: {HEAD}")],
+            ),
+            (
+                "superseded",
+                [
+                    comment(),
+                    comment(
+                        id=2,
+                        created_at="2026-09-19T16:40:10Z",
+                        updated_at="2026-09-19T16:40:10Z",
+                        body=f"Exact review candidate: {PREVIOUS}",
+                    ),
+                ],
+            ),
+        ):
+            with self.subTest(name):
+                edits = _edits(*((c["id"], c.pop("edited_at", None)) for c in comments))
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            f"{API}/issues/300/comments?per_page=100": (comments, {}),
+                            EDITS: edits,
+                        }
+                    )
+                )
+                self.assertIn("M9", _failed(_evidence(snapshot)))
+
+    def test_closing_references_are_found_on_every_surface(self) -> None:
+        cases: dict[str, dict[str, Any]] = {
+            "title": {f"{API}/pulls/300": None, "title": "Fixes #12: the gate"},
+            "body": {
+                f"{API}/pulls/300": None,
+                "body": BODY + "\nCloses ktogias/gnostoa#13\n",
+            },
+            "commit body": {
+                COMPARE: _comparison(
+                    [_commit(HEAD, "Subject\n\nSome context.\nresolved: #14")], FILES
+                )
+            },
+            "issue URL": {
+                COMPARE: _comparison(
+                    [_commit(HEAD, "fix https://github.com/ktogias/gnostoa/issues/15")],
+                    FILES,
+                )
+            },
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                pull = replies[f"{API}/pulls/300"][0]
+                for key in ("title", "body"):
+                    if key in change:
+                        pull[key] = change[key]
+                for key, value in change.items():
+                    if key.startswith("https://") and value is not None:
+                        replies[key] = value
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(
+                    1,
+                    len(evidence["closing_references"]["found"]),
+                    evidence["closing_references"],
+                )
+                self.assertIn("M12", _failed(evidence))
+
+    def test_an_issue_the_merge_would_close_denies(self) -> None:
+        """Codex on #413: M12 sees an issue linked by hand, and an incomplete
+        read of them is not COMPLETE coverage (#407, 6086122133)."""
+        linked = _evidence(
+            _snapshot(_replies(**{CLOSING: _closing(("ktogias/gnostoa", 407))}))
+        )
+        self.assertEqual(
+            [
+                {
+                    "surface": "github.closingIssuesReferences",
+                    "reference": "ktogias/gnostoa#407",
+                }
+            ],
+            linked["closing_references"]["found"],
+        )
+        self.assertIn("M12", _failed(linked))
+        # A complete, empty relation leaves M12 to the other sources.
+        self.assertNotIn("M12", _failed(_evidence()))
+        # A second page is read too.
+        paged = _evidence(
+            _snapshot(
+                _replies(
+                    **{
+                        CLOSING: _closing(next_cursor="page-2"),
+                        "graphql:closingIssuesReferences:page-2": _closing(
+                            ("ktogias/gnostoa", 15)
+                        ),
+                    }
+                )
+            )
+        )
+        self.assertEqual(
+            ["ktogias/gnostoa#15"],
+            [f["reference"] for f in paged["closing_references"]["found"]],
+        )
+        malformed = _closing()
+        malformed[0]["data"]["repository"]["pullRequest"]["closingIssuesReferences"][
+            "nodes"
+        ] = {}
+        missing = _closing()
+        del missing[0]["data"]["repository"]["pullRequest"]["closingIssuesReferences"]
+        for name, reply in (
+            ("malformed page", malformed),
+            ("missing connection", missing),
+            ("missing cursor", _closing(next_cursor="")),
+        ):
+            with self.subTest(name):
+                unread = _evidence(_snapshot(_replies(**{CLOSING: reply})))
+                self.assertNotEqual(
+                    "COMPLETE", unread["closing_references"]["coverage"]
+                )
+                self.assertIn("M12", _failed(unread))
+
+    def test_a_link_added_during_collection_is_not_missed(self) -> None:
+        """The relation is part of each pass, so a link added between passes is
+        in the certified snapshot, never a stale empty read."""
+        replies = _replies()
+        fake = paged_fake_fixture(replies)
+        original = fake.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            reply: tuple[Any, dict[str, str]] = original(url)
+            if url == CLOSING:
+                # The link is added just after the first pass reads the relation.
+                replies[CLOSING] = _closing(("ktogias/gnostoa", 407))
+            return reply
+
+        fake.get = get
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertIn("M12", _failed(_evidence(snapshot)))
+
+    def test_a_missing_title_is_not_complete_coverage(self) -> None:
+        """CodeAnt on #413: L1 records a missing title as None, and its keywords
+        were then never read while M12 reported COMPLETE."""
+        replies = _replies()
+        del replies[f"{API}/pulls/300"][0]["title"]
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual("PARTIAL", evidence["closing_references"]["coverage"])
+        self.assertIn("M12", _failed(evidence))
+
+    def test_words_that_are_not_closing_keywords_are_not_references(self) -> None:
+        for text in (
+            "Refs #407",
+            "prefix #3",
+            "unfixed #3",
+            "fixture #12",
+            "closes the gap",
+        ):
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["title"] = text
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual([], evidence["closing_references"]["found"])
+
+    def test_closing_reference_coverage_follows_its_sources(self) -> None:
+        commits = [_commit(f"{index:040x}", "x") for index in range(250)]
+        capped = _replies(**{COMPARE: _comparison(commits, FILES, total=251)})
+        truncated_message = _replies(
+            **{COMPARE: _comparison([_commit(HEAD, "y" * 70_000)], FILES)}
+        )
+        for name, replies in (
+            ("fewer commits than the total", capped),
+            ("truncated message", truncated_message),
+        ):
+            with self.subTest(name):
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual("PARTIAL", evidence["closing_references"]["coverage"])
+                self.assertIn("M12", _failed(evidence))
+
+    def test_threads_map_their_count_and_coverage(self) -> None:
+        snapshot = _snapshot()
+        snapshot["review_threads"][0]["state"] = "unresolved"
+        self.assertEqual(1, _evidence(snapshot)["threads"]["unresolved"])
+        snapshot["coverage"]["review_threads"]["status"] = "PARTIAL"
+        self.assertEqual("PARTIAL", _evidence(snapshot)["threads"]["coverage"])
+
+    def test_reviews_are_raw_and_their_partial_reads_fail_the_run(self) -> None:
+        evidence = _evidence()
+        self.assertEqual(
+            {
+                "reviewer": "ktogias",
+                "state": "APPROVED",
+                "commit_id": HEAD,
+                "submitted_at": "2026-09-19T16:40:02Z",
+            },
+            evidence["reviews"][0],
+        )
+        snapshot = _snapshot()
+        snapshot["coverage"]["reviews"].update(
+            {"status": "PARTIAL", "limit": "page_limit"}
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_l1_s_semantic_partial_reasons_keep_every_review(self) -> None:
+        for reason in (
+            "unsubmitted_provider_items",
+            "unavailable_reviewer_identity",
+            "ambiguous_latest_reviewer_opinion",
+        ):
+            with self.subTest(reason=reason):
+                snapshot = _snapshot()
+                snapshot["coverage"]["reviews"].update(
+                    {"status": "PARTIAL", "reason": reason}
+                )
+                self.assertEqual(2, len(_evidence(snapshot)["reviews"]))
+
+    def test_a_deleted_reviewer_keeps_a_per_review_identity(self) -> None:
+        replies = _replies()
+        replies[f"{API}/pulls/300/reviews?per_page=100"][0][0]["user"] = None
+        reviewers = [r["reviewer"] for r in _evidence(_snapshot(replies))["reviews"]]
+        self.assertEqual("github-unavailable-reviewer:10", reviewers[0])
+
+    def test_lifecycle_reflects_draft_target_and_merge(self) -> None:
+        for change, criterion in (
+            ({"draft": True}, "M1"),
+            ({"merged": True, "state": "closed"}, "M1"),
+            ({"state": "closed"}, "M1"),
+        ):
+            with self.subTest(change=change):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0].update(change)
+                self.assertIn(criterion, _failed(_evidence(_snapshot(replies))))
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0].update({"merged": True, "state": "closed"})
+        self.assertEqual("merged", _evidence(_snapshot(replies))["lifecycle"]["state"])
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["base"]["ref"] = "release"
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual("release", evidence["lifecycle"]["target"])
+        self.assertIn("M1", _failed(evidence))
+
+    def test_the_required_approvers_come_from_the_protected_codeowners_and_roster(
+        self,
+    ) -> None:
+        self.assertEqual(
+            ["ktogias"],
+            _evidence(codeowners="* @ktogias\n")["authorities"]["required_approvers"],
+        )
+        self.assertEqual(
+            [],
+            _evidence(codeowners="/docs/ @ktogias\n")["authorities"][
+                "required_approvers"
+            ],
+        )
+        for text in (
+            "* @org/maintainers\n",
+            "* someone@example.com\n",
+            "* @stranger\n",
+        ):
+            with (
+                self.subTest(codeowners=text),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                _evidence(codeowners=text)
+
+    def test_a_candidate_s_own_codeowners_change_does_not_choose_its_approvers(
+        self,
+    ) -> None:
+        """The candidate may edit `.github/CODEOWNERS`; the protected copy decides."""
+        replies = _replies(
+            **{
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
+                    [{"filename": ".github/CODEOWNERS", "status": "modified"}],
+                )
+            }
+        )
+        evidence = _evidence(_snapshot(replies), codeowners="* @ktogias\n")
+        self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
+
+    def test_change_control_comes_from_the_template_fields(self) -> None:
+        for body in (
+            "## Outcome\n\nNo change-control section.\n",
+            BODY.replace(
+                "`normative`",
+                "`mechanical | normal | normative | critical | emergency`",
+            ),
+            BODY.replace("`normative`", "`urgent`"),
+        ):
+            with self.subTest(body=body[:40]):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15", "- Work Item:"
+        ).replace(
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
+            "- Decision:",
+        )
+        evidence = _evidence(_snapshot(replies))
+        self.assertEqual({"work_items": [], "decisions": []}, evidence["links"])
+        self.assertIn("M14", _failed(evidence))
+
+    def test_a_decision_must_name_an_existing_decision(self) -> None:
+        """Codex, cubic and CodeAnt on #413: prose such as "wait until 2026" must
+        not satisfy M14. Under the strict grammar (#407, 6088050686) prose fails the
+        run, and an id counts only when the protected target has its record."""
+        line = "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)"
+        for value in (
+            "wait until 2026",
+            "see https://github.com/ktogias/gnostoa/issues/0112",
+            "Decision 0016 and 0112",
+            # A Decision id is four digits.
+            "112",
+            "01120",
+            "0112x",
+            "0112 and 0113",
+            "0112,, 0113",
+            # A Decision id is ASCII digits.
+            "\u0660\u0661\u0661\u0662",
+        ):
+            with self.subTest(value=value):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                    line, f"- Decision: {value}"
+                )
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        for value, expected in (
+            ("9999", []),
+            ("0112", ["0112"]),
+            ("0016, 0112", ["0016", "0112"]),
+            ("0112, 0113", ["0112", "0113"]),
+            (
+                "[0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
+                ["0112"],
+            ),
+        ):
+            with self.subTest(value=value):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+                    line, f"- Decision: {value}"
+                )
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(expected, evidence["links"]["decisions"])
+                if not expected:
+                    self.assertIn("M14", _failed(evidence))
+
+    def test_the_protected_target_s_decisions_are_its_decision_records(self) -> None:
+        decisions = merge_evidence_github.load_decisions(ROOT)
+        self.assertIn("0112", decisions)
+        self.assertIn("0016", decisions)
+        self.assertNotIn("9999", decisions)
+
+    def test_a_protected_target_without_decision_records_fails_the_run(self) -> None:
+        """cubic on #413: every other declaration fails loudly when missing; an
+        absent directory silently dropped every reference."""
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaises(merge_evidence_github.MergeEvidenceError),
+        ):
+            merge_evidence_github.load_decisions(Path(directory))
+
+    def test_a_decision_record_outside_the_protected_target_does_not_count(
+        self,
+    ) -> None:
+        """cubic on #413: a symlink could lend an external record."""
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "9999-fake.md").write_text("x", encoding="utf-8")
+            project = base / "project"
+            records = project / "knowledge" / "decisions"
+            records.mkdir(parents=True)
+            (records / "0001-real.md").write_text("x", encoding="utf-8")
+            (records / "9998-linked.md").symlink_to(outside / "9999-fake.md")
+            # Each id with its record names, which a Decision link must name.
+            self.assertEqual(
+                {"0001": frozenset({"0001-real.md"})},
+                merge_evidence_github.load_decisions(project),
+            )
+            linked = base / "linked"
+            (linked / "knowledge").mkdir(parents=True)
+            (linked / "knowledge" / "decisions").symlink_to(outside)
+            with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                merge_evidence_github.load_decisions(linked)
+
+    def test_an_example_in_a_code_block_is_not_change_control(self) -> None:
+        """CodeAnt on #413: fields inside a fenced example supplied links."""
+        example = (
+            "## Notes\n\n```markdown\n## Change control\n\n- Class: `normal`\n"
+            "- Work Item: #999\n- Decision: 0112\n```\n"
+        )
+        for body in (
+            example,
+            BODY.replace("- Work Item: #407, #15", "- Work Item:")
+            + "\n~~~\n- Work Item: #999\n~~~\n<!--\n- Decision: 0016\n-->\n",
+        ):
+            with self.subTest(body=body[:30]):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                if body is example:
+                    snapshot = _snapshot(replies)
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        _evidence(snapshot)
+                else:
+                    links = _evidence(_snapshot(replies))["links"]
+                    self.assertEqual([], links["work_items"])
+                    self.assertEqual(["0112"], links["decisions"])
+
+    def test_every_markdown_code_form_hides_its_fields(self) -> None:
+        """Codex on #413: a fence may be indented by up to three spaces, may be
+        longer than three, and an indented block is code too; none of their
+        lines is a field."""
+        stripped = BODY.replace("- Work Item: #407, #15", "- Work Item:")
+        for name, extra in (
+            # A paragraph ends the list first: after a list item, an indented fence
+            # would sit inside the item, and the next line would break out as a
+            # visible item, as GitHub renders it.
+            ("indented fence", "\nText.\n\n  ```\n- Work Item: #999\n  ```\n"),
+            ("long fence", "\n````text\n```\n- Work Item: #999\n````\n"),
+            ("mixed markers", "\n~~~\n```\n- Work Item: #999\n~~~\n"),
+            ("tilde fence", "\nText.\n\n   ~~~~\n- Work Item: #999\n   ~~~~\n"),
+            ("indented code block", "\n    - Work Item: #999\n"),
+            ("unclosed fence", "\n```\n- Work Item: #999\n"),
+        ):
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = stripped + extra
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual([], links["work_items"])
+
+    def test_an_unclosed_comment_hides_the_rest_of_the_description(self) -> None:
+        """Codex on #413: GitHub renders an unclosed comment as hiding
+        everything after it, so its fields are not visible evidence."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            BODY.replace("- Work Item: #407, #15", "- Work Item:")
+            + "\n<!--\n- Work Item: #999\n"
+        )
+        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = "<!--\n" + BODY
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_html_and_code_spans_follow_commonmark(self) -> None:
+        """Codex, cubic, CodeAnt and Claude on #413: a raw HTML block is code; a
+        fence can straddle a comment; `<!--` in a code span opens nothing; an
+        inline comment in a value is not part of it (Decision 0113)."""
+        stripped = BODY.replace("- Work Item: #407, #15", "- Work Item:")
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            stripped + "\n<pre>\n- Work Item: #999\n</pre>\n"
+        )
+        # A raw `<pre>` in the section can hold content, so the run fails (the
+        # owner's choice, #407 6086999580).
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+        # A fence that opens before a comment closes at its own marker, so what
+        # follows renders as a visible item (Decision 0113): here a second Work
+        # Item, which is ambiguous.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            stripped + "\n```\n<!--\n```\n- Work Item: #999\n-->\n"
+        )
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            "Write `<!--` to open a comment.\n\n" + BODY
+        )
+        self.assertEqual(
+            ["#407", "#15"], _evidence(_snapshot(replies))["links"]["work_items"]
+        )
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Decision: [0112](knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md)",
+            "- Decision: 0112 <!-- 0016 -->",
+        )
+        self.assertEqual(["0112"], _evidence(_snapshot(replies))["links"]["decisions"])
+
+    def test_the_section_is_the_top_level_heading_and_its_own_items(self) -> None:
+        """Only the top-level section's own top-level items are fields: not a
+        later section's, not a nested item, not a heading inside a quote."""
+        cases = {
+            "a later section": BODY + "\n## Notes\n\n- Work Item: #999\n",
+            "a nested item": BODY.replace(
+                "- Accountable owner: @ktogias",
+                "- Accountable owner: @ktogias\n  - Work Item: #999",
+            ),
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                self.assertEqual(
+                    ["#407", "#15"],
+                    _evidence(_snapshot(replies))["links"]["work_items"],
+                )
+        # A quoted section is not the description's own, so it neither counts
+        # nor makes the real one ambiguous.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = (
+            BODY + "\n> ## Change control\n>\n> - Class: `normal`\n"
+        )
+        self.assertEqual("normative", _evidence(_snapshot(replies))["change_class"])
+
+    def test_a_work_item_is_a_visible_issue_number(self) -> None:
+        """The owner's #402 decisions (#407, 6086766086 and 6088050686): a Work Item
+        value is only `#N` entries in ASCII digits, separated by commas or
+        spaces. Anything else fails the run: an issue URL, another repository, a
+        lookalike host, a suffix, non-ASCII digits, an invisible character or
+        prose."""
+        refused = (
+            "https://github.com/ktogias/gnostoa/issues/407",
+            "https://github.com/unrelated/project/issues/999999",
+            "https://g\u0131thub.com/ktogias/gnostoa/issues/999",
+            "#407 https://github.com/ktogias/gnostoa-x/issues/9",
+            "other/project#999",
+            "#\u0661",
+            # Codex on #413: a zero-width space GitHub does not show.
+            "#40\u200b7",
+            "#407 (MA0)",
+            "see #407",
+            "#407,",
+            # The separators are ASCII commas and spaces.
+            "#407\u2003#15",
+            # The owner-requested analysis's table (#407, 6088035894): each
+            # fails by not being in the grammar, with no special case.
+            "#40\u200d7",
+            "#40\ufeff7",
+            "#40\u00a07",
+            "#40\u202e7",
+            # Only ASCII spaces pad a value; the parser itself trims a line's
+            # end, so these sit where it does not.
+            "\u00a0#407",
+            "`#407\u00a0`",
+            "#407junk",
+            "#407 extra",
+            "#407, garbage",
+            "#407,, #15",
+        )
+        for text in refused:
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        for text, expected in (
+            ("#407, #15", ["#407", "#15"]),
+            ("#407 #15", ["#407", "#15"]),
+            ("#407,#15", ["#407", "#15"]),
+            ("#407, #407", ["#407"]),
+            ("#407 , #15", ["#407", "#15"]),
+            ("[#407](https://github.com/ktogias/gnostoa/issues/407)", ["#407"]),
+        ):
+            with self.subTest(text=text):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace("#407, #15", text)
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual(expected, links["work_items"])
+
+    def test_a_value_is_its_visible_text(self) -> None:
+        """Codex on #413, and the owner's re-slice decision (#407, 6085478125): a
+        link's target is never read, so an empty link contributes nothing and a
+        Decision counts only by the id it shows."""
+        cases = {
+            "an empty Work Item link": (
+                ("#407, #15", "[](https://github.com/ktogias/gnostoa/issues/407)"),
+                "work_items",
+                [],
+            ),
+            "a descriptive Work Item link": (
+                (
+                    "#407, #15",
+                    "[the issue](https://github.com/ktogias/gnostoa/issues/407)",
+                ),
+                "work_items",
+                None,
+            ),
+            "a Work Item in inline code": (
+                ("#407, #15", "`#407`"),
+                "work_items",
+                ["#407"],
+            ),
+            "a Work Item link showing its number": (
+                ("#407, #15", "[#407](https://github.com/ktogias/gnostoa/issues/407)"),
+                "work_items",
+                ["#407"],
+            ),
+            "a Decision named only by its target": (
+                ("[0112]", "[the verdict's record]"),
+                "decisions",
+                None,
+            ),
+            "a Decision showing its id": ((BODY, BODY), "decisions", ["0112"]),
+        }
+        for name, ((old, new), key, expected) in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(old, new)
+                if expected is None:
+                    # Text that is not the grammar fails the run (#407, 6088050686).
+                    snapshot = _snapshot(replies)
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        _evidence(snapshot)
+                else:
+                    links = _evidence(_snapshot(replies))["links"]
+                    self.assertEqual(expected, links[key])
+
+    def test_a_heading_is_compared_by_its_visible_text(self) -> None:
+        """cubic on #413: inline HTML in the heading is not part of its text."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "## Change control", "## Change control <!-- the template's fields -->"
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
+
+    def test_raw_html_that_can_hold_content_fails_the_run(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6086999580): GitHub may
+        render Markdown inside a raw HTML element, and HTML5 nesting is not
+        modelled, so any raw tag that can hold content before the end of the
+        section fails the run. Comments and void elements hold nothing."""
+        heading = "## Change control"
+        refused = {
+            "the section in details": BODY.replace(
+                heading, f"<details>\n<summary>More</summary>\n\n{heading}"
+            )
+            + "\n</details>\n",
+            "the fields in details": BODY.replace("- Class:", "<details>\n\n- Class:")
+            + "\n</details>\n",
+            "the heading in details": BODY.replace(
+                heading, f"<details>\n\n{heading}\n\n</details>"
+            ),
+            "a closed details before": BODY.replace(
+                heading,
+                f"<details>\n<summary>Notes</summary>\n\nNotes.\n\n</details>\n\n{heading}",
+            ),
+            # Codex on #413: HTML5 closes the <p> at <details>, so the stray </p>
+            # leaves <details> open.
+            "a misnested details": BODY.replace(
+                heading, f"<p><details></p>\n\n{heading}"
+            ),
+            "a self-closing details": BODY.replace(heading, f"<details/>\n\n{heading}"),
+            "an inline details": BODY.replace(heading, f"Note <details>\n\n{heading}"),
+            "a hidden span": BODY.replace(
+                "- Class: `normative`", "- <span hidden>Class: `normative`</span>"
+            ),
+            "a value in details": BODY.replace(
+                "#407, #15", "#407, <details>metadata #999</details>"
+            ),
+            "inline markup in a value": BODY.replace("#407, #15", "<b>#407</b>, #15"),
+            "a stray end tag": BODY.replace("#407, #15", "#407</span>, #15"),
+            "a tag in the heading": BODY.replace(
+                heading, "## <span>Change control</span>"
+            ),
+            "an item opening with details": BODY.replace(
+                "- Work Item: #407, #15", "- <details>Work Item: #407, #15</details>"
+            ),
+        }
+        for name, body in refused.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        accepted = {
+            "void elements before": BODY.replace(
+                heading, f"Line<br>\n\n<img src=x>\n\n<param name=x>\n\n{heading}"
+            ),
+            "a comment in a value": BODY.replace(
+                "#407, #15", "#407, #15 <!-- note -->"
+            ),
+            # A comment renders as nothing, so the text around it joins.
+            "a comment inside a number": BODY.replace(
+                "#407, #15", "#4<!-- x -->07, #15"
+            ),
+            "raw HTML after the section": BODY
+            + "\n## Later\n\n<details>\n\nNotes.\n\n</details>\n",
+        }
+        for name, body in accepted.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = body
+                links = _evidence(_snapshot(replies))["links"]
+                self.assertEqual(["#407", "#15"], links["work_items"])
+
+    def test_raw_html_in_a_field_fails_the_run(self) -> None:
+        """cubic and Codex on #413, and the owner's choice (#407, 6087507517): how
+        a void element renders differs, `<wbr>` joining and `<br>` breaking, so a
+        field holding raw HTML other than a comment fails the run. A comment
+        renders as nothing, and the text around it joins."""
+        field = "- Work Item: #407, #15"
+        refused = {
+            "a break in a value": "- Work Item: #40<br>7",
+            "a zero-width break in a value": "- Work Item: #40<wbr>7",
+            "an image in a value": "- Work Item: #40<img src=x>7",
+            "a stripped tag in a value": "- Work Item: #40<meta>7",
+            "a tag in a label": "- Wo<wbr>rk Item: #407",
+            "a tag in a Decision": "- Decision: 01<wbr>12",
+            # #407, 6087484196: every candidate is checked before extraction, so
+            # HTML that keeps a label from matching is refused too.
+            "a label the tag breaks": f"{field}\n- Work<br>Item: #999",
+            "an item that is not a field": f"{field}\n- Note: see below<br>",
+        }
+        for name, text in refused.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        # Inline code is code, not raw HTML, even when it shows a tag, so an
+        # item showing one is read (a field value must still be its grammar).
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Accountable owner: @ktogias", "- Accountable owner: @ktogias `<wbr>`"
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
+
+    def test_an_item_s_field_is_its_first_paragraph(self) -> None:
+        """Codex on #413, and the owner's choice (#407, 6085825905 and
+        6085819873): a continuation paragraph of an item is not a field."""
+        field = "- Work Item: #407, #15\n"
+        cases = {
+            "a tight list": (field, ["#407", "#15"]),
+            "a loose list": (f"\n{field}\n", ["#407", "#15"]),
+            "a soft break in the first paragraph": (
+                "- Work Item: #407,\n  #15\n",
+                ["#407", "#15"],
+            ),
+            "a field and a continuation": (
+                f"{field}\n  Work Item: #999\n",
+                ["#407", "#15"],
+            ),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
+                evidence = _evidence(_snapshot(replies))
+                self.assertEqual(expected, evidence["links"]["work_items"])
+                self.assertEqual(not expected, "M14" in _failed(evidence))
+        # A `- Notes` item, whose continuation holds the Work Item, is not one
+        # of the template's fields, so the run fails (#407, 6092909419).
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            field, "- Notes\n\n  Work Item: #407, #15\n"
+        )
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_the_section_holds_only_the_template_s_fields(self) -> None:
+        """cubic on #413, and the owner's choice (#407, 6092909419): every
+        top-level item begins with exactly one of the template's four labels,
+        each once, so a near-match label cannot escape the duplicate check."""
+        field = "- Work Item: #407, #15"
+        refused = {
+            "a near-match label": f"{field}\n- Work Item\u00a0: #999",
+            "a lowercase label": f"{field}\n- work item: #999",
+            "another item": f"{field}\n- Notes",
+            "an unknown label": f"{field}\n- Context: the verdict's inputs",
+            # Duplicates fail even when their values agree (#407, 6092907589).
+            "a repeated Work Item": f"{field}\n{field}",
+            # cubic and Codex on #413: an ordered list's items are top-level
+            # items of the section too.
+            "an ordered list's conflicting class": f"{field}\n\n1. Class: critical",
+            "an ordered list's other item": f"{field}\n\n1. Notes",
+            "an item opening with code": f"{field}\n-     Work Item: #999",
+            "a repeated owner": f"{field}\n- Accountable owner: @someone",
+        }
+        for name, text in refused.items():
+            with self.subTest(name):
+                replies = _replies()
+                replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, text)
+                snapshot = _snapshot(replies)
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(field, "- Work Item:")
+        self.assertEqual([], _evidence(_snapshot(replies))["links"]["work_items"])
+        # A nested ordered list is not a top-level item, so it is allowed.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Accountable owner: @ktogias",
+            "- Accountable owner: @ktogias\n\n  1. approves natively",
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
+        # Prose in the section is not an item, so the fields are still read.
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Accountable owner: @ktogias",
+            "- Accountable owner: @ktogias\n\nThe owner approves natively.",
+        )
+        links = _evidence(_snapshot(replies))["links"]
+        self.assertEqual(["#407", "#15"], links["work_items"])
+
+    def test_two_change_control_sections_are_ambiguous(self) -> None:
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY + "\n" + BODY
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_logins_compare_without_case(self) -> None:
+        """CodeAnt on #413: GitHub logins are case-insensitive."""
+        approvers = _evidence(codeowners="* @KTogias\n")["authorities"][
+            "required_approvers"
+        ]
+        self.assertEqual(["ktogias"], approvers)
+        self.assertNotIn("M16", _failed(_evidence(codeowners="* @KTogias\n")))
+        roster = {**_authorities(), "human_approvers": ["KTogias"]}
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            _snapshot(),
+            authorities=roster,
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.parse_required_checks(
+                REQUIRED_CHECKS
+            ),
+        )
+        self.assertEqual(["ktogias"], evidence["authorities"]["required_approvers"])
+
+    def test_only_ascii_letters_fold_in_logins(self) -> None:
+        """cubic on #413: `casefold` folds the Kelvin sign to `k`, so a roster
+        entry or a login containing it would match another account."""
+        kelvin = "\u212atogias"
+        for name, change in (
+            ("roster", {"human_approvers": [kelvin]}),
+            ("roster with a space", {"human_approvers": ["kto gias"]}),
+            ("an App on the human roster", {"human_approvers": [DECLARER]}),
+            ("declarer", {"declarer": "gnostoa agent[bot]"}),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_authorities(
+                    {
+                        "schema_version": "1.0",
+                        "id": "example.merge-authorities",
+                        "version": "0.1.0",
+                        "declarer": DECLARER,
+                        "human_approvers": ["ktogias"],
+                        **change,
+                    }
+                )
+        replies = _replies()
+        for review in replies[f"{API}/pulls/300/reviews?per_page=100"][0]:
+            if review["user"] == {"login": "ktogias"}:
+                review["user"] = {"login": kelvin}
+        evidence = _evidence(_snapshot(replies))
+        self.assertNotIn("ktogias", [r["reviewer"] for r in evidence["reviews"]])
+        self.assertIn("M16", _failed(evidence))
+
+    def test_a_rename_without_its_previous_path_fails_the_run(self) -> None:
+        """CodeAnt on #413: the old location's code owner would be skipped."""
+        replies = _replies(
+            **{
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
+                    [{"filename": "tools/new.py", "status": "renamed"}],
+                )
+            }
+        )
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+        replies = _replies(
+            **{
+                COMPARE: _comparison(
+                    [_commit(HEAD, "x")],
+                    [
+                        {
+                            "filename": "tools/new.py",
+                            "status": "renamed",
+                            "previous_filename": "docs/old.py",
+                        }
+                    ],
+                )
+            }
+        )
+        approvers = _evidence(
+            _snapshot(replies), codeowners="* @ktogias\n/docs/ @ktogias\n"
+        )["authorities"]["required_approvers"]
+        self.assertEqual(["ktogias"], approvers)
+        # The old location's owners count too: one off the roster fails the run.
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot, codeowners="* @ktogias\n/docs/ @stranger\n")
+
+    def test_a_failed_roster_names_the_first_path_in_order(self) -> None:
+        """Claude on #413: a rename's two paths are visited in sorted order, so
+        the message does not depend on set order."""
+        for n in range(10):
+            with self.subTest(n=n):
+                new, old = f"z{n}/new.py", f"a{n}/old.py"
+                replies = _replies(
+                    **{
+                        COMPARE: _comparison(
+                            [_commit(HEAD, "x")],
+                            [
+                                {
+                                    "filename": new,
+                                    "status": "renamed",
+                                    "previous_filename": old,
+                                }
+                            ],
+                        )
+                    }
+                )
+                snapshot = _snapshot(replies)
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, f"of {old} is"
+                ):
+                    _evidence(snapshot, codeowners="* @stranger\n")
+
+    def test_a_truncated_description_cannot_vouch_for_its_change_control(self) -> None:
+        """CodeAnt on #413: a cut body may have lost part of its section."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY + "x" * 70_000
+        snapshot = _snapshot(replies)
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(snapshot)
+
+    def test_a_subject_repository_not_in_owner_name_form_is_refused(self) -> None:
+        """Kilo on #424: the subject repository is a GitHub repository in
+        owner/name form, checked where it is read, so a malformed one is a labelled
+        refusal before any producer derives a key from it. The description lists no
+        Work Item, so no Work Item check can refuse it first."""
+        replies = _replies()
+        replies[f"{API}/pulls/300"][0]["body"] = BODY.replace(
+            "- Work Item: #407, #15\n", ""
+        )
+        for repository in (
+            "https://github.com/",
+            "https://github.com/ktogias",
+            "https://github.com/ktogias/",
+            "https://github.com//gnostoa",
+            "https://github.com/ktogias/gnostoa/extra",
+            "https://github.com/ktogias/..",
+            # Not GitHub's, though in owner/name form.
+            "ktogias/gnostoa",
+            "https://gitlab.com/ktogias/gnostoa",
+        ):
+            with self.subTest(repository):
+                snapshot = _snapshot(replies)
+                snapshot["subject"]["repository"] = repository
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "the subject repository is not a GitHub repository",
+                ):
+                    _evidence(snapshot)
+
+    def test_incomplete_conversation_or_files_fail_the_run(self) -> None:
+        for source in ("conversation", "files", "subject"):
+            with self.subTest(source=source):
+                snapshot = _snapshot()
+                snapshot["coverage"][source]["status"] = "PARTIAL"
+                with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                    _evidence(snapshot)
+
+    def test_a_snapshot_without_the_merge_evidence_fields_is_refused(self) -> None:
+        adapter = adapter_fixture()
+        plain = adapter.collect_snapshot(
+            paged_fake_fixture(complete_replies_fixture(API)),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(plain)
+        unmarked = _snapshot()
+        del unmarked["conversation"][0]["edited"]
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            _evidence(unmarked)
+
+
+class CommandTests(unittest.TestCase):
+    def test_the_command_writes_the_evidence_document(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            code, out, err = _run(_project(Path(directory)), json.dumps(_snapshot()))
+        self.assertEqual(0, code, err)
+        self.assertEqual(HEAD, json.loads(out)["subject"]["head_commit"])
+
+    def test_a_failed_run_exits_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            for text in ("[]", "not json", json.dumps({"schema_version": "x"})):
+                with self.subTest(text=text):
+                    self.assertEqual(2, _run(project, text)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            missing = _project(Path(directory), authorities=False)
+            self.assertEqual(2, _run(missing, json.dumps(_snapshot()))[0])
+
+    def test_the_command_refuses_inconsistent_producer_routes(self) -> None:
+        """cubic on #424: the one-producer rule (G1) is the command's, not only the
+        tests'. Against the protected target's declaration, a manifest that also
+        claims a readback item, one that leaves a declared item without a
+        producer, or no declaration at all, fails the run."""
+        overlap = copy.deepcopy(REQUIRED_CHECKS)
+        overlap["requirements"]["sonarcloud"]["issue-inventory"] = {
+            "app_id": ACTIONS,
+            "name": "SonarCloud Inventory",
+        }
+        gap = copy.deepcopy(REQUIRED_CHECKS)
+        del gap["requirements"]["sonarcloud"]
+        for name, manifest, declaration, message in (
+            ("an overlap", overlap, True, "has two producers"),
+            ("a gap", gap, True, "has no producer"),
+            ("no declaration", REQUIRED_CHECKS, False, "assurance"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                project = _project(Path(directory))
+                (project / "policy" / "merge-required-checks.yaml").write_text(
+                    yaml.safe_dump(manifest), encoding="utf-8"
+                )
+                if not declaration:
+                    (project / "policy" / "assurance-evidence.yaml").unlink()
+                code, _, err = _run(project, json.dumps(_snapshot()))
+                self.assertEqual(2, code, err)
+                self.assertIn(message, err)
+
+    def test_the_command_s_evidence_is_the_shared_function_s(self) -> None:
+        """#426 round 2: the guarded merge rebuilds the evidence through the function
+        the command calls, from the same protected inputs. A factor, not a copy."""
+        # Each case's exit is exact (CodeAnt on #426): an unrelated failure of the
+        # command never passes for the malformed bundle's.
+        for analyzer, expected in ((None, 0), ({"schema": "not a bundle"}, 2)):
+            with (
+                self.subTest(analyzer=analyzer),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                project = _project(Path(directory))
+                snapshot = _snapshot()
+                options: list[str] = []
+                if analyzer is not None:
+                    (project / "bundle.json").write_text(
+                        json.dumps(analyzer), encoding="utf-8"
+                    )
+                    options = ["--analyzer-readback", "bundle.json"]
+                code, out, err = _run(project, json.dumps(snapshot), *options)
+                self.assertEqual(expected, code, err)
+                if code != 0:
+                    with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+                        merge_evidence_github.evidence_for(
+                            snapshot, project_root=project, analyzer_readback=analyzer
+                        )
+                    continue
+                self.assertEqual(
+                    json.loads(out),
+                    json.loads(
+                        json.dumps(
+                            merge_evidence_github.evidence_for(
+                                snapshot,
+                                project_root=project,
+                                analyzer_readback=analyzer,
+                            )
+                        )
+                    ),
+                )
+
+    def test_the_knowledge_cli_routes_merge_evidence(self) -> None:
+        from tools import cli
+
+        self.assertIs(merge_evidence_github.main, cli.COMMANDS["merge-evidence"][1])
+
+
+def _command_evidence(replies: dict[str, tuple[Any, dict[str, str]]]) -> dict[str, Any]:
+    """The evidence document `knowledge merge-evidence` writes for a snapshot of
+    these replies, read with the protected target's manifest."""
+
+    with tempfile.TemporaryDirectory() as directory:
+        code, out, err = _run(_project(Path(directory)), json.dumps(_snapshot(replies)))
+    if code != 0:
+        raise AssertionError(f"merge-evidence failed: {err}")
+    document: dict[str, Any] = json.loads(out)
+    return document
+
+
+def _receipt_statuses(evidence: dict[str, Any]) -> dict[tuple[str, str], str]:
+    return {
+        (r["requirement"], item): r["status"]
+        for r in evidence["receipts"]
+        for item in r["coverage"]
+    }
+
+
+class CheckReceiptTests(unittest.TestCase):
+    """1b.3b-1 (#407, 6096776222): the declaration's check items get receipts from
+    the head's check runs, as the manifest names them."""
+
+    def test_each_observed_check_gives_a_receipt_for_its_item(self) -> None:
+        evidence = _command_evidence(_replies())
+        expected = {("verification-checks", n): "COMPLETE" for n in REQUIRED}
+        expected[("codeql", "codeql")] = "COMPLETE"
+        self.assertEqual(expected, _receipt_statuses(evidence))
+        for receipt in evidence["receipts"]:
+            with self.subTest(receipt=receipt["coverage"]):
+                self.assertEqual("gnostoa-evidence-receipt/v1", receipt["schema"])
+                self.assertEqual(evidence["subject"], receipt["subject"])
+                self.assertEqual(1, len(receipt["coverage"]))
+                self.assertEqual("success", receipt["provenance"]["conclusion"])
+
+    def test_the_check_requirements_complete_and_the_others_stay_missing(
+        self,
+    ) -> None:
+        evidence = _command_evidence(_replies())
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        verdict = merge_admission.evaluate(
+            evidence, declaration=declaration, change_policy=_policy()
+        )
+        statuses = {
+            r["id"]: r["status"] for r in verdict["completeness"]["requirements"]
+        }
+        self.assertEqual("COMPLETE", statuses["verification-checks"])
+        self.assertEqual("COMPLETE", statuses["codeql"])
+        self.assertEqual("MISSING", statuses["analyzer-readback"])
+        self.assertEqual("MISSING", statuses["sonarcloud"])
+        self.assertIn("M2-M8", _failed(evidence))
+
+    def test_a_check_s_state_decides_its_receipt(self) -> None:
+        """I10: a green check that did not run is not evidence."""
+        cases: dict[str, tuple[dict[str, Any], str]] = {
+            "skipped": ({"conclusion": "skipped"}, "SKIPPED"),
+            "neutral": ({"conclusion": "neutral"}, "SKIPPED"),
+            "failed": ({"conclusion": "failure"}, "INCOMPLETE"),
+            "cancelled": ({"conclusion": "cancelled"}, "INCOMPLETE"),
+            "pending": (
+                {"conclusion": None, "status": "in_progress", "completed_at": None},
+                "INCOMPLETE",
+            ),
+            # A run that has not completed is not evidence, whatever it claims.
+            "not completed but claiming success": (
+                {"status": "in_progress", "completed_at": None},
+                "INCOMPLETE",
+            ),
+        }
+        for name, (change, status) in cases.items():
+            with self.subTest(name):
+                runs = _green_checks()
+                runs[1].update(change)
+                evidence = _command_evidence(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertEqual(
+                    status, _receipt_statuses(evidence)[("verification-checks", "fast")]
+                )
+                self.assertIn("M2-M8", _failed(evidence))
+
+    def test_a_check_that_is_absent_or_from_another_app_gives_no_receipt(
+        self,
+    ) -> None:
+        for name, runs in (
+            ("absent", _green_checks()[1:]),
+            ("another app", [_check_run(40, "policy", 1001), *_green_checks()[1:]]),
+        ):
+            with self.subTest(name):
+                evidence = _command_evidence(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertNotIn(
+                    ("verification-checks", "policy"), _receipt_statuses(evidence)
+                )
+
+    def test_an_ambiguous_latest_run_is_partial(self) -> None:
+        runs = [
+            *_green_checks(),
+            _check_run(60, "smoke", ACTIONS, conclusion="failure"),
+        ]
+        evidence = _command_evidence(
+            _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+        )
+        self.assertEqual(
+            "PARTIAL", _receipt_statuses(evidence)[("verification-checks", "smoke")]
+        )
+
+    def test_an_incomplete_checks_read_marks_every_item(self) -> None:
+        replies = _replies(
+            **{
+                CHECK_RUNS: (
+                    {"check_runs": _green_checks()},
+                    {"link": '<https://api.github.com/page9/check-runs>; rel="next"'},
+                ),
+                "https://api.github.com/page9/check-runs": ({"message": "x"}, {}),
+            }
+        )
+        statuses = _receipt_statuses(_command_evidence(replies))
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses))
+        self.assertTrue(all(s != "COMPLETE" for s in statuses.values()), statuses)
+
+    def test_gnostoa_s_declared_items_each_have_one_producer(self) -> None:
+        """G1 (PAO 6119736075): every (requirement, item) pair the declaration
+        names has exactly one producer, the check manifest or the analyzer
+        readback, and neither names a pair it does not declare."""
+        manifest = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        checks = "gnostoa.merge-evidence-github/check-runs"
+        readback = "gnostoa.merge-evidence-github/analyzer-readback"
+        self.assertEqual(
+            {
+                **{("verification-checks", n): checks for n in REQUIRED},
+                ("codeql", "codeql"): checks,
+                ("analyzer-readback", "codacy"): readback,
+                ("project-risk-readback", "project-diff"): readback,
+                ("project-risk-readback", "project-full"): readback,
+                ("sonarcloud", "quality-gate"): checks,
+                ("sonarcloud", "issue-inventory"): readback,
+            },
+            merge_evidence_github.producer_routes(declaration, manifest),
+        )
+
+    def test_a_declared_pair_needs_exactly_one_producer(self) -> None:
+        """G1: a gap, an overlap and an undeclared pair are each refused."""
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        manifest = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        gap = copy.deepcopy(declaration)
+        gap["requirements"][0]["coverage"].append("unproduced")
+        overlap = copy.deepcopy(manifest)
+        overlap["sonarcloud"]["issue-inventory"] = "github-check-run:12526:Inventory"
+        undeclared_item = copy.deepcopy(manifest)
+        undeclared_item["codeql"]["extra"] = "github-check-run:57789:Extra"
+        undeclared_requirement = copy.deepcopy(manifest)
+        undeclared_requirement["other"] = {"item": "github-check-run:1:Other"}
+        for name, (documents, message) in {
+            "a gap": ((gap, manifest), "has no producer"),
+            "an overlap": ((declaration, overlap), "has two producers"),
+            "an undeclared item": ((declaration, undeclared_item), "is not declared"),
+            "an undeclared requirement": (
+                (declaration, undeclared_requirement),
+                "is not declared",
+            ),
+        }.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, message
+                ),
+            ):
+                merge_evidence_github.producer_routes(*documents)
+
+    def test_the_manifest_has_a_closed_contract(self) -> None:
+        def changed(**change: Any) -> dict[str, Any]:
+            return {**copy.deepcopy(REQUIRED_CHECKS), **change}
+
+        policy = {"app_id": ACTIONS, "name": "policy"}
+        for name, document in (
+            ("unknown key", changed(extra=1)),
+            ("schema version", changed(schema_version="2.0")),
+            ("no requirement", changed(requirements={})),
+            ("no item", changed(requirements={"codeql": {}})),
+            ("bad requirement", changed(requirements={"Codeql": {"x": policy}})),
+            ("bad item", changed(requirements={"codeql": {"Code QL": policy}})),
+            (
+                "unknown check key",
+                changed(requirements={"codeql": {"x": {**policy, "slug": "y"}}}),
+            ),
+            (
+                "app id",
+                changed(requirements={"codeql": {"x": {**policy, "app_id": 0}}}),
+            ),
+            (
+                "app id as text",
+                changed(requirements={"codeql": {"x": {**policy, "app_id": "15368"}}}),
+            ),
+            ("name", changed(requirements={"codeql": {"x": {**policy, "name": ""}}})),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_two_items_may_not_name_one_check(self) -> None:
+        """The owner's selection for gr-415-shared-check-key (#15, 6099845892):
+        each (requirement, coverage item) names its own `{app_id, name}`, within
+        and across requirements, so one run cannot satisfy two declared checks."""
+
+        fast = {"app_id": ACTIONS, "name": "fast"}
+
+        def requirements(**change: Any) -> dict[str, Any]:
+            return {**copy.deepcopy(REQUIRED_CHECKS), "requirements": change}
+
+        for name, document in (
+            ("within a requirement", requirements(checks={"a": fast, "b": fast})),
+            ("across requirements", requirements(one={"a": fast}, two={"b": fast})),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "github-check-run:15368:fast",
+                ),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+        for name, document in (
+            ("Gnostoa's manifest", copy.deepcopy(REQUIRED_CHECKS)),
+            (
+                "the same name from another app",
+                requirements(one={"a": fast}, two={"b": {**fast, "app_id": CODEQL}}),
+            ),
+            (
+                "another name from the same app",
+                requirements(checks={"a": fast, "b": {**fast, "name": "smoke"}}),
+            ),
+        ):
+            with self.subTest(name):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_an_unread_commit_status_read_withholds_the_check_receipts(
+        self,
+    ) -> None:
+        """The receipts follow L1's combined checks coverage, commit statuses
+        included: an incomplete source can only deny, and narrowing it would be a
+        coverage-boundary decision (#407, 6097059408; the owner-requested analysis
+        6096945431 on #415)."""
+        statuses = f"{API}/commits/{HEAD}/statuses?per_page=100"
+        evidence = _command_evidence(_replies(**{statuses: ({"message": "x"}, {})}))
+        statuses_by_item = _receipt_statuses(evidence)
+        # Every manifest item: four verification checks, CodeQL and SonarCloud's gate.
+        self.assertEqual(6, len(statuses_by_item))
+        self.assertTrue(
+            all(s != "COMPLETE" for s in statuses_by_item.values()), statuses_by_item
+        )
+
+    def test_several_runs_of_one_check_count_only_if_all_succeeded(self) -> None:
+        """Codex on #415: GitHub lists every run with the same app and name from
+        different check suites, so a later success must not hide another current
+        failing or pending run. CodeAnt's overlap, an older run completing after a
+        newer one started, is the same case."""
+        cases = {
+            "a failure and a later success": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    conclusion="failure",
+                    completed_at="2026-09-19T16:40:25Z",
+                ),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "PARTIAL",
+            ),
+            "an older success completing after a newer pending run started": (
+                _check_run(
+                    41,
+                    "fast",
+                    ACTIONS,
+                    started_at="2026-09-19T16:40:00Z",
+                    completed_at="2026-09-19T16:40:40Z",
+                ),
+                _check_run(
+                    61,
+                    "fast",
+                    ACTIONS,
+                    conclusion=None,
+                    status="in_progress",
+                    completed_at=None,
+                    started_at="2026-09-19T16:40:30Z",
+                ),
+                "PARTIAL",
+            ),
+            "two successes": (
+                _check_run(41, "fast", ACTIONS, completed_at="2026-09-19T16:40:25Z"),
+                _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z"),
+                "COMPLETE",
+            ),
+            # A run on another commit is not this head's evidence.
+            "a failure on another head": (
+                {
+                    **_check_run(41, "fast", ACTIONS, conclusion="failure"),
+                    "head_sha": PREVIOUS,
+                },
+                _check_run(61, "fast", ACTIONS),
+                "COMPLETE",
+            ),
+        }
+        for name, (first, second, status) in cases.items():
+            with self.subTest(name):
+                runs = [run for run in _green_checks() if run["name"] != "fast"]
+                evidence = _command_evidence(
+                    _replies(
+                        **{CHECK_RUNS: ({"check_runs": [*runs, first, second]}, {})}
+                    )
+                )
+                self.assertEqual(
+                    status, _receipt_statuses(evidence)[("verification-checks", "fast")]
+                )
+
+    def test_a_check_without_a_conclusion_key_reads_as_null(self) -> None:
+        """Claude on #415: a check that omits `conclusion`, which the reconciler's
+        normalizer reads as null, gives an INCOMPLETE receipt, not a crash."""
+        snapshot = _snapshot()
+        [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+        del fast["conclusion"]
+        evidence = _evidence(snapshot)
+        self.assertEqual(
+            "INCOMPLETE", _receipt_statuses(evidence)[("verification-checks", "fast")]
+        )
+
+    def test_a_malformed_check_is_an_invalid_snapshot(self) -> None:
+        """The owner's selection for gr-415-check-error-contract (#15, 6100292562):
+        the normalizer's error from a malformed check becomes the adapter's
+        invalid-snapshot error, keeping its cause."""
+
+        def without_key(check: dict[str, Any]) -> None:
+            del check["key"]
+
+        def conclusion_not_text(check: dict[str, Any]) -> None:
+            check["conclusion"] = 1
+
+        for name, change, reason in (
+            ("no key", without_key, "check.key"),
+            ("a conclusion that is not text", conclusion_not_text, "check.conclusion"),
+        ):
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                change(fast)
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    f"^the snapshot is invalid: {re.escape(reason)}",
+                ) as raised:
+                    _evidence(snapshot)
+                self.assertIsInstance(
+                    raised.exception.__cause__,
+                    review_reconcile.ReconciliationInputError,
+                )
+
+    def test_only_a_github_snapshot_gives_evidence(self) -> None:
+        """The owner's review 5478389359 on #413: a snapshot from another provider,
+        otherwise well-formed, fails the run."""
+        snapshot = _snapshot()
+        snapshot["provider"]["id"] = "gitlab"
+        with tempfile.TemporaryDirectory() as directory:
+            code, _, err = _run(_project(Path(directory)), json.dumps(snapshot))
+        self.assertEqual(2, code)
+        self.assertIn("github", err)
+
+
+class _Shifting:
+    """The fake provider, except that each read of one URL answers the next of
+    its replies, as a provider whose state moves between L1's passes would."""
+
+    def __init__(
+        self,
+        replies: dict[str, tuple[Any, dict[str, str]]],
+        url: str,
+        answers: list[tuple[Any, dict[str, str]]],
+    ) -> None:
+        self._inner = paged_fake_fixture(replies)
+        self._url = url
+        self._answers = answers
+        self.calls = self._inner.calls
+
+    def get(self, url: str) -> tuple[Any, dict[str, str]]:
+        if url != self._url:
+            return self._inner.get(url)
+        self.calls.append(url)
+        return self._answers[min(self.calls.count(url), len(self._answers)) - 1]
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        return self._inner.graphql(query, variables)
+
+
+def _manifest_statuses(snapshot: dict[str, Any]) -> dict[tuple[str, str], str]:
+    """Every receipt status the protected target's manifest gives a snapshot."""
+
+    evidence = merge_evidence_github.evidence_from_snapshot(
+        snapshot,
+        authorities=_authorities(),
+        change_policy=_policy(),
+        codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+        decisions=merge_evidence_github.load_decisions(ROOT),
+        required_checks=merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        ),
+    )
+    return _receipt_statuses(evidence)
+
+
+def _native(name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """An observed native fixture's default check-run view and check suites, on
+    this frame's head. The fixture leaves each entry's head out, since a bare
+    commit id reads as a secret candidate; its source URLs name the observed one.
+    The head is the only field added."""
+
+    document = json.loads(
+        (ROOT / "tests" / "fixtures" / "check_suites" / name).read_text(
+            encoding="utf-8"
+        )
+    )
+    if document["provenance"]["kind"] != "observed native":
+        raise AssertionError(f"{name} is not an observed native fixture")
+    runs = [{**run, "head_sha": HEAD} for run in document["check_runs"]]
+    suites = [{**suite, "head_sha": HEAD} for suite in document["check_suites"]]
+    return runs, suites, document["check_suites_total_count"]
+
+
+class SuiteStateGateTests(unittest.TestCase):
+    """Option S (#407, owner 6143702096, handoff 6143841830): a required run counts
+    only when it succeeded and its own check suite, read on the exact head, is
+    completed. Each case says whether its state was observed natively, is
+    documented by GitHub, or is synthetic."""
+
+    @staticmethod
+    def _fast(
+        runs: list[dict[str, Any]] | None = None,
+        suites: list[dict[str, Any]] | None = None,
+    ) -> str:
+        replies = _replies(
+            **{
+                CHECK_RUNS: (
+                    {"check_runs": _green_checks() if runs is None else runs},
+                    {},
+                ),
+                CHECK_SUITES: _suites(_green_suites() if suites is None else suites),
+            }
+        )
+        return _receipt_statuses(_command_evidence(replies))[
+            ("verification-checks", "fast")
+        ]
+
+    @staticmethod
+    def _with_fast_in(suite: int | None) -> list[dict[str, Any]]:
+        runs = [run for run in _green_checks() if run["name"] != "fast"]
+        return [*runs, _check_run(41, "fast", ACTIONS, suite=suite)]
+
+    def test_merge_evidence_reads_the_head_s_check_suites(self) -> None:
+        """Synthetic: L1 records each suite's identity and state, and each check
+        run's suite."""
+        snapshot = _snapshot()
+        self.assertIn("check_suites", snapshot)
+        self.assertEqual(
+            [
+                {"id": suite, "app_id": app, "head_commit": HEAD, "status": "completed"}
+                for app, suite in SUITE_OF.items()
+            ],
+            snapshot["check_suites"],
+        )
+        self.assertEqual("COMPLETE", snapshot["coverage"]["check_suites"]["status"])
+        for check in snapshot["checks"]:
+            if check["key"].startswith(f"github-check-run:{ACTIONS}:"):
+                with self.subTest(check=check["name"]):
+                    self.assertEqual(SUITE_OF[ACTIONS], check["suite"])
+
+    def test_the_advisory_snapshot_reads_no_check_suites(self) -> None:
+        """L1's current-state advisory keeps its reads (#407, 1b.3a)."""
+        fake = paged_fake_fixture(_replies())
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        self.assertNotIn("check_suites", snapshot)
+        self.assertNotIn(CHECK_SUITES, fake.calls)
+
+    def test_a_queued_suite_beside_its_unchanged_success_is_not_complete(
+        self,
+    ) -> None:
+        """Documented: a rerequested run's suite is reset to queued and its
+        conclusion cleared, while the run itself is not updated (GitHub's
+        "Rerequest a check run"; the PAO, 6143194424)."""
+        suites = _green_suites()
+        suites[0].update({"status": "queued", "conclusion": None})
+        self.assertEqual("INCOMPLETE", self._fast(suites=suites))
+
+    def test_sonarcloud_s_queued_suite_withholds_its_passed_gate(self) -> None:
+        """Documented, for the producer whose runs are rerequestable (native flags on
+        `63fc652`'s suite 103916552807): the passed gate stands unchanged while its
+        suite is queued."""
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        runs = [*_green_checks(), gate]
+        for status, expected in (("completed", "COMPLETE"), ("queued", "INCOMPLETE")):
+            with self.subTest(status):
+                suites = _green_suites()
+                suites[2]["status"] = status
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            CHECK_RUNS: ({"check_runs": runs}, {}),
+                            CHECK_SUITES: _suites(suites),
+                        }
+                    )
+                )
+                self.assertEqual(
+                    expected,
+                    _manifest_statuses(snapshot)[("sonarcloud", "quality-gate")],
+                )
+
+    def test_a_suite_whose_newer_attempt_is_pending_is_not_complete(self) -> None:
+        """Synthetic: the default view still shows the completed earlier attempt
+        while its suite runs a newer one. Whether GitHub ever shows this is the
+        live Actions proof the handoff requires before readiness."""
+        suites = _green_suites()
+        suites[0].update({"status": "in_progress", "conclusion": None})
+        self.assertEqual("INCOMPLETE", self._fast(suites=suites))
+
+    def test_a_run_whose_suite_is_not_proven_is_partial(self) -> None:
+        """Synthetic: a run whose suite is missing, unlisted, listed twice, on
+        another head or another App's is not bound to a completed suite of its
+        own."""
+        on_another_head = [*_green_suites(), _suite(9101, ACTIONS, head_sha=PREVIOUS)]
+        listed_twice = [*_green_suites(), _suite(SUITE_OF[ACTIONS], ACTIONS)]
+        cases: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {
+            "no suite metadata": (self._with_fast_in(None), _green_suites()),
+            "a suite that is not listed": (self._with_fast_in(9100), _green_suites()),
+            "a suite listed twice": (_green_checks(), listed_twice),
+            "a suite on another head": (self._with_fast_in(9101), on_another_head),
+            "another App's suite": (
+                self._with_fast_in(SUITE_OF[CODEQL]),
+                _green_suites(),
+            ),
+        }
+        for name, (runs, suites) in cases.items():
+            with self.subTest(name):
+                self.assertEqual("PARTIAL", self._fast(runs, suites))
+
+    def test_a_serialized_run_s_suite_must_be_an_exact_suite_id(self) -> None:
+        """Synthetic serialized input (the PAO on #428, 6144886026): the adapter also
+        reads a snapshot from a file, so a run's suite must be the exact integer id of
+        a listed suite. A missing id on both sides, or one that only compares equal,
+        as 9001.0 and True do, never makes the item COMPLETE; refusing the snapshot is
+        as good."""
+
+        def outcome(snapshot: dict[str, Any]) -> str:
+            try:
+                return _manifest_statuses(snapshot)[("verification-checks", "fast")]
+            except merge_evidence_github.MergeEvidenceError:
+                return "REFUSED"
+
+        cases: dict[str, tuple[object, object]] = {
+            "no suite on the run, a null id on the entry": (None, None),
+            "no suite on the run, no id on the entry": (None, "drop"),
+            "a fractional suite on the run": (9001.0, SUITE_OF[ACTIONS]),
+            "a boolean suite on the run": (True, 1),
+        }
+        for name, (run_suite, entry_id) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                [fast] = [c for c in snapshot["checks"] if c.get("name") == "fast"]
+                fast["suite"] = run_suite
+                [entry] = [
+                    s for s in snapshot["check_suites"] if s["id"] == SUITE_OF[ACTIONS]
+                ]
+                if entry_id == "drop":
+                    del entry["id"]
+                else:
+                    entry["id"] = entry_id
+                self.assertNotEqual("COMPLETE", outcome(snapshot))
+
+    def test_a_malformed_suite_reference_is_a_source_error(self) -> None:
+        """Synthetic: a run whose suite reference is not a suite id is malformed
+        provider data, so the checks read is not complete."""
+        for name, value in (("a text id", {"id": "9001"}), ("not an object", 9001)):
+            with self.subTest(name):
+                runs = _green_checks()
+                runs[1]["check_suite"] = value
+                snapshot = _snapshot(
+                    _replies(**{CHECK_RUNS: ({"check_runs": runs}, {})})
+                )
+                self.assertNotEqual(
+                    "COMPLETE", snapshot["coverage"]["checks"]["status"]
+                )
+
+    def test_an_incomplete_suites_read_marks_every_item(self) -> None:
+        """Synthetic, and GitHub's documented bound: with more than 1,000 suites on a
+        reference, check runs are listed only from its 1,000 most recent, so a head
+        past that count is not proven complete."""
+        page_error = {
+            CHECK_SUITES: (
+                {"total_count": 4, "check_suites": _green_suites()},
+                {"link": '<https://api.github.com/page9/check-suites>; rel="next"'},
+            ),
+            "https://api.github.com/page9/check-suites": ({"message": "x"}, {}),
+        }
+        cases: dict[str, dict[str, Any]] = {
+            "a page that fails": page_error,
+            "fewer listed than counted": {
+                CHECK_SUITES: _suites(_green_suites(), total=4)
+            },
+            "no count": {CHECK_SUITES: ({"check_suites": _green_suites()}, {})},
+            # 3.0 == 3, so only the count's type refuses it.
+            "a count that is not an integer": {
+                CHECK_SUITES: (
+                    {"total_count": 3.0, "check_suites": _green_suites()},
+                    {},
+                )
+            },
+            "a page that is not an object": {CHECK_SUITES: (_green_suites(), {})},
+            "a page without its list": {CHECK_SUITES: ({"total_count": 3}, {})},
+            "past the provider's bound": self._listed_suites(1001),
+        }
+        for name, changes in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot(_replies(**changes))
+                self.assertNotEqual(
+                    "COMPLETE",
+                    snapshot["coverage"].get("check_suites", {}).get("status"),
+                )
+                statuses = _manifest_statuses(snapshot)
+                checks = {
+                    k: s for k, s in statuses.items() if k[0] != "analyzer-readback"
+                }
+                self.assertTrue(checks)
+                self.assertTrue(all(s != "COMPLETE" for s in checks.values()), checks)
+
+    @staticmethod
+    def _listed_suites(count: int) -> dict[str, Any]:
+        """`count` suites over pages of 100, every one completed, the head's own
+        among them."""
+        suites = [
+            *_green_suites(),
+            *(_suite(20000 + i, 1001) for i in range(count - 3)),
+        ]
+        pages = [suites[start : start + 100] for start in range(0, count, 100)]
+        replies: dict[str, Any] = {}
+        url = CHECK_SUITES
+        for number, listed in enumerate(pages):
+            following = f"https://api.github.com/page{number + 2}/check-suites"
+            last = number == len(pages) - 1
+            headers = {} if last else {"link": f'<{following}>; rel="next"'}
+            replies[url] = ({"total_count": count, "check_suites": listed}, headers)
+            url = following
+        return replies
+
+    def test_exactly_the_provider_s_bound_is_complete(self) -> None:
+        """Documented: check runs go unlisted only past 1,000 suites, so a head
+        with exactly 1,000, all listed and counted, is complete (Codex on #428)."""
+        snapshot = _snapshot(_replies(**self._listed_suites(1000)))
+        self.assertEqual("COMPLETE", snapshot["coverage"]["check_suites"]["status"])
+        self.assertEqual(
+            "COMPLETE", _manifest_statuses(snapshot)[("verification-checks", "fast")]
+        )
+
+    def test_a_malformed_suite_entry_is_an_invalid_snapshot(self) -> None:
+        """Synthetic: a snapshot whose suite entry is not as L1 records one is
+        refused as invalid, as a malformed check is (CodeAnt on #428)."""
+        cases: dict[str, Any] = {
+            "a null entry": None,
+            "a text id": {
+                "id": "9001",
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": "completed",
+            },
+            "no status": {"id": 9001, "app_id": ACTIONS, "head_commit": HEAD},
+            "a null status": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": HEAD,
+                "status": None,
+            },
+            "a null head": {
+                "id": 9001,
+                "app_id": ACTIONS,
+                "head_commit": None,
+                "status": "completed",
+            },
+        }
+        for name, entry in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot()
+                snapshot["check_suites"][0] = entry
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError, "the snapshot is invalid"
+                ):
+                    _manifest_statuses(snapshot)
+
+    def test_suites_that_move_between_passes_are_not_complete(self) -> None:
+        """Synthetic: a suite read whose state changes between L1's passes is not a
+        stable observation, so L1 certifies nothing and the adapter gives no
+        evidence at all."""
+        moving = _green_suites()
+        moving[0].update({"status": "in_progress", "conclusion": None})
+        fake = _Shifting(
+            _replies(),
+            CHECK_SUITES,
+            [_suites(_green_suites()), _suites(moving), _suites(_green_suites())],
+        )
+        snapshot = adapter_fixture().collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+        self.assertIn(CHECK_SUITES, fake.calls)
+        self.assertEqual("UNSTABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual(
+            {"status": "PARTIAL", "reason": "unstable_observation_cut"},
+            {
+                key: snapshot["coverage"]["check_suites"][key]
+                for key in ("status", "reason")
+            },
+        )
+        with self.assertRaisesRegex(
+            merge_evidence_github.MergeEvidenceError, "not COMPLETE"
+        ):
+            _manifest_statuses(snapshot)
+
+    def test_completed_suites_keep_their_successful_runs_complete(self) -> None:
+        """Controls: a completed suite of the run's own App on the head keeps a
+        success COMPLETE, whatever the suite concluded from its other runs, and a
+        re-run that recovered within its suite counts."""
+        failed_elsewhere = _green_suites()
+        failed_elsewhere[0]["conclusion"] = "failure"
+        recovered = [run for run in _green_checks() if run["name"] != "fast"]
+        recovered.append(
+            _check_run(61, "fast", ACTIONS, completed_at="2026-09-19T16:40:35Z")
+        )
+        # Observed native: GitHub creates a suite on every push for each installed
+        # App, and one that never runs stays queued with no run (`63fc652`: 16 such).
+        idle = [
+            *_green_suites(),
+            _suite(9500, 811515, status="queued", conclusion=None),
+        ]
+        for name, (runs, suites) in {
+            "a completed suite": (None, None),
+            "a suite that concluded in failure from another run": (
+                None,
+                failed_elsewhere,
+            ),
+            "a re-run that recovered within its suite": (recovered, None),
+            "another App's queued suite without runs": (None, idle),
+        }.items():
+            with self.subTest(name):
+                self.assertEqual("COMPLETE", self._fast(runs, suites))
+
+    def test_every_suite_behind_an_item_gates_it(self) -> None:
+        """Synthetic: two workflow runs on one head each post a successful run of
+        the check, and one of their suites is queued again. Every run's suite gates
+        the item, in whichever order the provider lists them."""
+        runs = [run for run in _green_checks() if run["name"] != "fast"]
+        for name, order in (
+            ("queued first", (9001, 9201)),
+            ("queued last", (9201, 9001)),
+        ):
+            with self.subTest(name):
+                suites = [_suite(9201, ACTIONS), *_green_suites()]
+                suites[1].update({"status": "queued", "conclusion": None})
+                both = [
+                    *runs,
+                    *(
+                        _check_run(41 + i, "fast", ACTIONS, suite=s)
+                        for i, s in enumerate(order)
+                    ),
+                ]
+                self.assertEqual("INCOMPLETE", self._fast(both, suites))
+
+    def test_a_gated_receipt_is_dated_by_its_suite_read(self) -> None:
+        """Synthetic: a receipt the suite gate lowers is decided by the suite's state
+        at the snapshot's cut, so it carries that time, as a receipt an incomplete
+        read marks does; a COMPLETE one keeps its run's (CodeAnt on #428)."""
+        queued = _green_suites()
+        queued[0].update({"status": "queued", "conclusion": None})
+        cases = {
+            "a queued suite": (_green_checks(), queued, "INCOMPLETE", None),
+            "an unlisted suite": (
+                self._with_fast_in(9100),
+                _green_suites(),
+                "PARTIAL",
+                None,
+            ),
+            "a completed suite": (
+                _green_checks(),
+                _green_suites(),
+                "COMPLETE",
+                "2026-09-19T16:40:30Z",
+            ),
+        }
+        for name, (runs, suites, status, run_time) in cases.items():
+            with self.subTest(name):
+                snapshot = _snapshot(
+                    _replies(
+                        **{
+                            CHECK_RUNS: ({"check_runs": runs}, {}),
+                            CHECK_SUITES: _suites(suites),
+                        }
+                    )
+                )
+                evidence = merge_evidence_github.evidence_from_snapshot(
+                    snapshot,
+                    authorities=_authorities(),
+                    change_policy=_policy(),
+                    codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+                    decisions=merge_evidence_github.load_decisions(ROOT),
+                    required_checks=merge_evidence_github.load_required_checks(
+                        ROOT / "policy" / "merge-required-checks.yaml",
+                        project_root=ROOT,
+                    ),
+                )
+                [receipt] = [
+                    r for r in evidence["receipts"] if r["coverage"] == ["fast"]
+                ]
+                self.assertEqual(status, receipt["status"])
+                self.assertEqual(
+                    run_time or snapshot["observed_at"], receipt["observed_at"]
+                )
+
+    def test_a_failure_in_another_completed_suite_still_denies(self) -> None:
+        """Control: suites never weaken the all-must-pass rule across suites (Codex
+        on #415)."""
+        runs = [
+            *_green_checks(),
+            _check_run(61, "fast", ACTIONS, conclusion="failure", suite=9201),
+        ]
+        suites = [*_green_suites(), _suite(9201, ACTIONS, conclusion="failure")]
+        self.assertEqual("PARTIAL", self._fast(runs, suites))
+
+    def test_the_observed_native_rerun_and_split_suites(self) -> None:
+        """Observed native (`tests/fixtures/check_suites/`): #404's run
+        37835021142 re-ran within suite 102509822157, and `4893270f` holds a
+        cancelled suite with a failed `regression` beside a successful one."""
+        for name, expected in (
+            ("rerun-in-one-suite.json", "COMPLETE"),
+            ("failure-in-another-suite.json", "PARTIAL"),
+        ):
+            with self.subTest(name):
+                runs, suites, total = _native(name)
+                statuses = _receipt_statuses(
+                    _command_evidence(
+                        _replies(
+                            **{
+                                CHECK_RUNS: ({"check_runs": runs}, {}),
+                                CHECK_SUITES: _suites(suites, total=total),
+                            }
+                        )
+                    )
+                )
+                for item in REQUIRED:
+                    self.assertEqual(expected, statuses[("verification-checks", item)])
+
+
+class AuthoritiesTests(unittest.TestCase):
+    def test_the_declaration_has_a_closed_contract(self) -> None:
+        valid = {
+            "schema_version": "1.0",
+            "id": "example.merge-authorities",
+            "version": "0.1.0",
+            "declarer": DECLARER,
+            "human_approvers": ["ktogias"],
+        }
+        changes: tuple[dict[str, Any], ...] = (
+            {"extra": 1},
+            {"declarer": ""},
+            {"human_approvers": []},
+            {"human_approvers": ["ktogias", "ktogias"]},
+            {"human_approvers": "ktogias"},
+        )
+        for change in changes:
+            with (
+                self.subTest(change=change),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_authorities({**valid, **change})
+
+    def test_gnostoa_s_authorities_and_codeowners(self) -> None:
+        authorities = merge_evidence_github.load_authorities(
+            ROOT / "policy" / "merge-authorities.yaml", project_root=ROOT
+        )
+        self.assertEqual(DECLARER, authorities["declarer"])
+        self.assertEqual(["ktogias"], authorities["human_approvers"])
+        owners = merge_evidence_github.load_codeowners(ROOT)
+        for path in ("tools/merge_admission.py", ".github/workflows/verification.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(["@ktogias"], owners.owners(path))
+
+
+class GuardrailRegistrationTests(unittest.TestCase):
+    def test_every_test_in_this_module_is_registered_in_its_guardrail(self) -> None:
+        self.assertEqual(
+            set(), unregistered_tests(globals(), "tests/test_merge_evidence_github.py")
+        )
+        # The command's route is part of the entry point (cubic on #413).
+        self.assertIn("tools/cli.py", _merge_evidence_guardrail()["implementation"])
+
+
+class AnalyzerReceiptTests(unittest.TestCase):
+    """1b.3b-2, admitted by the owner (#407, 6101607240): the authenticated
+    analyzer readback gives the analyzer items their receipts, whatever its
+    findings, and its findings stay explicit in the evidence for M17."""
+
+    # Every item the readback gives, each named once: Codacy's, SonarCloud's
+    # inventory and the project inventory's two (DeepSource is retired, Decision 0130).
+    _READBACK_ITEMS = ("codacy", "issue-inventory", "project-diff", "project-full")
+
+    @staticmethod
+    def _statuses(bundle: dict[str, Any] | None) -> dict[str, str]:
+        # The readback's vendor item under `analyzer-readback`: Codacy's, DeepSource's
+        # own requirement being retired (#389 A0-MP1 slice 3; Decision 0130).
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {
+            item: s for (r, item), s in statuses.items() if r == "analyzer-readback"
+        }
+
+    @classmethod
+    def _items(cls, bundle: dict[str, Any]) -> dict[str, str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {
+            item: s for (_, item), s in statuses.items() if item in cls._READBACK_ITEMS
+        }
+
+    def test_a_bound_complete_bundle_gives_each_item_a_complete_receipt(self) -> None:
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"), self._statuses(_bundle())
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "findings": []},
+            _evidence(analyzer=_bundle())["analyzer_findings"],
+        )
+
+    def test_findings_leave_the_receipt_complete_and_stay_explicit(self) -> None:
+        suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
+        bundle = _bundle(
+            _inventory("DIFF", suppressed),
+            _inventory("FULL", FINDING),
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR),
+        )
+        self.assertEqual(
+            dict.fromkeys(self._READBACK_ITEMS, "COMPLETE"), self._items(bundle)
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            {
+                "coverage": "COMPLETE",
+                "findings": [
+                    {"item": "project-diff", **suppressed},
+                    {"item": "project-full", **FINDING},
+                ],
+            },
+            evidence["analyzer_findings"],
+        )
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
+
+    def test_a_finding_keeps_its_normalized_disposition_fields(self) -> None:
+        """The owner's re-admission (#417 6107601240): a finding keeps the tool,
+        range and native reference the readback normalized, and its category; its
+        provenance and native metadata stay in the bundle."""
+        rich = {
+            **FINDING,
+            "id": "issue-2",
+            "category": "antipattern",
+            "native_ref": "https://app.codacy.com/gh/ktogias/gnostoa/pull-requests/300",
+            "tool": {"id": "pylint", "name": "Pylint"},
+            "range": {
+                "start_line": 3,
+                "start_column": 1,
+                "end_line": 3,
+                "end_column": 9,
+            },
+        }
+        raw = {
+            **rich,
+            "provenance": [{"surface": "codacy-api-v3", "reference": "issue-2"}],
+            "native": {"issue_id": "issue-2"},
+        }
+        bundle = _bundle(
+            _readback("codacy", "DIFF", raw, FINDING),
+            _readback(*SONAR),
+            *_inventory_readbacks(),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            [
+                {"item": "codacy", **FINDING},
+                {"item": "codacy", **rich},
+            ],
+            evidence["analyzer_findings"]["findings"],
+        )
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
+
+    def test_a_bundle_not_bound_to_the_subject_gives_incomplete_receipts(self) -> None:
+        incomplete = _bundle(
+            subject_binding="INCOMPLETE", reason="GITHUB_SUBJECT_MISMATCH", readbacks=[]
+        )
+        del incomplete["github_projection"]
+        for name, bundle in (
+            ("an incomplete binding", incomplete),
+            ("another head", _bundle_for(head=PREVIOUS)),
+            ("another pull request", _bundle_for(pull=301)),
+            ("another repository", _bundle_for(repository="ktogias/other")),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    dict.fromkeys(ANALYZER_ITEMS, "INCOMPLETE"), self._statuses(bundle)
+                )
+                self.assertEqual(
+                    {"coverage": "INCOMPLETE", "findings": []},
+                    _evidence(analyzer=bundle)["analyzer_findings"],
+                )
+
+    def test_a_bundle_binds_only_a_pull_request(self) -> None:
+        """cubic on #417: the bundle's pull number names a pull request, so a change
+        request of another kind with the same id is not its subject."""
+        snapshot = _snapshot()
+        snapshot["subject"]["change_request"]["kind"] = "gitlab-merge-request"
+        evidence = _evidence(snapshot, analyzer=_bundle())
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "INCOMPLETE"),
+            {
+                item: status
+                for (record, item), status in _receipt_statuses(evidence).items()
+                if record == "analyzer-readback"
+            },
+        )
+        self.assertEqual(
+            {"coverage": "INCOMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+
+    def test_a_readback_s_own_status_is_its_receipt_s(self) -> None:
+        bundle = _bundle(
+            _inventory("DIFF"),
+            _inventory("FULL"),
+            _readback("codacy", "DIFF", status="UNAVAILABLE"),
+        )
+        self.assertEqual(
+            {
+                "project-diff": "COMPLETE",
+                "project-full": "COMPLETE",
+                "codacy": "UNAVAILABLE",
+            },
+            self._items(bundle),
+        )
+        self.assertEqual(
+            "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
+        )
+
+    def test_an_item_needs_its_own_kind_of_read(self) -> None:
+        """Codex on #417: a full item cannot be satisfied by diff-local evidence
+        (Decision 0091), nor the diff item by a full run it does not stand for."""
+        for name, readbacks, item in (
+            (
+                "a diff-local read as the full one",
+                (
+                    _inventory("DIFF"),
+                    _readback("gnostoa-inventory", "FULL", completeness="DIFF_LOCAL"),
+                    _readback("codacy", "DIFF"),
+                ),
+                "project-full",
+            ),
+            (
+                "a full run as the diff-local one",
+                (
+                    _readback("gnostoa-inventory", "DIFF", completeness="FULL_RUN"),
+                    _inventory("FULL"),
+                    _readback("codacy", "DIFF"),
+                ),
+                "project-diff",
+            ),
+            (
+                "a diff-local read as Codacy's",
+                (
+                    _inventory("DIFF"),
+                    _inventory("FULL"),
+                    _readback("codacy", "DIFF", completeness="DIFF_LOCAL"),
+                ),
+                "codacy",
+            ),
+        ):
+            with self.subTest(name):
+                bundle = _bundle(*readbacks)
+                self.assertEqual("INCOMPLETE", self._items(bundle)[item])
+                self.assertEqual(
+                    "INCOMPLETE",
+                    _evidence(analyzer=bundle)["analyzer_findings"]["coverage"],
+                )
+
+    def test_a_missing_readback_gives_its_item_no_receipt(self) -> None:
+        bundle = _bundle(_inventory("DIFF"), _inventory("FULL"))
+        self.assertEqual(
+            {"project-diff": "COMPLETE", "project-full": "COMPLETE"},
+            self._items(bundle),
+        )
+        self.assertEqual(
+            "INCOMPLETE", _evidence(analyzer=bundle)["analyzer_findings"]["coverage"]
+        )
+
+    def test_an_unknown_repeated_or_invalid_readback_fails_the_run(self) -> None:
+        for name, bundle in (
+            (
+                "an unknown analyzer",
+                _bundle(_readback("codacy", "DIFF"), _readback("semgrep", "DIFF")),
+            ),
+            (
+                "a repeated item",
+                _bundle(_inventory("FULL"), _inventory("FULL")),
+            ),
+            (
+                "an unknown analyzer, for another head",
+                _bundle(
+                    _readback("codacy", "DIFF", head=PREVIOUS),
+                    _readback("semgrep", "DIFF", head=PREVIOUS),
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
+            (
+                "a repeated item, for another head",
+                _bundle(
+                    _inventory("FULL", head=PREVIOUS),
+                    _inventory("FULL", head=PREVIOUS),
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
+            ("an invalid bundle", {**_bundle(), "extra": 1}),
+            (
+                "a readback time that is not one",
+                _bundle(
+                    {**_readback("codacy", "DIFF"), "observed_at": "yesterday"},
+                ),
+            ),
+            ("a bundle time that is not one", _bundle(observed_at="yesterday")),
+            (
+                "a readback time that is not one, for another head",
+                _bundle(
+                    {
+                        **_readback("codacy", "DIFF", head=PREVIOUS),
+                        "observed_at": "yesterday",
+                    },
+                    requested_head=PREVIOUS,
+                    observed_head=PREVIOUS,
+                ),
+            ),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                _evidence(analyzer=bundle)
+
+    def test_without_a_bundle_the_findings_are_unavailable(self) -> None:
+        self.assertEqual({}, self._statuses(None))
+        self.assertEqual(
+            {"coverage": "UNAVAILABLE", "findings": []},
+            _evidence()["analyzer_findings"],
+        )
+
+    def test_the_items_are_the_declaration_s(self) -> None:
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        # The readback's items, as section C splits them (#389 A0-MP1 slice 3), without
+        # DeepSource's, which Decision 0130 retires.
+        coverage = {r["id"]: r["coverage"] for r in declaration["requirements"]}
+        self.assertEqual(["codacy"], coverage["analyzer-readback"])
+        self.assertEqual(
+            ["project-diff", "project-full"], coverage["project-risk-readback"]
+        )
+
+    def test_the_command_reads_the_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            path = project / "bundle.json"
+            path.write_text(json.dumps(_bundle()), encoding="utf-8")
+            code, out, err = _run(
+                project, json.dumps(_snapshot()), "--analyzer-readback", "bundle.json"
+            )
+            self.assertEqual(0, code, err)
+            statuses = _receipt_statuses(json.loads(out))
+            self.assertEqual(
+                dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
+                {i: s for (r, i), s in statuses.items() if r == "analyzer-readback"},
+            )
+            # A given file that holds `null` is not "no bundle" (CodeAnt on #417).
+            for text in ("not json", json.dumps({**_bundle(), "extra": 1}), "null"):
+                with self.subTest(text=text[:20]):
+                    path.write_text(text, encoding="utf-8")
+                    self.assertEqual(
+                        2,
+                        _run(
+                            project,
+                            json.dumps(_snapshot()),
+                            "--analyzer-readback",
+                            str(path),
+                        )[0],
+                    )
+            missing = project / "missing.json"
+            self.assertEqual(
+                2,
+                _run(
+                    project,
+                    json.dumps(_snapshot()),
+                    "--analyzer-readback",
+                    str(missing),
+                )[0],
+            )
+            path.write_text(json.dumps(_bundle()), encoding="utf-8")
+            with patch("tools.verdict_cli.MAX_INPUT_BYTES", 64):
+                code, _, err = _run(project, "{}", "--analyzer-readback", str(path))
+            self.assertEqual(2, code)
+            self.assertIn("the analyzer readback is larger than the 64-byte bound", err)
+
+    def test_the_bundle_is_read_only_inside_the_project_root(self) -> None:
+        """Claude and cubic on #417: as every path the command reads
+        (verdict_cli), the bundle is resolved against the project root, links
+        included, and refused outside it."""
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            outside = Path(directory) / "bundle.json"
+            outside.write_text(json.dumps(_bundle()), encoding="utf-8")
+            (project / "link.json").symlink_to(outside)
+            for name, argument in (
+                ("an absolute path outside", str(outside)),
+                ("a relative path out of the root", "../bundle.json"),
+                ("a link out of the root", "link.json"),
+            ):
+                with self.subTest(name):
+                    code, _, err = _run(
+                        project,
+                        json.dumps(_snapshot()),
+                        "--analyzer-readback",
+                        argument,
+                    )
+                    self.assertEqual(2, code, err)
+                    self.assertIn("analyzer readback", err)
+
+
+class SonarCloudInventoryTests(unittest.TestCase):
+    """MA0 1b.3c (#407 6119460225, lineage 6119607885): SonarCloud's inventory
+    reaches the existing receipt intake, under its own requirement, and M17."""
+
+    @staticmethod
+    def _inventory(bundle: dict[str, Any] | None) -> dict[tuple[str, str], str]:
+        statuses = _receipt_statuses(_evidence(analyzer=bundle))
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_the_inventory_gives_its_own_requirement_s_item(self) -> None:
+        """C9: the readback's coverage is the receipt of `sonarcloud`'s
+        `issue-inventory`; the analyzer readback's items stay its own."""
+        evidence = _evidence(analyzer=_bundle())
+        [receipt] = [
+            r for r in evidence["receipts"] if r["requirement"] == "sonarcloud"
+        ]
+        self.assertEqual(["issue-inventory"], receipt["coverage"])
+        self.assertEqual("COMPLETE", receipt["status"])
+        self.assertEqual(
+            {"completeness": "FULL_RUN", "bound": True}, receipt["provenance"]
+        )
+        self.assertEqual(
+            dict.fromkeys(ANALYZER_ITEMS, "COMPLETE"),
+            {
+                item: s
+                for (r, item), s in _receipt_statuses(evidence).items()
+                if r == "analyzer-readback"
+            },
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+
+    def test_a_green_gate_s_findings_reach_m17(self) -> None:
+        """C8, #353: 29 open issues behind a passing gate. The inventory is
+        complete, every finding is listed under its item, and M17 denies."""
+        issues = [
+            {**FINDING, "id": f"sonar-{n:02d}", "rule": "python:S5778"}
+            for n in range(29)
+        ]
+        bundle = _bundle(
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, *issues),
+            *_inventory_readbacks(),
+        )
+        # The gate passed on the exact head, through the protected manifest, beside
+        # the inventory (cubic on #424).
+        gate = {
+            **_check_run(60, "SonarCloud Code Analysis", 12526),
+            "details_url": "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&pullRequest=300",
+        }
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), gate]}, {})})
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+            analyzer_readback=bundle,
+        )
+        statuses = _receipt_statuses(evidence)
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "quality-gate")])
+        self.assertEqual("COMPLETE", statuses[("sonarcloud", "issue-inventory")])
+        listed = evidence["analyzer_findings"]
+        self.assertEqual("COMPLETE", listed["coverage"])
+        self.assertEqual(
+            [{"item": "issue-inventory", **issue} for issue in issues],
+            listed["findings"],
+        )
+        self.assertEqual(["29 unresolved analyzer findings"], _failed(evidence)["M17"])
+
+    def test_m17_needs_the_inventory_too(self) -> None:
+        """C9: a bundle without SonarCloud's readback, as every bundle before
+        1b.3c, gives its item no receipt, so the reducer reports it MISSING, and
+        M17's coverage is not COMPLETE."""
+        bundle = _bundle(_readback("codacy", "DIFF"), *_inventory_readbacks())
+        self.assertEqual({}, self._inventory(bundle))
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual("INCOMPLETE", evidence["analyzer_findings"]["coverage"])
+        self.assertIn("M17", _failed(evidence))
+
+    def test_an_unbound_bundle_leaves_the_inventory_incomplete(self) -> None:
+        for name, bundle in (
+            ("another head", _bundle_for(head=PREVIOUS)),
+            ("another pull request", _bundle_for(pull=301)),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): "INCOMPLETE"},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_s_own_status_is_its_receipt_s(self) -> None:
+        """C1, C9: an unauthenticated or partial read stays what it is."""
+        unauthenticated = _readback(*SONAR, status="UNAVAILABLE")
+        for status, readback in (
+            ("UNAVAILABLE", unauthenticated),
+            *(
+                (
+                    status,
+                    {
+                        **unauthenticated,
+                        "completeness": "READBACK_UNAVAILABLE",
+                        "coverage": {
+                            "status": status,
+                            "pages": 1,
+                            "count": 0,
+                            "reason": "PROVIDER_ERROR",
+                        },
+                    },
+                )
+                for status in ("PARTIAL", "ERROR")
+            ),
+        ):
+            with self.subTest(status):
+                bundle = _bundle(
+                    _readback("codacy", "DIFF"), readback, *_inventory_readbacks()
+                )
+                self.assertEqual(
+                    {("sonarcloud", "issue-inventory"): status},
+                    self._inventory(bundle),
+                )
+
+    def test_the_inventory_needs_a_full_run(self) -> None:
+        """C9: a complete read of another kind does not give the item."""
+        bundle = _bundle(
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, completeness="DIFF_LOCAL"),
+            *_inventory_readbacks(),
+        )
+        self.assertEqual(
+            {("sonarcloud", "issue-inventory"): "INCOMPLETE"}, self._inventory(bundle)
+        )
+
+    def test_the_inventory_s_item_is_the_declaration_s(self) -> None:
+        declaration = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        [requirement] = [
+            r for r in declaration["requirements"] if r["id"] == "sonarcloud"
+        ]
+        self.assertIn("issue-inventory", requirement["coverage"])
+
+    def test_accepted_and_false_positive_findings_reach_m17(self) -> None:
+        """S1 (PAO 6119736075): a SonarCloud acceptance or false-positive marking
+        is no waiver; such a finding denies M17 as an open one does."""
+        accepted = {**FINDING, "id": "sonar-accepted", "state": "accepted"}
+        false_positive = {
+            **FINDING,
+            "id": "sonar-false-positive",
+            "state": "false_positive",
+        }
+        bundle = _bundle(
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR, accepted, false_positive),
+            *_inventory_readbacks(),
+        )
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual(
+            ["sonar-accepted", "sonar-false-positive"],
+            [f["id"] for f in evidence["analyzer_findings"]["findings"]],
+        )
+        # Without the gate in the default snapshot the claims are not met, so M17
+        # names the required evidence beside the findings (#389 F2).
+        self.assertEqual(
+            [
+                "analyzer finding coverage follows the required evidence, which is "
+                "INCOMPLETE",
+                "2 unresolved analyzer findings",
+            ],
+            _failed(evidence)["M17"],
+        )
+
+
+SONAR_CHECK = 12526
+
+
+class SonarCloudGateTests(unittest.TestCase):
+    """G1 (PAO 6119736075): `sonarcloud/quality-gate` is SonarCloud's own check
+    run on the exact head, through the existing check-receipt producer and the
+    protected manifest; it never stands for the inventory."""
+
+    @staticmethod
+    def _statuses(*runs: dict[str, Any]) -> dict[tuple[str, str], str]:
+        snapshot = _snapshot(
+            _replies(**{CHECK_RUNS: ({"check_runs": [*_green_checks(), *runs]}, {})})
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        statuses = _receipt_statuses(evidence)
+        return {key: s for key, s in statuses.items() if key[0] == "sonarcloud"}
+
+    def test_a_passed_gate_gives_the_quality_gate_item(self) -> None:
+        self.assertEqual(
+            {("sonarcloud", "quality-gate"): "COMPLETE"},
+            self._statuses(self._run(60, self._for(300))),
+        )
+
+    def test_any_other_gate_state_is_not_complete(self) -> None:
+        for case, runs, status in (
+            (
+                "a failed gate",
+                [self._run(60, self._for(300), conclusion="failure")],
+                "INCOMPLETE",
+            ),
+            (
+                "an unfinished analysis",
+                [
+                    self._run(
+                        60,
+                        self._for(300),
+                        conclusion=None,
+                        status="in_progress",
+                        completed_at=None,
+                    )
+                ],
+                "INCOMPLETE",
+            ),
+            (
+                "a skipped check",
+                [self._run(60, self._for(300), conclusion="skipped")],
+                "SKIPPED",
+            ),
+            (
+                "a passed run beside a failed one",
+                [
+                    self._run(60, self._for(300)),
+                    self._run(61, self._for(300), conclusion="failure"),
+                ],
+                "PARTIAL",
+            ),
+        ):
+            with self.subTest(case):
+                self.assertEqual(
+                    {("sonarcloud", "quality-gate"): status}, self._statuses(*runs)
+                )
+
+    @staticmethod
+    def _run(identifier: int, details: object, **change: Any) -> dict[str, Any]:
+        """SonarCloud's run on the head, its `details_url` as given."""
+        return {
+            **_check_run(identifier, "SonarCloud Code Analysis", SONAR_CHECK, **change),
+            "details_url": details,
+        }
+
+    @staticmethod
+    def _for(pull: int, project: str = "ktogias_gnostoa") -> str:
+        return f"https://sonarcloud.io/dashboard?id={project}&pullRequest={pull}"
+
+    def _gate(self, *runs: dict[str, Any]) -> str | None:
+        return self._statuses(*runs).get(("sonarcloud", "quality-gate"))
+
+    def test_a_foreign_pull_request_s_gate_is_not_this_one_s(self) -> None:
+        """Codex on #424; Q-a (PAO 6123049205): a commit carries every pull
+        request's SonarCloud runs (#394, #395 and #396 share one), so the gate's
+        runs are this pull request's only, filtered before they are reduced."""
+        own, foreign = self._for(300), self._for(299)
+        for name, runs, expected in (
+            ("a foreign success alone", [self._run(60, foreign)], None),
+            # L1's `latest` view can hide this PR's run behind another one's: then
+            # there is no receipt, never the foreign result.
+            ("this PR's run hidden by the latest view", [self._run(61, foreign)], None),
+            (
+                "own success beside a foreign failure",
+                [self._run(60, own), self._run(61, foreign, conclusion="failure")],
+                "COMPLETE",
+            ),
+            (
+                "own failure beside a foreign success",
+                [self._run(60, own, conclusion="failure"), self._run(61, foreign)],
+                "INCOMPLETE",
+            ),
+            (
+                "two own runs, one not a success",
+                [self._run(60, own), self._run(61, own, conclusion="failure")],
+                "PARTIAL",
+            ),
+            (
+                "another project's run",
+                [self._run(60, self._for(300, "ktogias_other"))],
+                None,
+            ),
+            (
+                "a branch analysis",
+                [
+                    self._run(
+                        60,
+                        "https://sonarcloud.io/dashboard?id=ktogias_gnostoa&branch=main",
+                    )
+                ],
+                None,
+            ),
+            (
+                "a malformed association beside own success",
+                [
+                    self._run(60, own),
+                    self._run(61, "https://sonarcloud.io/project/overview"),
+                ],
+                "PARTIAL",
+            ),
+            (
+                "no association beside own success",
+                [self._run(60, own), self._run(61, None)],
+                "PARTIAL",
+            ),
+            ("own success alone", [self._run(60, own)], "COMPLETE"),
+        ):
+            with self.subTest(name):
+                self.assertEqual(expected, self._gate(*runs))
+
+    def test_a_blank_association_is_not_a_foreign_one(self) -> None:
+        """The PAO on #424 (6123979691): beside this pull request's own success, a
+        run on the head whose details name an empty project, pull request or
+        branch might be anyone's, so the gate stays PARTIAL."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("an empty pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest="),
+            ("a blank pull request", f"{dashboard}?id=ktogias_gnostoa&pullRequest=%20"),
+            ("an empty project", f"{dashboard}?id=&pullRequest=300"),
+            ("a blank project", f"{dashboard}?id=%20&pullRequest=300"),
+            ("an empty branch", f"{dashboard}?id=ktogias_gnostoa&branch="),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
+    def test_an_unreadable_escape_is_not_a_foreign_association(self) -> None:
+        """CodeAnt on #424: beside this pull request's own success, a run whose
+        details hold an escape that cannot be read might be anyone's."""
+        dashboard = "https://sonarcloud.io/dashboard"
+        own = self._for(300)
+        for name, details in (
+            ("a cut escape", f"{dashboard}?id=ktogias_gnostoa&pullRequest=30%3"),
+            (
+                "an escape that is not UTF-8",
+                f"{dashboard}?id=ktogias_gnostoa&pullRequest=%FF",
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    "PARTIAL", self._gate(self._run(60, own), self._run(61, details))
+                )
+
+    def test_the_gate_s_qualification_follows_its_identity(self) -> None:
+        """Octopus on #424: SonarCloud's gate is qualified because it is SonarCloud's
+        check, not because its key kept a type. Keys that arrive as plain text, as
+        after a JSON round trip, still count only this pull request's runs."""
+        parsed = merge_evidence_github.load_required_checks(
+            ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+        )
+        plain = json.loads(json.dumps(parsed))
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(299)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=plain,
+        )
+        self.assertNotIn(("sonarcloud", "quality-gate"), _receipt_statuses(evidence))
+
+    def test_the_gate_qualifies_a_pull_request_only(self) -> None:
+        """Q-a: a pull request's id is what the qualification matches, so a change
+        request of another kind with the same id is not one."""
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        snapshot["subject"]["change_request"]["kind"] = "gitlab-merge-request"
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        self.assertEqual(
+            "PARTIAL", _receipt_statuses(evidence)[("sonarcloud", "quality-gate")]
+        )
+
+    def test_the_gate_s_receipt_names_its_qualification(self) -> None:
+        snapshot = _snapshot(
+            _replies(
+                **{
+                    CHECK_RUNS: (
+                        {
+                            "check_runs": [
+                                *_green_checks(),
+                                self._run(60, self._for(300)),
+                            ]
+                        },
+                        {},
+                    )
+                }
+            )
+        )
+        evidence = merge_evidence_github.evidence_from_snapshot(
+            snapshot,
+            authorities=_authorities(),
+            change_policy=_policy(),
+            codeowners=merge_evidence_github.parse_codeowners("* @ktogias\n"),
+            decisions=merge_evidence_github.load_decisions(ROOT),
+            required_checks=merge_evidence_github.load_required_checks(
+                ROOT / "policy" / "merge-required-checks.yaml", project_root=ROOT
+            ),
+        )
+        [receipt] = [
+            r for r in evidence["receipts"] if r["coverage"] == ["quality-gate"]
+        ]
+        self.assertEqual(
+            {
+                "check": "github-check-run:12526:SonarCloud Code Analysis",
+                "conclusion": "success",
+                "pull_request": "details_url",
+            },
+            receipt["provenance"],
+        )
+
+    def test_the_manifest_qualifies_sonarcloud_s_gate_only(self) -> None:
+        """Q-a: one optional key, `pull_request`, with one value, `details_url`;
+        SonarCloud's check must carry it, and no other check may."""
+
+        def manifest(**gate: Any) -> dict[str, Any]:
+            document = copy.deepcopy(REQUIRED_CHECKS)
+            document["requirements"]["sonarcloud"]["quality-gate"] = {
+                "app_id": SONAR_CHECK,
+                "name": "SonarCloud Code Analysis",
+                **gate,
+            }
+            return document
+
+        parsed = merge_evidence_github.parse_required_checks(
+            manifest(pull_request="details_url")
+        )
+        self.assertEqual(
+            "github-check-run:12526:SonarCloud Code Analysis",
+            parsed["sonarcloud"]["quality-gate"],
+        )
+        qualified_codeql = copy.deepcopy(REQUIRED_CHECKS)
+        qualified_codeql["requirements"]["codeql"]["codeql"]["pull_request"] = (
+            "details_url"
+        )
+        for name, document in (
+            ("an unqualified SonarCloud gate", manifest()),
+            ("an unsupported value", manifest(pull_request="url")),
+            ("another key", manifest(pull_request="details_url", branch="main")),
+            ("a qualified CodeQL check", qualified_codeql),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(merge_evidence_github.MergeEvidenceError),
+            ):
+                merge_evidence_github.parse_required_checks(document)
+
+    def test_another_app_s_check_of_that_name_gives_nothing(self) -> None:
+        self.assertEqual(
+            {}, self._statuses(_check_run(60, "SonarCloud Code Analysis", ACTIONS))
+        )
+
+    def test_a_passed_gate_never_gives_the_inventory(self) -> None:
+        """#353: a passing gate is no evidence that the inventory is empty."""
+        statuses = self._statuses(self._run(60, self._for(300)))
+        self.assertNotIn(("sonarcloud", "issue-inventory"), statuses)
+
+
+# #389 F2 (the Router's exact-base continuation, 6192443314): M17's positive
+# coverage is the completeness verdict over every applicable claim of the
+# protected declaration, computed once by the admission; the adapter keeps each
+# source's raw coverage, and every obtained finding still vetoes. The substitute
+# claims are a test-only qualification, never a live one (F3 owns qualification):
+# since Decision 0130 retires DeepSource, a down Codacy is stood in for by the
+# project's diff read and a down SonarCloud inventory by its full read, each pair
+# two failure domains.
+_F2_SUBSTITUTES = (
+    (("analyzer-readback", "codacy"), ("project-risk-readback", "project-diff")),
+    (("sonarcloud", "issue-inventory"), ("project-risk-readback", "project-full")),
+)
+_F2_CLASSES = ("critical", "mechanical", "normal", "normative")
+
+
+def _f2_group_claims(
+    group: tuple[tuple[str, str], ...], applies: dict[str, list[str]], minimum: int
+) -> list[tuple[tuple[tuple[str, str], ...], dict[str, int]]]:
+    """One group's claims: the group, for the classes all its items' requirements
+    share, and each item's own claim for the classes only its requirement has (a
+    helper of its own, so `_f2_declaration` stays within the project's complexity
+    bound: #461's inventory)."""
+
+    shared = [c for c in _F2_CLASSES if all(c in applies[r] for r, _ in group)]
+    claims = [(group, dict.fromkeys(shared, minimum))]
+    for pair in group:
+        extra = [c for c in applies[pair[0]] if c not in shared]
+        if extra:
+            claims.append(((pair,), dict.fromkeys(extra, 1)))
+    return claims
+
+
+def _f2_declaration(
+    groups: tuple[tuple[tuple[str, str], ...], ...] = (), minimum: int = 1
+) -> dict[str, Any]:
+    """Gnostoa's own declaration, its requirements and their domains as they
+    are, with its claims replaced: each group is one claim with the minimum given,
+    for the classes every one of its items' requirements applies to, and every
+    other item is its own claim (minimum 1). A grouped item whose requirement
+    applies to more classes keeps its own claim for those, as the parser requires
+    every collected item to support a claim (#389 A0-MP1 slice 3). Taking the
+    domains from the declaration keeps a requirement it gains covered (Amazon Q on
+    #435)."""
+
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / "policy" / "assurance-evidence.yaml").read_text(encoding="utf-8")
+    )
+    applies = {r["id"]: r["applies_to"] for r in document["requirements"]}
+    grouped = {pair for group in groups for pair in group}
+    claims: list[tuple[tuple[tuple[str, str], ...], dict[str, int]]] = [
+        (((requirement["id"], item),), dict.fromkeys(requirement["applies_to"], 1))
+        for requirement in document["requirements"]
+        for item in requirement["coverage"]
+        if (requirement["id"], item) not in grouped
+    ]
+    for group in groups:
+        claims.extend(_f2_group_claims(group, applies, minimum))
+    document["claims"] = [
+        {
+            "id": "-".join(item for _, item in group),
+            "title": "A test-only claim",
+            "evidence": [{"requirement": r, "item": i} for r, i in group],
+            "independent_domains": classes,
+        }
+        for group, classes in claims
+    ]
+    return document
+
+
+def _f2_partial(provider: str, *findings: dict[str, Any]) -> dict[str, Any]:
+    """A partial read by a vendor, Codacy or SonarCloud's inventory, each its
+    pull-request analysis of DIFF, that still obtained findings."""
+
+    return analyzer_readback.build_readback(
+        provider=provider,
+        adapter=f"{provider}-fake/v1",
+        repository="ktogias/gnostoa",
+        pull_number=300,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id=None,
+        scope="DIFF",
+        completeness="READBACK_UNAVAILABLE",
+        native_mode="PULL_REQUEST",
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="UNKNOWN",
+        coverage_record={
+            "status": "PARTIAL",
+            "pages": 1,
+            "count": len(findings),
+            "reason": "PAGE_LIMIT",
+        },
+        findings=findings,
+    )
+
+
+# The vendors' readbacks that remain since Decision 0130, complete, and each down.
+_VENDORS = (_readback("codacy", "DIFF"), _readback(*SONAR))
+_VENDORS_DOWN = (
+    _readback("codacy", "DIFF", status="UNAVAILABLE"),
+    _readback(*SONAR, status="UNAVAILABLE"),
+)
+
+
+# #389 A0-MP1 slice 3 (6381812211 rows 4, 6 and 7): the inventory's two readbacks
+# give the project-risk items, NORMAL's alone under section C and every class's since
+# Decision 0130, which retires DeepSource's requirement.
+_PROJECT_ITEMS = (
+    ("project-risk-readback", "project-diff"),
+    ("project-risk-readback", "project-full"),
+)
+
+
+def _inventory_incomplete(scope: str) -> dict[str, Any]:
+    """An inventory readback that is not complete, as the real run gives it
+    (6399343052): the requested head's run, AMBIGUOUS, its coverage INCOMPLETE with
+    the composite's reason."""
+
+    return analyzer_readback.build_readback(
+        provider="gnostoa-inventory",
+        adapter="gnostoa-diagnostic-inventory/v3",
+        repository="ktogias/gnostoa",
+        pull_number=300,
+        requested_head=HEAD,
+        observed_head=HEAD,
+        analysis_id=None,
+        scope=scope,
+        completeness="AMBIGUOUS",
+        native_mode="DIFF_LOCAL" if scope == "DIFF" else "FULL_RUN",
+        observed_at="2026-09-19T16:40:50Z",
+        run_state="COMPLETE",
+        coverage_record={
+            "status": "INCOMPLETE",
+            "pages": 1,
+            "count": 0,
+            "reason": "source binding UNVERIFIED",
+        },
+        findings=[],
+    )
+
+
+class ProjectRiskActivationTests(unittest.TestCase):
+    """#389 A0-MP1 slice 3, end to end through `evidence_for` and
+    `merge_admission.evaluate`: the inventory's readbacks give the project items
+    (6381812211 section D's cases), NORMAL's alone under section C and every class's
+    since Decision 0130."""
+
+    def test_an_incomplete_composite_never_gives_a_project_claim(self) -> None:
+        """RED (absent-or-partial): an inventory that is missing, or not complete,
+        leaves a NORMAL change's project claims unmet, its vendors' claims met."""
+        for name, inventories in (
+            ("missing", ()),
+            ("partial diff", (_inventory_incomplete("DIFF"), _inventory("FULL"))),
+            ("partial full", (_inventory("DIFF"), _inventory_incomplete("FULL"))),
+            # A document the job wrote when its collection failed, passed through as
+            # recorded (Amazon Q on #461): both UNAVAILABLE, so neither item is met.
+            (
+                "unavailable",
+                tuple(
+                    analyzer_inventory.unavailable(
+                        repository="ktogias/gnostoa",
+                        pull_number=300,
+                        requested_head=HEAD,
+                        observed_at="2026-09-19T16:40:50Z",
+                        reason="QualityEvidenceError",
+                    )
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    _bundle(*_VENDORS, *inventories),
+                    change_class="normal",
+                )
+                self.assertIn("M2-M8", failed)
+
+    def test_a_full_read_never_gives_the_diff_item(self) -> None:
+        """RED (full-not-diff-label): a complete read of the other kind does not give
+        the item (Decision 0091, `_ANALYZER_COMPLETENESS`)."""
+        bundle = _bundle(
+            *_VENDORS,
+            _readback("gnostoa-inventory", "DIFF", completeness="FULL_RUN"),
+            _inventory("FULL"),
+        )
+        evidence, failed = _admitted(
+            _section_c_declaration(), bundle, change_class="normal"
+        )
+        self.assertEqual(
+            "INCOMPLETE",
+            _receipt_statuses(evidence)[("project-risk-readback", "project-diff")],
+        )
+        self.assertIn("M2-M8", failed)
+
+    def test_an_inventory_finding_denies_a_normal_change(self) -> None:
+        """RED (all-negative-evidence): under met claims, a finding the inventory
+        obtained is M17's only reason, listed as its item's."""
+        bundle = _bundle(*_VENDORS, _inventory("DIFF"), _inventory("FULL", FINDING))
+        evidence, failed = _admitted(
+            _section_c_declaration(), bundle, change_class="normal"
+        )
+        [listed] = evidence["analyzer_findings"]["findings"]
+        self.assertEqual("project-full", listed["item"])
+        self.assertNotIn("M2-M8", failed)
+        self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_an_inventory_finding_denies_every_class(self) -> None:
+        """Characterization (PAO 6399779328, finding 2): the classes a requirement
+        applies to never filter its findings. M17 lists every finding obtained, so
+        once the bundle carries the inventory, a standing project finding denies a
+        change of every class whose own claims are all met, the project items being
+        every class's since Decision 0130; a finding is never filtered after it is
+        obtained."""
+        bundle = _bundle(*_VENDORS, _inventory("DIFF"), _inventory("FULL", FINDING))
+        for change_class in ("mechanical", "normal", "normative", "critical"):
+            with self.subTest(change_class=change_class):
+                evidence, failed = _admitted(
+                    _section_c_declaration(), bundle, change_class=change_class
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual("project-full", listed["item"])
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+
+# A provider the retired table names, as DeepSource was before Decision 0132.
+_RETIRED = {"retired-provider": "0130"}
+
+
+class OptionalUnknownSeverityOrderTests(unittest.TestCase):
+    """Router6689135669: unknown-rank collisions cannot establish no worsening."""
+
+    @staticmethod
+    def _findings() -> list[dict[str, Any]]:
+        return [
+            {
+                **FINDING,
+                "id": f"unknown-{index}",
+                "severity": severity,
+                "range": {"start_line": 2},
+                "enclosing": {
+                    "kind": "function",
+                    "name": "f",
+                    "sha256": "d" * 64,
+                    "scope_line": 1,
+                },
+            }
+            for index, severity in enumerate(("UNKNOWN-A", "UNKNOWN-B"))
+        ]
+
+    @staticmethod
+    def _compared(
+        head: list[dict[str, Any]], base: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        merge_base = _comparison([], [])[0]["merge_base_commit"]["sha"]
+        bundle = _bundle()
+        bundle["readbacks"].extend(
+            [
+                _readback("deepsource", "FULL", *head),
+                _readback("deepsource", "BASE", *base, head=merge_base),
+            ]
+        )
+        return _admitted(
+            _section_c_declaration(),
+            analyzer_readback.parse_bundle(bundle),
+            files=[
+                {
+                    "filename": FINDING["path"],
+                    "status": "modified",
+                    "patch": "@@ -1,2 +1,2 @@\n-old\n+new",
+                }
+            ],
+        )
+
+    def test_distinct_unknown_labels_fail_closed_for_each_input_order(self) -> None:
+        findings = self._findings()
+        for head in (findings, list(reversed(findings))):
+            for base in (findings, list(reversed(findings))):
+                with self.subTest(
+                    head=[f["severity"] for f in head],
+                    base=[f["severity"] for f in base],
+                ):
+                    evidence, failed = self._compared(head, base)
+                    self.assertEqual(
+                        "COMPLETE", evidence["analyzer_findings"]["coverage"]
+                    )
+                    self.assertIn("M17", failed)
+
+    def test_unambiguous_unknown_labels_keep_existing_equality_behavior(self) -> None:
+        first, second = self._findings()
+        groups = [
+            [first],
+            [first, {**first, "id": "same-label-again"}],
+            [first, {**second, "enclosing": {**second["enclosing"], "scope_line": 2}}],
+        ]
+        for group in groups:
+            with self.subTest(group=group):
+                evidence, failed = self._compared(group, list(reversed(group)))
+                self.assertEqual("COMPLETE", evidence["analyzer_findings"]["coverage"])
+                self.assertNotIn("M17", failed)
+                self.assertEqual(
+                    ["pre_existing"] * len(group),
+                    [f["baseline"] for f in evidence["analyzer_findings"]["findings"]],
+                )
+
+    def test_unknown_rank_collisions_stay_open_through_canonical_evidence(self) -> None:
+        findings = self._findings()
+        for reverse in (False, True):
+            base_order = list(reversed(findings)) if reverse else findings
+            for new_ids in (False, True):
+                base = [
+                    {**finding, **({"id": f"base-{index}"} if new_ids else {})}
+                    for index, finding in enumerate(base_order)
+                ]
+                with self.subTest(reverse=reverse, new_ids=new_ids):
+                    evidence, failed = self._compared(findings, base)
+                    self.assertEqual(
+                        "COMPLETE", evidence["analyzer_findings"]["coverage"]
+                    )
+                    self.assertIn("M17", failed)
+
+
+class DeepSourceRetirementTests(unittest.TestCase):
+    """The DeepSource exit (#389, owner 6625223543; Decision 0130), end to end through
+    `evidence_for` and `merge_admission.evaluate`: the project inventory's claims stand
+    for every class, and a missing or partial inventory, or any obtained finding,
+    still denies. Decision 0132 moves DeepSource from retired to optional; the retired
+    state stays, protected and recorded, for any provider its table names."""
+
+    _CLASSES = ("mechanical", "normal", "normative", "critical")
+
+    @staticmethod
+    def _without_deepsource(*inventories: dict[str, Any]) -> dict[str, Any]:
+        return _bundle(
+            _readback("codacy", "DIFF"),
+            _readback(*SONAR),
+            *(inventories or (_inventory("DIFF"), _inventory("FULL"))),
+        )
+
+    def test_the_declaration_names_no_deepsource_and_the_project_for_every_class(
+        self,
+    ) -> None:
+        document = _section_c_declaration()
+        requirements = {r["id"]: r for r in document["requirements"]}
+        claims = {c["id"]: c for c in document["claims"]}
+        self.assertNotIn("deepsource-readback", requirements)
+        self.assertEqual(
+            [],
+            [c for c in claims if "deepsource" in c],
+        )
+        self.assertEqual(
+            list(self._CLASSES), requirements["project-risk-readback"]["applies_to"]
+        )
+        for claim in ("project-diff-risk-findings", "project-full-risk-findings"):
+            with self.subTest(claim=claim):
+                self.assertEqual(
+                    dict.fromkeys(self._CLASSES, 1),
+                    claims[claim]["independent_domains"],
+                )
+
+    def test_every_class_meets_its_claims_without_deepsource(self) -> None:
+        """Its other gates met, each class is denied only by this fixture's own gaps,
+        M13 and M15: no class needs DeepSource any more."""
+        for change_class in self._CLASSES:
+            with self.subTest(change_class=change_class):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    self._without_deepsource(),
+                    change_class=change_class,
+                )
+                self.assertEqual({"M13", "M15"}, set(failed))
+
+    def test_a_missing_or_partial_inventory_denies_every_class(self) -> None:
+        for name, inventories in (
+            ("no full read", (_inventory("DIFF"),)),
+            ("no diff read", (_inventory("FULL"),)),
+            (
+                "a partial full read",
+                (_inventory("DIFF"), _inventory_incomplete("FULL")),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, failed = _admitted(
+                        _section_c_declaration(),
+                        _bundle(
+                            _readback("codacy", "DIFF"), _readback(*SONAR), *inventories
+                        ),
+                        change_class=change_class,
+                    )
+                    self.assertIn("M2-M8", failed)
+
+    def test_an_obtained_finding_still_denies_every_class(self) -> None:
+        for change_class in self._CLASSES:
+            with self.subTest(change_class=change_class):
+                _, failed = _admitted(
+                    _section_c_declaration(),
+                    self._without_deepsource(
+                        _inventory("DIFF"), _inventory("FULL", FINDING)
+                    ),
+                    change_class=change_class,
+                )
+                self.assertIn("M17", failed)
+
+    def test_a_retired_provider_s_readback_is_refused_as_retired(self) -> None:
+        """Not as an unknown readback: retirement is a protected, recorded state."""
+        for scope in ("DIFF", "FULL"):
+            with (
+                self.subTest(scope=scope),
+                patch.object(merge_evidence_github, "_RETIRED_ANALYZERS", _RETIRED),
+            ):
+                bundle = self._without_deepsource()
+                bundle["readbacks"].insert(0, _readback("retired-provider", scope))
+                with self.assertRaisesRegex(
+                    merge_evidence_github.MergeEvidenceError,
+                    "retired-provider is retired as merge evidence \\(Decision 0130\\)",
+                ):
+                    _evidence(analyzer=bundle)
+
+    def test_the_evidence_records_the_retirement(self) -> None:
+        with patch.object(merge_evidence_github, "_RETIRED_ANALYZERS", _RETIRED):
+            evidence = _evidence(analyzer=self._without_deepsource())
+        self.assertEqual(
+            [{"provider": "retired-provider", "decision": "0130"}],
+            evidence["analyzer_retired"],
+        )
+        # DeepSource is optional, not retired (Decision 0132): its read is recorded
+        # apart, and the evidence retires no provider of its own.
+        bundle = self._without_deepsource()
+        bundle["readbacks"].insert(0, _readback("deepsource", "FULL"))
+        evidence = _evidence(analyzer=bundle)
+        self.assertEqual([], evidence["analyzer_retired"])
+        self.assertEqual(
+            [{"provider": "deepsource", "scope": "FULL", "coverage": "COMPLETE"}],
+            evidence["analyzer_optional"],
+        )
+
+
+# #389 F2's "down" bundle: both vendors down, and the project inventory's two reads,
+# which `_F2_SUBSTITUTES` lets stand in for them, complete.
+_F2_DOWN = (*_VENDORS_DOWN, *_inventory_readbacks())
+
+
+class AnalyzerClaimsCoverageTests(unittest.TestCase):
+    """#389 F2, end to end through `evidence_for` and `merge_admission.evaluate`:
+    a qualified alternative meets M17 only through the verdict, a down vendor's
+    items and the adapter's raw coverage stay what they are (R1), and every
+    obtained finding still vetoes (R5). The project declares no suppression
+    markers or trust roots, so M13 and M15 hold as they always did here."""
+
+    @staticmethod
+    def _admit(
+        declaration: dict[str, Any],
+        bundle: dict[str, Any],
+        change_class: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        return _admitted(declaration, bundle, change_class)
+
+    def test_a_qualified_alternative_meets_m17_through_the_verdict(self) -> None:
+        """RED: today M17 counts all four readbacks, whatever the claims say."""
+        evidence, failed = self._admit(
+            _f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DOWN)
+        )
+        statuses = _receipt_statuses(evidence)
+        self.assertEqual(
+            ("UNAVAILABLE", "UNAVAILABLE"),
+            (
+                statuses[("analyzer-readback", "codacy")],
+                statuses[("sonarcloud", "issue-inventory")],
+            ),
+        )
+        self.assertEqual(
+            {"coverage": "INCOMPLETE", "findings": []}, evidence["analyzer_findings"]
+        )
+        self.assertEqual({"M13", "M15"}, set(failed))
+
+    def test_any_obtained_finding_still_denies(self) -> None:
+        """RED for the reasons: under met claims, a finding from a partial,
+        unselected or selected source, suppressed or not, is M17's only reason."""
+        suppressed = {**FINDING, "id": "issue-2", "state": "suppressed"}
+        codacy_down, inventory_down = _VENDORS_DOWN
+        for name, readbacks, item in (
+            (
+                "partial unselected Codacy",
+                (
+                    _f2_partial("codacy", FINDING),
+                    inventory_down,
+                    *_inventory_readbacks(),
+                ),
+                "codacy",
+            ),
+            (
+                "partial unselected SonarCloud inventory",
+                (
+                    codacy_down,
+                    _f2_partial("sonarcloud", FINDING),
+                    *_inventory_readbacks(),
+                ),
+                "issue-inventory",
+            ),
+            (
+                "suppressed on the selected source",
+                (
+                    *_VENDORS_DOWN,
+                    _inventory("DIFF", suppressed),
+                    _inventory("FULL"),
+                ),
+                "project-diff",
+            ),
+        ):
+            with self.subTest(name):
+                evidence, failed = self._admit(
+                    _f2_declaration(_F2_SUBSTITUTES), _bundle(*readbacks)
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual(item, listed["item"])
+                self.assertEqual(
+                    "INCOMPLETE", evidence["analyzer_findings"]["coverage"]
+                )
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(["1 unresolved analyzer finding"], failed["M17"])
+
+    def test_f1_already_meets_m2_m8_under_the_alternative(self) -> None:
+        """Characterization: F1's claims give M2-M8 today, beside M17."""
+        _, failed = self._admit(_f2_declaration(_F2_SUBSTITUTES), _bundle(*_F2_DOWN))
+        self.assertNotIn("M2-M8", failed)
+
+    def test_without_proof_a_down_vendor_still_holds(self) -> None:
+        """Characterization: singleton claims, an unbound or another subject's
+        bundle, a missing alternative, one source's two reads and fewer domains than
+        the minimum all leave M2-M8 and M17 failing."""
+        diff_only = (_F2_SUBSTITUTES[0],)
+        for name, declaration, bundle in (
+            ("singleton claims", _f2_declaration(), _bundle(*_F2_DOWN)),
+            (
+                "another head",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle_for(head=PREVIOUS),
+            ),
+            (
+                "another pull request",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle_for(pull=301),
+            ),
+            (
+                "the alternative is missing",
+                _f2_declaration(_F2_SUBSTITUTES),
+                _bundle(*_VENDORS_DOWN),
+            ),
+            # The project inventory's two reads share GitHub's domain; neither stands
+            # in for the other when both are missing.
+            (
+                "one source's two reads",
+                _f2_declaration((_PROJECT_ITEMS,)),
+                _bundle(*_VENDORS),
+            ),
+            (
+                "fewer domains than the minimum",
+                _f2_declaration(diff_only, minimum=2),
+                _bundle(*_F2_DOWN),
+            ),
+        ):
+            with self.subTest(name):
+                _, failed = self._admit(declaration, bundle)
+                self.assertIn("M2-M8", failed)
+                self.assertIn("M17", failed)
+
+    def test_neither_the_bundle_nor_the_evidence_can_supply_the_policy(self) -> None:
+        """Characterization: a readback cannot name a claim or a domain, and an
+        evidence document cannot carry its own completeness verdict."""
+        readback = {**_readback("codacy", "DIFF"), "claims": ["diff-findings"]}
+        declaration = _f2_declaration(_F2_SUBSTITUTES)
+        bundle = _bundle(readback, _readback(*SONAR), *_inventory_readbacks())
+        with self.assertRaises(merge_evidence_github.MergeEvidenceError):
+            self._admit(declaration, bundle)
+        evidence = _evidence(analyzer=_bundle())
+        evidence["completeness"] = {"status": "COMPLETE"}
+        loaded = assurance_completeness.load_declaration(
+            ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+        )
+        policy = _policy()
+        with self.assertRaises(assurance_completeness.AssuranceCompletenessError):
+            merge_admission.evaluate(evidence, declaration=loaded, change_policy=policy)
+
+
+# The protected target's analyzer debt ledger (#389, the M17 transition).
+_LEDGER_ERRORS = (
+    merge_evidence_github.MergeEvidenceError,
+    assurance_completeness.AssuranceCompletenessError,
+)
+
+
+class DebtLedgerTests(unittest.TestCase):
+    """The ledger: a closed, versioned declaration read only from the protected
+    target, carried as evidence with each finding's enclosing scope, and matched
+    by the verdict (#389, the M17 transition)."""
+
+    def test_the_ledger_is_a_closed_versioned_declaration(self) -> None:
+        self.assertEqual(
+            [debt_entry()], merge_evidence_github.parse_debt_ledger(LEDGER_DOCUMENT)
+        )
+        self.assertEqual(
+            [],
+            merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, "entries": []}),
+        )
+        for name, change in (
+            ("another schema", {"schema_version": "2.0"}),
+            ("an unknown key", {"extra": 1}),
+            ("no id", {"id": ""}),
+            ("entries that are not a list", {"entries": {}}),
+            (
+                "an entry the verdict refuses",
+                {"entries": [debt_entry(aspect="security")]},
+            ),
+            ("two entries with one id", {"entries": [debt_entry(), debt_entry()]}),
+        ):
+            with self.subTest(name), self.assertRaises(_LEDGER_ERRORS):
+                merge_evidence_github.parse_debt_ledger({**LEDGER_DOCUMENT, **change})
+        missing = copy.deepcopy(LEDGER_DOCUMENT)
+        del missing["entries"]
+        with self.assertRaises(_LEDGER_ERRORS):
+            merge_evidence_github.parse_debt_ledger(missing)
+
+    def test_a_missing_ledger_is_none_and_the_repository_s_ships_empty(self) -> None:
+        """Not activated: the transition adds no entry."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertIsNone(
+                merge_evidence_github.load_debt_ledger(
+                    root / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=root
+                )
+            )
+        self.assertEqual(
+            [],
+            merge_evidence_github.load_debt_ledger(
+                ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER, project_root=ROOT
+            ),
+        )
+
+    def test_the_command_reads_the_ledger_from_the_project_root_only(self) -> None:
+        """The candidate's own ledger in its diff changes nothing; without one on
+        the protected target the ledger is UNAVAILABLE, and M17 is what it was."""
+        candidate = {
+            "filename": "policy/analyzer-debt-ledger.yaml",
+            "status": "added",
+            "sha": "b" * 40,
+            "patch": "@@ -0,0 +1 @@\n+entries: []",
+            "additions": 1,
+            "deletions": 0,
+            "changes": 1,
+        }
+        replies = _replies()
+        replies[COMPARE] = _comparison(
+            [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], [candidate]
+        )
+        text = json.dumps(_snapshot(replies))
+        with tempfile.TemporaryDirectory() as directory:
+            project = _project(Path(directory))
+            code, out, err = _run(project, text)
+            self.assertEqual(0, code, err)
+            bootstrap = json.loads(out)
+            (project / merge_evidence_github.DEFAULT_DEBT_LEDGER).write_text(
+                yaml.safe_dump(LEDGER_DOCUMENT), encoding="utf-8"
+            )
+            code, out, err = _run(project, text)
+            self.assertEqual(0, code, err)
+            protected = json.loads(out)
+            (project / "policy" / "other-ledger.yaml").write_text(
+                yaml.safe_dump({**LEDGER_DOCUMENT, "entries": []}), encoding="utf-8"
+            )
+            code, out, err = _run(
+                project, text, "--debt-ledger", "policy/other-ledger.yaml"
+            )
+            self.assertEqual(0, code, err)
+            other = json.loads(out)
+        self.assertEqual(
+            {"coverage": "UNAVAILABLE", "entries": []}, bootstrap["analyzer_debt"]
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": [debt_entry()]},
+            protected["analyzer_debt"],
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": []}, other["analyzer_debt"]
+        )
+
+    def test_an_inherited_finding_meets_m17_end_to_end(self) -> None:
+        """Through `evidence_for` and `merge_admission.evaluate`: an inventory finding
+        under its run-bound profile keeps its scope and configuration in the
+        evidence, and the protected ledger's entry for it means M17 does not fail on
+        it. Another scope, a raised severity (owner 6620829215 §1), another profile,
+        a provider that states no configuration (§2), or no ledger, does."""
+        raw = {
+            k: v
+            for k, v in debt_finding().items()
+            if k not in ("item", "configuration")
+        }
+        entry = debt_entry(item="project-full", configuration=CONFIGURATION)
+        ledger = {**LEDGER_DOCUMENT, "entries": [entry]}
+        # The identity merge evidence derives: adapter, profile, producer.
+        self.assertEqual(
+            f"gnostoa-inventory-fake/v1@{_PROFILE}/python@{_PRODUCER}", CONFIGURATION
+        )
+        inventory = _complete_bundle(inventory_full=(raw,))
+        unresolved = ["1 unresolved analyzer finding"]
+        for name, given, bundle, m17 in (
+            ("the entry", ledger, inventory, None),
+            (
+                "another scope",
+                {**ledger, "entries": [{**entry, "enclosing_sha256": "e" * 64}]},
+                inventory,
+                unresolved,
+            ),
+            (
+                "a raised severity",
+                ledger,
+                _complete_bundle(inventory_full=({**raw, "severity": "CRITICAL"},)),
+                unresolved,
+            ),
+            (
+                "another profile",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), profile="sha256:" + "d" * 64),
+                unresolved,
+            ),
+            (
+                "a profile not bound to its run",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), binding="UNBOUND"),
+                unresolved,
+            ),
+            (
+                # The entry pins the identity a non-digest profile would give, so only
+                # the digest check refuses it.
+                "a profile that is no digest",
+                {
+                    **ledger,
+                    "entries": [
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@latest/python@{_PRODUCER}",
+                        }
+                    ],
+                },
+                _complete_bundle(inventory_full=(raw,), profile="latest"),
+                unresolved,
+            ),
+            # Owner 6621293483 §1: the finding's own producer, proved and the same.
+            (
+                "another producer version",
+                ledger,
+                _complete_bundle(
+                    inventory_full=(raw,), producers={"python": "sha256:" + "f" * 64}
+                ),
+                unresolved,
+            ),
+            (
+                "an unproved producer",
+                ledger,
+                _complete_bundle(inventory_full=(raw,), producers={}),
+                unresolved,
+            ),
+            (
+                "a producer identity that is no digest",
+                {
+                    **ledger,
+                    "entries": [
+                        {
+                            **entry,
+                            "configuration": f"gnostoa-inventory-fake/v1@{_PROFILE}/python@abc",
+                        }
+                    ],
+                },
+                _complete_bundle(inventory_full=(raw,), producers={"python": "abc"}),
+                unresolved,
+            ),
+            (
+                "a provider that states no configuration",
+                {**ledger, "entries": [{**entry, "item": "codacy"}]},
+                _complete_bundle(raw),
+                unresolved,
+            ),
+            ("no ledger", None, inventory, unresolved),
+        ):
+            with self.subTest(name):
+                evidence, failed = _admitted(
+                    _section_c_declaration(), bundle, "critical", ledger=given
+                )
+                [listed] = evidence["analyzer_findings"]["findings"]
+                self.assertEqual(debt_finding()["enclosing"], listed["enclosing"])
+                self.assertNotIn("M2-M8", failed)
+                self.assertEqual(m17, failed.get("M17"))
+
+
+def _shipped_ledger() -> dict[str, Any]:
+    """The analyzer debt ledger this repository ships, which `_admitted` puts on the
+    protected target: empty until the owner approves an entry (Decision 0129)."""
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / merge_evidence_github.DEFAULT_DEBT_LEDGER).read_text(encoding="utf-8")
+    )
+    return document
+
+
+# A finding a ledger entry could match: an inventory full-run finding with its
+# enclosing scope, under its run-bound profile and producer (Decision 0129).
+_MATCHABLE = {
+    k: v for k, v in debt_finding().items() if k not in ("item", "configuration")
+}
+
+
+class EmptyLedgerAdmissionTests(unittest.TestCase):
+    """The owner's checks before #480 merges (#389, 6658166252, Option B), end to end
+    through `evidence_for` and `merge_admission.evaluate` on the active providers'
+    evidence, under the ledger this repository ships, which is empty: missing or
+    incomplete required evidence still denies, and so does every obtained finding,
+    new, worsened, unmatched or security, in every class."""
+
+    _CLASSES = ("mechanical", "normal", "normative", "critical")
+
+    def _admit(
+        self, bundle: dict[str, Any] | None, change_class: str
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """The evidence and the failed criteria under the shipped ledger, which the
+        evidence must carry as read and empty, and the verdict match nothing in."""
+        declaration = _section_c_declaration()
+        evidence, failed = _admitted(
+            declaration, bundle, change_class, ledger=_shipped_ledger()
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "entries": []}, evidence["analyzer_debt"]
+        )
+        verdict = merge_admission.evaluate(
+            evidence,
+            declaration=assurance_completeness.parse_declaration(declaration),
+            change_policy=_policy(),
+        )
+        self.assertEqual([], verdict["for_approval"]["inherited_findings"])
+        self.assertEqual([], verdict["for_approval"]["resolved_debt"])
+        return evidence, failed
+
+    def test_missing_or_incomplete_required_evidence_still_denies(self) -> None:
+        codacy, sonar = _readback("codacy", "DIFF"), _readback(*SONAR)
+        diff, full = _inventory_readbacks()
+        for name, bundle in (
+            ("no analyzer readback", None),
+            ("another head's readback", _bundle_for(head=PREVIOUS)),
+            ("no Codacy read", _bundle(sonar, diff, full)),
+            (
+                "Codacy unavailable",
+                _bundle(
+                    _readback("codacy", "DIFF", status="UNAVAILABLE"), sonar, diff, full
+                ),
+            ),
+            (
+                "SonarCloud's inventory unavailable",
+                _bundle(codacy, _readback(*SONAR, status="UNAVAILABLE"), diff, full),
+            ),
+            ("no inventory diff read", _bundle(codacy, sonar, full)),
+            ("no inventory full read", _bundle(codacy, sonar, diff)),
+            (
+                "a partial inventory diff read",
+                _bundle(codacy, sonar, _inventory_incomplete("DIFF"), full),
+            ),
+            (
+                "a partial inventory full read",
+                _bundle(codacy, sonar, diff, _inventory_incomplete("FULL")),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    _, failed = self._admit(bundle, change_class)
+                    self.assertIn("M2-M8", failed)
+                    self.assertIn(
+                        "analyzer finding coverage follows the required evidence, "
+                        "which is INCOMPLETE",
+                        failed.get("M17", []),
+                    )
+
+    def test_every_obtained_finding_still_denies(self) -> None:
+        worsened = {
+            **_MATCHABLE,
+            "id": "issue-worse",
+            "message": "`f` has a cyclomatic complexity of 17",
+            "severity": "MAJOR",
+        }
+        security = {**_MATCHABLE, "id": "issue-security", "category": "SECURITY"}
+        new = {**FINDING, "id": "issue-new"}
+        everything = _complete_bundle(
+            {**FINDING, "id": "issue-codacy"},
+            sonarcloud=({**FINDING, "id": "issue-sonar"},),
+            inventory_diff=(new,),
+            inventory_full=(_MATCHABLE, worsened, security),
+        )
+        for name, bundle, count in (
+            (
+                "a new finding on a changed path",
+                _complete_bundle(inventory_diff=(new,)),
+                1,
+            ),
+            ("a worsened finding", _complete_bundle(inventory_full=(worsened,)), 1),
+            # Its identity is complete, so only the empty ledger leaves it unmatched.
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+                1,
+            ),
+            ("a security finding", _complete_bundle(inventory_full=(security,)), 1),
+            ("a Codacy finding", _complete_bundle(FINDING), 1),
+            ("a SonarCloud finding", _complete_bundle(sonarcloud=(FINDING,)), 1),
+            ("all of them", everything, 6),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    evidence, failed = self._admit(bundle, change_class)
+                    listed = evidence["analyzer_findings"]["findings"]
+                    self.assertEqual(count, len(listed))
+                    self.assertNotIn("M2-M8", failed)
+                    plural = "" if count == 1 else "s"
+                    self.assertEqual(
+                        [f"{count} unresolved analyzer finding{plural}"], failed["M17"]
+                    )
+        # The finding an entry could match carries every part of its identity.
+        evidence, _ = self._admit(
+            _complete_bundle(inventory_full=(_MATCHABLE,)), "normal"
+        )
+        self.assertEqual(
+            [("project-full", CONFIGURATION, debt_finding()["enclosing"])],
+            [
+                (f["item"], f.get("configuration"), f.get("enclosing"))
+                for f in evidence["analyzer_findings"]["findings"]
+            ],
+        )
+
+    def test_the_shipped_ledger_changes_no_verdict(self) -> None:
+        """Against no ledger at all, under which M17 is what it was before the ledger
+        (`DebtLedgerM17Tests.test_without_a_ledger_m17_is_as_it_was`): the whole
+        verdict is the same, every criterion's status and reasons and everything it
+        carries for approval (Claude on #480), while the shipped ledger is read."""
+        for name, bundle in (
+            ("complete, finding nothing", _complete_bundle()),
+            (
+                "a partial inventory full read",
+                _bundle(
+                    _readback("codacy", "DIFF"),
+                    _readback(*SONAR),
+                    _inventory("DIFF"),
+                    _inventory_incomplete("FULL"),
+                ),
+            ),
+            (
+                "a finding an entry could match",
+                _complete_bundle(inventory_full=(_MATCHABLE,)),
+            ),
+        ):
+            for change_class in self._CLASSES:
+                with self.subTest(name, change_class=change_class):
+                    self._admit(bundle, change_class)
+                    read, shipped = _decision(
+                        _section_c_declaration(),
+                        bundle,
+                        change_class,
+                        ledger=_shipped_ledger(),
+                    )
+                    _, without = _decision(
+                        _section_c_declaration(), bundle, change_class
+                    )
+                    self.assertEqual(
+                        {"coverage": "COMPLETE", "entries": []}, read["analyzer_debt"]
+                    )
+                    self.assertEqual(without, shipped)
+
+
+if __name__ == "__main__":
+    unittest.main()

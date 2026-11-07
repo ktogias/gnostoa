@@ -493,6 +493,51 @@ class SharedGitHubClientTests(unittest.TestCase):
             [(m, p, json.loads(b)) for m, p, b in provider.received],
         )
 
+    def test_a_body_less_write_is_acceptance_not_a_document(self) -> None:
+        """G1 (#426 6132395441): an endpoint that answers a write with no body, such as
+        a repository dispatch's `204`, is the provider's acceptance. The JSON write
+        reads that empty answer as an unknown outcome, so a body-less write says so
+        explicitly. A body where none belongs, or a refusal, is still reported."""
+
+        def empty(status: int) -> Route:
+            def route(handler: http.server.BaseHTTPRequestHandler) -> None:
+                handler.send_response(status)
+                handler.send_header("Content-Length", "0")
+                handler.end_headers()
+
+            return route
+
+        provider = self._provider(
+            {
+                "/dispatches": empty(204),
+                "/bodied": _json(200, {"unexpected": True}),
+                "/refused": _json(403, {"message": "Resource not accessible"}),
+            }
+        )
+        client = github_rest.GitHubRestClient("t", api_root=provider.root)
+        # Its contract is no answer at all: the runtime value is checked, so the
+        # reference checks the method's two parameters, the payload as
+        # `dict[str, object]`, which its `dict[str, Any]` accepts, and is read as
+        # returning `object`, which every return satisfies.
+        post_accepted: Callable[[str, dict[str, object]], object] = client.post_accepted
+        self.assertIsNone(
+            post_accepted(f"{provider.root}/dispatches", {"event_type": "x"})
+        )
+        self.assertEqual(
+            [("POST", "/dispatches", {"event_type": "x"})],
+            [(m, p, json.loads(b)) for m, p, b in provider.received],
+        )
+        with self.assertRaises(github_rest.GitHubWriteError) as unknown:
+            client.post(f"{provider.root}/dispatches", {"event_type": "x"})
+        self.assertTrue(unknown.exception.outcome_unknown)
+        with self.assertRaises(github_rest.GitHubWriteError) as bodied:
+            client.post_accepted(f"{provider.root}/bodied", {"event_type": "x"})
+        self.assertTrue(bodied.exception.outcome_unknown)
+        with self.assertRaises(github_rest.GitHubWriteError) as refused:
+            client.post_accepted(f"{provider.root}/refused", {"event_type": "x"})
+        self.assertFalse(refused.exception.outcome_unknown)
+        self.assertEqual(403, refused.exception.status)
+
     def test_a_followed_page_keeps_its_query(self) -> None:
         """The next page is the URL the provider named, query and all: a client that
         dropped it would read the first page again."""
@@ -738,6 +783,134 @@ class SharedClientOwnershipTests(unittest.TestCase):
                 self.assertIn("tools/github_rest.py", guardrail["implementation"])
                 self.assertIn("tests/test_github_rest.py", guardrail.get("tests") or [])
         self.assertGreaterEqual(len(owners), 3)
+
+
+# Legacy request_timeout floats, pinned from the frozen #441 subject 2a0421f9's own
+# function at the clock observation 1000.0, before request_limit existed (#441 R3,
+# Router 6284547841): (policy, remaining budget or None for no deadline, seconds).
+_LIMIT_POLICIES: dict[str, github_rest.Policy] = {
+    "default": github_rest.Policy(),
+    "zero-floor": github_rest.Policy(min_request_seconds=0.0),
+    "floor-above-cap": github_rest.Policy(
+        timeout_seconds=0.05, min_request_seconds=0.1
+    ),
+    "floor-equals-cap": github_rest.Policy(
+        timeout_seconds=0.1, min_request_seconds=0.1
+    ),
+}
+_REQUEST_TIMEOUT_GOLDEN: tuple[tuple[str, float | None, float], ...] = (
+    ("default", -1.0, 0.1),
+    ("default", 0.0, 0.1),
+    ("default", 0.05, 0.1),
+    ("default", 0.08, 0.1),
+    ("default", 0.1, 0.10000000000002274),
+    ("default", 10.0, 10.0),
+    ("default", 29.999, 29.999000000000024),
+    ("default", 30.0, 30.0),
+    ("default", 30.001, 30.0),
+    ("default", 3600.0, 30.0),
+    ("default", None, 30.0),
+    ("zero-floor", -1.0, 0.0),
+    ("zero-floor", 0.0, 0.0),
+    ("zero-floor", 0.05, 0.049999999999954525),
+    ("zero-floor", 0.08, 0.08000000000004093),
+    ("zero-floor", 0.1, 0.10000000000002274),
+    ("zero-floor", 10.0, 10.0),
+    ("zero-floor", 29.999, 29.999000000000024),
+    ("zero-floor", 30.0, 30.0),
+    ("zero-floor", 30.001, 30.0),
+    ("zero-floor", 3600.0, 30.0),
+    ("zero-floor", None, 30.0),
+    ("floor-above-cap", -1.0, 0.1),
+    ("floor-above-cap", 0.0, 0.1),
+    ("floor-above-cap", 0.05, 0.1),
+    ("floor-above-cap", 0.08, 0.1),
+    ("floor-above-cap", 0.1, 0.1),
+    ("floor-above-cap", 10.0, 0.1),
+    ("floor-above-cap", 29.999, 0.1),
+    ("floor-above-cap", 30.0, 0.1),
+    ("floor-above-cap", 30.001, 0.1),
+    ("floor-above-cap", 3600.0, 0.1),
+    ("floor-above-cap", None, 0.05),
+    ("floor-equals-cap", -1.0, 0.1),
+    ("floor-equals-cap", 0.0, 0.1),
+    ("floor-equals-cap", 0.05, 0.1),
+    ("floor-equals-cap", 0.08, 0.1),
+    ("floor-equals-cap", 0.1, 0.1),
+    ("floor-equals-cap", 10.0, 0.1),
+    ("floor-equals-cap", 29.999, 0.1),
+    ("floor-equals-cap", 30.0, 0.1),
+    ("floor-equals-cap", 30.001, 0.1),
+    ("floor-equals-cap", 3600.0, 0.1),
+    ("floor-equals-cap", None, 0.1),
+)
+
+
+class RequestLimitTests(unittest.TestCase):
+    """One request's limit and whether the policy's cap set it, from one clock
+    observation (#441 R3, Decision 0100 addendum). request_timeout keeps its legacy
+    floats."""
+
+    _NOW = 1000.0
+
+    def _deadline(self, remaining: float | None) -> float | None:
+        return None if remaining is None else self._NOW + remaining
+
+    def test_request_timeout_keeps_its_legacy_values(self) -> None:
+        for name, remaining, expected in _REQUEST_TIMEOUT_GOLDEN:
+            with self.subTest(policy=name, remaining=remaining):
+                policy = _LIMIT_POLICIES[name]
+                with mock.patch("time.monotonic", return_value=self._NOW):
+                    actual = github_rest.request_timeout(
+                        self._deadline(remaining), policy
+                    )
+                self.assertEqual(expected, actual)
+
+    def test_the_limit_seconds_are_the_legacy_values(self) -> None:
+        for name, remaining, expected in _REQUEST_TIMEOUT_GOLDEN:
+            with self.subTest(policy=name, remaining=remaining):
+                policy = _LIMIT_POLICIES[name]
+                with mock.patch("time.monotonic", return_value=self._NOW):
+                    limit = github_rest.request_limit(self._deadline(remaining), policy)
+                self.assertEqual(expected, limit.seconds)
+
+    def test_the_ceiling_is_the_strict_cap_after_the_floor(self) -> None:
+        # (cap, floor, remaining) -> ceiling. A tie is the budget's, and a floor at or
+        # above the cap leaves no ceiling (PAO R3-LIMIT-ORIGIN-01).
+        for cap, floor, remaining, expected in (
+            (30.0, 0.0, 30.001, True),
+            (30.0, 0.0, 30.0, False),
+            (30.0, 0.0, 29.999, False),
+            (30.0, 0.1, 3600.0, True),
+            (30.0, 0.1, 0.05, False),
+            (0.05, 0.1, 0.08, False),
+            (0.05, 0.1, 3600.0, False),
+            (0.1, 0.1, 1.0, False),
+        ):
+            with self.subTest(cap=cap, floor=floor, remaining=remaining):
+                policy = github_rest.Policy(
+                    timeout_seconds=cap, min_request_seconds=floor
+                )
+                with mock.patch("time.monotonic", return_value=self._NOW):
+                    limit = github_rest.request_limit(self._NOW + remaining, policy)
+                self.assertIs(expected, limit.ceiling)
+
+    def test_a_deadline_is_observed_once(self) -> None:
+        reads: list[float] = []
+
+        def clock() -> float:
+            reads.append(self._NOW)
+            return self._NOW
+
+        with mock.patch("time.monotonic", side_effect=clock):
+            github_rest.request_limit(self._NOW + 45.0, github_rest.Policy())
+        self.assertEqual(1, len(reads))
+
+    def test_no_deadline_reads_no_clock_and_applies_no_floor(self) -> None:
+        policy = github_rest.Policy(timeout_seconds=0.05, min_request_seconds=0.1)
+        with mock.patch("time.monotonic", side_effect=AssertionError("clock read")):
+            limit = github_rest.request_limit(None, policy)
+        self.assertEqual((0.05, True), (limit.seconds, limit.ceiling))
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
-import importlib.util
 import json
+import os
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -14,53 +14,38 @@ from unittest import mock
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "ci" / "review_github_current_state.py"
+from tests.review_reconcile_l1_support import (
+    GUARDRAILS_PATH,
+    ROOT,
+    reducer_fixture,
+    snapshot_fixture,
+)
+from tests.review_reconcile_l1_support import (
+    PagedFake as _PagedFake,
+)
+from tests.review_reconcile_l1_support import (
+    adapter as _adapter,
+)
+from tests.review_reconcile_l1_support import (
+    bundle as _bundle,
+)
+from tests.review_reconcile_l1_support import (
+    complete_replies as _complete_replies,
+)
+from tests.review_reconcile_l1_support import (
+    complete_replies_without_review_comments as _complete_replies_without_review_comments,
+)
+from tests.review_reconcile_l1_support import (
+    reducer as _reducer,
+)
+from tests.review_reconcile_l1_support import (
+    snapshot as _snapshot,
+)
+from tests.review_reconcile_l1_support import (
+    valid_incomplete_result as _valid_incomplete_result,
+)
+
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "review-current-state.yml"
-GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
-
-
-def _reducer() -> ModuleType:
-    spec = importlib.util.find_spec("tools.review_reconcile")
-    if spec is None:
-        raise AssertionError("L1_REDUCER_UNAVAILABLE")
-    return importlib.import_module("tools.review_reconcile")
-
-
-def reducer_fixture() -> ModuleType:
-    """Public test-only access to the shared provider-neutral reducer fixture."""
-    return _reducer()
-
-
-def snapshot_fixture() -> dict[str, Any]:
-    """Public test-only access to the shared normalized provider snapshot."""
-    return _snapshot()
-
-
-def _adapter() -> ModuleType:
-    if not ADAPTER_PATH.is_file():
-        raise AssertionError("L1_GITHUB_ADAPTER_UNAVAILABLE")
-    spec = importlib.util.spec_from_file_location(
-        "gnostoa_l1_github_adapter", ADAPTER_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise AssertionError("L1_GITHUB_ADAPTER_UNLOADABLE")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def adapter_fixture() -> ModuleType:
-    """Public test-only access to the shared GitHub adapter fixture."""
-    return _adapter()
-
-
-def _bundle() -> dict[str, Any]:
-    path = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
-    loaded = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise AssertionError("protected authority fixture must be an object")
-    return loaded
 
 
 def _consumer_document() -> dict[str, Any]:
@@ -71,320 +56,79 @@ def _consumer_document() -> dict[str, Any]:
     return loaded
 
 
-def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes]:
-    from tools import review_live
-    from tools.review_model import canonical_json
-
-    trusted_cut = input_document["evaluation_context"]["as_of"]
-    if not isinstance(trusted_cut, str):
-        raise AssertionError("evaluation cut must be a string")
-    # skipcq: PYL-W0212 -- intentional white-box L1 test
-    code, payload = review_live._semantic_incomplete(
-        input_document,
-        _bundle(),
-        trusted_cut,
-        "QUORUM_UNMET",
-        "fixture semantic incomplete",
-    )
-    return code, (canonical_json(payload) + "\n").encode("utf-8")
+def _run_adapter_main(
+    adapter: ModuleType, client: Any, directory: Path, argv: list[str]
+) -> int:
+    """Run the adapter's command line against ``client``, its step summary kept in
+    ``directory``."""
+    with (
+        mock.patch.object(adapter, "GitHubRestClient", return_value=client),
+        mock.patch.dict(
+            os.environ, {"GITHUB_STEP_SUMMARY": str(directory / "summary.md")}
+        ),
+    ):
+        return int(adapter.main(argv))
 
 
-def _snapshot(
-    *,
-    provider_id: str = "github",
-    repository: str = "https://github.com/ktogias/gnostoa",
-    change_kind: str = "github-pull-request",
-    change_id: str = "300",
-    source_url: str = "https://github.com/ktogias/gnostoa/pull/300",
+def _collected_entry(
+    adapter: ModuleType, client: Any, directory: Path, *, run_id: int
 ) -> dict[str, Any]:
+    """The one entry the adapter's ``collect`` mode writes for Pull Request 300."""
+    output = directory / "payload.json"
+    code = _run_adapter_main(
+        adapter,
+        client,
+        directory,
+        [
+            "--mode",
+            "collect",
+            "--repository",
+            "ktogias/gnostoa",
+            "--pull-number",
+            "300",
+            "--run-id",
+            str(run_id),
+            "--run-attempt",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    entries = json.loads(output.read_text(encoding="utf-8"))
+    if code != 0 or not isinstance(entries, list) or len(entries) != 1:
+        raise AssertionError(f"collect did not write one entry: {code} {entries!r}")
+    entry = entries[0]
+    if not isinstance(entry, dict) or entry.get("pull_number") != 300:
+        raise AssertionError(f"collect wrote another entry: {entry!r}")
+    if "body" not in entry:
+        raise AssertionError(f"collect wrote no projection: {entry!r}")
+    return entry
+
+
+def _issue_comment(comment_id: int, author: str, body: str) -> dict[str, Any]:
+    """One Pull Request conversation comment as GitHub's REST API returns it."""
     return {
-        "schema_version": "gnostoa-review-provider-state/v1",
-        "provider": {
-            "id": provider_id,
-            "adapter": f"{provider_id}-fixture/v1",
-        },
-        "observed_at": "2026-09-19T16:41:00Z",
-        "subject": {
-            "repository": repository,
-            "change_request": {
-                "kind": change_kind,
-                "id": change_id,
-            },
-            "state": "open",
-            "head_commit": "a" * 40,
-            "base_commit": "b" * 40,
-            "comparison": {
-                "kind": "merge_base",
-                "commit_sha": "c" * 40,
-            },
-            "source_url": source_url,
-            "title": "Useful L1 fixture",
-        },
-        "coverage": {
-            "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
-            "conversation": {"status": "COMPLETE", "pages": 2, "count": 1},
-            "reviews": {"status": "COMPLETE", "pages": 2, "count": 2},
-            "review_threads": {"status": "COMPLETE", "pages": 1, "count": 1},
-            "checks": {"status": "COMPLETE", "pages": 1, "count": 1},
-        },
-        "conversation": [
-            {
-                "id": "conversation-1",
-                "author": "review-bot",
-                "observed_at": "2026-09-19T16:40:20Z",
-                "body": "raw provider text that must not be rendered",
-            }
-        ],
-        "reviews": [
-            {
-                "observation_id": "provider-review-10",
-                "reviewer_id": "qodo-code-review[bot]",
-                "recommendation_state": "APPROVED",
-                "observed_at": "2026-09-19T16:40:30Z",
-                "head_commit": "a" * 40,
-                "source_url": source_url + "#review-10",
-            },
-            {
-                "observation_id": "provider-review-11",
-                "reviewer_id": "older-reviewer",
-                "recommendation_state": "COMMENTED",
-                "observed_at": "2026-09-19T16:39:30Z",
-                "head_commit": "d" * 40,
-                "source_url": source_url + "#review-11",
-            },
-        ],
-        "review_threads": [
-            {
-                "id": "provider-thread-20",
-                "review_observation_id": "provider-review-10",
-                "reviewer_id": "qodo-code-review[bot]",
-                "observed_at": "2026-09-19T16:40:31Z",
-                "head_commit": "a" * 40,
-                "body": "inline raw finding",
-                "source_url": source_url + "#thread-20",
-                "state": "unresolved",
-            }
-        ],
-        "checks": [
-            {
-                "id": "provider-check-00000000000000000030",
-                "key": "provider-check:fast",
-                "name": "fast",
-                "head_commit": "a" * 40,
-                "observed_at": "2026-09-19T16:40:40Z",
-                "status": "completed",
-                "conclusion": "success",
-            }
-        ],
+        "id": comment_id,
+        "user": {"login": author},
+        "created_at": "2026-09-19T16:44:00Z",
+        "updated_at": "2026-09-19T16:44:00Z",
+        "body": body,
     }
 
 
-class _PagedFake:
-    def __init__(self, replies: dict[str, tuple[Any, dict[str, str]]]) -> None:
-        self.replies = replies
-        self.calls: list[str] = []
-
-    def get(self, url: str) -> tuple[Any, dict[str, str]]:
-        self.calls.append(url)
-        if url not in self.replies:
-            raise RuntimeError(f"unexpected URL: {url}")
-        return self.replies[url]
-
-    def graphql(self, _query: str, variables: dict[str, Any]) -> Any:
-        cursor = variables.get("cursor")
-        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
-        first_url = next(
-            (
-                url
-                for url in self.replies
-                if url.endswith("/pulls/300/comments?per_page=100")
-            ),
-            None,
-        )
-        if first_url is None:
-            raise RuntimeError("review comment fixture is unavailable")
-        if cursor is None:
-            url = first_url
-        elif cursor == "page-2":
-            url = "https://api.github.com/page2/review-comments"
-        else:
-            raise RuntimeError(f"unexpected GraphQL cursor: {cursor!r}")
-        payload, headers = self.get(url)
-        nodes = [
-            {
-                "id": f"PRRT_fixture_{item['id']}",
-                "isResolved": True,
-                "isOutdated": False,
-                "comments": {
-                    "nodes": [
-                        {
-                            "databaseId": item["id"],
-                            "url": item.get("html_url"),
-                        }
-                    ]
-                },
-            }
-            for item in payload
-        ]
-        has_next = 'rel="next"' in headers.get("link", "")
-        return {
-            "data": {
-                "repository": {
-                    "pullRequest": {
-                        "reviewThreads": {
-                            "nodes": nodes,
-                            "pageInfo": {
-                                "hasNextPage": has_next,
-                                "endCursor": "page-2" if has_next else None,
-                            },
-                        }
-                    }
-                }
-            }
-        }
-
-
-def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
-    return {
-        f"{root}/pulls/300": (
-            {
-                "number": 300,
-                "state": "open",
-                "html_url": "https://github.com/ktogias/gnostoa/pull/300",
-                "head": {"sha": "a" * 40},
-                "base": {"sha": "b" * 40},
-            },
-            {},
-        ),
-        f"{root}/compare/{'b' * 40}...{'a' * 40}": (
-            {"merge_base_commit": {"sha": "c" * 40}},
-            {},
-        ),
-        f"{root}/issues/300/comments?per_page=100": (
-            [
-                {
-                    "id": 1,
-                    "user": {"login": "one"},
-                    "created_at": "2026-09-19T16:40:00Z",
-                    "updated_at": "2026-09-19T16:40:00Z",
-                    "body": "one",
-                }
-            ],
-            {"link": '<https://api.github.com/page2/issues>; rel="next"'},
-        ),
-        "https://api.github.com/page2/issues": (
-            [
-                {
-                    "id": 2,
-                    "user": {"login": "two"},
-                    "created_at": "2026-09-19T16:40:01Z",
-                    "updated_at": "2026-09-19T16:40:01Z",
-                    "body": "two",
-                }
-            ],
-            {},
-        ),
-        f"{root}/pulls/300/reviews?per_page=100": (
-            [
-                {
-                    "id": 10,
-                    "user": {"login": "one"},
-                    "state": "APPROVED",
-                    "submitted_at": "2026-09-19T16:40:02Z",
-                    "commit_id": "a" * 40,
-                    "html_url": "https://example.invalid/review/10",
-                }
-            ],
-            {"link": '<https://api.github.com/page2/reviews>; rel="next"'},
-        ),
-        "https://api.github.com/page2/reviews": (
-            [
-                {
-                    "id": 11,
-                    "user": {"login": "two"},
-                    "state": "COMMENTED",
-                    "submitted_at": "2026-09-19T16:40:03Z",
-                    "commit_id": "a" * 40,
-                    "html_url": "https://example.invalid/review/11",
-                }
-            ],
-            {},
-        ),
-        f"{root}/pulls/300/comments?per_page=100": (
-            [
-                {
-                    "id": 20,
-                    "pull_request_review_id": 10,
-                    "user": {"login": "one"},
-                    "created_at": "2026-09-19T16:40:04Z",
-                    "updated_at": "2026-09-19T16:40:04Z",
-                    "commit_id": "a" * 40,
-                    "body": "inline one",
-                    "html_url": "https://example.invalid/comment/20",
-                }
-            ],
-            {"link": '<https://api.github.com/page2/review-comments>; rel="next"'},
-        ),
-        "https://api.github.com/page2/review-comments": (
-            [
-                {
-                    "id": 21,
-                    "pull_request_review_id": 11,
-                    "user": {"login": "two"},
-                    "created_at": "2026-09-19T16:40:05Z",
-                    "updated_at": "2026-09-19T16:40:05Z",
-                    "commit_id": "a" * 40,
-                    "body": "inline two",
-                    "html_url": "https://example.invalid/comment/21",
-                }
-            ],
-            {},
-        ),
-        f"{root}/commits/{'a' * 40}/check-runs?per_page=100": (
-            {
-                "check_runs": [
-                    {
-                        "id": 30,
-                        "name": "fast",
-                        "app": {"id": 1001},
-                        "head_sha": "a" * 40,
-                        "started_at": "2026-09-19T16:40:06Z",
-                        "completed_at": "2026-09-19T16:40:07Z",
-                        "status": "completed",
-                        "conclusion": "success",
-                    }
-                ]
-            },
-            {"link": '<https://api.github.com/page2/check-runs>; rel="next"'},
-        ),
-        "https://api.github.com/page2/check-runs": (
-            {
-                "check_runs": [
-                    {
-                        "id": 31,
-                        "name": "policy",
-                        "app": {"id": 1001},
-                        "head_sha": "a" * 40,
-                        "started_at": "2026-09-19T16:40:08Z",
-                        "completed_at": "2026-09-19T16:40:09Z",
-                        "status": "completed",
-                        "conclusion": "success",
-                    }
-                ]
-            },
-            {},
-        ),
-        f"{root}/commits/{'a' * 40}/statuses?per_page=100": ([], {}),
-    }
-
-
-def _complete_replies_without_review_comments(
-    root: str,
-) -> dict[str, tuple[Any, dict[str, str]]]:
+def _publication_client(comments: list[dict[str, Any]]) -> Any:
+    """A client for Pull Request 300 at its fixture subject whose conversation is
+    exactly ``comments``, refusing any read it was not given."""
+    root = "https://api.github.com/repos/ktogias/gnostoa"
     replies = _complete_replies(root)
-    replies[f"{root}/pulls/300/comments?per_page=100"] = ([], {})
-    replies.pop("https://api.github.com/page2/review-comments", None)
-    return replies
+    replies[f"{root}/issues/300/comments?per_page=100"] = (comments, {})
+    replies.pop("https://api.github.com/page2/issues", None)
+    return mock.Mock(get=_PagedFake(replies).get)
+
+
+def _publication_entry(body: str) -> dict[str, Any]:
+    """The collected entry for Pull Request 300 at its fixture head."""
+    return {"pull_number": 300, "head_sha": "a" * 40, "body": body}
 
 
 class UsefulL1RedContractTests(unittest.TestCase):
@@ -1131,32 +875,82 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
     def test_current_pr_recomputes_merge_base_for_prewrite_subject(self) -> None:
         adapter = _adapter()
+        reducer = _reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        fake = _PagedFake(_complete_replies(root))
-
-        # skipcq: PYL-W0212 -- intentional white-box L1 test
-        current = adapter._current_pr(fake, "ktogias/gnostoa", 300)
-
-        self.assertEqual(
-            {
-                "state": "open",
-                "head_sha": "a" * 40,
-                "base_sha": "b" * 40,
-                "merge_base_sha": "c" * 40,
-            },
-            current,
+        compare = f"{root}/compare/{'b' * 40}...{'a' * 40}"
+        conversation = f"{root}/issues/300/comments?per_page=100"
+        moved: tuple[Any, dict[str, str]] = (
+            {"merge_base_commit": {"sha": "d" * 40}},
+            {},
         )
-        self.assertIn(
-            f"{root}/compare/{'b' * 40}...{'a' * 40}",
-            fake.calls,
+        entry = _publication_entry(
+            reducer.render_projection(
+                reducer.build_projection(
+                    _snapshot(),
+                    protected_main_revision=None,
+                    outer_consumer=None,
+                    r2a_result={
+                        "outcome": "INCOMPLETE",
+                        "reason": "QUORUM_UNMET",
+                        "binding": False,
+                    },
+                    execution={
+                        "execution_id": "github-actions:150:1",
+                        "observed_at": "2026-09-19T16:41:10Z",
+                    },
+                )
+            )
         )
+
+        def publish(moves: str | None) -> tuple[dict[str, Any], _PagedFake, Any]:
+            """Publish the entry while the merge base moves when ``moves`` is read:
+            at the first compare, or once the conversation has been read back."""
+            fake = _PagedFake(_complete_replies(root))
+            if moves == compare:
+                fake.replies[compare] = moved
+
+            def get(url: str) -> tuple[Any, dict[str, str]]:
+                reply = fake.get(url)
+                if moves == conversation and url == conversation:
+                    fake.replies[compare] = moved
+                return reply
+
+            client = mock.Mock(get=get)
+            result = adapter.publish_entry(
+                client, repository="ktogias/gnostoa", entry=entry
+            )
+            return result, fake, client
+
+        # The open state, head and base the Pull Request reports, and the merge base
+        # its compare reports, are re-read before the read-back and again before the
+        # write: a merge base that moves before either read refuses the write.
+        for moves, expected in (
+            (None, {"published": True, "reason": "CREATED"}),
+            (compare, {"published": False, "reason": "STALE_COMPARISON"}),
+            (conversation, {"published": False, "reason": "STALE_COMPARISON"}),
+        ):
+            with self.subTest(moves=moves):
+                result, fake, client = publish(moves)
+
+                self.assertEqual({"pull_number": 300, **expected}, result)
+                self.assertIn(compare, fake.calls)
+                self.assertEqual(
+                    1 if moves == compare else 2, fake.calls.count(compare)
+                )
+                if expected["published"]:
+                    client.post.assert_called_once_with(
+                        f"{root}/issues/300/comments", {"body": entry["body"]}
+                    )
+                else:
+                    client.post.assert_not_called()
+                client.patch.assert_not_called()
 
     def test_scheduled_population_is_fully_enumerated_before_batch_selection(
         self,
     ) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        pulls = [
+        pulls: list[dict[str, Any]] = [
             {
                 "number": number,
                 "state": "open",
@@ -1166,17 +960,52 @@ class UsefulL1RedContractTests(unittest.TestCase):
             }
             for number in range(1, 12)
         ]
-        fake = _PagedFake(
-            {
-                f"{root}/pulls?state=open&per_page=100": (pulls, {}),
-            }
-        )
+        listing = f"{root}/pulls?state=open&per_page=100"
+        replies: dict[str, tuple[Any, dict[str, str]]] = {
+            listing: (
+                pulls[:6],
+                {"link": '<https://api.github.com/page2/pulls>; rel="next"'},
+            ),
+            "https://api.github.com/page2/pulls": (pulls[6:], {}),
+            **{f"{root}/pulls/{pull['number']}": (pull, {}) for pull in pulls},
+        }
+        heads = {pull["number"]: pull["head"]["sha"] for pull in pulls}
 
-        self.assertEqual(
-            list(range(1, 12)),
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            adapter._open_pull_numbers(fake, "ktogias/gnostoa"),
-        )
+        # Eleven open Pull Requests over two listing pages exceed one scheduled batch:
+        # the hour selects the batch, and the later hour's batch is the remainder of
+        # the whole enumeration, which a listing cut to one batch would never reach.
+        for observed_at, expected in (
+            ("2026-09-19T22:00:00Z", list(range(1, 9))),
+            ("2026-09-19T23:00:00Z", [9, 10, 11]),
+        ):
+            with (
+                self.subTest(observed_at=observed_at),
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(adapter, "_now", return_value=observed_at),
+            ):
+                output = Path(directory) / "subjects.json"
+                code = _run_adapter_main(
+                    adapter,
+                    _PagedFake(replies),
+                    Path(directory),
+                    [
+                        "--mode",
+                        "subjects",
+                        "--repository",
+                        "ktogias/gnostoa",
+                        "--output",
+                        str(output),
+                    ],
+                )
+
+                self.assertEqual(0, code)
+                self.assertEqual(
+                    [
+                        {"pull_number": number, "head": heads[number]}
+                        for number in expected
+                    ],
+                    json.loads(output.read_text(encoding="utf-8")),
+                )
 
     def test_duplicate_projection_comments_fail_closed(self) -> None:
         adapter = _adapter()
@@ -1218,28 +1047,43 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         )
 
-        comments = [
-            {
-                "id": 1,
-                "author": "github-actions[bot]",
-                "body": reducer.render_projection(first),
+        # A candidate newer than both and without protected authority, which would
+        # be written at once were the two owned comments not refused as ambiguous.
+        candidate = reducer.build_projection(
+            snapshot,
+            protected_main_revision=None,
+            outer_consumer=None,
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
             },
-            {
-                "id": 2,
-                "author": "github-actions[bot]",
-                "body": reducer.render_projection(second),
+            execution={
+                "execution_id": "github-actions:132:1",
+                "observed_at": "2026-09-19T16:43:10Z",
             },
-        ]
+        )
+        client = _publication_client(
+            [
+                _issue_comment(
+                    1, "github-actions[bot]", reducer.render_projection(first)
+                ),
+                _issue_comment(
+                    2, "github-actions[bot]", reducer.render_projection(second)
+                ),
+            ]
+        )
         with self.assertRaisesRegex(
             adapter.ProviderWriteError,
             "multiple valid owned L1 projection comments",
         ):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            adapter._existing_projection(
-                comments,
+            adapter.publish_entry(
+                client,
                 repository="ktogias/gnostoa",
-                pull_number=300,
+                entry=_publication_entry(reducer.render_projection(candidate)),
             )
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
 
     def test_projection_ownership_ignores_forged_or_wrong_subject_comments(
         self,
@@ -1299,31 +1143,49 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         )
 
-        # skipcq: PYL-W0212 -- intentional white-box L1 test
-        existing = adapter._existing_projection(
+        candidate = reducer.build_projection(
+            _snapshot(),
+            protected_main_revision=None,
+            outer_consumer=None,
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:138:1",
+                "observed_at": "2026-09-19T16:44:10Z",
+            },
+        )
+        body = reducer.render_projection(candidate)
+        client = _publication_client(
             [
-                {
-                    "id": 1,
-                    "author": "github-actions[bot]",
-                    "body": reducer.render_projection(legitimate),
-                },
-                {
-                    "id": 2,
-                    "author": "mallory",
-                    "body": reducer.render_projection(forged_later),
-                },
-                {
-                    "id": 3,
-                    "author": "github-actions[bot]",
-                    "body": reducer.render_projection(wrong_subject),
-                },
-            ],
-            repository="ktogias/gnostoa",
-            pull_number=300,
+                _issue_comment(
+                    1, "github-actions[bot]", reducer.render_projection(legitimate)
+                ),
+                _issue_comment(2, "mallory", reducer.render_projection(forged_later)),
+                _issue_comment(
+                    3, "github-actions[bot]", reducer.render_projection(wrong_subject)
+                ),
+            ]
         )
 
-        self.assertIsNotNone(existing)
-        self.assertEqual(1, existing[0])
+        result = adapter.publish_entry(
+            client,
+            repository="ktogias/gnostoa",
+            entry=_publication_entry(body),
+        )
+
+        # The one owned projection for this subject is the comment updated in place;
+        # the forged and wrong-subject comments are neither ambiguity nor its owner.
+        self.assertEqual(
+            {"pull_number": 300, "published": True, "reason": "UPDATED"}, result
+        )
+        client.patch.assert_called_once_with(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/comments/1",
+            {"body": body},
+        )
+        client.post.assert_not_called()
 
     def test_semantic_execution_uses_same_acquired_protected_consumer(self) -> None:
         adapter = _adapter()
@@ -1357,14 +1219,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
                 side_effect=run_bound,
             ) as runner,
+            tempfile.TemporaryDirectory() as directory,
         ):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            entry = adapter._collect_entry(
+            entry = _collected_entry(
+                adapter,
                 _PagedFake(_complete_replies_without_review_comments(root)),
-                "ktogias/gnostoa",
-                300,
+                Path(directory),
                 run_id=139,
-                run_attempt=1,
             )
 
         runner.assert_called_once()
@@ -1381,19 +1242,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         fake = _PagedFake(_complete_replies_without_review_comments(root))
 
-        with mock.patch.object(
-            adapter,
-            "_protected_state",
-            side_effect=adapter.ProviderReadError("protected state unavailable"),
+        with (
+            mock.patch.object(
+                adapter,
+                "_protected_state",
+                side_effect=adapter.ProviderReadError("protected state unavailable"),
+            ),
+            tempfile.TemporaryDirectory() as directory,
         ):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            entry = adapter._collect_entry(
-                fake,
-                "ktogias/gnostoa",
-                300,
-                run_id=140,
-                run_attempt=1,
-            )
+            entry = _collected_entry(adapter, fake, Path(directory), run_id=140)
 
         projection = reducer.parse_projection_comment(entry["body"])
         self.assertIsInstance(projection, dict)
@@ -1411,17 +1268,45 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "payload.json"
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            path.write_bytes(b"x" * (adapter._MAX_PUBLICATION_PAYLOAD_BYTES + 1))
+            # One byte over the publication payload's 300,000-byte bound, and not
+            # JSON: a bound applied only after decoding fails with another error.
+            path.write_bytes(b"x" * 300_001)
+            client = mock.Mock()
             with self.assertRaisesRegex(
                 ValueError,
                 "publication payload exceeds bounded size",
             ):
-                # skipcq: PYL-W0212 -- intentional white-box L1 test
-                adapter._load_payload(path)
+                _run_adapter_main(
+                    adapter,
+                    client,
+                    Path(directory),
+                    [
+                        "--mode",
+                        "publish",
+                        "--repository",
+                        "ktogias/gnostoa",
+                        "--payload",
+                        str(path),
+                    ],
+                )
+            self.assertEqual([], client.method_calls)
 
     def test_workflow_run_preserves_all_associated_pull_requests(self) -> None:
         adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        listing = f"{root}/pulls?state=open&per_page=100"
+        replies: dict[str, tuple[Any, dict[str, str]]] = {listing: ([], {})}
+        for number in (301, 302):
+            replies[f"{root}/pulls/{number}"] = (
+                {
+                    "number": number,
+                    "state": "open",
+                    "html_url": f"https://github.com/ktogias/gnostoa/pull/{number}",
+                    "head": {"sha": f"{number:040x}"},
+                    "base": {"sha": "b" * 40},
+                },
+                {},
+            )
         payload = json.dumps(
             [
                 {"number": 301},
@@ -1429,21 +1314,89 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 {"number": 301},
             ]
         )
-        self.assertEqual(
-            [301, 302],
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            adapter._workflow_run_pull_numbers(payload),
-        )
-        # skipcq: PYL-W0212 -- intentional white-box L1 test
-        self.assertEqual([], adapter._workflow_run_pull_numbers(""))
-        # skipcq: PYL-W0212 -- intentional white-box L1 test
-        self.assertEqual([], adapter._workflow_run_pull_numbers("null"))
-        with self.assertRaisesRegex(
-            adapter.ProviderReadError,
-            "workflow_run.pull_requests",
-        ):
-            # skipcq: PYL-W0212 -- intentional white-box L1 test
-            adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
+
+        # Each value the adapter's own field reader returns is recorded, through the
+        # patch factory that receives the reader as its spec, so its once-each order
+        # is seen before the run's merge of its sources could mask it.
+        parsed: list[list[int]] = []
+
+        def recorder(*, spec: Callable[[str], list[int]]) -> Callable[[str], list[int]]:
+            def recording(raw: str) -> list[int]:
+                result = spec(raw)
+                parsed.append(list(result))
+                return result
+
+            return recording
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "subjects.json"
+
+            def subjects(raw: str, *argv: str) -> tuple[list[int], list[str]]:
+                """The subjects a run with this ``workflow_run.pull_requests`` field
+                and these further arguments selects, and the reads it made."""
+                parsed.clear()
+                fake = _PagedFake(replies)
+                with mock.patch.object(
+                    adapter,
+                    "_workflow_run_pull_numbers",
+                    spec=True,
+                    new_callable=recorder,
+                ):
+                    code = _run_adapter_main(
+                        adapter,
+                        fake,
+                        Path(directory),
+                        [
+                            "--mode",
+                            "subjects",
+                            "--repository",
+                            "ktogias/gnostoa",
+                            "--workflow-run-pulls-json",
+                            raw,
+                            *argv,
+                            "--output",
+                            str(output),
+                        ],
+                    )
+                self.assertEqual(0, code)
+                selected = json.loads(output.read_text(encoding="utf-8"))
+                return [item["pull_number"] for item in selected], fake.calls
+
+            both = ([301, 302], [f"{root}/pulls/301", f"{root}/pulls/302"])
+            self.assertEqual(both, subjects(payload))
+            self.assertEqual([[301, 302]], parsed)
+            # A number hinted on the command line that the field also names is one
+            # subject: the run merges its two sources once each, in order, on the
+            # scheduled path and on an event's.
+            for event in ((), ("--event",)):
+                with self.subTest(event=bool(event)):
+                    self.assertEqual(
+                        both,
+                        subjects(
+                            json.dumps([{"number": 301}, {"number": 302}]),
+                            "--pull-number",
+                            "301",
+                            *event,
+                        ),
+                    )
+                    self.assertEqual([[301, 302]], parsed)
+            # An empty or null field names no Pull Request, so the run falls back to
+            # the open population, here empty.
+            for raw in ("", "null"):
+                with self.subTest(raw=raw):
+                    self.assertEqual(([], [listing]), subjects(raw))
+                    self.assertEqual([[]], parsed)
+            # A number no Pull Request has is refused before any read.
+            malformed = json.dumps([{"number": 0}])
+            with self.assertRaisesRegex(
+                SystemExit,
+                "workflow_run.pull_requests",
+            ) as refused:
+                subjects(malformed)
+            self.assertEqual([], parsed)
+            self.assertIsInstance(
+                refused.exception.__cause__, adapter.ProviderReadError
+            )
 
     def test_l1_has_separate_guardrail_from_historical_r2a_promotion(self) -> None:
         loaded = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
@@ -1461,6 +1414,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             None,
         )
         self.assertIsInstance(l1, dict)
+        assert isinstance(l1, dict)
         self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
         self.assertIn(
             "ci/review_github_current_state.py",
@@ -1483,6 +1437,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             None,
         )
         self.assertIsInstance(semantic, dict)
+        assert isinstance(semantic, dict)
         self.assertNotIn(
             "ci/review_github_current_state.py",
             semantic.get("implementation", []),
@@ -1554,6 +1509,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             None,
         )
         self.assertIsInstance(upload, dict)
+        assert isinstance(upload, dict)
         # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         download = next(
             (
@@ -1565,6 +1521,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             None,
         )
         self.assertIsInstance(download, dict)
+        assert isinstance(download, dict)
         self.assertEqual(1, upload.get("with", {}).get("retention-days"))
         self.assertEqual(
             "gnostoa-l1-publication",
@@ -1610,8 +1567,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 None,
             )
             self.assertIsInstance(checkout, dict)
+            assert isinstance(checkout, dict)
             checkout_with = checkout.get("with")
             self.assertIsInstance(checkout_with, dict)
+            assert isinstance(checkout_with, dict)
             self.assertEqual("main", checkout_with.get("ref"))
             self.assertIs(False, checkout_with.get("persist-credentials"))
 

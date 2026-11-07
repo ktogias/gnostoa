@@ -1,0 +1,573 @@
+---
+type: Decision
+title: Admit merges through a required, provider-neutral merge-admission verdict
+description: MA0 Phase 1b. A required check, merge-admission, admits a merge only when a provider-neutral, fail-closed verdict over the exact head finds every applicable criterion satisfied. Its evidence part is one completeness reducer over exact-subject receipts (#389 S1), which slice 1b.1 implements. GitHub specifics stay in an adapter, a dedicated App publishes the check from a main-only environment, and the owner's native approval of the exact head is the only per-merge human act, with no waiver.
+status: draft
+generated:
+  by: anthropic/claude-opus-5-5
+  at: "2026-10-09T07:15:00Z"
+sources:
+  - id: work-item
+    resource: https://github.com/ktogias/gnostoa/issues/407
+    title: Require a provider-neutral merge-admission verdict on the exact head (MA0 Phase 1b)
+  - id: admission-package
+    resource: https://github.com/ktogias/gnostoa/issues/407#issuecomment-6069729619
+    title: The admission package, its lineage at 795920f and its prior art
+  - id: owner-decisions
+    resource: https://github.com/ktogias/gnostoa/issues/407#issuecomment-6076064688
+    title: The owner's decisions on the package
+  - id: phase-1b-handoff
+    resource: https://github.com/ktogias/gnostoa/issues/398#issuecomment-6061573600
+    title: The owner's Phase 1b handoff, its seams and its safety invariants
+  - id: ma0-revision
+    resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-6048360846
+    title: The MA0 revision, with the merge-admission criteria M1-M16
+  - id: completeness-owner
+    resource: https://github.com/ktogias/gnostoa/issues/389
+    title: Fail closed when required assurance evidence is missing, stale or incomplete
+  - id: owner-b
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6427529942
+    title: "The owner's B: close L1's six inventory findings by real fixes before the cutover"
+  - id: alpha-scope
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6430377203
+    title: "The Router's scoped α proposal: this note, under the merge-admission boundary"
+  - id: alpha-typing
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6430425318
+    title: "The PAO's finding: an untyped guard import is not coverage; a typed interface both checkers share"
+x-project-knowledge:
+  id: kit.decision.0112.admit-merges-through-a-required-provider-neutral-merge-admission-verdict
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: references
+      target: /decisions/0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md
+    - kind: governed-by
+      target: /decisions/0006-provider-neutral-change-governance.md
+    - kind: implements
+      target: /requirements/reviewed-change-control.md
+    - kind: references
+      target: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
+    - kind: references
+      target: /decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+---
+
+# Admit merges through a required, provider-neutral merge-admission verdict
+
+## Context
+
+[Decision 0110](0110-bind-every-merge-to-the-owner-s-approval-of-the-exact-head.md)
+(MA0 Phase 1a) makes the owner's native approval of a pull request required on
+`main`. It leaves the rest to the merge procedure and the agent's convergence report:
+- the approval's `commit_id` against the head;
+- the analyzer readback;
+- the analyzers' findings;
+- the seal;
+- close-last.
+
+Its "Successor: Phase 1b" defers a required check that enforces them, under a
+reuse contract:
+- consume `tools/github_rest.py`;
+- consume Decision 0086's current-state observation;
+- consume #389's completeness receipts and #369's trusted execution once they exist;
+- add only the provider-neutral verdict.
+
+The evidence part of the merge criteria (M2–M8 in the MA0 revision) is #389 S1's
+completeness verdict: "one reducer, not two". No such reducer existed at `795920f`.
+
+## Decision
+
+This Decision is a Gnostoa-self/GitHub specialization. It does not alter the
+provider-neutral public change-governance contract of
+[Decision 0006](0006-provider-neutral-change-governance.md).
+
+1. **A required check, `merge-admission`, admits each merge.** It passes only when a
+   verdict over the exact head finds every applicable criterion satisfied. The
+   verdict is provider-neutral and deterministic, and has no network access or side
+   effect. It fails closed: missing, stale, partial, unavailable and unknown evidence
+   deny. GitHub's vocabulary is translated in an adapter, which consumes the existing
+   observation, readback and transport owners. It adds no second observer, reducer or
+   REST client.
+2. **One completeness reducer** supplies the verdict's evidence part
+   (`knowledge assurance-check`, #389 S1):
+   - A project declaration names, for each change class, the required evidence as
+     coverage items (`policy/assurance-evidence.yaml`).
+   - An item is covered only by a current `COMPLETE` receipt for the exact
+     repository, change request and head. Otherwise it is `MISSING`, `STALE`,
+     `PARTIAL`, `INCOMPLETE`, `SKIPPED`, `RATE_LIMITED`, `UNAVAILABLE` or `ERROR`.
+   - Receipts that disagree fail closed at the worse status.
+   - The receipt statuses are Decision 0091's coverage statuses, which contain
+     Decision 0086's, plus `SKIPPED`.
+   - The reducer fetches nothing and grants nothing.
+   - A declaration of schema `1.1` (#389 F1) also gives each coverage item its
+     failure domain. Items sharing a vendor, backend, credential or imported result
+     share one domain. It names claims: each lists the items qualified to support it
+     and, for each change class it applies to, how many distinct domains must
+     support it with a current `COMPLETE` item. The verdict is then `COMPLETE` only
+     when every applicable claim is. This is item 1's fail-closed rule applied to
+     claims: the evidence a `1.1` declaration requires is each applicable claim's
+     minimum, so a missing, stale, partial, unavailable or unknown item denies
+     whenever its claim then falls short of that minimum. Item statuses are computed
+     as above and never upgraded: an item that is not complete is listed as
+     degraded, never as clean. Findings are not read here; M17 still denies on any
+     of them.
+   - A `1.0` declaration keeps its form and its verdict. Gnostoa's own declaration
+     is `1.1` since #389 F2, with each item its own claim at a minimum of one in
+     each class its requirement applies to. Decision 0119 gave NORMAL the project's
+     own inventory; Decision 0130 retires DeepSource as merge evidence and gives the
+     inventory's two project items to every class. Each other `1.0` obligation
+     stays, so a missing item still holds, as a guard over every combination of
+     statuses proves for the verdict and for the merge decision; the same guard
+     proves that DeepSource's status no longer decides any class. A substitute becomes
+     eligible only through a reviewed change to the declaration, after its
+     qualification (#389 F3).
+3. **The owner's native approval of the exact head is the only per-merge human act.**
+   - What the approval rests on:
+     - reviewer convergence: item 4's subset is criteria of the verdict, and the
+       rest is in the agent's convergence report;
+     - justified suppressions, which the verdict lists;
+     - changes to the gate's trust roots, which the verdict lists;
+     - the analyzer findings, which the verdict lists and which deny it (M17).
+   - Channel C, the environment attestation of MA0 design decision 2, is not used
+     for merges. **There is no evidence waiver**: when required evidence is
+     unavailable, the merge waits, or goes through break glass with its mandatory
+     follow-up.
+4. **Reviewer convergence (M11) is enforced as its deterministic subset in this
+   phase:**
+   - no unresolved thread;
+   - no effective `CHANGES_REQUESTED`;
+   - the readback and the analyzers, as coverage items of the declaration that the
+     reducer covers (M2–M8).
+
+   The convergence of the reviewers themselves stays in the agent's convergence
+   report until MA0 Phase 2's per-reviewer adapters.
+5. **Publication.** A dedicated App, `gnostoa-ma0`, posts the check from a main-only
+   environment. It is woken by Decision 0096's relay pattern and a sweep, and the
+   requirement in R-main is pinned to that App, so a same-named check from any other
+   source cannot satisfy it.
+6. **A post-merge audit** opens the emergency follow-up Work Item for any merge
+   without a green `merge-admission` on its head.
+
+## Consequences
+
+- **The phase lands in slices** (#407). Each is admitted separately and merged under
+  Phase 1a's procedure:
+
+  | Slice | Contents | Status |
+  |---|---|---|
+  | 1b.1 | the completeness reducer and declaration | implemented with this Decision |
+  | 1b.2 | the verdict (`knowledge merge-admission`) | implemented |
+  | 1b.3a | the GitHub evidence adapter's snapshot and identity (`knowledge merge-evidence`) | implemented |
+  | 1b.3b | the changed content (suppressions, trust roots) and the receipts, in four PRs: 1b.3b-1 check receipts, 1b.3b-2 the analyzer receipt, 1b.3b-3 Work Item existence and reference integrity, 1b.3b-4 the changed content | 1b.3b-1 merged (#415); 1b.3b-2 merged (#417); 1b.3b-3 merged (#422); 1b.3b-4 merged (#423) |
+  | 1b.3c | SonarCloud's readback (#359) | admitted in the owner's sequence (#325, 6113092417), continued after 1b.3b-4's integration (#407, 6119460225) |
+  | 1b.4 | publication and activation | continued after 1b.3c's integration (#407, 6129370606); publication implemented, in shadow until the owner's activation |
+  | 1b.5 | the post-merge audit | not yet admitted |
+
+- **Publication (1b.4)** follows item 5 and runbook "Merge admission":
+  - `merge-admission-trigger.yml` holds nothing and wakes `merge-admission.yml`, which runs from protected `main` only, with an hourly sweep.
+  - L1 re-reads each subject; event numbers are hints. The admission point re-reads the inventory by calling the existing `analyzer-readback.yml` for the exact subject, so the bundle the evidence reads is that run's own, which authenticates it.
+  - The relay publishes `merge-admission` on the exact evaluated head, and only while the evidence rebuilt from a second snapshot equals the evaluated one, observation times aside. A moved head (invariant d), or an edited description, relation, review, thread or check, supersedes the verdict.
+  - The check is written at most once and read back. An unknown outcome is found or read back, never written again.
+  - Only a well-formed `ALLOW` for the exact subject, from a command that exited 0, is ever a success.
+  - **Freshness (F1, the Decisions Router on #426, 6130207025).**
+    - The seal's comments, created, edited or deleted, wake the relay too. The comment filter is the declarer's identity, never the body.
+    - A review thread's resolution or reopening has no Actions event (T1, #426 6134806265): `pull_request_review_thread` is a webhook event only. Its changed state is acquired at the next supported event, the owner's review, the guard's own dispatch or the sweep, and until then the required check may show an earlier verdict, which is no evidence of current thread state.
+    - Before anything is acquired again, a success the App's latest run stands on is replaced by a pending run of the App. The run completes it, or, without one, writes a success only while the latest run is still the one it observed. A superseded, incomplete or denied evaluation ends as a failure and invalidates an older success. An interrupted run stays pending, which blocks.
+    - After activation, the guarded merge obtains its own admission (`ci/merge_admission_guard.py`). It requests the protected workflow for the approved head by `repository_dispatch`, with the App's existing `contents: write` and a fresh 128-bit nonce (G1, #426 6132395441). It finds that run through the pinned App's record carrying the nonce beside the run's own identity, never through time, and reads the workflow run natively. It reads the pinned App's check natively, re-reads the subject, compares it with the evaluation's digest, and does not merge itself.
+  - **One pull request per head (H1, 6131149850).** A check run belongs to a commit, so a success needs this pull request alone at its exact head in the complete open population, read beside both snapshots and again by the guard. A shared head is a failure naming the pull requests, whatever the neutral verdict, which is unchanged. The cost is liveness: both stay denied until one closes or moves and a fresh evaluation recovers. A close wakes the relay, which evaluates the open pull requests left at that head; a move to another head names only the new head, so the survivor recovers at its next event, the owner's review, the guard's own dispatch or the sweep.
+  - **The residual,** bounded and recorded rather than accepted:
+    - the window from the guard's last reads to the provider's merge, measured before activation;
+    - an analyzer inventory change after the run's readback, which the guard cannot re-read;
+    - a change no event names, until the sweep revisits the pull request;
+    - an open-population change that no event names, between the reads.
+
+    No atomic provider guarantee follows from event coverage, the sweep, timestamps or a digest.
+  - Without `gnostoa-ma0`'s credentials the run is a shadow and publishes nothing.
+  - **Activation is the owner's:** the App, its main-only environment, and R-main's requirement pinned to the App. It waits for the rerun-successor case's live proof below. It also waits for one guarded `repository_dispatch` whose nonce reads back in the pinned App's record, correlated to that workflow run natively. A pending run blocking R-main's App-pinned required check over an older success can be read only once the requirement exists, so it is proved after the entry is added, on an otherwise eligible pull request that is not a draft, and **before activation is declared complete** or any merge relies on MA0; until then Phase-1a governs (P2, #426 6138724140).
+- **Until 1b.4 activates the check, nothing changes for merges.** Decision 0110's
+  procedure and the convergence report still govern them.
+- **While an item has no receipt, the reducer reports it `MISSING`.** So once the
+  check is required, a merge waits for its evidence rather than passing without
+  it. Since 1b.3c every declared item has exactly one producer: the check
+  manifest's runs or the authenticated readback (`producer_routes`, which refuses a
+  gap, an overlap and an undeclared item).
+- **The verdict's input is a normalized evidence document,** which the GitHub
+  adapter (1b.3) produces. It names the change's subject and lifecycle, its class
+  and links, the declared candidate, the declarer, the author and the required approvers, the
+  reviews, the threads, the closing references, the new suppressions, the
+  trust-root changes, the analyzer findings, and the receipts for the reducer. Every list the adapter
+  reads from the provider carries its coverage, so "not read" cannot pass as
+  "none": the suppressions and trust-root changes, like the threads and the
+  closing references, deny unless their coverage is `COMPLETE`, and M15 is a
+  criterion. Finding closing references
+  is the adapter's job, since the keyword syntax is the provider's. The verdict
+  denies unless their coverage is complete and none is found. The approval rule is
+  runbook step 8's: each required approver's latest review, of any state, approves
+  the exact head. A pending review is not submitted and is ignored. A review's
+  commit is an exact SHA, as the subject's is, or null, as GitHub reports it once
+  the commit is garbage-collected or force-deleted; a null commit approves no
+  head. The required approvers are distinct. Timestamps are compared in
+  whole seconds. Reviews by one reviewer that share the latest second and disagree
+  in what a criterion reads (the opinion for M11, the opinion and commit for M16)
+  have no order, so they deny. Mapping a deleted account, GitHub's null `user`, to
+  a stable reviewer identity is the 1b.3 adapter's job.
+- **The approval is bound to the class's rules.** M16 reads `minimum_approvals` and
+  `independent_approval` from the effective policy, as M14 reads the link rules.
+  In an independent class, the change's author and declarer can be neither a
+  required approver nor an approver: any approval by either denies
+  (`may_approve_own_change: false`).
+- **Each required approver must approve; the adapter names exactly them.** The
+  verdict requires every listed approver's latest review to approve the head, and
+  at least the class's minimum to be listed. A class whose minimum is zero, as in
+  the core policy, needs no approver. Who they are, and that each is a
+  person, is the adapter's to establish (a 1b.3 acceptance case). It must take
+  them from the protected target's code owners, never from the candidate, since a
+  provider account's type does not tell a person from a machine user. An
+  any-of-several owner rule would need the contract to carry eligible approvers
+  and a count, which this slice does not.
+- **The GitHub evidence adapter (1b.3a) reads one L1 snapshot and the protected
+  target.** It reads nothing from the provider itself:
+  - L1 (Decision 0086), asked for merge evidence, adds the pull request's draft,
+    merged, target, default branch, author and bounded body, and its commits and
+    changed files with their coverage. Both lists come from the comparison of the
+    subject's exact base and head commits, which L1 already reads for the merge
+    base, so neither can be another head's. An empty comparison is empty, not an
+    error. **The supported domain is up to 250 commits and fewer than 300
+    files.** A comparison's one page holds at most 250 commits, the cap the pull
+    request's commit list had, so fewer commits than the total is `PARTIAL`. It
+    lists at most 300 files, so 300 or more is `PARTIAL`, and the run fails. The
+    owner accepted that file domain for initial MA0, and a larger one is a
+    separately owned extension (#407, 6084981368). L1 also marks each conversation
+    comment `edited` from GraphQL's `lastEditedAt`. A comment it cannot mark makes
+    the conversation `PARTIAL`. The advisory's snapshot is unchanged.
+  - The project root is a checkout of the protected target, whose change policy,
+    `policy/merge-authorities.yaml` and CODEOWNERS apply, never the candidate's.
+  - The seal is the declarer's last unedited top-level comment whose first line
+    is `Exact review candidate: <sha>`. Unedited means GraphQL records no edit,
+    since timestamps in whole seconds cannot show an edit made in the comment's
+    own second, and the timestamps agree.
+  - Logins are compared without case, and only their ASCII letters fold, so a
+    Unicode compatibility character matches no other account. The roster and the
+    declarer must be in GitHub's login syntax.
+  - The required approvers are each changed file's code owners on the human
+    roster (owner decision 2 on #407). A rule whose owners include no rostered
+    person fails the run. The CODEOWNERS reader follows GitHub's documented
+    rules, inline comments and ownerless rules included, and refuses the syntax
+    GitHub skips. A pattern with an empty segment, such as `//sensitive`, or a
+    `.` or `..` segment fails the run, since git matches nothing for it (#407,
+    6092909419). Wildcards are read only in GitHub's documented forms: `*`
+    alone or as the last segment, which is not recursive, `*.ext` as the only
+    segment, and `**` as a leading or middle segment. Any other wildcard, such
+    as `docs/guides*`, fails the run (#407, 6095614968).
+  - The class, Work Item and Decision come from the change-request template's
+    `## Change control` fields (owner decision 3), read as CommonMark ([Decision
+    0113](0113-read-pull-request-descriptions-with-a-commonmark-parser.md)). The
+    fields are the items of the one top-level section's top-level bullet lists,
+    so code, HTML blocks and comments are never fields. The section is closed:
+    every top-level item must open with a paragraph that begins with exactly
+    one of the template's four labels, `Class:`, `Work Item:`, `Decision:` and
+    `Accountable owner:`, each at most once, and any other item, a top-level
+    ordered list included, fails the run (#407, 6092909419). The closed set
+    makes no field required: which are is the change class's policy. An item's field is its first paragraph; a continuation
+    paragraph is not read (#407, 6085825905). The section's heading is
+    compared by its visible text. GitHub may render Markdown inside a raw HTML
+    element, such as a collapsed `<details>`, and CommonMark does not track HTML
+    nesting. So any raw HTML tag of an element that can hold content, anywhere
+    before the section's end, fails the run, as the owner chose over modelling
+    HTML5 nesting (#407, 6086999580). Comments and void elements, such as `<br>`,
+    hold nothing and are allowed there. A Change control item holding raw HTML
+    other than a comment, in its label or its value, fails the run before it is
+    read, since how a void element renders differs, `<wbr>` joining text and
+    `<br>` breaking it (#407, 6087507517 and 6087484196). Inline code showing a
+    tag is code, not raw HTML. A comment in a value is skipped, so the text
+    around it joins. A field's value is its visible text and inline code: a link's
+    target is never read, so an empty link contributes nothing, and a Decision
+    counts only by the id it shows. That is the owner's re-slice decision under
+    #402 (#407, 6085478125). A Work Item value is only `#N` entries in ASCII
+    digits, and a Decision value only four-digit ids, each separated by commas
+    or spaces. A Work Item's identity is its number, so `#0407` is issue 407 and
+    is read once with `#407` (1b.3b-3), and a number too long to convert fails
+    the run. Any other value, such as an issue URL, an invisible character or
+    prose, fails the run, as the owner chose over reading identifiers out of
+    free text (#407, 6086766086 and 6088050686). A Decision counts only when the
+    protected target has its record, and a truncated description fails the run.
+  - Each listed Work Item must exist as an issue, not a pull request, of the
+    subject repository (1b.3b-3, the owner's admission, #407 6108453639; the
+    acceptance cases 6085101448 and 6085110011). L1 reads each listed number as
+    an issue, once per readback pass and at most 20, through the same client and
+    with this adapter's own reading of the section, so a description or an issue
+    that changes between passes is never certified. A 404 is an absent Work Item,
+    and any other failure, the bound included, leaves the `work_items` source
+    incomplete. The run fails, naming the Work Item, unless that source is
+    `COMPLETE` and every listed Work Item was observed as such an issue, so none
+    is silently left out. Each observation must be in L1's closed shape:
+    exactly `number`, `kind` and `repository`. The `kind` is `issue`,
+    `pull_request` or `absent`, and the `repository` is text. The `number` is an
+    integer, positive for an issue or a pull request, and for an absent Work
+    Item the listed number, which may be 0. An issue need not be open.
+  - Reference integrity (#407, 6085507735): a Work Item or Decision a link
+    carries must be linked to its own issue or record. A Work Item `#N` must link
+    to `https://github.com/<owner>/<name>/issues/N` of the subject repository, and
+    a Decision to `knowledge/decisions/` followed by one of its protected
+    records' names; a Work Item's target number is compared by value. Any other
+    target, such as another repository or number, a pull request, a relative,
+    `blob/` or `http:` URL, a fragment or a query, fails the run, as does a link
+    label holding several identifiers. A link whose label holds a `#` or a
+    digit must be exactly one whole identifier as a reader sees it: its label,
+    trimmed of spaces, is that identifier, and in the item's visible text no `#`
+    or digit comes right before or after it. So a link labelled `#4` or `#`
+    that shows as part of `#407` fails the run, whatever lies between them. A
+    label with no `#` or digit, an empty one included, lists nothing wherever it
+    sits, since identifiers come only from visible text and inline code (#407,
+    6085478125). Nothing a link points to is fetched. An image in a
+    Change control item fails the run, since its alt text is a label the visible
+    value does not show. A new link form goes to #402.
+  - Closing references are GitHub's keywords in the title, the body and every
+    commit message, read in the raw text, code and comments included. The
+    asymmetry with the class and links is deliberate. Reading a hidden field
+    could satisfy M14, so code is skipped there. Reporting a hidden keyword can
+    only deny M12, while missing one would let a merge close a Work Item. An
+    issue linked by hand in the Development sidebar closes on merge too, so L1
+    also reads GraphQL's `closingIssuesReferences`, through the same pager and in
+    each readback pass. Each listed issue is found, and M12's coverage is
+    `COMPLETE` only when that read and the commit list are complete, the title
+    was read, and every commit message was read whole (#407, 6086122133).
+    Whether the relation can change after the verdict, with the head unchanged,
+    is 1b.4's and 1b.5's concern (#407, 6086106156).
+  - The protected target is the repository's default branch, which the change
+    policy declares protected.
+  - The check items have receipts (1b.3b-1). `policy/merge-required-checks.yaml`,
+    read from the protected target, names for each of the declaration's
+    `verification-checks` and `codeql` items the GitHub check run that gives
+    it, by app id and name: R-main's four checks from GitHub Actions, and
+    GitHub Advanced Security's `CodeQL`, whose conclusion applies the
+    code-scanning ruleset's threshold. A check of the same name from another
+    app does not count. No two (requirement, coverage item) pairs, within or
+    across requirements, may name the same app id and name: such a manifest is
+    refused, so one run cannot satisfy two declared checks (owner selection for
+    `gr-415-shared-check-key`, #15, 6099845892). The rule is this manifest's
+    only; a receipt in the provider-neutral contract may still cover several
+    items. The latest run on the exact head gives the receipt;
+    when several runs carry an item's key, as when two check suites post the
+    same name, the item is `COMPLETE` only if every one succeeded, and
+    `PARTIAL` if any did not, so a later success cannot hide another current run
+    (#407, 6097059408). GitHub's default view lists the latest run of each
+    name per check suite, and a re-run stays in its suite, so a failed attempt
+    beside its successful re-run within one suite is not listed, while distinct
+    suites stay listed side by side (#407, 6143035811: natively on #404's
+    `6e8ed826` and on `4893270f`). **Each run is also gated by its own check
+    suite** (Option S, the owner's 6143702096): an item its runs make
+    `COMPLETE` stays so only while every one of them names one suite, listed
+    on the exact head and of the run's own App, whose status is `completed`. A
+    rerequested run's suite is queued again while the run stands unchanged
+    (GitHub's "Rerequest a check run"; the PAO, 6143194424), so the suite's
+    status gates and its conclusion never does, since a suite concludes from
+    all its runs. A suite not yet completed gives `INCOMPLETE`. A run without
+    a suite, or whose suite is unlisted, listed twice, on another head or
+    another App's, gives `PARTIAL`. Either is decided by the suites read, so it
+    carries the snapshot's cut as its observation time. An App that never runs leaves a queued
+    suite with no run on every push; it gates nothing, since no required run
+    names it. L1 reads the head's suites with merge evidence only, and the
+    read is `COMPLETE` only when every page is read, each counts as many
+    suites as were listed, and there are no more than 1,000: past that, GitHub
+    lists a reference's check runs from its 1,000 most recent suites only. A
+    suite entry not in L1's shape makes the snapshot invalid. Checks data
+    GitHub has archived, after 400 days, is not listed, so its item is
+    `MISSING` or its suite unlisted, and either denies. Whether a newer pending
+    Actions attempt can stand beside a `completed` suite is proved natively
+    before activation; if it can, Option B, a per-run attempt identity, goes to
+    the owner. For a single run, `success` is `COMPLETE`. `skipped` or `neutral` is `SKIPPED`, since a check
+    that did not run is not evidence (I10). Pending or any other conclusion is
+    `INCOMPLETE`, and an ambiguous latest state is `PARTIAL`. An item with no
+    run has no receipt, so the reducer makes it `MISSING`, and a checks read
+    that is not `COMPLETE`, commit statuses included, gives every item its
+    status, since an incomplete source can only deny. Tests keep the manifest
+    equal to the declaration's items and to R-main's recorded checks. A snapshot
+    whose provider is not `github` fails the run (the owner's review 5478389359
+    on #413).
+  - The analyzer items have receipts (1b.3b-2), from the authenticated
+    readback's bundle (Decisions 0091 and 0107), read back through the readback
+    module's own contract: a recorded readback is valid only if `build_readback`
+    rebuilds it exactly. A bundle bound to the exact repository, pull request (a
+    `github-pull-request` change request) and head gives each item the receipt of
+    its readback's own coverage, whatever its findings; readbacks map to items by
+    provider and scope (Codacy; SonarCloud's inventory, under its own requirement,
+    since 1b.3c; the project's inventory, diff and full; DeepSource's until Decision
+    0130 retired it). Each item stands for one kind of read, as the producer marks a
+    complete one: the project's diff item a `DIFF_LOCAL` read, its full item,
+    Codacy's and SonarCloud's a `FULL_RUN`. A complete read of
+    another kind gives `INCOMPLETE` (Decision 0091). A bundle that is not bound to
+    the subject gives every item `INCOMPLETE`, and a missing readback gives its
+    item no receipt (`MISSING`). Whatever the binding, an unknown or repeated
+    readback, or a bundle or readback observation time that is not an RFC 3339
+    time, fails the run. Without a bundle the items stay `MISSING`. The bundle
+    file is read inside the project root, as every path the command reads, and
+    authenticating it is 1b.4's publisher's.
+  - **M17: no unresolved analyzer finding** (the owner's findings rule, #407
+    6096770145, and selection, 6101607240). The evidence lists the findings, each
+    with its item and in the readback's normalized form: its id and message, and
+    when supplied its rule, severity, category, path, state, tool, range and
+    native reference (the owner's re-admission, #417 6107601240). Their
+    provenance and native metadata stay in the bundle, traceable by item and id.
+    It also lists their coverage: `COMPLETE` only when all four readbacks are
+    present and complete. That coverage is the readback's own, so a degraded
+    source stays visibly degraded.
+    Under a `1.0` declaration, M17 denies unless that coverage is `COMPLETE` and
+    the list is empty. Under a `1.1` declaration, the read is complete when the
+    claims are (#389 F2, the Router's 6192443314): M17 denies unless the
+    completeness verdict the admission computed for M2–M8, over every applicable
+    claim of the protected declaration, is `COMPLETE`, and the list is empty. No
+    second reduction or claim projection exists. Every
+    listed finding counts, a suppressed one included, with no waiver: a justified
+    suppression discharges none (1b.3b-4). So does a finding from a partial
+    source, or from one no claim needed: a met claim never erases a finding. The
+    verdict lists the findings for the approval. A finding that matches an entry
+    of the protected target's analyzer debt ledger exactly is listed as inherited
+    and does not count (Decision 0129); the ledger ships empty.
+  - **M13 and M15 read the exact comparison** against two declarations of the
+    protected target (1b.3b-4, the owner's sequence admission, #325 6113092417,
+    with the contract 6112833932). The declarations are
+    `policy/merge-suppression-markers.yaml` and `policy/merge-trust-roots.yaml`,
+    in the required-check manifest's closed, versioned convention. They are read
+    from the project root, never from the candidate. Without one, what it
+    governs is `UNAVAILABLE`, so the change that introduces them cannot certify
+    itself, and Decision 0110's procedure governs its merge.
+    - **Suppressions (M13).** L1 keeps each changed file's typed `additions`,
+      blob and patch, bounded and marked when cut. Only the lines the patch adds
+      are read, with their head-line numbers, so an unchanged marker never
+      counts. Every case-sensitive occurrence of a declared marker is a
+      suppression, with its path, head line and marker. It is justified when the
+      same line goes on, after the marker, with `--` and a non-blank reason,
+      which is kept as written and never judged adequate. A missing or blank
+      reason denies M13. A patch whose hunks do not account exactly for its
+      lines and additions, or a truncated one, leaves the suppressions
+      `PARTIAL`. So does a file without hunks, unless it is a removal or its head
+      blob is Git's empty blob, since only then can nothing have been added; and
+      such a file whose patch keeps any head-side line, context included,
+      contradicts itself and is `PARTIAL` too. A comparison yields at most 1,000
+      suppressions and 1 MiB of them as the command writes them, each charged
+      its serialized size. Past either budget the list keeps what it holds and is
+      `PARTIAL`, since a reason is the rest of its line and a line packed with
+      markers grows quadratically (the coordinator's selection on #423).
+    - **Trust-root changes (M15).** Each pattern is compiled by the CODEOWNERS
+      matcher, which refuses what GitHub does not document. An added, modified,
+      removed or renamed file with a name under a pattern is listed under every
+      name it has, so a rename into or out of a root shows both. Any other file
+      status leaves the list `PARTIAL`. The list is shown for the native
+      approval; it is neither vetoed nor approved here.
+  - **SonarCloud's two items** (1b.3c, under the coordinator's guidance on #407,
+    6119736075: G1, S1 and H1).
+    - **The quality gate** is SonarCloud's own check run on the exact head, from
+      the check manifest (app 12526, `SonarCloud Code Analysis`), under the check
+      items' rules. It is never evidence of the inventory. A commit carries every
+      analysed pull request's runs, so the item is qualified by its pull request
+      (`pull_request: details_url`, Q-a on #424): only runs whose `details_url`
+      names this project's pull request count, filtered before the reduction. A
+      foreign pull request, project or branch is excluded. A run whose association
+      is malformed, missing, blank (6123979691) or undecodable makes the item
+      `PARTIAL`. With no own run there is no receipt (`MISSING`), as when L1's
+      latest view hides it. The helper that
+      reads the association, `tools/sonarcloud_scope.py`, is the adapter's too.
+      The reduction qualifies the item because it is SonarCloud's check, so a key
+      that arrives as plain text keeps its qualification; the manifest must still
+      declare it.
+    - **The issue inventory** is the authenticated readback's. Its adapter binds
+      it to a published report of the exact head before any issue is read, and
+      again after the last page:
+      - SonarCloud's pull-request listing names the head and its analysis date,
+        the same both times;
+      - every SonarCloud check run naming the pull request is finished, and the
+        latest has a gate result and starts at that analysis date (as it did for
+        all 44 listed pull requests on 2026-10-12);
+      - the project's tasks hold none of the pull request's that is queued,
+        unfinished or failed, and no queued task of unknown identity, one that
+        names neither a pull request nor a branch.
+      Otherwise the inventory is `AMBIGUOUS`, never complete. A task naming the
+      pull request, with an analysis id, can be read in the project's `current`
+      task, but its association with the exact head's report is not established,
+      so none is claimed. Every page is read until the count reaches SonarCloud's
+      total, and a total past its 10,000-result window is `PARTIAL`. What this
+      does not prove is that SonarCloud indexed every issue before the pages were
+      read, nor that no other computation ran meanwhile; only that the bound
+      descriptors stayed the same.
+    - **Under the owner's selection (R1, #424 6122025441), a bound inventory is
+      `COMPLETE` as the latest observed published report's.** No source read here
+      is established to show a newer, unfinished analysis of the same head:
+      SonarCloud posts its check run only once finished, no task exists before an
+      analysis is submitted, and only a task's seconds of processing showed in the
+      queue. So `COMPLETE` means the fully enumerated, PR-scoped inventory of the
+      latest observed published, completed report of this repository, pull
+      request and head, over the reads' own interval. It is not an absence of
+      unpublished work, not a snapshot versioned by an analysis id, and no
+      freshness lease, and the provenance says so: `unfinished_analysis:
+      "UNOBSERVABLE"`, `binding`, `source_limitation` and the first and last
+      read times. A bound empty first page with a total of 0 is the clean case.
+      Every observed unfinished or failed relevant task, ambiguous association,
+      changed descriptor, short page before the total, or contradictory count
+      stays non-`COMPLETE`, and the admission point re-reads the inventory.
+    - **Every issue that is not `FIXED` is a finding**, with its state: `OPEN`,
+      `CONFIRMED`, `ACCEPTED` and `FALSE_POSITIVE`. An acceptance or a
+      false-positive marking in SonarCloud is no waiver of M17. A state that was
+      not asked for is an error, never dropped.
+    - **Security Hotspots are not read**; their inventory is an unadmitted
+      successor case (#407, 6119816718).
+    - Without `SONAR_TOKEN` in the `analyzer-readback` environment nothing is
+      read, although the project is public, and the inventory is
+      `AUTH_UNAVAILABLE`.
+- **The effective change policy is the candidate's own.** Its whole inheritance
+  chain is confined to the project root, through the parent-reference resolver
+  that Decision 0033 established for profiles and that both loaders now share. The
+  policy must also match the change-control schema, so a malformed requirement
+  cannot read as "not required". The inheritance walk is bounded at eight
+  policies before a parent is opened, so a long chain fails the run with that
+  reason instead of reaching the interpreter's recursion limit.
+- **The head-move invariant (d) of the owner's acceptance list** (#398,
+  6061573600) is 1b.4's, not the verdict's. The check is posted on the exact head
+  commit, so a new head has no passing check, and the App's merge names the head
+  it expects.
+- **The two commands share one command-line boundary,** `tools/verdict_cli.py`,
+  factored from 1b.1's: bounded strict input on standard input, the project-root
+  confinement, the write and flush inside the guard, and exit 2 for every failed
+  run. Slice 1b.2 adds both of its files to SB2 (21 → 23). The owners it also
+  imports, `tools/check_change_policy.py` and `tools/knowledge_common.py`, are
+  already members.
+- **SB2 grows by two files.** `knowledge assurance-check` is a supported entrypoint, so
+  `tools/assurance_completeness.py` and the vocabulary it imports,
+  `tools/analyzer_readback.py`, join the executable-candidate binding (19 → 21 files).
+  Under [Decision 0035](0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md),
+  the next OCI candidate's G3 re-binding replays the affected boundary for them.
+- **Slice 1b.3c adds one file to SB2** (25 → 26): `knowledge merge-evidence` now
+  imports the pure SonarCloud association helper, `tools/sonarcloud_scope.py`.
+- **More owner configuration** is needed by 1b.3 and 1b.4: `SONAR_TOKEN`, the
+  `gnostoa-ma0` App and its environment, and the requirement in R-main.
+- **The guard reads L1 through public names and one typed surface** (#389, the owner's
+  B, source `owner-b`; source `alpha-scope`). The guard acquires the existing flat L1
+  module under its existing run-time name and uses L1's public `open_pulls`; L1 uses
+  `tools/review_outer.py`'s public late-bound decoder, pinned-acquisition and transport
+  contracts. The private implementations, and the effect and refusal order, stay where
+  they are owned.
+  - **Why a surface:** the two type checkers name a flat `ci/` script differently, the
+    project's gate as a top-level module and the protected collector by its path from
+    the root. With their current invocations, the direct imports tried each failed in
+    one of them (`import-not-found` in the collector; one file under two module names
+    in the gate), and an untyped import would not be coverage (source
+    `alpha-typing`). A shared interface was selected instead.
+  - **What it holds:** `tools/review_current_state_surface.py` is the static contract
+    both checkers share. The guard's three calls are typed by it, and L1 checks its own
+    three definitions against it, so a changed name or signature on either side is a
+    type error in both checkers.
+  - No declaration, profile, threshold or negative-propagation rule is relaxed.
+
+## What this supersedes or revises
+
+- **MA0 design decisions 1, 3 and 4 (#15, 5979363503):**
+  - the owner exception on every merge;
+  - the attestation kinds;
+  - the declared-class confirmation.
+
+  They are superseded by item 3. Decision 2's channel C is no longer used for
+  merges, a further step beyond Decision 0110's item 3.
+- **Decisions 0107 and 0091 §8:** the readback becomes a required input of the
+  verdict, failing closed. It is still not a required check of its own.
+- **Decision 0067** is unchanged: R2A stays advisory, at most an input.

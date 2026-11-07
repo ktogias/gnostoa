@@ -346,6 +346,36 @@ def _load_retained_json(path: Path, *, label: str) -> dict[str, Any]:
     return cast(dict[str, Any], decoded)
 
 
+def _retained_task_capsules(
+    tasks: Mapping[object, object],
+) -> tuple[dict[str, str], set[str]]:
+    """Each retained task's capsule identity and the qualification backends they name;
+    a malformed task record is refused."""
+    capsules: dict[str, str] = {}
+    backends: set[str] = set()
+    for task_id, raw_task in tasks.items():
+        if not isinstance(task_id, str) or not isinstance(raw_task, dict):
+            raise EffectClaimError(INVALID_CLAIM, "retained task record is malformed")
+        capsule_identity = raw_task.get("capsule_identity")
+        qualification = raw_task.get("qualification")
+        if not isinstance(capsule_identity, str) or not capsule_identity:
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no capsule identity"
+            )
+        if not isinstance(qualification, dict):
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no qualification receipt"
+            )
+        backend = qualification.get("backend")
+        if not isinstance(backend, str) or not backend:
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no qualification backend"
+            )
+        capsules[task_id] = capsule_identity
+        backends.add(backend)
+    return capsules, backends
+
+
 def _validate_completed_stage_binding(
     workspace: Path,
     *,
@@ -391,28 +421,7 @@ def _validate_completed_stage_binding(
             INVALID_CLAIM, "retained public state has no task records"
         )
 
-    capsules: dict[str, str] = {}
-    backends: set[str] = set()
-    for task_id, raw_task in tasks.items():
-        if not isinstance(task_id, str) or not isinstance(raw_task, dict):
-            raise EffectClaimError(INVALID_CLAIM, "retained task record is malformed")
-        capsule_identity = raw_task.get("capsule_identity")
-        qualification = raw_task.get("qualification")
-        if not isinstance(capsule_identity, str) or not capsule_identity:
-            raise EffectClaimError(
-                INVALID_CLAIM, f"retained task {task_id!r} has no capsule identity"
-            )
-        if not isinstance(qualification, dict):
-            raise EffectClaimError(
-                INVALID_CLAIM, f"retained task {task_id!r} has no qualification receipt"
-            )
-        backend = qualification.get("backend")
-        if not isinstance(backend, str) or not backend:
-            raise EffectClaimError(
-                INVALID_CLAIM, f"retained task {task_id!r} has no qualification backend"
-            )
-        capsules[task_id] = capsule_identity
-        backends.add(backend)
+    capsules, backends = _retained_task_capsules(tasks)
     if len(backends) != 1:
         raise EffectClaimError(
             INVALID_CLAIM, "retained qualifications disagree on qualification backend"

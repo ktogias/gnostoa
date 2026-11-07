@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -253,17 +254,24 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
             replaced = False
 
             def publish_then_replace(
-                source_name: object,
-                target_name: object,
-                *args: object,
-                **kwargs: object,
-            ) -> object:
+                source_name: str | os.PathLike[str],
+                target_name: str | os.PathLike[str],
+                *,
+                src_dir_fd: int | None = None,
+                dst_dir_fd: int | None = None,
+                follow_symlinks: bool = True,
+            ) -> None:
                 nonlocal replaced
-                result = real_link(source_name, target_name, *args, **kwargs)
+                real_link(
+                    source_name,
+                    target_name,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                    follow_symlinks=follow_symlinks,
+                )
                 output.unlink()
                 output.write_bytes(b"foreign-after-publication\n")
                 replaced = True
-                return result
 
             with mock.patch.object(
                 packaging.os,

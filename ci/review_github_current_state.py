@@ -5,14 +5,16 @@ import json
 import os
 import re
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from tools import github_events, github_rest
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
+    parse_dispositions,
     parse_projection_comment,
     render_projection,
 )
@@ -52,16 +54,80 @@ query ReviewThreads(
   }
 }
 """
+# The conversation's edit state, which REST does not carry: `lastEditedAt` is
+# null for a comment that was never edited (#407, slice 1b.3a).
+_CONVERSATION_EDITS_QUERY = """
+query ConversationEdits(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      comments(first: 100, after: $cursor) {
+        nodes {
+          databaseId
+          lastEditedAt
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"""
+# The issues merging the pull request would close, keyword-linked or linked by
+# hand in the Development sidebar (Codex on #413; #407, 6086122133).
+_CLOSING_ISSUES_QUERY = """
+query ClosingIssues(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: 100, after: $cursor) {
+        nodes {
+          number
+          repository {
+            nameWithOwner
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"""
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
+# A comparison file's patch arrives whole inside one comparison response, which the
+# client already refuses past _MAX_RESPONSE_BYTES, so that budget is its bound: the
+# 65,536-byte bound of comments and messages would cut a patch GitHub returned whole
+# (#389, M13; Decision 0086).
+_MAX_PATCH_BYTES = _MAX_RESPONSE_BYTES
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
+# GitHub lists at most 300 files on a comparison, so a list that reaches it may be
+# cut (#407, slice 1b.3a).
+_COMPARE_FILE_CAP = 300
 _MAX_OPEN_PULLS = 8
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _MAX_COLLECTION_PASSES = 3
+# The distinct Work Items one pass reads (#407, slice 1b.3b-3).
+_MAX_WORK_ITEMS = 20
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+# A GitHub App's id, as the runner names it: a positive ASCII decimal.
+_APP_ID = re.compile(r"^[1-9]\d{0,18}$", re.ASCII)
 _GITHUB_EXECUTION_ID = re.compile(r"^github-actions:([1-9][0-9]*):([1-9][0-9]*)$")
 
 
@@ -157,10 +223,11 @@ class GitHubRestClient(github_rest.GitHubRestClient):
         payload: dict[str, Any] | None = None,
         *,
         read: bool = False,
+        empty: bool = False,
     ) -> tuple[Any, dict[str, str]]:
         """Make one attempt, failing under this adapter's error names."""
         try:
-            return super()._request(method, url, payload, read=read)
+            return super()._request(method, url, payload, read=read, empty=empty)
         except github_rest.GitHubError as error:
             raise _translated(error) from error
 
@@ -274,24 +341,19 @@ def _combined_coverage_status(*coverages: dict[str, Any]) -> str:
     return "COMPLETE"
 
 
-def _collect_review_threads(
+def _collect_connection(
     client: JsonReader,
-    *,
-    repository: str,
-    pull_number: int,
-    review_comments: list[dict[str, Any]],
-    review_observation_ids: set[str],
+    query: str,
+    variables: dict[str, Any],
+    connection: str,
+    normalize_nodes: Callable[[list[Any]], list[dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    owner, name = repository.split("/", 1)
-    comments_by_id = {
-        item["id"]: item for item in review_comments if isinstance(item.get("id"), str)
-    }
+    """Every page of one pull request's GraphQL connection, under the REST
+    sources' page and item bounds."""
+
     cursor: str | None = None
     items: list[dict[str, Any]] = []
     pages = 0
-    omitted_roots = 0
-    omitted_reviews = 0
-
     while True:
         if pages >= _MAX_PAGES:
             return items, {
@@ -301,15 +363,7 @@ def _collect_review_threads(
                 "limit": "page_limit",
             }
         try:
-            payload = client.graphql(
-                _REVIEW_THREADS_QUERY,
-                {
-                    "owner": owner,
-                    "name": name,
-                    "number": pull_number,
-                    "cursor": cursor,
-                },
-            )
+            payload = client.graphql(query, {**variables, "cursor": cursor})
             graphql_payload = _mapping(payload, "graphql response")
             data = _mapping(graphql_payload.get("data"), "graphql.data")
             repository_payload = _mapping(
@@ -320,83 +374,20 @@ def _collect_review_threads(
                 repository_payload.get("pullRequest"),
                 "graphql.data.repository.pullRequest",
             )
-            connection = _mapping(
-                pull_payload.get("reviewThreads"),
-                "graphql.reviewThreads",
-            )
-            nodes = connection.get("nodes")
+            page = _mapping(pull_payload.get(connection), f"graphql.{connection}")
+            nodes = page.get("nodes")
             if not isinstance(nodes, list):
-                raise ProviderReadError("GitHub reviewThreads.nodes must be an array")
+                raise ProviderReadError(f"GitHub {connection}.nodes must be an array")
             page_info = _mapping(
-                connection.get("pageInfo"),
-                "graphql.reviewThreads.pageInfo",
+                page.get("pageInfo"),
+                f"graphql.{connection}.pageInfo",
             )
             has_next = _boolean(
                 page_info.get("hasNextPage"),
-                "graphql.reviewThreads.pageInfo.hasNextPage",
+                f"graphql.{connection}.pageInfo.hasNextPage",
             )
             end_cursor = page_info.get("endCursor")
-
-            normalized: list[dict[str, Any]] = []
-            for raw_node in nodes:
-                node = _mapping(raw_node, "graphql.reviewThread")
-                thread_id = _text(node.get("id"), "graphql.reviewThread.id")
-                resolved = _boolean(
-                    node.get("isResolved"),
-                    "graphql.reviewThread.isResolved",
-                )
-                outdated = _boolean(
-                    node.get("isOutdated"),
-                    "graphql.reviewThread.isOutdated",
-                )
-                comments = _mapping(
-                    node.get("comments"),
-                    "graphql.reviewThread.comments",
-                ).get("nodes")
-                if not isinstance(comments, list) or not comments:
-                    omitted_roots += 1
-                    continue
-                root_comment = _mapping(
-                    comments[0],
-                    "graphql.reviewThread.comments[0]",
-                )
-                reply_to = root_comment.get("replyTo")
-                identity_comment = (
-                    _mapping(
-                        reply_to,
-                        "graphql.reviewThread.comments[0].replyTo",
-                    )
-                    if reply_to is not None
-                    else root_comment
-                )
-                database_id = _integer(
-                    identity_comment.get("databaseId"),
-                    "graphql.reviewThread.rootComment.databaseId",
-                )
-                retained = comments_by_id.get(f"github-review-comment-{database_id}")
-                if retained is None:
-                    omitted_roots += 1
-                    continue
-                if retained["review_observation_id"] not in review_observation_ids:
-                    omitted_reviews += 1
-                    continue
-                normalized.append(
-                    {
-                        "id": f"github-review-thread-{thread_id}",
-                        "review_observation_id": retained["review_observation_id"],
-                        "reviewer_id": retained["reviewer_id"],
-                        "observed_at": retained["observed_at"],
-                        "head_commit": retained["head_commit"],
-                        "body": retained["body"],
-                        "body_truncated": retained["body_truncated"],
-                        "source_url": (
-                            _optional_text(identity_comment.get("url"))
-                            or retained["source_url"]
-                        ),
-                        "state": "resolved" if resolved else "unresolved",
-                        "outdated": outdated,
-                    }
-                )
+            normalized = normalize_nodes(nodes)
         except ProviderReadError as exc:
             return items, {
                 "status": _error_status(exc, pages),
@@ -427,8 +418,97 @@ def _collect_review_threads(
                 }
             cursor = end_cursor
             continue
-        break
+        return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
 
+
+def _collect_review_threads(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    review_comments: list[dict[str, Any]],
+    review_observation_ids: set[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    owner, name = repository.split("/", 1)
+    comments_by_id = {
+        item["id"]: item for item in review_comments if isinstance(item.get("id"), str)
+    }
+    omitted = {"roots": 0, "reviews": 0}
+
+    def normalize_nodes(nodes: list[Any]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for raw_node in nodes:
+            node = _mapping(raw_node, "graphql.reviewThread")
+            thread_id = _text(node.get("id"), "graphql.reviewThread.id")
+            resolved = _boolean(
+                node.get("isResolved"),
+                "graphql.reviewThread.isResolved",
+            )
+            outdated = _boolean(
+                node.get("isOutdated"),
+                "graphql.reviewThread.isOutdated",
+            )
+            comments = _mapping(
+                node.get("comments"),
+                "graphql.reviewThread.comments",
+            ).get("nodes")
+            if not isinstance(comments, list) or not comments:
+                omitted["roots"] += 1
+                continue
+            root_comment = _mapping(
+                comments[0],
+                "graphql.reviewThread.comments[0]",
+            )
+            reply_to = root_comment.get("replyTo")
+            identity_comment = (
+                _mapping(
+                    reply_to,
+                    "graphql.reviewThread.comments[0].replyTo",
+                )
+                if reply_to is not None
+                else root_comment
+            )
+            database_id = _integer(
+                identity_comment.get("databaseId"),
+                "graphql.reviewThread.rootComment.databaseId",
+            )
+            retained = comments_by_id.get(f"github-review-comment-{database_id}")
+            if retained is None:
+                omitted["roots"] += 1
+                continue
+            if retained["review_observation_id"] not in review_observation_ids:
+                omitted["reviews"] += 1
+                continue
+            normalized.append(
+                {
+                    "id": f"github-review-thread-{thread_id}",
+                    "review_observation_id": retained["review_observation_id"],
+                    "reviewer_id": retained["reviewer_id"],
+                    "observed_at": retained["observed_at"],
+                    "head_commit": retained["head_commit"],
+                    "body": retained["body"],
+                    "body_truncated": retained["body_truncated"],
+                    "source_url": (
+                        _optional_text(identity_comment.get("url"))
+                        or retained["source_url"]
+                    ),
+                    "state": "resolved" if resolved else "unresolved",
+                    "outdated": outdated,
+                }
+            )
+        return normalized
+
+    items, coverage = _collect_connection(
+        client,
+        _REVIEW_THREADS_QUERY,
+        {"owner": owner, "name": name, "number": pull_number},
+        "reviewThreads",
+        normalize_nodes,
+    )
+    if coverage["status"] != "COMPLETE":
+        return items, coverage
+    pages = coverage["pages"]
+    omitted_reviews, omitted_roots = omitted["reviews"], omitted["roots"]
     if omitted_reviews:
         return items, {
             "status": "PARTIAL",
@@ -518,13 +598,13 @@ def _comment_author(value: Any) -> str:
     return login if isinstance(login, str) and login else "UNAVAILABLE"
 
 
-def _bounded_body(value: Any) -> tuple[str, bool]:
+def _bounded_body(value: Any, limit: int = _MAX_BODY_BYTES) -> tuple[str, bool]:
     if not isinstance(value, str):
         return "", False
     raw = value.encode("utf-8")
-    if len(raw) <= _MAX_BODY_BYTES:
+    if len(raw) <= limit:
         return value, False
-    bounded = raw[:_MAX_BODY_BYTES].decode("utf-8", errors="ignore")
+    bounded = raw[:limit].decode("utf-8", errors="ignore")
     return bounded, True
 
 
@@ -550,7 +630,7 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         return None
     if submitted_at is None:
         raise ProviderReadError("submitted GitHub review has no submitted_at")
-    return {
+    review: dict[str, Any] = {
         "observation_id": f"github-review-{review_id}",
         "reviewer_id": _reviewer_id(item.get("user"), "review.user", review_id),
         "recommendation_state": state,
@@ -558,6 +638,13 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         "head_commit": _optional_sha(item.get("commit_id"), "review.commit_id"),
         "source_url": _optional_text(item.get("html_url")),
     }
+    # Its false-positive dispositions, from its bounded text (Decision 0132 item 4):
+    # only a review that carries one has the field.
+    body, _ = _bounded_body(item.get("body"))
+    found = parse_dispositions(body)
+    if found:
+        review["dispositions"] = found
+    return review
 
 
 def _mark_effective_reviews(
@@ -662,7 +749,79 @@ def _normalize_check(
         "status": _text(item.get("status"), "check_run.status"),
         "conclusion": _optional_text(item.get("conclusion")),
         "source_url": _optional_text(item.get("details_url")),
+        "suite": _suite_id(item.get("check_suite")),
     }
+
+
+def _suite_id(value: Any) -> int | None:
+    """A check run's suite, or None when the provider names none, which leaves
+    the run unbound to any suite's state (#407, Option S)."""
+
+    if value is None:
+        return None
+    return _integer(
+        _mapping(value, "check_run.check_suite").get("id"), "check_run.check_suite.id"
+    )
+
+
+def _normalize_suite(value: Any) -> dict[str, Any]:
+    """A check suite's identity and state. Its conclusion is not kept: a suite
+    concludes from all its runs, so it never stands for one of them."""
+
+    item = _mapping(value, "check suite")
+    app = _mapping(item.get("app"), "check_suite.app")
+    return {
+        "id": _integer(item.get("id"), "check_suite.id"),
+        "app_id": _integer(app.get("id"), "check_suite.app.id"),
+        "head_commit": _sha(item.get("head_sha"), "check_suite.head_sha"),
+        "status": _text(item.get("status"), "check_suite.status"),
+    }
+
+
+# Past 1,000 check suites on a reference, GitHub lists its check runs from the
+# 1,000 most recent suites only ("List check runs for a Git reference"), so a head
+# with more suites than that is not proven complete (#407, Option S; Codex on #428).
+_MAX_CHECK_SUITES = 1_000
+
+
+def _check_suites(
+    client: JsonReader, root: str, head: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The head's check suites, and whether their read is complete: every page
+    read, each page counting as many suites as were listed, and no more of them than
+    the bound past which the head's check runs go unlisted."""
+
+    counted: set[int] = set()
+
+    def page(payload: Any) -> list[Any]:
+        if not isinstance(payload, dict):
+            raise ProviderReadError("GitHub check-suites source has invalid shape")
+        suites = payload.get("check_suites")
+        total = payload.get("total_count")
+        if not isinstance(suites, list):
+            raise ProviderReadError("GitHub check-suites source has invalid shape")
+        if type(total) is not int or total < 0:
+            raise ProviderReadError("GitHub check-suites source has no count")
+        counted.add(total)
+        return suites
+
+    suites, coverage = _collect_pages(
+        client,
+        f"{root}/commits/{head}/check-suites?per_page=100",
+        page_items=page,
+        normalize=_normalize_suite,
+    )
+    if coverage["status"] != "COMPLETE":
+        return suites, coverage
+    if counted != {len(suites)}:
+        return suites, {
+            **coverage,
+            "status": "PARTIAL",
+            "reason": "check_suite_count_mismatch",
+        }
+    if len(suites) > _MAX_CHECK_SUITES:
+        return suites, {**coverage, "status": "PARTIAL", "reason": "check_suite_limit"}
+    return suites, coverage
 
 
 def _normalize_commit_status(
@@ -776,21 +935,9 @@ def _collect_snapshot_once(
         opinion_ambiguities,
         unavailable_opinionated_reviews,
     ) = _mark_effective_reviews(reviews)
-    if opinion_ambiguities or unavailable_opinionated_reviews:
-        review_coverage = dict(review_coverage)
-        if opinion_ambiguities:
-            review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
-        if unavailable_opinionated_reviews:
-            review_coverage["unavailable_opinionated_reviews"] = (
-                unavailable_opinionated_reviews
-            )
-        if review_coverage.get("status") == "COMPLETE":
-            review_coverage["status"] = "PARTIAL"
-            review_coverage["reason"] = (
-                "unavailable_reviewer_identity"
-                if unavailable_opinionated_reviews
-                else "ambiguous_latest_reviewer_opinion"
-            )
+    review_coverage = _review_coverage_with_opinions(
+        review_coverage, opinion_ambiguities, unavailable_opinionated_reviews
+    )
     review_comments, review_comment_coverage = _collect_pages(
         client,
         f"{root}/pulls/{pull_number}/comments?per_page=100",
@@ -807,22 +954,9 @@ def _collect_snapshot_once(
             if isinstance(item.get("observation_id"), str)
         },
     )
-    metadata_status = review_comment_coverage.get("status")
-    combined_status = _combined_coverage_status(
-        review_comment_coverage,
-        review_thread_coverage,
+    review_thread_coverage = _thread_coverage_with_metadata(
+        review_thread_coverage, review_comment_coverage
     )
-    if combined_status != review_thread_coverage.get("status"):
-        review_thread_coverage = dict(review_thread_coverage)
-        review_thread_coverage["status"] = combined_status
-    if metadata_status != "COMPLETE":
-        review_thread_coverage["metadata_status"] = metadata_status
-        review_thread_coverage["metadata_pages"] = review_comment_coverage.get("pages")
-        review_thread_coverage["metadata_count"] = review_comment_coverage.get("count")
-        review_thread_coverage["metadata_reason"] = review_comment_coverage.get(
-            "reason",
-            review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
-        )
     check_runs, check_run_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
@@ -847,28 +981,9 @@ def _collect_snapshot_once(
         count=len(checks),
     )
 
-    cut_candidates = [collection_cut]
-    cut_candidates.extend(
-        item["updated_at"]
-        for item in issue_comments
-        if isinstance(item.get("updated_at"), str)
+    effective_observed_at = _effective_observed_at(
+        collection_cut, issue_comments, reviews, review_threads, checks
     )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in reviews
-        if isinstance(item.get("observed_at"), str)
-    )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in review_threads
-        if isinstance(item.get("observed_at"), str)
-    )
-    cut_candidates.extend(
-        item["observed_at"]
-        for item in checks
-        if isinstance(item.get("observed_at"), str)
-    )
-    effective_observed_at = max(cut_candidates, key=parse_rfc3339)
 
     return {
         "schema_version": PROVIDER_STATE_SCHEMA_VERSION,
@@ -907,24 +1022,436 @@ def _collect_snapshot_once(
     }
 
 
+def _review_coverage_with_opinions(
+    review_coverage: dict[str, Any],
+    opinion_ambiguities: int,
+    unavailable_opinionated_reviews: int,
+) -> dict[str, Any]:
+    """The reviews' coverage, marked PARTIAL when an effective opinion is ambiguous or
+    its reviewer's identity is unavailable; unchanged, the same object, otherwise."""
+    if not (opinion_ambiguities or unavailable_opinionated_reviews):
+        return review_coverage
+    review_coverage = dict(review_coverage)
+    if opinion_ambiguities:
+        review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
+    if unavailable_opinionated_reviews:
+        review_coverage["unavailable_opinionated_reviews"] = (
+            unavailable_opinionated_reviews
+        )
+    if review_coverage.get("status") == "COMPLETE":
+        review_coverage["status"] = "PARTIAL"
+        review_coverage["reason"] = (
+            "unavailable_reviewer_identity"
+            if unavailable_opinionated_reviews
+            else "ambiguous_latest_reviewer_opinion"
+        )
+    return review_coverage
+
+
+def _thread_coverage_with_metadata(
+    review_thread_coverage: dict[str, Any],
+    review_comment_coverage: dict[str, Any],
+) -> dict[str, Any]:
+    """The threads' coverage combined with the review-comment metadata it was read
+    beside, as the collection reports it."""
+    metadata_status = review_comment_coverage.get("status")
+    combined_status = _combined_coverage_status(
+        review_comment_coverage,
+        review_thread_coverage,
+    )
+    if combined_status != review_thread_coverage.get("status"):
+        review_thread_coverage = dict(review_thread_coverage)
+        review_thread_coverage["status"] = combined_status
+    if metadata_status != "COMPLETE":
+        review_thread_coverage["metadata_status"] = metadata_status
+        review_thread_coverage["metadata_pages"] = review_comment_coverage.get("pages")
+        review_thread_coverage["metadata_count"] = review_comment_coverage.get("count")
+        review_thread_coverage["metadata_reason"] = review_comment_coverage.get(
+            "reason",
+            review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
+        )
+    return review_thread_coverage
+
+
+def _effective_observed_at(
+    collection_cut: str,
+    issue_comments: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
+    review_threads: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+) -> str:
+    """The snapshot's cut: the latest of the collection time and every observation."""
+    cut_candidates = [collection_cut]
+    cut_candidates.extend(
+        item["updated_at"]
+        for item in issue_comments
+        if isinstance(item.get("updated_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in reviews
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in review_threads
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in checks
+        if isinstance(item.get("observed_at"), str)
+    )
+    return max(cut_candidates, key=parse_rfc3339)
+
+
+def _merge_evidence_subject(value: Any) -> dict[str, Any]:
+    """The pull request's fields the merge-evidence adapter reads (#407, slice
+    1b.3a): read only when asked, so the advisory's snapshot is unchanged."""
+
+    item = _mapping(value, "pull request")
+    base = _mapping(item.get("base"), "pull.base")
+    base_repo = _mapping(base.get("repo"), "pull.base.repo")
+    draft = item.get("draft")
+    merged = item.get("merged")
+    if not isinstance(draft, bool) or not isinstance(merged, bool):
+        raise ProviderReadError("pull request draft and merged must be booleans")
+    author = item.get("user")
+    body, truncated = _bounded_body(item.get("body"))
+    return {
+        "draft": draft,
+        "merged": merged,
+        "target": _text(base.get("ref"), "pull.base.ref"),
+        # The repository's default branch, from the same response: the policy's
+        # `protected_default_branch` names no branch (#407, slice 1b.3a).
+        "default_branch": _text(
+            base_repo.get("default_branch"), "pull.base.repo.default_branch"
+        ),
+        "author": None if author is None else _login(author, "pull.user"),
+        "body": body,
+        "body_truncated": truncated,
+    }
+
+
+def _normalize_commit(value: Any) -> dict[str, Any]:
+    item = _mapping(value, "commit")
+    commit = _mapping(item.get("commit"), "commit.commit")
+    raw_message = commit.get("message")
+    if not isinstance(raw_message, str):
+        # Unread, not empty: Git's empty message is "" (CodeAnt on #413).
+        raise ProviderReadError("commit.commit.message must be a string")
+    message, truncated = _bounded_body(raw_message)
+    return {
+        "sha": _sha(item.get("sha"), "commit.sha"),
+        "message": message,
+        "message_truncated": truncated,
+    }
+
+
+def _normalize_file(value: Any) -> dict[str, Any]:
+    """One changed file, with what the comparison says about its added content
+    (#407, slice 1b.3b-4). Typed as `agent_review_github` types a comparison
+    entry: an omitted or empty patch is no hunks, a present null is malformed, a
+    count is a non-negative whole number, and only the blob may be null."""
+
+    item = _mapping(value, "file")
+    patch, truncated = None, False
+    if "patch" in item:
+        raw = item["patch"]
+        if not isinstance(raw, str):
+            raise ProviderReadError("file.patch must be a string")
+        if raw:
+            patch, truncated = _bounded_body(raw, limit=_MAX_PATCH_BYTES)
+    additions = None
+    if "additions" in item:
+        additions = item["additions"]
+        if type(additions) is not int or additions < 0:
+            raise ProviderReadError("file.additions must be a non-negative integer")
+    blob = item.get("sha")
+    if blob is not None and not isinstance(blob, str):
+        raise ProviderReadError("file.sha must be a string or null")
+    return {
+        "path": _text(item.get("filename"), "file.filename"),
+        "status": _text(item.get("status"), "file.status"),
+        "previous_path": _optional_text(item.get("previous_filename")),
+        "additions": additions,
+        "blob": blob,
+        "patch": patch,
+        "patch_truncated": truncated,
+    }
+
+
+def _capped(coverage: dict[str, Any], cap: int, reason: str) -> dict[str, Any]:
+    if coverage.get("status") == "COMPLETE" and coverage.get("count", 0) >= cap:
+        return {**coverage, "status": "PARTIAL", "reason": reason}
+    return coverage
+
+
+def _comparison_sources(
+    client: JsonReader, root: str, subject: dict[str, Any]
+) -> dict[str, tuple[list[dict[str, Any]], dict[str, Any]]]:
+    """The commits and changed files of the comparison of the subject's exact base
+    and head, which L1 already reads for the merge base. Both lists are a function
+    of the two commits, so neither can be another head's (cubic and Claude on
+    #413)."""
+
+    url = f"{root}/compare/{subject['base_commit']}...{subject['head_commit']}"
+    try:
+        payload, _ = client.get(url)
+        comparison = _mapping(payload, "compare")
+        raw_commits = comparison.get("commits")
+        raw_files = comparison.get("files")
+        if not isinstance(raw_commits, list) or not isinstance(raw_files, list):
+            raise ProviderReadError("compare commits and files must be arrays")
+        total = comparison.get("total_commits")
+        # A comparison with no commits is empty, not an error (cubic on #413).
+        if type(total) is not int or total < 0:
+            raise ProviderReadError(
+                "compare.total_commits must be a non-negative integer"
+            )
+        commits = [_normalize_commit(item) for item in raw_commits]
+        files = [_normalize_file(item) for item in raw_files]
+    except ProviderReadError as exc:
+        failed = {
+            "status": _error_status(exc, 0),
+            "pages": 0,
+            "count": 0,
+            "error": str(exc),
+        }
+        return {"commits": ([], failed), "files": ([], dict(failed))}
+    commit_coverage: dict[str, Any] = {
+        "status": "COMPLETE",
+        "pages": 1,
+        "count": len(commits),
+    }
+    if len(commits) != total:
+        # A comparison lists at most 250 commits; fewer than its total is a cut list.
+        commit_coverage.update(status="PARTIAL", reason="commit_list_cap")
+    file_coverage = _capped(
+        {"status": "COMPLETE", "pages": 1, "count": len(files)},
+        _COMPARE_FILE_CAP,
+        "file_list_cap",
+    )
+    return {"commits": (commits, commit_coverage), "files": (files, file_coverage)}
+
+
+def _edit_states(nodes: list[Any]) -> list[dict[str, Any]]:
+    states = []
+    for raw_node in nodes:
+        node = _mapping(raw_node, "graphql.comment")
+        edited_at = _optional_timestamp(
+            node.get("lastEditedAt"), "graphql.comment.lastEditedAt"
+        )
+        states.append(
+            {
+                "id": _integer(node.get("databaseId"), "graphql.comment.databaseId"),
+                "edited": edited_at is not None,
+            }
+        )
+    return states
+
+
+def _closing_issues(nodes: list[Any]) -> list[dict[str, Any]]:
+    issues = []
+    for raw_node in nodes:
+        node = _mapping(raw_node, "graphql.closingIssue")
+        repository = _mapping(node.get("repository"), "graphql.closingIssue.repository")
+        issues.append(
+            {
+                "repository": _text(
+                    repository.get("nameWithOwner"),
+                    "graphql.closingIssue.repository.nameWithOwner",
+                ),
+                "number": _integer(node.get("number"), "graphql.closingIssue.number"),
+            }
+        )
+    return issues
+
+
+def _work_item(payload: Any) -> dict[str, Any]:
+    """One issue as GitHub's REST API answers it: its number, its repository and
+    whether it is a pull request, which the issues API also answers for."""
+
+    issue = _mapping(payload, "issue")
+    number = _integer(issue.get("number"), "issue.number")
+    url = _text(issue.get("repository_url"), "issue.repository_url")
+    repository = url.removeprefix(f"{_API_ROOT}/repos/")
+    owner, _, name = repository.partition("/")
+    if repository == url or not owner or not name or "/" in name:
+        raise ProviderReadError("issue.repository_url is not an API repository")
+    kind = "pull_request" if "pull_request" in issue else "issue"
+    return {"number": number, "repository": repository, "kind": kind}
+
+
+def _work_items(
+    client: JsonReader, root: str, repository: str, subject: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Each Work Item the description's Change control section lists, read as an
+    issue (#407, slice 1b.3b-3), with the adapter's own reading of the section.
+    At most `_MAX_WORK_ITEMS` distinct numbers are read, once each per pass. A 404
+    is an absent Work Item; any other failure leaves the source incomplete, so it
+    cannot prove one. A truncated description reads none: the adapter fails that
+    run anyway (Claude on #422)."""
+
+    if subject["body_truncated"]:
+        error = "the description is truncated"
+        return [], {"status": "ERROR", "pages": 0, "count": 0, "error": error}
+    # Here, not at the top: the workflow's publish job runs this script with no
+    # runtime lock, and the adapter's Markdown parser is not there (Codex on #422).
+    from tools import merge_evidence_github
+
+    try:
+        numbers = merge_evidence_github.work_item_numbers(subject["body"])
+    except merge_evidence_github.MergeEvidenceError as exc:
+        return [], {"status": "ERROR", "pages": 0, "count": 0, "error": str(exc)}
+    items: list[dict[str, Any]] = []
+    for number in numbers[:_MAX_WORK_ITEMS]:
+        try:
+            payload, _ = client.get(f"{root}/issues/{number}")
+            items.append(_work_item(payload))
+        except ProviderReadError as exc:
+            if exc.status != 404:
+                return items, {
+                    "status": _error_status(exc, len(items)),
+                    "pages": len(items),
+                    "count": len(items),
+                    "error": str(exc),
+                }
+            items.append({"number": number, "repository": repository, "kind": "absent"})
+    coverage: dict[str, Any] = {
+        "status": "COMPLETE",
+        "pages": len(items),
+        "count": len(items),
+    }
+    if len(numbers) > _MAX_WORK_ITEMS:
+        coverage.update(status="PARTIAL", limit="work_item_limit")
+    return items, coverage
+
+
+def _mark_edits(
+    client: JsonReader, snapshot: dict[str, Any], repository: str, pull_number: int
+) -> None:
+    """Mark each conversation comment `edited` from GraphQL's `lastEditedAt`:
+    timestamps in whole seconds cannot show an edit made in the second the comment
+    was posted (Codex on #413). A comment left unmarked makes the conversation
+    PARTIAL."""
+
+    owner, name = repository.split("/", 1)
+    states, coverage = _collect_connection(
+        client,
+        _CONVERSATION_EDITS_QUERY,
+        {"owner": owner, "name": name, "number": pull_number},
+        "comments",
+        _edit_states,
+    )
+    edited = {state["id"]: state["edited"] for state in states}
+    conversation = snapshot["conversation"]
+    if coverage["status"] == "COMPLETE" and all(
+        comment["id"] in edited for comment in conversation
+    ):
+        for comment in conversation:
+            comment["edited"] = edited[comment["id"]]
+    elif snapshot["coverage"]["conversation"]["status"] == "COMPLETE":
+        snapshot["coverage"]["conversation"] = {
+            **snapshot["coverage"]["conversation"],
+            "status": "PARTIAL",
+            "reason": "comment_edits_unavailable",
+        }
+
+
+def _collect_merge_evidence_once(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    observed_at: str | None,
+    merge_evidence: bool,
+) -> dict[str, Any]:
+    """One pass of L1's collector, and, when asked, what the merge-evidence
+    adapter reads (#407, slice 1b.3a). The collector itself is unchanged; the pull
+    request is read again here, and a head that moved in between is refused, as
+    the collector refuses a changed identity."""
+
+    snapshot = _collect_snapshot_once(
+        client,
+        repository=repository,
+        pull_number=pull_number,
+        observed_at=observed_at,
+    )
+    if not merge_evidence:
+        return snapshot
+    root = f"{_API_ROOT}/repos/{repository}"
+    pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
+    again = _normalize_pull(pull_payload)
+    subject = snapshot["subject"]
+    # Every field both reads carry must agree, the number included, or the
+    # certified snapshot would mix two moments or two pull requests (cubic and
+    # CodeAnt on #413).
+    if (
+        again["number"],
+        again["head_sha"],
+        again["base_sha"],
+        again["state"],
+        again["title"],
+    ) != (
+        pull_number,
+        subject["head_commit"],
+        subject["base_commit"],
+        subject["state"],
+        subject["title"],
+    ):
+        raise ProviderReadError("Pull Request changed during collection")
+    snapshot["subject"].update(_merge_evidence_subject(pull_payload))
+    for name, (items, coverage) in _comparison_sources(client, root, subject).items():
+        snapshot[name] = items
+        snapshot["coverage"][name] = coverage
+    _mark_edits(client, snapshot, repository, pull_number)
+    owner, name = repository.split("/", 1)
+    snapshot["closing_issues"], snapshot["coverage"]["closing_issues"] = (
+        _collect_connection(
+            client,
+            _CLOSING_ISSUES_QUERY,
+            {"owner": owner, "name": name, "number": pull_number},
+            "closingIssuesReferences",
+            _closing_issues,
+        )
+    )
+    snapshot["work_items"], snapshot["coverage"]["work_items"] = _work_items(
+        client, root, repository, snapshot["subject"]
+    )
+    # Each required run's own suite gates it (#407, Option S, owner 6143702096).
+    snapshot["check_suites"], snapshot["coverage"]["check_suites"] = _check_suites(
+        client, root, subject["head_commit"]
+    )
+    return snapshot
+
+
 def collect_snapshot(
     client: JsonReader,
     *,
     repository: str,
     pull_number: int,
     observed_at: str | None,
+    merge_evidence: bool = False,
 ) -> dict[str, Any]:
-    """Confirm a cut that is covered by a subsequent full provider reread."""
+    """Confirm a cut that is covered by a subsequent full provider reread.
+
+    With `merge_evidence`, the snapshot also carries what the merge-evidence
+    adapter reads: the pull request's draft, merged, target, default branch,
+    author and body, its commits and changed files, the issues merging it would
+    close (#407, slice 1b.3a), and the Work Items its description lists (slice
+    1b.3b-3), each with its coverage."""
     previous: dict[str, Any] | None = None
     previous_cut: str | None = None
     snapshot: dict[str, Any] = {}
     for attempt in range(1, _MAX_COLLECTION_PASSES + 1):
         read_started_at = _now()
-        snapshot = _collect_snapshot_once(
+        snapshot = _collect_merge_evidence_once(
             client,
             repository=repository,
             pull_number=pull_number,
             observed_at=observed_at,
+            merge_evidence=merge_evidence,
         )
         read_completed_at = _now()
         if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):
@@ -1009,19 +1536,11 @@ def publication_decision(
     if current_head != collected_head:
         return False, "STALE_HEAD"
     candidate_subject = candidate_projection.get("subject")
-    expected_repository = f"https://github.com/{repository}"
-    expected_change_request = {
-        "kind": "github-pull-request",
-        "id": str(pull_number),
-    }
-    if (
-        not isinstance(candidate_subject, dict)
-        or candidate_subject.get("provider_id") != "github"
-        or candidate_subject.get("repository") != expected_repository
-        or candidate_subject.get("change_request") != expected_change_request
-        or candidate_subject.get("head_commit") != collected_head
-        or not isinstance(candidate_subject.get("base_commit"), str)
-        or not isinstance(candidate_subject.get("merge_base_commit"), str)
+    if not _candidate_subject_matches(
+        candidate_subject,
+        repository=repository,
+        pull_number=pull_number,
+        collected_head=collected_head,
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
     if candidate_subject.get("state") != current_pr.get("state"):
@@ -1031,16 +1550,48 @@ def publication_decision(
         or current_pr.get("merge_base_sha") != candidate_subject["merge_base_commit"]
     ):
         return False, "STALE_COMPARISON"
-    if existing_projection is not None:
-        existing_subject = existing_projection.get("subject")
-        if (
-            isinstance(existing_subject, dict)
-            and existing_subject.get("head_commit") == collected_head
-            and _projection_key(existing_projection)
-            >= _projection_key(candidate_projection)
-        ):
-            return False, "SUPERSEDED_PROJECTION"
+    if _supersedes(existing_projection, candidate_projection, collected_head):
+        return False, "SUPERSEDED_PROJECTION"
     return True, "PUBLISH"
+
+
+def _candidate_subject_matches(
+    candidate_subject: object,
+    *,
+    repository: str,
+    pull_number: int,
+    collected_head: str,
+) -> TypeGuard[dict[str, Any]]:
+    """The candidate projection names this repository's pull request at the collected
+    head, with both of its comparison commits."""
+    return (
+        isinstance(candidate_subject, dict)
+        and candidate_subject.get("provider_id") == "github"
+        and candidate_subject.get("repository") == f"https://github.com/{repository}"
+        and candidate_subject.get("change_request")
+        == {"kind": "github-pull-request", "id": str(pull_number)}
+        and candidate_subject.get("head_commit") == collected_head
+        and isinstance(candidate_subject.get("base_commit"), str)
+        and isinstance(candidate_subject.get("merge_base_commit"), str)
+    )
+
+
+def _supersedes(
+    existing_projection: dict[str, Any] | None,
+    candidate_projection: dict[str, Any],
+    collected_head: str,
+) -> bool:
+    """An existing projection at the collected head that is not older than the
+    candidate."""
+    if existing_projection is None:
+        return False
+    existing_subject = existing_projection.get("subject")
+    return (
+        isinstance(existing_subject, dict)
+        and existing_subject.get("head_commit") == collected_head
+        and _projection_key(existing_projection)
+        >= _projection_key(candidate_projection)
+    )
 
 
 def _existing_projection(
@@ -1189,16 +1740,10 @@ def publish_entry(
 ) -> dict[str, Any]:
     pull_number = _integer(entry.get("pull_number"), "entry.pull_number")
     if entry.get("collection_status") == "UNAVAILABLE":
-        raw_reason = entry.get("reason")
-        reason = (
-            raw_reason
-            if isinstance(raw_reason, str) and raw_reason
-            else "PROVIDER_SUBJECT_UNAVAILABLE"
-        )
         return {
             "pull_number": pull_number,
             "published": False,
-            "reason": reason,
+            "reason": _unavailable_reason(entry),
         }
     collected_head = _sha(entry.get("head_sha"), "entry.head_sha")
     body = _text(entry.get("body"), "entry.body")
@@ -1250,30 +1795,9 @@ def publish_entry(
     if not allowed:
         return {"pull_number": pull_number, "published": False, "reason": reason}
 
-    protected = candidate_projection.get("protected")
-    if isinstance(protected, dict) and protected.get("status") == "AVAILABLE":
-        candidate_protected_revision = protected.get("main_revision")
-        bundle, consumer = _protected_state()
-        if (
-            not isinstance(candidate_protected_revision, str)
-            or bundle.protected_main_revision != candidate_protected_revision
-            or consumer.protected_main_revision != candidate_protected_revision
-        ):
-            return {
-                "pull_number": pull_number,
-                "published": False,
-                "reason": "STALE_PROTECTED_AUTHORITY",
-            }
-        if not _positive_projection_is_fresh(
-            candidate_projection,
-            protected_bundle=bundle,
-            observed_now=_now(),
-        ):
-            return {
-                "pull_number": pull_number,
-                "published": False,
-                "reason": "STALE_PROVIDER_OBSERVATION",
-            }
+    refusal = _protected_publication_refusal(candidate_projection)
+    if refusal is not None:
+        return {"pull_number": pull_number, "published": False, "reason": refusal}
 
     if existing is None:
         client.post(
@@ -1290,6 +1814,40 @@ def publish_entry(
     return {"pull_number": pull_number, "published": True, "reason": action}
 
 
+def _unavailable_reason(entry: dict[str, Any]) -> str:
+    """An unavailable entry's own reason, or the provider's unavailability."""
+    raw_reason = entry.get("reason")
+    return (
+        raw_reason
+        if isinstance(raw_reason, str) and raw_reason
+        else "PROVIDER_SUBJECT_UNAVAILABLE"
+    )
+
+
+def _protected_publication_refusal(candidate_projection: dict[str, Any]) -> str | None:
+    """Why a projection that claims protected authority may not be published now: the
+    authority it names is not current, or its provider observation is stale. Called
+    after both reads, where the protected state is acquired."""
+    protected = candidate_projection.get("protected")
+    if not (isinstance(protected, dict) and protected.get("status") == "AVAILABLE"):
+        return None
+    candidate_protected_revision = protected.get("main_revision")
+    bundle, consumer = _protected_state()
+    if (
+        not isinstance(candidate_protected_revision, str)
+        or bundle.protected_main_revision != candidate_protected_revision
+        or consumer.protected_main_revision != candidate_protected_revision
+    ):
+        return "STALE_PROTECTED_AUTHORITY"
+    if not _positive_projection_is_fresh(
+        candidate_projection,
+        protected_bundle=bundle,
+        observed_now=_now(),
+    ):
+        return "STALE_PROVIDER_OBSERVATION"
+    return None
+
+
 def _workflow_run_pull_numbers(raw: str) -> list[int]:
     """The shared parser's numbers, its refusal raised as this adapter's (#387)."""
     try:
@@ -1298,19 +1856,54 @@ def _workflow_run_pull_numbers(raw: str) -> list[int]:
         raise ProviderReadError(str(exc)) from exc
 
 
-def _open_pull_numbers(
+def _open_pull_listing(
     client: JsonReader,
     repository: str,
-) -> list[int]:
+) -> list[dict[str, Any]]:
+    """Every open Pull Request of the repository with its head, from one complete
+    enumeration, whatever its author, fork or target. An enumeration that is not
+    COMPLETE is refused."""
     root = f"{_API_ROOT}/repos/{repository}"
     pulls, coverage = _collect_pages(
         client,
         f"{root}/pulls?state=open&per_page=100",
-        normalize=lambda item: {"number": _normalize_pull(item)["number"]},
+        normalize=lambda item: {
+            key: _normalize_pull(item)[key] for key in ("number", "head_sha")
+        },
     )
     if coverage["status"] != "COMPLETE":
         raise ProviderReadError("open Pull Request enumeration is incomplete")
-    return sorted({item["number"] for item in pulls})
+    return pulls
+
+
+def _open_pulls(
+    client: JsonReader,
+    repository: str,
+) -> list[dict[str, Any]]:
+    """The open population, each Pull Request once with its head (H1 on #426). A
+    number listed at two heads contradicts itself, so it is refused rather than
+    reconciled; one listed twice at one head, as an overlapping page lists it, is
+    kept once."""
+    heads: dict[int, str] = {}
+    for item in _open_pull_listing(client, repository):
+        if heads.setdefault(item["number"], item["head_sha"]) != item["head_sha"]:
+            raise ProviderReadError(
+                "open Pull Request enumeration lists a number at two heads"
+            )
+    return [{"number": number, "head_sha": heads[number]} for number in sorted(heads)]
+
+
+def open_pulls(client: JsonReader, repository: str) -> list[dict[str, Any]]:
+    """The open population with each head, as `_open_pulls` reads it: the one public
+    name for the merge-admission guard's in-process re-read (#389 F1)."""
+    return _open_pulls(client, repository)
+
+
+def _open_pull_numbers(
+    client: JsonReader,
+    repository: str,
+) -> list[int]:
+    return sorted({item["number"] for item in _open_pull_listing(client, repository)})
 
 
 def _select_scheduled_pull_batch(
@@ -1346,7 +1939,7 @@ def _semantic_result(code: int, raw: bytes) -> dict[str, Any]:
     from tools import review_outer
 
     try:
-        payload = review_outer._decode_outer_result(code, raw)
+        payload = review_outer.decode_outer_result(code, raw)
     except (RuntimeError, TypeError, ValueError):
         return {"reason": "INVALID_R2A_RESULT"}
 
@@ -1415,7 +2008,7 @@ def _collect_entry(
         bundle, consumer = _protected_state()
         protected_revision = bundle.protected_main_revision
         review_input = build_review_input(snapshot, bundle.document)
-        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
+        code, raw = review_outer.run_prior_effective_current_advisory_with_acquisition(
             review_input,
             acquire_consumer=lambda: consumer,
         )
@@ -1423,7 +2016,7 @@ def _collect_entry(
         acquired = consumer.document.get("acquired_consumer")
         if not isinstance(acquired, dict):
             raise ProviderReadError("protected outer-consumer authority is malformed")
-        review_outer._require_transport_compatible_consumer(acquired)
+        review_outer.require_transport_compatible_consumer(acquired)
         outer = acquired
     except (OSError, RuntimeError, ValueError) as exc:
         semantic = {"reason": type(exc).__name__}
@@ -1542,10 +2135,16 @@ def _emit_publication_results(results: list[dict[str, Any]]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("collect", "publish"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("collect", "publish", "subjects", "merge-evidence", "open-heads"),
+        required=True,
+    )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pull-number", type=int, action="append", default=[])
     parser.add_argument("--workflow-run-pulls-json", default="")
+    parser.add_argument("--event", action="store_true")
+    parser.add_argument("--workflow-run-head-sha", default=None)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--run-id", type=int, default=0)
@@ -1568,12 +2167,9 @@ def _collection_summary(lines: list[str]) -> None:
         )
 
 
-def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
-    """Collect a projection for each selected Pull Request and write the payload."""
-    if args.output is None:
-        raise SystemExit("--output is required for collect")
-    if args.run_id <= 0 or args.run_attempt <= 0:
-        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+def _selected_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """The Pull Requests a run reconciles: the event's hints, else the scheduled
+    batch of the open population, within the bounded capacity."""
     pulls = list(
         dict.fromkeys(
             [
@@ -1591,6 +2187,16 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
         raise SystemExit(
             "selected Pull Request population exceeds bounded reconciliation capacity"
         )
+    return pulls
+
+
+def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Collect a projection for each selected Pull Request and write the payload."""
+    if args.output is None:
+        raise SystemExit("--output is required for collect")
+    if args.run_id <= 0 or args.run_attempt <= 0:
+        raise SystemExit("--run-id and --run-attempt must be positive for collect")
+    pulls = _selected_pulls(args, client)
     entries = []
     for number in pulls:
         try:
@@ -1630,6 +2236,174 @@ def _collect_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     return 0
 
 
+def _event_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
+    """An event run's subjects: the event's hints and, for a pull request's event,
+    every open Pull Request at the trigger run's own head, which GitHub leaves out of
+    a fork's run (CodeAnt on #426; github/docs#22501). An event run never falls back
+    to the scheduled sweep."""
+    hints = list(
+        dict.fromkeys(
+            [
+                *args.pull_number,
+                *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+            ]
+        )
+    )
+    head = args.workflow_run_head_sha
+    if head is None:
+        selected = hints
+    else:
+        if _SHA40.fullmatch(head) is None:
+            raise SystemExit("subjects: the trigger run's head is not an exact commit")
+        # An unreadable population refuses through L1's one clean refusal.
+        population = _open_pulls(client, args.repository)
+        heads = {item["number"]: item["head_sha"] for item in population}
+        at_head = sorted(number for number, at in heads.items() if at == head)
+        # A check run belongs to a commit: one subject evaluates it for every pull
+        # request at that head, and H1's failure names them all when it is shared, so
+        # however many share it nothing aborts before it is evaluated (CodeAnt and
+        # Claude on #426). A hinted pull request is the one chosen; a hint the
+        # listing does not show yet keeps its own place, and is re-read.
+        chosen: dict[str, int] = {}
+        for number in [*hints, *at_head]:
+            chosen.setdefault(heads.get(number, f"#{number}"), number)
+        selected = list(chosen.values())
+    if len(selected) > _MAX_OPEN_PULLS:
+        raise SystemExit(
+            "subjects: selected Pull Request population exceeds bounded reconciliation capacity"
+        )
+    return selected
+
+
+def _coalescing(args: argparse.Namespace) -> tuple[int, str] | None:
+    """The pinned merge-admission App's id and the protected revision this run
+    executes, from the runner, when the request is routine: an event run woken by a
+    completed workflow run (Decision 0133). A guarded dispatch, a manual request and
+    the sweep never coalesce, nor a run that does not name both exactly."""
+    app_id = os.environ.get("GNOSTOA_MA0_APP_ID", "")
+    revision = os.environ.get("GITHUB_SHA", "")
+    if (
+        not args.event
+        or os.environ.get("GITHUB_EVENT_NAME") != "workflow_run"
+        or _APP_ID.fullmatch(app_id) is None
+        or _SHA40.fullmatch(revision) is None
+    ):
+        return None
+    return int(app_id), revision
+
+
+def _already_admitted(
+    client: GitHubRestClient,
+    repository: str,
+    subject: dict[str, Any],
+    pinned: tuple[int, str],
+) -> bool:
+    """Whether the pinned App's latest record on the subject's head already binds
+    its whole material state, by the guarded merge's own predicates, so evaluating
+    it again would only repeat that record (Decision 0133). Whatever cannot be read
+    proves nothing, and the subject is evaluated."""
+    # Imported here, not at module level: the predicates and the evidence they
+    # rebuild need the runtime lock, which L1's own `publish` job does not install.
+    from tools import merge_admission_checks as checks
+
+    number, head = subject["pull_number"], subject["head"]
+    app_id, revision = pinned
+    try:
+        return checks.equivalent(
+            client,
+            repository,
+            number,
+            head,
+            app_id=app_id,
+            revision=revision,
+            rebuild=lambda: checks.unbundled_evidence(
+                collect_snapshot,
+                client,
+                repository=repository,
+                number=number,
+                root=Path.cwd(),
+            ),
+            observe=lambda: checks.open_population(_open_pulls(client, repository)),
+        )
+    except (github_rest.GitHubError, checks.PublicationError, ValueError, OSError):
+        return False
+
+
+def _subjects_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the open Pull Requests the merge-admission relay evaluates, each with
+    its head as GitHub reports it now (#407, slice 1b.4). An event's numbers are
+    hints only: each is re-read, and a closed one is no subject. A routine request's
+    subject whose state the pinned App's standing success already binds is none
+    either, so nothing invalidates that success (Decision 0133)."""
+    if args.output is None:
+        raise SystemExit("--output is required for subjects")
+    selected = (
+        _event_pulls(args, client) if args.event else _selected_pulls(args, client)
+    )
+    pinned = _coalescing(args)
+    subjects = []
+    for number in selected:
+        document, _ = client.get(f"{_API_ROOT}/repos/{args.repository}/pulls/{number}")
+        pull = _normalize_pull(document)
+        if pull["number"] != number:
+            raise ProviderReadError("the pull request read is not the one asked for")
+        subject = {"pull_number": number, "head": pull["head_sha"]}
+        if pull["state"] == "open" and (
+            pinned is None
+            or not _already_admitted(client, args.repository, subject, pinned)
+        ):
+            subjects.append(subject)
+    args.output.write_text(json.dumps(subjects, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def _open_heads_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write the complete open population with each head, the population the
+    merge-admission relay binds a success to (H1 on #426). Nothing is written when
+    the enumeration is incomplete."""
+    if args.output is None:
+        raise SystemExit("--output is required for open-heads")
+    pulls = _open_pulls(client, args.repository)
+    population = {
+        "coverage": "COMPLETE",
+        "pulls": [
+            {"pull_number": item["number"], "head": item["head_sha"]} for item in pulls
+        ],
+    }
+    args.output.write_text(json.dumps(population, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def _merge_evidence_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
+    """Write one Pull Request's merge-evidence snapshot, the document `knowledge
+    merge-evidence` reads (#407, slice 1b.4), bounded as that command bounds its
+    input. Nothing is written when the read fails."""
+    if args.output is None:
+        raise SystemExit("--output is required for merge-evidence")
+    if len(args.pull_number) != 1 or args.workflow_run_pulls_json:
+        raise SystemExit("merge-evidence reads exactly one --pull-number")
+    snapshot = collect_snapshot(
+        client,
+        repository=args.repository,
+        pull_number=args.pull_number[0],
+        observed_at=None,
+        merge_evidence=True,
+    )
+    # Imported here, not at module level: `knowledge merge-evidence`'s bound pulls in
+    # PyYAML and jsonschema, which L1's own `publish` job does not install, while
+    # this mode runs only where the runtime lock is installed (CodeAnt on #426).
+    from tools.verdict_cli import MAX_INPUT_BYTES
+
+    encoded = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    if len(encoded) > MAX_INPUT_BYTES:
+        raise SystemExit("the merge-evidence snapshot exceeds its bounded size")
+    with args.output.open("xb") as handle:
+        handle.write(encoded)
+    return 0
+
+
 def _publish_mode(args: argparse.Namespace, client: GitHubRestClient) -> int:
     """Publish each collected projection, isolating one entry's failure."""
     if args.payload is None:
@@ -1657,9 +2431,30 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     client = GitHubRestClient(token)
-    if args.mode == "collect":
-        return _collect_mode(args, client)
-    return _publish_mode(args, client)
+    modes = {
+        "collect": _collect_mode,
+        "subjects": _subjects_mode,
+        "merge-evidence": _merge_evidence_mode,
+        "open-heads": _open_heads_mode,
+    }
+    try:
+        return modes.get(args.mode, _publish_mode)(args, client)
+    except ProviderReadError as exc:
+        # One clean refusal for every mode: a read GitHub contradicts stops the mode
+        # with its reason, never a traceback, and nothing is written (Claude and
+        # CodeAnt on #426).
+        raise SystemExit(f"{args.mode}: {exc}") from exc
+
+
+if TYPE_CHECKING:
+    from tools import review_current_state_surface as surface
+
+    # L1's own definitions, checked against the surface the merge-admission guard
+    # reads them through (#389 F1): a changed name or signature here, or there, is a
+    # type error in both checkers.
+    _CLIENT: surface.ClientFactory = GitHubRestClient
+    _COLLECT_SNAPSHOT: surface.SnapshotCollector = collect_snapshot
+    _OPEN_PULLS: surface.OpenPullsReader = open_pulls
 
 
 if __name__ == "__main__":

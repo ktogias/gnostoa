@@ -134,6 +134,7 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
         dogfood = _json(FIX / "dogfood-pr239.json")
         reviews = dogfood["reviews"]
         self.assertIsInstance(reviews, list)
+        assert isinstance(reviews, list)
         expected = {
             "5182705577": ("qodo-code-review[bot]", "COMMENTED", "COMMENT_ONLY"),
             "5182778419": ("sourcery-ai[bot]", "APPROVED", "APPROVE"),
@@ -143,6 +144,7 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
         )
         for record in reviews:
             self.assertIsInstance(record, dict)
+            assert isinstance(record, dict)
             assessment, mismatches = normalize_observation(_dogfood_observation(record))
             reviewer, raw, normalized = expected[str(record["github_review_id"])]
             with self.subTest(review_id=record["github_review_id"]):
@@ -160,6 +162,7 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
         cases = _json(FIX / "cases.json")
         base = cases["base"]
         self.assertIsInstance(base, dict)
+        assert isinstance(base, dict)
         input_document = copy.deepcopy(base["input"])
         policy_document = copy.deepcopy(base["policy"])
         self.assertIsInstance(input_document, dict)

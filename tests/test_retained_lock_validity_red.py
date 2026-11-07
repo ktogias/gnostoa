@@ -33,13 +33,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import compiler, qualification, retained_commit
 from tools.capsule import lock as lock_module
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -96,7 +92,7 @@ class CanonicallyInvalidLockTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect(effects):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )

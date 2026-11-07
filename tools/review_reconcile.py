@@ -6,14 +6,20 @@ import hashlib
 import html
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
+from .analyzer_readback import SHA256_DIGEST
 from .review_model import canonical_json, parse_rfc3339
 
 _INTERNAL_SCHEMA_VERSION = "gnostoa-l1-current-state/v1"
 PROVIDER_STATE_SCHEMA_VERSION = "gnostoa-review-provider-state/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
+# Decision 0086's L1 coverage vocabulary. Decision 0091's analyzer readback adds
+# INCOMPLETE to it (`analyzer_readback.COVERAGE_STATUSES`); a test pins that.
+L1_COVERAGE_STATUSES = frozenset(
+    {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
+)
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
 _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
@@ -26,6 +32,18 @@ _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
 _PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
 _THREAD_EVIDENCE_MAX_PROBE = (1 << 64) - 1
+# A false-positive disposition (Decision 0132 item 4): a closed block in a review's
+# text, one `key: <JSON value>` line per field, naming one finding at one commit by
+# its enclosing scope's hash or its line, and its rule, or null for a finding listed
+# with none. Only an eligible approval's counts; that is the merge verdict's to judge
+# (M17, with M16's eligibility).
+DISPOSITION_MARKER = "<!-- gnostoa:disposition:v1\n"
+_DISPOSITION_END = "-->"
+_DISPOSITION_KEYS = frozenset(
+    {"provider", "native_id", "rule", "path", "commit_id", "evidence_ref"}
+)
+_DISPOSITION_LOCATORS = frozenset({"scope_hash", "line"})
+MAX_DISPOSITIONS = 100
 
 
 class ReconciliationInputError(ValueError):
@@ -42,6 +60,90 @@ def _string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ReconciliationInputError(f"{label} must be a non-empty string")
     return value
+
+
+def _disposition(value: object, label: str) -> dict[str, Any]:
+    """A false-positive disposition's closed fields: its provider, the finding's
+    native id, rule and path, the commit, an evidence reference, and exactly one
+    locator, the enclosing scope's SHA-256 or a positive line. The rule is null for
+    a finding its provider lists with none, as an inline comment's is."""
+
+    record = _mapping(value, label)
+    locators = _DISPOSITION_LOCATORS & set(record)
+    if set(record) - locators != _DISPOSITION_KEYS or len(locators) != 1:
+        raise ReconciliationInputError(f"{label} has missing or unknown fields")
+    for key in sorted(_DISPOSITION_KEYS - {"rule"}):
+        _string(record[key], f"{label}.{key}")
+    if record["rule"] is not None:
+        _string(record["rule"], f"{label}.rule")
+    _sha(record["commit_id"], f"{label}.commit_id")
+    if "scope_hash" in record and not SHA256_DIGEST.fullmatch(
+        _string(record["scope_hash"], f"{label}.scope_hash")
+    ):
+        raise ReconciliationInputError(f"{label}.scope_hash must be a SHA-256 digest")
+    if "line" in record and (type(record["line"]) is not int or record["line"] < 1):
+        raise ReconciliationInputError(f"{label}.line must be a positive integer")
+    return dict(record)
+
+
+def dispositions(value: object, label: str) -> list[dict[str, Any]]:
+    """A review's dispositions, each closed, at most MAX_DISPOSITIONS."""
+
+    if not isinstance(value, list) or len(value) > MAX_DISPOSITIONS:
+        raise ReconciliationInputError(
+            f"{label} must be an array of at most {MAX_DISPOSITIONS}"
+        )
+    return [_disposition(item, f"{label}[{index}]") for index, item in enumerate(value)]
+
+
+def parse_dispositions(text: str) -> list[dict[str, Any]]:
+    """The well-formed disposition blocks in a review's text, in order, at most
+    MAX_DISPOSITIONS. A malformed block disposes of nothing, so it is left out. A text
+    written in a web form ends its lines in CRLF, read as LF."""
+
+    text = text.replace("\r\n", "\n")
+    found: list[dict[str, Any]] = []
+    start = text.find(DISPOSITION_MARKER)
+    while start != -1 and len(found) < MAX_DISPOSITIONS:
+        begin = start + len(DISPOSITION_MARKER)
+        end = text.find(_DISPOSITION_END, begin)
+        if end == -1:
+            break
+        following = text.find(DISPOSITION_MARKER, begin)
+        if following != -1 and following < end:
+            # Unterminated, it ends where the next block starts: only it is left out
+            # (cubic on #485).
+            start = following
+            continue
+        record = _disposition_block(text[begin:end])
+        if record is not None:
+            found.append(record)
+        start = text.find(DISPOSITION_MARKER, end)
+    return found
+
+
+def _disposition_block(block: str) -> dict[str, Any] | None:
+    # Imported here, as the readback's strict readers import it: it needs the runtime
+    # lock, which this module's other importers do not all install.
+    from .review_check import assert_document_depth, strict_json_loads
+
+    fields: dict[str, Any] = {}
+    for line in block.splitlines():
+        key, separator, raw = line.partition(": ")
+        if not separator or key in fields:
+            return None
+        try:
+            # Strict and bounded: a value nested past the parser's bound is refused,
+            # never raised (Revix on #485, strict-bounded-json-parsing).
+            value = strict_json_loads(raw, label="a disposition field")
+            assert_document_depth(value, "a disposition field")
+        except ValueError:
+            return None
+        fields[key] = value
+    try:
+        return _disposition(fields, "disposition")
+    except ReconciliationInputError:
+        return None
 
 
 def _optional_summary(value: object, *, limit: int = 512) -> str | None:
@@ -168,7 +270,7 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     ):
         item = _mapping(coverage.get(source), f"coverage.{source}")
         status = _string(item.get("status"), f"coverage.{source}.status")
-        if status not in _ALLOWED_COVERAGE:
+        if status not in L1_COVERAGE_STATUSES:
             raise ReconciliationInputError(f"coverage.{source}.status is unsupported")
         pages = item.get("pages")
         if type(pages) is not int or pages < 0:
@@ -587,16 +689,31 @@ def _observations(
     return observations
 
 
+def validate_snapshot(
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
+    """Validate an L1 provider snapshot: its subject, its per-source coverage, the
+    retained payloads against that coverage, and its temporal integrity.
+
+    Returns the R2A subject, the provider subject and the coverage. Shared by R2A's
+    input and the merge-evidence adapter (#407, slice 1b.3a), so both read a
+    snapshot under one set of checks.
+    """
+
+    subject, provider_subject = _subject(snapshot)
+    coverage = _coverage(snapshot)
+    _validate_source_payloads(snapshot, coverage)
+    _validate_temporal_integrity(snapshot)
+    return subject, provider_subject, coverage
+
+
 def build_review_input(
     snapshot: dict[str, Any],
     protected_bundle: dict[str, Any],
 ) -> dict[str, Any]:
     """Translate normalized provider state into the existing R2A input contract."""
 
-    subject, provider_subject = _subject(snapshot)
-    coverage = _coverage(snapshot)
-    _validate_source_payloads(snapshot, coverage)
-    _validate_temporal_integrity(snapshot)
+    subject, provider_subject, coverage = validate_snapshot(snapshot)
     bundle = _mapping(protected_bundle, "protected_bundle")
     authority = _mapping(bundle.get("authority"), "protected_bundle.authority")
     judge = _mapping(bundle.get("acquired_judge"), "protected_bundle.acquired_judge")
@@ -690,14 +807,40 @@ def _record_latest_check(
         previous["states"].add(state)
 
 
-def _latest_checks(
-    raw_checks: list[object],
+def latest_checks(
+    raw_checks: Sequence[object],
     target_head: str,
 ) -> dict[str, dict[str, Any]]:
+    """Each check key's latest state on the target head: `observed_at` and the
+    set of `(name, status, conclusion)` states observed at that moment, more than
+    one when the latest is ambiguous. The merge-evidence adapter reads it too
+    (#407, slice 1b.3b-1)."""
+
     latest: dict[str, dict[str, Any]] = {}
     for raw_check in raw_checks:
         _record_latest_check(latest, _normalize_check(raw_check), target_head)
     return latest
+
+
+_latest_checks = latest_checks
+
+
+def check_runs_by_key(
+    raw_checks: Sequence[object],
+    target_head: str,
+) -> dict[str, list[tuple[str, str | None]]]:
+    """Every `(status, conclusion)` observed on the target head, by check key, as
+    the normalizer reads it. The merge-evidence adapter uses it to see each run
+    that shares a key (#407, slice 1b.3b-1)."""
+
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    for raw_check in raw_checks:
+        check = _normalize_check(raw_check)
+        if check["head_commit"] == target_head:
+            runs.setdefault(check["key"], []).append(
+                (check["status"], check["conclusion"])
+            )
+    return runs
 
 
 def _classify_latest_check(

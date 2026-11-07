@@ -1,0 +1,66 @@
+name: Merge admission trigger
+
+# Decision 0096 rule 2 (#407, MA0 slice 1b.4; Decision 0112 item 5): this workflow
+# only wakes the protected merge-admission relay, `merge-admission.yml`, on the events
+# that can change a verdict. It holds no permission, secret or checkout and computes
+# nothing. The relay takes the pull request's number from GitHub's record of this run,
+# or from the comment event relayed below, as a hint, and re-reads everything else
+# from the provider.
+#
+# F1 (the Decisions Router on #426, 6130207025): the seal is a PR conversation comment,
+# so it wakes the relay too. A comment's run executes from the default branch with no
+# pull request of its own, so its event is relayed unchanged, as
+# `claude-mention-trigger.yml` relays a mention.
+#
+# T1 (the Router on #426, 6134806265): resolving or reopening a review thread has no
+# Actions event. `pull_request_review_thread` is a webhook event only, and declaring
+# it here made this whole workflow invalid (Codex on #426). A thread's changed state
+# is acquired at the next supported event, the owner's review, the guard's own
+# dispatch or the sweep; until then the required check may show an earlier verdict.
+on:
+  # `closed`: closing one of two pull requests at a head ends H1's shared-head failure;
+  # the relay evaluates the open pull requests left at that head (Codex and CodeAnt
+  # on #426).
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review, converted_to_draft, closed]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  # A thread's only comment, deleted, removes the thread, an unresolved one included
+  # (CodeAnt on #426).
+  pull_request_review_comment:
+    types: [created, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions: {}
+
+jobs:
+  wake:
+    if: github.event_name != 'issue_comment'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Wake the protected merge-admission relay
+        run: echo "The protected relay re-reads this pull request from the provider."
+
+  relay-comment:
+    # An efficiency filter, not a security control: the declarer's comments on a pull
+    # request, by the author `policy/merge-authorities.yaml` declares, never by the
+    # body, so an edit that removes the seal's prefix, or a deletion, still wakes the
+    # relay. A skipped job concludes as `skipped`, and the relay runs only on
+    # `success`. The protected side re-reads the seal and decides.
+    if: >-
+      github.event_name == 'issue_comment'
+      && github.event.issue.pull_request
+      && github.event.comment.user.login == 'gnostoa-agent[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Relay the event GitHub delivered
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: merge-admission-event-${{ github.run_attempt }}
+          path: ${{ github.event_path }}
+          if-no-files-found: error
+          retention-days: 1

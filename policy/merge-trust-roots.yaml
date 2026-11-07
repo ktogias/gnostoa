@@ -1,0 +1,36 @@
+# The trust roots M15 shows for the owner's approval (#407, slice 1b.3b-4;
+# Decision 0112), admitted with the contract #325 6112833932.
+#
+# `knowledge merge-evidence` reads this from the protected target, never from the
+# candidate. Each pattern is in CODEOWNERS syntax and compiled by the same
+# matcher, which refuses what GitHub does not document. A changed file under a
+# pattern is listed under every name it has, a rename's old name included. A
+# listed change is shown for the native approval; it is neither vetoed nor
+# approved here. Without this file the trust-root changes are UNAVAILABLE.
+schema_version: "1.0"
+id: gnostoa.merge-trust-roots
+version: "0.1.0"
+patterns:
+  - /.github/
+  - /CODEOWNERS
+  - /docs/CODEOWNERS
+  - /.gitlab-ci.yml
+  - /.devcontainer/
+  - /.githooks/
+  - /.dockerignore
+  - /.secrets.baseline
+  - /AGENTS.md
+  - /Dockerfile
+  - /pyproject.toml
+  - /requirements/
+  - /ci/
+  - /tools/
+  - /core/
+  - /policy/
+  - /schemas/
+  - /guidance/
+  - /knowledge/
+  - /templates/
+  - /tests/
+  - /CONTRIBUTING.md
+  - /SECURITY.md

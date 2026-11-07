@@ -1,0 +1,1075 @@
+"""Admit or deny one merge from normalized evidence (MA0 Phase 1b, slice 1b.2).
+
+The verdict is provider-neutral and pure: a provider's adapter (slice 1b.3)
+supplies an evidence document for the exact change, and the verdict is `ALLOW`
+only when every criterion holds. Otherwise it is `DENY`, and it names each
+criterion that failed. An unknown or missing input fails closed. The evidence part
+(M2-M8) is the completeness reducer's verdict, computed here from the same
+receipts ("one reducer", Decision 0112). The owner's native approval of the exact
+head is the only per-merge human act (Decision 0112, item 3): justified
+suppressions and trust-root changes are listed for it, not attested separately,
+and so are the analyzer findings that deny it (M17).
+An emergency is never this verdict's `ALLOW`, since break glass bypasses the
+protected branch's rules (Decision 0110).
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from . import assurance_completeness as completeness
+from .analyzer_readback import SHA256_DIGEST, AnalyzerReadbackError, normalize_finding
+from .assurance_completeness import (
+    AssuranceCompletenessError,
+    parse_change_class,
+    parse_subject,
+    require_closed_keys,
+    require_commit,
+    require_mapping,
+    require_text,
+    require_unique_texts,
+)
+from .check_change_policy import change_policy_issues, load_change_policy
+from .knowledge_common import KnowledgeFormatError
+from .review_model import parse_rfc3339
+from .review_reconcile import ReconciliationInputError, dispositions
+from .verdict_cli import read_json_input, run
+
+VERDICT_SCHEMA = "gnostoa-merge-admission/v1"
+DEFAULT_CHANGE_POLICY = Path("policy") / "change-control.yaml"
+_INPUT_LABEL = "merge-admission input"
+_EVIDENCE_KEYS = frozenset(
+    {
+        "subject",
+        "lifecycle",
+        "change_class",
+        "links",
+        "declared_candidate",
+        "authorities",
+        "reviews",
+        "threads",
+        "closing_references",
+        "suppressions",
+        "trust_root_changes",
+        "analyzer_findings",
+        # The providers retired as merge evidence, each with its Decision, possibly
+        # none: required, so a producer that forgot retirement is refused (Decision 0130).
+        "analyzer_retired",
+        "receipts",
+    }
+)
+# The protected target's debt ledger (#389, the M17 transition) and the optional
+# providers' reads (Decision 0132): optional, so an older input stays valid, and
+# without them M17 is what it was.
+_EVIDENCE_OPTIONAL_KEYS = frozenset({"analyzer_debt", "analyzer_optional"})
+_OPTIONAL_READ_KEYS = frozenset({"provider", "scope", "coverage"})
+_OPTIONAL_READ_OPTIONAL_KEYS = frozenset({"reason"})
+_OPTIONAL_COVERAGES = completeness.RECEIPT_STATUSES | frozenset({"STALE"})
+# An optional provider's finding against the merge base (Decision 0132 item 3): a
+# pre-existing one is listed and does not count; an introduced or unknown one does.
+_BASELINES = frozenset({"pre_existing", "introduced", "unknown"})
+_CONFIGURATION_PROVENANCES = frozenset({"unproven"})
+# A listed finding's fields that are the evidence's own, not the readback's.
+_EVIDENCE_FINDING_FIELDS = (
+    "configuration",
+    "provider",
+    "baseline",
+    "configuration_provenance",
+)
+_DEBT_KEYS = frozenset({"coverage", "entries"})
+_DEBT_COVERAGES = frozenset({"COMPLETE", "UNAVAILABLE"})
+_DEBT_ENTRY_KEYS = frozenset(
+    {
+        "id",
+        "item",
+        "rule",
+        "path",
+        "message",
+        "enclosing_sha256",
+        # The baseline severity, text or an explicit null, matched exactly (owner
+        # 6620829215 §1), and the run-bound configuration identity it was proved
+        # under (§2).
+        "severity",
+        "configuration",
+        "aspect",
+        "provenance",
+    }
+)
+# The analyzer's identity at the entry's proof, as the finding names it (PAO P2,
+# 6614901388): an entry without one matches only a finding without one.
+_DEBT_ENTRY_OPTIONAL_KEYS = frozenset({"tool"})
+_DEBT_PROVENANCE_KEYS = frozenset({"commit", "readback_run", "admitted_by"})
+# Each provider's own security category, compared without case: such a finding is
+# never matched, whatever its entry says.
+_SECURITY_CATEGORIES = frozenset({"security", "vulnerability", "security_hotspot"})
+# The aspects an entry may name. A security finding is never inherited debt: it is
+# repaired (PAO 6614901388 on #389).
+_DEBT_ASPECTS = frozenset(
+    {
+        "complexity",
+        "correctness",
+        "documentation",
+        "maintainability",
+        "performance",
+        "style",
+        "typing",
+    }
+)
+_RETIRED_KEYS = frozenset({"provider", "decision"})
+_LIFECYCLE_KEYS = frozenset({"state", "draft", "target", "protected_target"})
+_LINK_KEYS = frozenset({"work_items", "decisions"})
+_CANDIDATE_KEYS = frozenset({"declarer", "head_commit"})
+_AUTHORITY_KEYS = frozenset({"declarer", "author", "required_approvers"})
+_REVIEW_KEYS = frozenset({"reviewer", "state", "commit_id", "submitted_at"})
+# A review's false-positive dispositions (Decision 0132 item 4): optional, so an older
+# input stays valid.
+_REVIEW_OPTIONAL_KEYS = frozenset({"dispositions"})
+_REVIEW_STATES = frozenset(
+    {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"}
+)
+_OPINIONS = frozenset({"APPROVED", "CHANGES_REQUESTED"})
+# Reviews from one reviewer that share the latest second and disagree have no
+# order: their state reads as this, which is neither an approval nor a pass.
+_AMBIGUOUS = "AMBIGUOUS"
+# The values the change-control schema allows for the fields M14 reads.
+_WORK_ITEM_RULES = frozenset({"optional", "required-follow-up", "required"})
+_COVERAGE_KEYS = frozenset({"coverage"})
+_SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
+# Where the suppression is and its literal same-line reason (#407, slice
+# 1b.3b-4): optional, so an older input stays valid; the adapter gives both.
+_SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason"})
+_REFERENCE_KEYS = frozenset({"surface", "reference"})
+_FINDING_KEYS = frozenset({"item", "id", "message"})
+_FINDING_OPTIONAL_KEYS = frozenset(
+    {
+        "rule",
+        "severity",
+        "category",
+        "path",
+        "state",
+        "native_ref",
+        "tool",
+        "range",
+        "enclosing",
+        # Its readback's run-bound configuration identity, when it states one.
+        "configuration",
+        # An optional provider's finding: the provider, its class against the merge
+        # base, and the provenance of the configuration that class rests on.
+        "provider",
+        "baseline",
+        "configuration_provenance",
+    }
+)
+
+
+def _texts(value: object, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError(f"{label} must be a list")
+    return [require_text(item, label) for item in value]
+
+
+def _flag(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise AssuranceCompletenessError(f"{label} must be true or false")
+    return value
+
+
+def _count(value: object, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise AssuranceCompletenessError(f"{label} must be a non-negative integer")
+    return value
+
+
+def _coverage(value: object, label: str, extra: frozenset[str]) -> Mapping[str, Any]:
+    record = require_mapping(value, label)
+    require_closed_keys(record, label, _COVERAGE_KEYS | extra)
+    status = record["coverage"]
+    if not isinstance(status, str) or status not in completeness.RECEIPT_STATUSES:
+        raise AssuranceCompletenessError(f"{label} has unknown coverage {status!r}")
+    return record
+
+
+def _reviews(value: object) -> dict[str, list[dict[str, Any]]]:
+    """The submitted reviews, grouped by reviewer once, so each criterion reads a
+    reviewer's own reviews in time linear in the input (CodeAnt on #410)."""
+
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("reviews must be a list")
+    by_reviewer: dict[str, list[dict[str, Any]]] = {}
+    for index, item in enumerate(value):
+        label = f"review {index}"
+        review = require_mapping(item, label)
+        require_closed_keys(review, label, _REVIEW_KEYS, _REVIEW_OPTIONAL_KEYS)
+        state = review["state"]
+        if not isinstance(state, str) or state not in _REVIEW_STATES:
+            raise AssuranceCompletenessError(f"{label} has unknown state {state!r}")
+        reviewer = require_text(review["reviewer"], f"{label} reviewer")
+        # GitHub's commit is null once the commit is garbage-collected or
+        # force-deleted (CodeAnt on #410); such a review approves no head.
+        commit_id = (
+            None
+            if review["commit_id"] is None
+            else require_commit(review["commit_id"], f"{label} commit_id")
+        )
+        if state == "PENDING" and review["submitted_at"] is None:
+            # Not submitted, so no one's opinion yet; GitHub returns the reader's
+            # own with no timestamp (Sourcery on #410). Only the timestamp may be
+            # absent: the rest is validated first (Codex on #410).
+            continue
+        try:
+            submitted = parse_rfc3339(review["submitted_at"])
+        except ValueError as exc:
+            raise AssuranceCompletenessError(f"{label} submitted_at: {exc}") from exc
+        if state == "PENDING":
+            continue
+        found = _review_dispositions(review, label)
+        by_reviewer.setdefault(reviewer, []).append(
+            {
+                "state": state,
+                "commit_id": commit_id,
+                # Whole seconds: a fraction cannot order two opinions inside the
+                # second the rule leaves unordered (CodeAnt on #410).
+                "second": submitted.timeline_seconds,
+                "dispositions": found,
+            }
+        )
+    return by_reviewer
+
+
+def _review_dispositions(review: Mapping[str, Any], label: str) -> list[dict[str, Any]]:
+    """A review's dispositions, each closed as the snapshot's contract states them
+    (Decision 0132 item 4), or none."""
+
+    try:
+        return dispositions(review.get("dispositions", []), f"{label} dispositions")
+    except ReconciliationInputError as exc:
+        raise AssuranceCompletenessError(str(exc)) from exc
+
+
+def _latest(
+    own: list[dict[str, Any]],
+    states: frozenset[str] | None,
+    *,
+    by_commit: bool,
+) -> dict[str, Any] | None:
+    """One reviewer's latest review among `states`. A tie is judged only by what
+    the criterion reads: the state, and with `by_commit` also the commit (cubic on
+    #410)."""
+
+    considered = [r for r in own if states is None or r["state"] in states]
+    if not considered:
+        return None
+    newest = max(r["second"] for r in considered)
+    tied = {
+        (r["state"], r["commit_id"] if by_commit else None)
+        for r in considered
+        if r["second"] == newest
+    }
+    if len(tied) > 1:
+        # Timestamps have second resolution, so a tie has no order (cubic, CodeAnt
+        # and Sourcery on #410).
+        return {"state": _AMBIGUOUS, "commit_id": None}
+    ((state, commit_id),) = tied
+    return {"state": state, "commit_id": commit_id}
+
+
+def _criterion(identifier: str, reasons: list[str]) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "status": "FAIL" if reasons else "PASS",
+        "reasons": reasons,
+    }
+
+
+def _lifecycle(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    lifecycle = require_mapping(evidence["lifecycle"], "lifecycle")
+    require_closed_keys(lifecycle, "lifecycle", _LIFECYCLE_KEYS)
+    reasons = []
+    if require_text(lifecycle["state"], "lifecycle state") != "open":
+        reasons.append(f"the change request is {lifecycle['state']}, not open")
+    if _flag(lifecycle["draft"], "lifecycle draft"):
+        reasons.append("the change request is a draft")
+    target = require_text(lifecycle["target"], "lifecycle target")
+    protected = require_text(
+        lifecycle["protected_target"], "lifecycle protected_target"
+    )
+    if target != protected:
+        reasons.append(f"the change targets {target!r}, not {protected!r}")
+    return _criterion("M1", reasons)
+
+
+def _candidate(evidence: Mapping[str, Any], head: str, declarer: str) -> dict[str, Any]:
+    if evidence["declared_candidate"] is None:
+        return _criterion("M9", ["no candidate is declared"])
+    candidate = require_mapping(evidence["declared_candidate"], "declared_candidate")
+    require_closed_keys(candidate, "declared_candidate", _CANDIDATE_KEYS)
+    reasons = []
+    if require_text(candidate["declarer"], "declared_candidate declarer") != declarer:
+        reasons.append(
+            f"the candidate is declared by {candidate['declarer']!r}, not {declarer!r}"
+        )
+    if (
+        require_commit(candidate["head_commit"], "declared_candidate head_commit")
+        != head
+    ):
+        reasons.append("the declared candidate is not the head")
+    return _criterion("M9", reasons)
+
+
+def _threads(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    threads = _coverage(evidence["threads"], "threads", frozenset({"unresolved"}))
+    reasons = []
+    if threads["coverage"] != "COMPLETE":
+        reasons.append(f"thread coverage is {threads['coverage']}")
+    unresolved = _count(threads["unresolved"], "threads unresolved")
+    if unresolved:
+        reasons.append(f"{unresolved} thread(s) unresolved")
+    return _criterion("M10", reasons)
+
+
+def _requests_for_changes(
+    reviews: Mapping[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    reasons = []
+    for reviewer in sorted(reviews):
+        opinion = _latest(reviews[reviewer], _OPINIONS, by_commit=False)
+        if opinion is None or opinion["state"] == "APPROVED":
+            continue
+        if opinion["state"] == _AMBIGUOUS:
+            reasons.append(
+                f"{reviewer}'s latest opinions share one second and disagree"
+            )
+        else:
+            reasons.append(f"{reviewer} requests changes")
+    return _criterion("M11", reasons)
+
+
+def _closing_references(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    record = _coverage(
+        evidence["closing_references"], "closing_references", frozenset({"found"})
+    )
+    found = record["found"]
+    if not isinstance(found, list):
+        raise AssuranceCompletenessError("closing_references found must be a list")
+    reasons = []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"closing-reference coverage is {record['coverage']}")
+    for index, item in enumerate(found):
+        reference = require_mapping(item, f"closing reference {index}")
+        require_closed_keys(reference, f"closing reference {index}", _REFERENCE_KEYS)
+        reasons.append(
+            f"{require_text(reference['surface'], 'surface')} closes "
+            f"{require_text(reference['reference'], 'reference')}"
+        )
+    return _criterion("M12", reasons)
+
+
+def _suppressions(
+    evidence: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    # A coverage, so "not read" cannot pass as "none found" (#407, slice 1b.3a).
+    record = _coverage(evidence["suppressions"], "suppressions", frozenset({"found"}))
+    value = record["found"]
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("suppressions found must be a list")
+    justified, reasons = [], []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"suppression coverage is {record['coverage']}")
+    for index, item in enumerate(value):
+        entry = _suppression(item, f"suppression {index}")
+        if entry["justified"]:
+            justified.append(entry)
+        else:
+            location = entry["path"]
+            if "line" in entry:
+                location = f"{location}:{entry['line']}"
+            reasons.append(f"{entry['marker']} in {location} has no justification")
+    return _criterion("M13", reasons), justified
+
+
+def _suppression(item: object, label: str) -> dict[str, Any]:
+    """One listed suppression, with its location and reason when it has them."""
+
+    suppression = require_mapping(item, label)
+    require_closed_keys(
+        suppression, label, _SUPPRESSION_KEYS, _SUPPRESSION_OPTIONAL_KEYS
+    )
+    entry = {
+        "path": require_text(suppression["path"], f"{label} path"),
+        "marker": require_text(suppression["marker"], f"{label} marker"),
+        "justified": _flag(suppression["justified"], f"{label} justified"),
+    }
+    if "line" in suppression:
+        line = suppression["line"]
+        if type(line) is not int or line <= 0:
+            raise AssuranceCompletenessError(f"{label} line must be a positive integer")
+        entry["line"] = line
+    if "reason" in suppression:
+        reason = suppression["reason"]
+        if not isinstance(reason, str):
+            raise AssuranceCompletenessError(f"{label} reason must be a string")
+        # The reason decides the flag: a blank one is no justification.
+        if entry["justified"] != bool(reason.strip()):
+            raise AssuranceCompletenessError(
+                f"{label} justified does not match its reason"
+            )
+        entry["reason"] = reason
+    return entry
+
+
+def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """M15: the changed trust roots are listed for the approval, which needs a
+    complete read of them (#407, slice 1b.3a)."""
+
+    record = _coverage(
+        evidence["trust_root_changes"], "trust_root_changes", frozenset({"paths"})
+    )
+    paths = _texts(record["paths"], "trust_root_changes paths")
+    reasons = []
+    if record["coverage"] != "COMPLETE":
+        reasons.append(f"trust-root coverage is {record['coverage']}")
+    return _criterion("M15", reasons), paths
+
+
+def _debt_entries(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if "analyzer_debt" not in evidence:
+        return []
+    return parse_analyzer_debt(evidence["analyzer_debt"])
+
+
+def parse_analyzer_debt(value: object) -> list[dict[str, Any]]:
+    """The protected target's debt ledger as the evidence carries it: its entries,
+    each closed and typed, or none without a ledger (#389, the M17 transition). A
+    security finding is refused. Merge evidence checks a loaded ledger with this
+    too, so the two never disagree on an entry."""
+
+    record = require_mapping(value, "analyzer_debt")
+    require_closed_keys(record, "analyzer_debt", _DEBT_KEYS)
+    # Text first: a JSON array or object is unhashable in the membership test.
+    if (
+        require_text(record["coverage"], "analyzer_debt coverage")
+        not in _DEBT_COVERAGES
+    ):
+        raise AssuranceCompletenessError(
+            f"analyzer_debt coverage {record['coverage']!r} is unknown"
+        )
+    entries = record["entries"]
+    if not isinstance(entries, list):
+        raise AssuranceCompletenessError("analyzer_debt entries must be a list")
+    if record["coverage"] == "UNAVAILABLE" and entries:
+        raise AssuranceCompletenessError("analyzer_debt has entries but no ledger")
+    result = [
+        _debt_entry(item, f"analyzer_debt entry {index}")
+        for index, item in enumerate(entries)
+    ]
+    require_unique_texts(
+        [e["id"] for e in result], "analyzer_debt entry ids", allow_empty=True
+    )
+    return result
+
+
+def _debt_entry(item: object, label: str) -> dict[str, Any]:
+    entry = require_mapping(item, label)
+    require_closed_keys(entry, label, _DEBT_ENTRY_KEYS, _DEBT_ENTRY_OPTIONAL_KEYS)
+    for key in ("id", "item", "rule", "path", "message", "configuration"):
+        require_text(entry[key], f"{label} {key}")
+    if entry["severity"] is not None:
+        require_text(entry["severity"], f"{label} severity")
+    digest = entry["enclosing_sha256"]
+    if not isinstance(digest, str) or SHA256_DIGEST.fullmatch(digest) is None:
+        raise AssuranceCompletenessError(
+            f"{label} enclosing_sha256 must be 64 lowercase hexadecimal characters"
+        )
+    if require_text(entry["aspect"], f"{label} aspect") == "security":
+        raise AssuranceCompletenessError(
+            f"{label} is a security finding, which is never inherited debt"
+        )
+    if entry["aspect"] not in _DEBT_ASPECTS:
+        raise AssuranceCompletenessError(
+            f"{label} aspect {entry['aspect']!r} is unknown"
+        )
+    provenance = require_mapping(entry["provenance"], f"{label} provenance")
+    require_closed_keys(provenance, f"{label} provenance", _DEBT_PROVENANCE_KEYS)
+    require_commit(provenance["commit"], f"{label} provenance commit")
+    require_text(provenance["readback_run"], f"{label} provenance readback_run")
+    require_text(provenance["admitted_by"], f"{label} provenance admitted_by")
+    if "tool" in entry:
+        tool = require_mapping(entry["tool"], f"{label} tool")
+        require_closed_keys(
+            tool, f"{label} tool", frozenset({"id"}), frozenset({"name"})
+        )
+        for key in tool:
+            require_text(tool[key], f"{label} tool {key}")
+    return dict(entry)
+
+
+def _finding_identity(
+    finding: Mapping[str, Any],
+) -> tuple[str | None, ...] | None:
+    """What a finding must share with a ledger entry: its item, rule, path, message,
+    enclosing scope, severity, configuration identity and tool. One without a rule, a
+    path or a scope has none, and neither has a security finding."""
+
+    enclosing = finding.get("enclosing")
+    if (
+        not isinstance(enclosing, Mapping)
+        or "rule" not in finding
+        or "path" not in finding
+        or str(finding.get("category", "")).casefold() in _SECURITY_CATEGORIES
+    ):
+        return None
+    return _identity(finding, enclosing["sha256"])
+
+
+def _identity(record: Mapping[str, Any], enclosing: str) -> tuple[str | None, ...]:
+    tool = record.get("tool") or {}
+    return (
+        record["item"],
+        record["rule"],
+        record["path"],
+        record["message"],
+        enclosing,
+        # Exactly, so a raised, lowered, new or dropped severity unmatches; and a
+        # finding without a configuration identity never meets an entry's.
+        record.get("severity"),
+        record.get("configuration"),
+        tool.get("id"),
+        tool.get("name"),
+    )
+
+
+def _analyzer_findings(
+    evidence: Mapping[str, Any],
+    claims_status: str | None,
+    honoured: list[dict[str, Any]] | None = None,
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[str],
+    list[dict[str, Any]],
+]:
+    """M17: no unresolved analyzer finding. Every finding listed counts, a
+    suppressed one included, with no waiver, and only a complete read of them can
+    pass (the owner's rule, #407 6096770145 and 6101607240). The one exception is a
+    finding that matches an entry of the protected target's debt ledger exactly, on
+    a complete read: it stays listed, as inherited, and does not count (#389,
+    Decision 0129). On a complete read, an optional provider's finding that is
+    pre-existing at the merge base, or that an eligible approval's disposition names
+    exactly, `honoured`, stays listed and does not count either (Decision 0132).
+
+    Under a 1.1 declaration the read is complete when the claims are:
+    `claims_status` is the status of the completeness verdict this admission
+    already computed, over every applicable claim (#389 F2, the Router's
+    6192443314). It is `None` under 1.0, where the findings' own coverage still
+    decides; under 1.1 that coverage stays in the evidence as the readback
+    reported it, degraded sources included."""
+
+    record = _coverage(
+        evidence["analyzer_findings"], "analyzer_findings", frozenset({"findings"})
+    )
+    value = record["findings"]
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_findings findings must be a list")
+    findings = []
+    for index, item in enumerate(value):
+        label = f"analyzer finding {index}"
+        finding = require_mapping(item, label)
+        require_closed_keys(finding, label, _FINDING_KEYS, _FINDING_OPTIONAL_KEYS)
+        findings.append(_listed_finding(finding, label))
+    reasons = []
+    if claims_status is None:
+        if record["coverage"] != "COMPLETE":
+            reasons.append(f"analyzer finding coverage is {record['coverage']}")
+    elif claims_status != "COMPLETE":
+        # The verdict spans every applicable claim, so the reason names it rather
+        # than the analyzers (Octopus and CodeAnt on #435).
+        reasons.append(
+            "analyzer finding coverage follows the required evidence, which is "
+            f"{claims_status}"
+        )
+    entries = _debt_entries(evidence)
+    # Only a complete read is matched: without it, every finding counts, and no
+    # entry is called resolved (#389, the M17 transition).
+    matchable = not reasons
+    absorbed = _inherited(findings, entries) if matchable else {}
+    inherited = list(absorbed.values())
+    resolved = _resolved(entries, findings, absorbed) if matchable else []
+    disposed = _disposed(findings, honoured or []) if matchable else {}
+    pre_existing = {
+        position
+        for position, finding in enumerate(findings)
+        if matchable and finding.get("baseline") == "pre_existing"
+    }
+    unresolved = len(findings) - len(set(absorbed) | set(disposed) | pre_existing)
+    if unresolved:
+        plural = "" if unresolved == 1 else "s"
+        reasons.append(f"{unresolved} unresolved analyzer finding{plural}")
+    return (
+        _criterion("M17", reasons),
+        findings,
+        inherited,
+        resolved,
+        list(disposed.values()),
+    )
+
+
+def _honoured(
+    reviews: Mapping[str, list[dict[str, Any]]],
+    head: str,
+    authorities: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """The dispositions M17 honours (Decision 0132 item 4): those in the latest
+    review of a required approver who is neither the declarer nor the author, when
+    that review is `APPROVED` at the head, as M16 reads it, and each for the head:
+    a push unbinds it. Each carries its approver."""
+
+    excluded = {authorities["declarer"], authorities["author"]}
+    honoured: list[dict[str, Any]] = []
+    for approver in authorities["required_approvers"]:
+        own = reviews.get(approver, [])
+        latest = _latest(own, None, by_commit=True)
+        if (
+            approver in excluded
+            or latest is None
+            or latest["state"] != "APPROVED"
+            or latest["commit_id"] != head
+        ):
+            continue
+        newest = max(r["second"] for r in own)
+        tied = [review["dispositions"] for review in own if review["second"] == newest]
+        # Within one second no review is later than another, so a disposition counts
+        # only when every review there carries it (Claude on #485).
+        honoured.extend(
+            {**found, "approver": approver}
+            for found in tied[0]
+            if found["commit_id"] == head and all(found in other for other in tied[1:])
+        )
+    return honoured
+
+
+def _disposed(
+    findings: list[dict[str, Any]], honoured: list[dict[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Each optional provider's finding an honoured disposition names exactly, by its
+    position: the provider, native id, rule, path, and the enclosing scope's hash or
+    the line (Decision 0132 item 4). Only a finding with a provider is named."""
+
+    disposed: dict[int, dict[str, Any]] = {}
+    for position, finding in enumerate(findings):
+        for found in honoured:
+            if _names(found, finding):
+                disposed[position] = {
+                    "item": finding["item"],
+                    "id": finding["id"],
+                    "approver": found["approver"],
+                    "evidence_ref": found["evidence_ref"],
+                }
+                break
+    return disposed
+
+
+def _names(found: Mapping[str, Any], finding: Mapping[str, Any]) -> bool:
+    if "provider" not in finding or (
+        found["provider"],
+        found["native_id"],
+        found["rule"],
+        found["path"],
+    ) != (finding["provider"], finding["id"], finding.get("rule"), finding.get("path")):
+        return False
+    if "scope_hash" in found:
+        return bool(
+            found["scope_hash"] == (finding.get("enclosing") or {}).get("sha256")
+        )
+    return bool(found["line"] == (finding.get("range") or {}).get("start_line"))
+
+
+def _inherited(
+    findings: list[dict[str, Any]], entries: list[dict[str, Any]]
+) -> dict[int, dict[str, str]]:
+    """Each finding matched to its own entry of the same identity, in order, by its
+    position among the findings: an entry absorbs one finding, so a repeated
+    finding beyond it still counts, and ids may repeat (cubic on #480)."""
+
+    available: dict[tuple[str | None, ...], list[str]] = {}
+    for entry in entries:
+        identity = _identity(entry, entry["enclosing_sha256"])
+        available.setdefault(identity, []).append(entry["id"])
+    inherited: dict[int, dict[str, str]] = {}
+    for position, finding in enumerate(findings):
+        key = _finding_identity(finding)
+        ids = available.get(key) if key is not None else None
+        if ids:
+            inherited[position] = {
+                "item": finding["item"],
+                "id": finding["id"],
+                "ledger_entry": ids.pop(0),
+            }
+    return inherited
+
+
+def _resolved(
+    entries: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    absorbed: Mapping[int, Mapping[str, str]],
+) -> list[str]:
+    """The entries no finding answers to any more: unmatched, with no unmatched
+    finding left at their item, rule and path. An entry whose finding changed in
+    place, by its measure, scope, analyzer, severity or configuration, is not
+    resolved, since that finding still counts (Revix on #480). Only the findings at
+    the positions an entry absorbed are set aside, since ids may repeat (cubic)."""
+
+    matched = {found["ledger_entry"] for found in absorbed.values()}
+    remaining = {
+        (finding["item"], finding.get("rule"), finding.get("path"))
+        for position, finding in enumerate(findings)
+        if position not in absorbed
+    }
+    return [
+        entry["id"]
+        for entry in entries
+        if entry["id"] not in matched
+        and (entry["item"], entry["rule"], entry["path"]) not in remaining
+    ]
+
+
+def _listed_finding(finding: Mapping[str, Any], label: str) -> dict[str, Any]:
+    """A listed finding, with its item, in the readback's own normalized form: it
+    is rebuilt through the readback module's normalizer and must come back
+    unchanged, so there is no second schema (#417 6107601240)."""
+
+    item = require_text(finding["item"], f"{label} item")
+    # The evidence's own fields, not the readback's: its configuration identity, and
+    # an optional provider's finding's provider and class against the merge base.
+    evidence = {"item": item}
+    for key in _EVIDENCE_FINDING_FIELDS:
+        if key in finding:
+            evidence[key] = require_text(finding[key], f"{label} {key}")
+    if evidence.get("baseline", "unknown") not in _BASELINES:
+        raise AssuranceCompletenessError(f"{label} has an unknown baseline")
+    provenance = evidence.get("configuration_provenance", "unproven")
+    if provenance not in _CONFIGURATION_PROVENANCES:
+        raise AssuranceCompletenessError(f"{label} has an unknown provenance")
+    # A class against the merge base is an optional provider's finding's alone, and a
+    # provenance a pre-existing one's (cubic on #485).
+    if ("provider" in evidence) != ("baseline" in evidence):
+        raise AssuranceCompletenessError(f"{label} has a provider or baseline alone")
+    baseline = evidence.get("baseline")
+    if "configuration_provenance" in evidence and baseline != "pre_existing":
+        raise AssuranceCompletenessError(f"{label} has a provenance it cannot have")
+    fields = {k: v for k, v in finding.items() if k not in evidence}
+    try:
+        normalized = normalize_finding(fields)
+    except AnalyzerReadbackError as exc:
+        raise AssuranceCompletenessError(f"{label} is invalid: {exc}") from exc
+    if normalized != fields:
+        raise AssuranceCompletenessError(
+            f"{label} is not in the readback's normalized form"
+        )
+    return {**evidence, **normalized}
+
+
+def _class_requirements(
+    change_policy: Mapping[str, Any], change_class: str
+) -> tuple[str, Mapping[str, Any]]:
+    label = f"change policy class {change_class!r}"
+    return label, require_mapping(
+        require_mapping(
+            change_policy.get("change_classes"), "change policy classes"
+        ).get(change_class),
+        label,
+    )
+
+
+def _boolean_rule(requirements: Mapping[str, Any], field: str, label: str) -> bool:
+    value = requirements.get(field)
+    if not isinstance(value, bool):
+        raise AssuranceCompletenessError(f"{label} has {field} {value!r}")
+    return value
+
+
+def _class_links(
+    evidence: Mapping[str, Any], change_class: str, change_policy: Mapping[str, Any]
+) -> dict[str, Any]:
+    links = require_mapping(evidence["links"], "links")
+    require_closed_keys(links, "links", _LINK_KEYS)
+    # Parsed whatever the class requires, emergencies included (Codex on #410).
+    work_items = _texts(links["work_items"], "links work_items")
+    decisions = _texts(links["decisions"], "links decisions")
+    if change_class == "emergency":
+        return _criterion(
+            "M14",
+            ["an emergency merges through break glass, never through this verdict"],
+        )
+    label, requirements = _class_requirements(change_policy, change_class)
+    # The schema's own values only: a malformed field must not read as "not
+    # required" (cubic, CodeAnt and Sourcery on #410).
+    work_item = requirements.get("work_item")
+    if not isinstance(work_item, str) or work_item not in _WORK_ITEM_RULES:
+        raise AssuranceCompletenessError(f"{label} has work_item {work_item!r}")
+    decision_record = _boolean_rule(requirements, "decision_record", label)
+    reasons = []
+    if work_item == "required" and not work_items:
+        reasons.append(f"a {change_class} change needs a linked Work Item")
+    if decision_record and not decisions:
+        reasons.append(f"a {change_class} change needs a linked Decision")
+    return _criterion("M14", reasons)
+
+
+def _approval(
+    reviews: Mapping[str, list[dict[str, Any]]],
+    head: str,
+    authorities: Mapping[str, Any],
+    rules: tuple[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Runbook step 8, bound to the class's approval rules (CodeAnt on #410).
+
+    Who the required approvers are, the protected target's code owners, and
+    whether each is human are the adapter's to establish (1b.3): a provider
+    account's type does not tell a person from a machine user.
+    """
+
+    label, requirements = rules
+    minimum = requirements.get("minimum_approvals")
+    if type(minimum) is not int or minimum < 0:
+        raise AssuranceCompletenessError(f"{label} has minimum_approvals {minimum!r}")
+    independent = _boolean_rule(requirements, "independent_approval", label)
+    approvers = authorities["required_approvers"]
+    reasons = []
+    # The class's minimum alone decides whether an empty list suffices: the core
+    # policy requires no approval (Codex on #410).
+    if len(approvers) < minimum:
+        reasons.append(
+            f"the class needs {minimum} approval(s), and "
+            f"{len(approvers)} approver(s) are named"
+        )
+    if independent:
+        # No self-approval, required or not (`may_approve_own_change: false`;
+        # cubic on #410). A dismissed approval is DISMISSED, so it no longer counts.
+        for party in ("declarer", "author"):
+            identity = authorities[party]
+            if identity in approvers:
+                reasons.append(
+                    f"{identity} is the change's {party} and cannot be an approver"
+                )
+            elif any(r["state"] == "APPROVED" for r in reviews.get(identity, [])):
+                reasons.append(f"{identity} is the change's {party} and approved it")
+    for approver in approvers:
+        latest = _latest(reviews.get(approver, []), None, by_commit=True)
+        if latest is None:
+            reasons.append(f"{approver} has not reviewed")
+        elif latest["state"] != "APPROVED":
+            reasons.append(f"{approver}'s latest review is {latest['state']}")
+        elif latest["commit_id"] != head:
+            reasons.append(f"{approver} approved another commit, not the head")
+    return _criterion("M16", reasons)
+
+
+def evaluate(
+    evidence: object,
+    *,
+    declaration: Mapping[str, Any],
+    change_policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Admit or deny the change the evidence describes."""
+
+    document = require_mapping(evidence, "evidence")
+    require_closed_keys(document, "evidence", _EVIDENCE_KEYS, _EVIDENCE_OPTIONAL_KEYS)
+    retired = _retired_analyzers(document["analyzer_retired"])
+    subject = parse_subject(document["subject"], "subject")
+    head = subject["head_commit"]
+    change_class = parse_change_class(document["change_class"])
+    authorities = require_mapping(document["authorities"], "authorities")
+    require_closed_keys(authorities, "authorities", _AUTHORITY_KEYS)
+    declarer = require_text(authorities["declarer"], "authorities declarer")
+    author = require_text(authorities["author"], "authorities author")
+    # Distinct, or a repeat would be corrupt evidence that rescans the same
+    # reviews (Codex on #410); empty when the class requires none.
+    approvers = require_unique_texts(
+        authorities["required_approvers"],
+        "authorities required_approvers",
+        allow_empty=True,
+    )
+    reviews = _reviews(document["reviews"])
+
+    evidence_verdict = completeness.evaluate(
+        declaration,
+        subject=subject,
+        change_class=change_class,
+        receipts=document["receipts"],
+    )
+    complete = _criterion(
+        "M2-M8",
+        []
+        if evidence_verdict["status"] == "COMPLETE"
+        else [f"required evidence is {evidence_verdict['status']}"],
+    )
+    suppressions, justified = _suppressions(document)
+    trust_root_criterion, trust_roots = _trust_roots(document)
+    optional = _optional_reads(document.get("analyzer_optional", []))
+    authority = {
+        "declarer": declarer,
+        "author": author,
+        "required_approvers": approvers,
+    }
+    analyzer_criterion, analyzer_findings, inherited, resolved, disposed = (
+        _analyzer_findings(
+            document,
+            evidence_verdict["status"]
+            if declaration["schema_version"] == completeness.CLAIMS_SCHEMA_VERSION
+            else None,
+            _honoured(reviews, head, authority),
+        )
+    )
+    criteria = [
+        _lifecycle(document),
+        complete,
+        _candidate(document, head, declarer),
+        _threads(document),
+        _requests_for_changes(reviews),
+        _closing_references(document),
+        suppressions,
+        _class_links(document, change_class, change_policy),
+        trust_root_criterion,
+        _approval(
+            reviews, head, authority, _class_requirements(change_policy, change_class)
+        ),
+        analyzer_criterion,
+    ]
+    allowed = all(c["status"] == "PASS" for c in criteria)
+    return {
+        "schema": VERDICT_SCHEMA,
+        "status": "ALLOW" if allowed else "DENY",
+        "subject": subject,
+        "change_class": change_class,
+        "criteria": criteria,
+        "completeness": evidence_verdict,
+        "for_approval": {
+            "suppressions": justified,
+            "trust_root_changes": trust_roots,
+            "analyzer_findings": analyzer_findings,
+            "inherited_findings": inherited,
+            "resolved_debt": resolved,
+            "retired_analyzers": retired,
+            "disposed_findings": disposed,
+            "optional_analyzers": optional,
+        },
+    }
+
+
+def _optional_reads(value: object) -> list[dict[str, str]]:
+    """The optional providers' reads the evidence records (Decision 0132 item 2),
+    listed for the approver: each its provider, scope, coverage and reason. They
+    map to no declared item, so they change no claim."""
+
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_optional must be a list")
+    reads = []
+    for index, item in enumerate(value):
+        label = f"optional analyzer read {index}"
+        record = require_mapping(item, label)
+        require_closed_keys(
+            record, label, _OPTIONAL_READ_KEYS, _OPTIONAL_READ_OPTIONAL_KEYS
+        )
+        read = {key: require_text(record[key], f"{label} {key}") for key in record}
+        if read["coverage"] not in _OPTIONAL_COVERAGES:
+            raise AssuranceCompletenessError(f"{label} has an unknown coverage")
+        reads.append(read)
+    return reads
+
+
+def _retired_analyzers(value: object) -> list[dict[str, str]]:
+    """The providers the evidence retires as merge evidence, each with its Decision
+    (Decision 0130), listed for the approver: a retired provider is never read as an
+    unavailable one, and none is named twice."""
+
+    if not isinstance(value, list):
+        raise AssuranceCompletenessError("analyzer_retired must be a list")
+    retired: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        label = f"retired analyzer {index}"
+        record = require_mapping(item, label)
+        require_closed_keys(record, label, _RETIRED_KEYS)
+        provider = require_text(record["provider"], f"{label} provider")
+        if any(entry["provider"] == provider for entry in retired):
+            raise AssuranceCompletenessError(f"{label} repeats {provider!r}")
+        decision = require_text(record["decision"], f"{label} decision")
+        retired.append({"provider": provider, "decision": decision})
+    return retired
+
+
+def load_policy(path: Path, *, project_root: Path) -> dict[str, Any]:
+    """Load the effective change policy, its whole inheritance chain confined to
+    `project_root`, and refuse it unless the schema accepts it (Codex, cubic,
+    CodeAnt and Sourcery on #410)."""
+
+    try:
+        policy = load_change_policy(path, project_root=project_root)
+        issues = change_policy_issues(policy)
+    except KnowledgeFormatError as exc:
+        raise AssuranceCompletenessError(str(exc)) from exc
+    if issues:
+        raise AssuranceCompletenessError(
+            "the change policy does not match its schema: " + "; ".join(issues)
+        )
+    return policy
+
+
+def _inside(root: Path, path: Path) -> Path:
+    return path if path.is_absolute() else root / path
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="knowledge merge-admission",
+        description=(
+            "Admit or deny one merge from normalized evidence. Exit 0 when "
+            "ALLOW, 1 when DENY, 2 when the run failed."
+        ),
+        epilog="The evidence document is read from standard input.",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path("."),
+        help="the project whose policy applies (default: the working directory)",
+    )
+    parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=completeness.DEFAULT_DECLARATION,
+        help=f"the required-evidence declaration (default: {completeness.DEFAULT_DECLARATION})",
+    )
+    parser.add_argument(
+        "--change-policy",
+        type=Path,
+        default=DEFAULT_CHANGE_POLICY,
+        help=f"the change-control policy (default: {DEFAULT_CHANGE_POLICY})",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+
+    def compute() -> dict[str, Any]:
+        root = args.project_root
+        declaration = completeness.load_declaration(
+            _inside(root, args.declaration), project_root=root
+        )
+        policy = load_policy(_inside(root, args.change_policy), project_root=root)
+        return evaluate(
+            read_json_input(_INPUT_LABEL, AssuranceCompletenessError),
+            declaration=declaration,
+            change_policy=policy,
+        )
+
+    return run(
+        "merge-admission",
+        compute,
+        positive=lambda verdict: verdict["status"] == "ALLOW",
+        input_errors=(AssuranceCompletenessError,),
+    )

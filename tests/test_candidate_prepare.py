@@ -110,7 +110,19 @@ class CandidatePreparationContractTests(unittest.TestCase):
             "#!/bin/sh\n"
             "set -eu\n"
             'case "$1" in\n'
-            "  --fix) sed -i 's/value=1/value = 1/' candidate.py ;;\n"
+            "  --fix)\n"
+            '    if [ "${GNOSTOA_TEST_STYLE_MODE:-}" = declared-worktree ]; then\n'
+            '      declared="$(git config --local --get core.worktree)" || {\n'
+            "        echo 'normalization metadata declares no core.worktree' >&2\n"
+            "        exit 9\n"
+            "      }\n"
+            '      test "$declared" = "$(pwd -P)" || {\n'
+            '        echo "normalization core.worktree is $declared" >&2\n'
+            "        exit 10\n"
+            "      }\n"
+            "    fi\n"
+            "    sed -i 's/value=1/value = 1/' candidate.py\n"
+            "    ;;\n"
             "  --check) grep -q '^value = 1$' candidate.py ;;\n"
             "  *) exit 2 ;;\n"
             "esac\n",
@@ -143,6 +155,18 @@ class CandidatePreparationContractTests(unittest.TestCase):
             "    printf 'nested\\n' > \"$nested/nested.txt\"\n"
             '    git -C "$nested" add nested.txt\n'
             '    git -C "$nested" commit --quiet -m baseline\n'
+            "    ;;\n"
+            "  declared-worktree)\n"
+            '    declared="$(git config --local --get core.worktree)" || {\n'
+            "      echo 'focused metadata declares no core.worktree' >&2\n"
+            "      exit 11\n"
+            "    }\n"
+            '    test "$declared" = "$(pwd -P)" || {\n'
+            '      echo "focused core.worktree is $declared" >&2\n'
+            "      exit 12\n"
+            "    }\n"
+            '    test "$(git rev-parse --show-toplevel)" = "$(pwd -P)"\n'
+            "    grep -q '^value = 1$' candidate.py\n"
             "    ;;\n"
             "  pass) grep -q '^value = 1$' candidate.py ;;\n"
             "  *) exit 8 ;;\n"
@@ -534,6 +558,116 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 payload = self._prepare(root, parent, receipt)
             self.assertEqual(0, payload["checks"]["focused_verification"])
             self.assertTrue(receipt.is_file())
+
+    def test_candidate_workspace_declares_its_resolved_work_tree(self) -> None:
+        # Decision 0114: each workspace's disposable metadata names its own
+        # resolved work tree, even when the temporary root is a symlink.
+        real = Path(tempfile.mkdtemp(prefix="gnostoa-candidate-real-tmp-"))
+        self.addCleanup(shutil.rmtree, real, ignore_errors=True)
+        link = real.parent / f"{real.name}-link"
+        link.symlink_to(real, target_is_directory=True)
+        self.addCleanup(link.unlink)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            tree = self._git(root, "rev-parse", f"{parent}^{{tree}}")
+            with patch.object(tempfile, "tempdir", str(link)):
+                with candidate_prepare._isolated_git_metadata(
+                    root, parent, b""
+                ) as git_dir:
+                    with candidate_prepare._candidate_workspace(
+                        git_dir, tree
+                    ) as workspace:
+                        self.assertNotEqual(str(workspace), str(workspace.resolve()))
+                        declared = candidate_prepare._run(
+                            [
+                                GIT,
+                                "config",
+                                "--file",
+                                str(git_dir / "config"),
+                                "--get-all",
+                                "core.worktree",
+                            ],
+                            cwd=workspace,
+                            env=_test_env(),
+                            check=False,
+                        )
+                        self.assertEqual(
+                            0,
+                            declared.returncode,
+                            "the workspace metadata declares no core.worktree",
+                        )
+                        self.assertEqual(
+                            str(workspace.resolve()),
+                            declared.stdout.decode("utf-8").strip(),
+                        )
+                        self.assertEqual(
+                            str(workspace.resolve()),
+                            self._git(workspace, "rev-parse", "--show-toplevel"),
+                        )
+                        self.assertEqual(
+                            str(git_dir.resolve()),
+                            self._git(workspace, "rev-parse", "--absolute-git-dir"),
+                        )
+
+    def test_prepare_normalization_workspace_declares_its_own_work_tree(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.dict(
+                os.environ,
+                {"GNOSTOA_TEST_STYLE_MODE": "declared-worktree"},
+                clear=False,
+            ):
+                payload = self._prepare(root, parent, receipt)
+            self.assertEqual(0, payload["checks"]["style_fix"])
+            self.assertTrue(receipt.is_file())
+
+    def test_prepare_focused_workspace_declares_its_own_work_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.dict(
+                os.environ,
+                {"GNOSTOA_TEST_FOCUSED_MODE": "declared-worktree"},
+                clear=False,
+            ):
+                payload = self._prepare(root, parent, receipt)
+            self.assertEqual(0, payload["checks"]["focused_verification"])
+            self.assertTrue(receipt.is_file())
+
+    def test_prepare_leaves_operator_source_and_global_git_config_unchanged(
+        self,
+    ) -> None:
+        home = Path(os.environ["HOME"])
+        global_config = home / ".gitconfig"
+        global_config.write_text("[user]\n\tname = Operator\n", encoding="utf-8")
+        xdg_config = Path(os.environ["XDG_CONFIG_HOME"]) / "git" / "config"
+        xdg_config.parent.mkdir(parents=True)
+        xdg_config.write_text("[core]\n\tautocrlf = false\n", encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            source_config = root / ".git" / "config"
+            before = [
+                path.read_bytes() for path in (source_config, global_config, xdg_config)
+            ]
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            self._prepare(root, parent, self._receipt())
+            self.assertEqual(
+                before,
+                [
+                    path.read_bytes()
+                    for path in (source_config, global_config, xdg_config)
+                ],
+            )
+            self.assertNotIn(b"worktree", source_config.read_bytes())
 
     def test_focused_verification_uses_prepared_toolkit_root_and_source_cli(
         self,
