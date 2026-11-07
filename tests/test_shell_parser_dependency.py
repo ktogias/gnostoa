@@ -27,7 +27,9 @@ from unittest.mock import patch
 
 import yaml
 
+from tools.gitlab_ci_reader import GitlabUnsupported, read_scripts
 from tools.repository_scope import SOURCE_MANIFEST, candidate_paths
+from tools.trusted_path import trusted_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "shell_parser_probe.py"
@@ -286,7 +288,7 @@ def _probe(scripts: list[str]) -> dict[str, object]:
         raise AssertionError(
             f"a corpus of {len(payload)} characters, beyond the probe's input bound"
         )
-    done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- test-only fixed interpreter/probe argv with bounded JSON stdin and deadline
         [sys.executable, str(PROBE)],
         input=payload,
         capture_output=True,
@@ -349,7 +351,7 @@ def _masked(match: re.Match[str]) -> str:
 
 
 def _facts(scripts: list[str]) -> list[dict[str, object]]:
-    facts: list[dict[str, object]] = _probe(scripts)["facts"]  # type: ignore[assignment]
+    facts: list[dict[str, object]] = _probe(scripts)["facts"]  # type: ignore[assignment]  # -- _probe validates the facts list before this type narrowing
     return facts
 
 
@@ -510,6 +512,46 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     A global keyword, such as `variables`, is not a job (Codex on #396); a job that
     runs is read only in a container image whose shell is known (Codex on #396)."""
     _check_gitlab_shells(document, name)
+    # The shared inventory reader owns ordinary script/default/extends extraction.
+    # This adapter renders already-loaded data, so its generated YAML locations
+    # are intentionally not presented as source locations. Non-script global
+    # metadata stays with the caller, including its image/shell checks.
+    reader_document = {
+        key: value
+        for key, value in document.items()
+        if key not in GITLAB_GLOBALS
+        or key in GITLAB_KEYS
+        or key in {"default", "image", "include"}
+    }
+    try:
+        shared = read_scripts(
+            yaml.safe_dump(reader_document, sort_keys=False, default_style="|")
+        )
+    except GitlabUnsupported as exc:
+        reason = str(exc)
+        legacy = reason.startswith(
+            ("a YAML anchor", "a YAML alias", "inherit in ", "a multi-line flow item")
+        ) or any(
+            part in reason
+            for part in (
+                "has a non-string or deeper item",
+                "extends past eleven levels",
+            )
+        )
+        default = document.get("default")
+        legacy = legacy or (
+            reason == "an unsupported default"
+            and isinstance(default, dict)
+            and "inherit" in default
+        )
+        if not legacy:
+            raise _refuse(name, f"shared GitLab reader: {reason}") from exc
+        # Frozen compatibility cases exceed the inventory reader's declared
+        # domain. Keep this explicit, unchanged legacy path until #369 supplies
+        # qualified extraction; an arbitrary shared-reader failure is not a
+        # reason to fall back. Hooks/run/unexecuted-template evidence below is
+        # likewise caller-owned, not an expansion of the inventory contract.
+        shared = None
     # Hooks run before the clone, so before any script; `run` steps stand in for a
     # `script` (Codex on #396).
     found: list[str] = []
@@ -527,7 +569,13 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     ]
     covered: set[str] = set()
     for key, job in running:
-        found.extend(_gitlab_job_scripts(document, key, job, covered, name))
+        if shared is not None and key in shared:
+            covered.update(
+                base for base, _ in _gitlab_lineage(document, job, key, name)
+            )
+            found.extend("\n".join(text for text, _ in part) for part in shared[key])
+        else:
+            found.extend(_gitlab_job_scripts(document, key, job, covered, name))
     found.extend(_gitlab_unrun_scripts(document, covered, bool(running)))
     return found
 
@@ -1959,9 +2007,15 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             (root / ".husky").mkdir()
             (root / ".husky" / "hook").write_text("#!/bin/sh\ngit a\n", "utf-8")
             (root / "scratch").write_text("#!/bin/sh\ngit b\n", "utf-8")
-            git = ["git", "-c", "init.defaultBranch=main", "-C", str(root)]
+            git = [
+                trusted_executable("git"),
+                "-c",
+                "init.defaultBranch=main",
+                "-C",
+                str(root),
+            ]
             for argv in (["init", "-q"], ["add", ".husky/hook"]):
-                subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
             self.assertEqual({".husky/hook"}, set(_shell_surfaces(root)))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2057,7 +2111,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         hanging the suite."""
         hostile = "*\t\t\t" * 40 + "x\n"
         # This interpreter, with a literal argv.
-        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- literal interpreter program and controlled hostile fixture under a deadline
             [
                 sys.executable,
                 "-c",
@@ -2791,14 +2845,14 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             "c": {"extends": "a"},
         }
         with self.assertRaisesRegex(AssertionError, "an `extends` cycle"):
-            _gitlab_lineage(cycle, cycle["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]
+            _gitlab_lineage(cycle, cycle["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]  # -- deliberately object-typed YAML cycle fixture for lineage validation
         diamond: dict[str, object] = {
             "a": {"extends": ["b", "c"], "script": "git a"},
             "b": {"extends": "d"},
             "c": {"extends": "d"},
             "d": {"before_script": "git d"},
         }
-        lineage = _gitlab_lineage(diamond, diamond["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]
+        lineage = _gitlab_lineage(diamond, diamond["a"], "a", ".gitlab-ci.yml")  # type: ignore[arg-type]  # -- deliberately object-typed YAML diamond fixture for precedence validation
         self.assertEqual(["a", "c", "d", "b"], [key for key, _ in lineage])
 
     def test_a_gitlab_job_runs_its_before_script_and_script_as_one(self) -> None:
@@ -3143,7 +3197,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         #396), and the parent refuses a corpus beyond its bound before sending it
         (CodeAnt on #396); the answer, which grows with the input, is bounded with
         it."""
-        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed probe argv tests the bounded JSON protocol
             [sys.executable, str(PROBE)],
             input='{"not": "a list"}',
             capture_output=True,
@@ -3155,7 +3209,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertIn("a JSON list of strings", completed.stderr)
         # Text that is not JSON at all is refused the same way, not with a
         # traceback (Amazon Q on #396).
-        malformed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        malformed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed probe argv tests deliberately malformed JSON
             [sys.executable, str(PROBE)],
             input="not json",
             capture_output=True,
@@ -3167,7 +3221,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertIn("a JSON list of strings", malformed.stderr)
         self.assertNotIn("Traceback", malformed.stderr)
         # JSON nested past the decoder's recursion limit too (cubic on #396).
-        nested = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        nested = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed probe argv tests the nested JSON refusal
             [sys.executable, str(PROBE)],
             input="[" * 100_000,
             capture_output=True,
@@ -3179,7 +3233,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
         self.assertIn("a JSON list of strings", nested.stderr)
         self.assertNotIn("Traceback", nested.stderr)
         # An integer past Python's digit limit raises `ValueError` (CodeAnt on #396).
-        digits = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        digits = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed probe argv tests the oversized integer refusal
             [sys.executable, str(PROBE)],
             input="[" + "1" * 5000 + "]",
             capture_output=True,
@@ -3206,7 +3260,7 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
             == ["INPUT_LIMIT"]
         ]
         self.assertEqual(PROBE_INPUT_LIMIT, ast.literal_eval(limit))
-        oversized = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        oversized = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed probe argv tests the input-size refusal
             [sys.executable, str(PROBE)],
             input=json.dumps(["x" * PROBE_INPUT_LIMIT]),
             capture_output=True,
@@ -3540,7 +3594,7 @@ class RetainedEvidenceTests(unittest.TestCase):
             for member in evidence["spike_scripts"]["members"]
         }
         with tempfile.TemporaryDirectory() as directory:
-            done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+            done = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- test-only retained materialization recipe with isolated TMPDIR and member digest checks
                 ["/bin/sh", "-c", block],
                 cwd=ROOT,
                 capture_output=True,

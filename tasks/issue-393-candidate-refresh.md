@@ -38,4 +38,17 @@ The80-helper inventory and individual21-marker dispositions are retained in the 
 
 Preserve the selected pair, all original archive/evaluation bytes and the published branch history. Integrate the supported public GitLab reader path, retain source-specific refusal/image handling and explicit legacy debt, resolve individual suppression annotations truthfully, and qualify the actual candidate. Keep native M13 partial-coverage resolution with its existing collector owner. Local complete-patch diagnosis is not provider evidence.
 
-Current evidence, exact candidate identity and remaining qualification will be appended before the local candidate is offered for independent review.
+The pre-edit merged baseline is local commit 80b9c5ad8895118288c4872ffa3ba89324293042, tree394ddb62fa217c2b516cd00314d8b6a8d09c3982. Its67 existing focused tests passed on Python3.12.14 before semantic helper edits. The first adapted run also passed all67. Exact final candidate identity and final qualification are retained in the external authoring receipt; no candidate is published by this Change Request.
+
+## Implemented reuse and retained debt
+
+- The supported GitLab script/default/extends path now delegates to public read_scripts. Already-loaded compatibility data is rendered as YAML; the generated locations are not represented as original source locations. The caller preserves image/refusal checks, hook/run and unused-template compatibility evidence.
+- Explicit frozen legacy incompatibilities (aliases/anchors, inherit, deeper item forms, multiline flow, extended depth) retain their existing compatibility path. Arbitrary public-reader refusals do not activate a blanket fallback. No production GitLab API or inventory contract changes. The historical80-helper inventory remains present; no removed-helper count or completed debt cleanup is claimed.
+- Named Git lookup in the temporary-repository fixture consumes trusted_executable. The exact sys.executable probe and fixed /bin/sh recipe remain their separate concrete boundaries.
+- There is no private drain loop to replace. bounded_process remains the existing owner if custom capped collection is later needed; no new spawning/output-policy framework is introduced.
+- The21 suppression occurrences receive truthful same-line reasons on their12 original lines. Reason adequacy remains subject to independent review. Missing provider patches and binary completeness remain unresolved with the existing collector owner; annotations cannot waive either.
+- All historical evaluation JSON/Markdown/archive bytes are preserved. The temporary host-language extraction and legacy compatibility path must be consumed/deleted when369 supplies qualified extraction for the required current corpus. This is a sunset condition, not a new prerequisite on396 or permission for more dialect cases.
+
+## Qualification and protected effects
+
+The authoring receipt binds final source/tree/diff identities and records Python3.11/3.12 focused checks, current-corpus common-path evidence, style/static checks and any broader verification actually run. A local test result is not native provider completeness, semantic acceptance, publication authorization, Phase1b activation or exact-head approval. Remaining checks and any failure are retained explicitly. No remote write, settings action or merge occurs in this authoring stage.
