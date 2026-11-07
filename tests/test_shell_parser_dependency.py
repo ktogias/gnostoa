@@ -351,7 +351,14 @@ def _masked(match: re.Match[str]) -> str:
 
 
 def _facts(scripts: list[str]) -> list[dict[str, object]]:
-    facts: list[dict[str, object]] = _probe(scripts)["facts"]  # type: ignore[assignment]  # -- _probe validates the facts list before this type narrowing
+    answer = _probe(scripts)["facts"]
+    if not isinstance(answer, list):
+        raise AssertionError("the probe facts are not a list of mappings")
+    facts: list[dict[str, object]] = []
+    for fact in answer:
+        if not isinstance(fact, dict):
+            raise AssertionError("the probe facts include a non-mapping")
+        facts.append(fact)
     return facts
 
 
@@ -1920,6 +1927,28 @@ class SurfaceExtractionTests(unittest.TestCase):
                 self.assertRaisesRegex(AssertionError, "answered another shape"),
             ):
                 _probe([])
+
+    def test_probe_facts_must_be_a_list_of_mappings(self) -> None:
+        invalid_facts: tuple[object, ...] = (None, {}, "facts", [None], ["fact"], [1])
+        for facts in invalid_facts:
+            answer = SimpleNamespace(
+                returncode=0, stdout=json.dumps({"abi": 15, "facts": facts}), stderr=""
+            )
+            with (
+                self.subTest(facts=facts),
+                patch("subprocess.run", return_value=answer),
+                self.assertRaisesRegex(AssertionError, "probe facts"),
+            ):
+                _facts([])
+        for facts in ([], [{"commands": []}]):
+            answer = SimpleNamespace(
+                returncode=0, stdout=json.dumps({"abi": 15, "facts": facts}), stderr=""
+            )
+            with (
+                self.subTest(facts=facts),
+                patch("subprocess.run", return_value=answer),
+            ):
+                self.assertEqual(facts, _facts([]))
 
     def test_a_default_shell_in_another_language_fails_closed(self) -> None:
         """A step inherits the job's or the workflow's `defaults.run.shell`
