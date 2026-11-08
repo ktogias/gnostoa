@@ -2385,9 +2385,9 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                     child = root / relative
                     child.write_text("#!/bin/sh\ngit tracked\n", "utf-8")
                     if membership == "git":
-                        subprocess.run(
+                        subprocess.run(  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
                             [*git, "add", relative.as_posix()], check=True, timeout=60
-                        )  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
+                        )
                     else:
                         (root / SOURCE_MANIFEST).write_bytes(
                             b"regular\0" + relative.as_posix().encode() + b"\0"
