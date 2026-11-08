@@ -524,16 +524,10 @@ def _gitlab_shaped(document: dict[str, object]) -> bool:
     )
 
 
-def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
-    """Each GitLab CI job's shell, as the runner runs it: the job's effective
-    `before_script` and `script` concatenated into one script, its `after_script`
-    apart, each from the job, its `extends` lineage, then `default` or the
-    deprecated global one, unless `inherit` drops it (Codex on #396); and its hook
-    commands and `run` steps. A template no running job extends, and `default` and
-    the global sections when no job runs, are read alone, so no shell goes unread.
-    A global keyword, such as `variables`, is not a job (Codex on #396); a job that
-    runs is read only in a container image whose shell is known (Codex on #396)."""
-    _check_gitlab_shells(document, name)
+def _gitlab_reader_scripts(
+    document: dict[str, object], name: str
+) -> dict[str, list[list[tuple[str, object]]]] | None:
+    """Translate loaded jobs through the shared reader or its explicit legacy domain."""
     # The shared inventory reader owns ordinary script/default/extends extraction.
     # This adapter renders already-loaded data, so its generated YAML locations
     # are intentionally not presented as source locations. Non-script global
@@ -546,7 +540,7 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
         or key in {"default", "image", "include"}
     }
     try:
-        shared = read_scripts(
+        return read_scripts(
             yaml.safe_dump(reader_document, sort_keys=False, default_style="|")
         )
     except GitlabUnsupported as exc:
@@ -573,7 +567,20 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
         # qualified extraction; an arbitrary shared-reader failure is not a
         # reason to fall back. Hooks/run/unexecuted-template evidence below is
         # likewise caller-owned, not an expansion of the inventory contract.
-        shared = None
+        return None
+
+
+def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
+    """Each GitLab CI job's shell, as the runner runs it: the job's effective
+    `before_script` and `script` concatenated into one script, its `after_script`
+    apart, each from the job, its `extends` lineage, then `default` or the
+    deprecated global one, unless `inherit` drops it (Codex on #396); and its hook
+    commands and `run` steps. A template no running job extends, and `default` and
+    the global sections when no job runs, are read alone, so no shell goes unread.
+    A global keyword, such as `variables`, is not a job (Codex on #396); a job that
+    runs is read only in a container image whose shell is known (Codex on #396)."""
+    _check_gitlab_shells(document, name)
+    shared = _gitlab_reader_scripts(document, name)
     # Hooks run before the clone, so before any script; `run` steps stand in for a
     # `script` (Codex on #396).
     found: list[str] = []
@@ -591,13 +598,16 @@ def _gitlab_scripts(document: dict[str, object], name: str) -> list[str]:
     ]
     covered: set[str] = set()
     for key, job in running:
-        if shared is not None and key in shared:
-            covered.update(
-                base for base, _ in _gitlab_lineage(document, job, key, name)
+        found.extend(
+            _gitlab_job_scripts(
+                document,
+                key,
+                job,
+                covered,
+                name,
+                None if shared is None else shared.get(key),
             )
-            found.extend("\n".join(text for text, _ in part) for part in shared[key])
-        else:
-            found.extend(_gitlab_job_scripts(document, key, job, covered, name))
+        )
     found.extend(_gitlab_unrun_scripts(document, covered, bool(running)))
     return found
 
@@ -608,12 +618,15 @@ def _gitlab_job_scripts(
     job: dict[str, object],
     covered: set[str],
     name: str,
+    shared: list[list[tuple[str, object]]] | None = None,
 ) -> list[str]:
     """One running job's shell: its effective `before_script` and `script` as one
     script, its `after_script` apart (Codex on #396). The lineage it reads joins
     `covered`."""
     lineage = _gitlab_lineage(document, job, key, name)
     covered.update(base for base, _ in lineage)
+    if shared is not None:
+        return ["\n".join(text for text, _ in part) for part in shared]
     main = [
         *_script_value(_gitlab_inherited(document, lineage, "before_script")),
         *_script_value(_gitlab_inherited(document, lineage, "script")),
@@ -1722,7 +1735,7 @@ class ShellParserDependencyTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(sorted(names), found["names"])
                 self.assertEqual(0, found["errors"])
-        [heredoc] = _facts(['bash 2>&1 <<EOF\n"git" status\nEOF\n'])
+        heredoc = _facts(['bash 2>&1 <<EOF\n"git" status\nEOF\n'])[0]
         self.assertEqual(['"git" status\n'], heredoc["heredocs"])
         # In source order (CodeAnt on #394).
         facts = _facts(["cat <<A\none\nA\ncat <<B\ntwo\nB\n"])
@@ -1734,6 +1747,36 @@ class ShellParserDependencyTests(unittest.TestCase):
         masked at its own width first (Codex, Kody and CodeAnt on #394)."""
         surfaces = _shell_surfaces()
         self.assertGreater(len(surfaces), 50)
+        self._assert_corpus_surface_identities(surfaces)
+        for kind in (
+            ".github/workflows/verification.yml#",
+            ".gitlab-ci.yml#",
+            "ci/gitlab-ci.yml#",
+            "ci/github-actions.yml#",
+            "Dockerfile#",
+            "AGENTS.md#",
+            "ci/verify",
+            "knowledge/assessments/365-duplication-inventory-2026-10-05-evidence/"
+            "duplicate_code.sh",
+        ):
+            with self.subTest(kind=kind):
+                self.assertTrue(any(name.startswith(kind) for name in surfaces))
+        facts = _facts(list(surfaces.values()))
+        broken = {
+            name for name, found in zip(surfaces, facts, strict=True) if found["errors"]
+        }
+        # With its placeholders masked, every surface, the instruction fences
+        # included, parses with no error at all (Codex and CodeAnt on #394).
+        self.assertEqual(set(), broken)
+        self.assertTrue(
+            any(
+                Path(name.split("#")[0]).name in INSTRUCTION_FILES and "_exact-" in text
+                for name, text in surfaces.items()
+            )
+        )
+
+    def _assert_corpus_surface_identities(self, surfaces: dict[str, str]) -> None:
+        """Keep the existing corpus and current-source identity assertions together."""
         # Each file of the frozen corpus that is still tracked still yields a
         # surface, so an extraction that drops one fails here (CodeAnt on #396).
         evidence = json.loads(
@@ -1785,32 +1828,6 @@ class ShellParserDependencyTests(unittest.TestCase):
             self.assertEqual(
                 expected, actual, f"{record['path']}: surface identities differ"
             )
-        for kind in (
-            ".github/workflows/verification.yml#",
-            ".gitlab-ci.yml#",
-            "ci/gitlab-ci.yml#",
-            "ci/github-actions.yml#",
-            "Dockerfile#",
-            "AGENTS.md#",
-            "ci/verify",
-            "knowledge/assessments/365-duplication-inventory-2026-10-05-evidence/"
-            "duplicate_code.sh",
-        ):
-            with self.subTest(kind=kind):
-                self.assertTrue(any(name.startswith(kind) for name in surfaces))
-        facts = _facts(list(surfaces.values()))
-        broken = {
-            name for name, found in zip(surfaces, facts, strict=True) if found["errors"]
-        }
-        # With its placeholders masked, every surface, the instruction fences
-        # included, parses with no error at all (Codex and CodeAnt on #394).
-        self.assertEqual(set(), broken)
-        self.assertTrue(
-            any(
-                Path(name.split("#")[0]).name in INSTRUCTION_FILES and "_exact-" in text
-                for name, text in surfaces.items()
-            )
-        )
 
 
 class SurfaceExtractionTests(unittest.TestCase):
@@ -2033,16 +2050,14 @@ class SurfaceExtractionTests(unittest.TestCase):
         """Malformed facts must fail before a falsy error value reaches the smoke
         (CodeAnt on #396). Empty names and here-documents are valid lists."""
         valid = {"names": [], "errors": 0, "heredocs": []}
+        error_values: tuple[object, ...] = (None, "", [], False, True, 0.0, -1)
         invalid = [
             {},
             {"commands": []},
             {key: value for key, value in valid.items() if key != "names"},
             {**valid, "unexpected": []},
             *({**valid, "names": value} for value in (None, "git", [None], [1])),
-            *(
-                {**valid, "errors": value}
-                for value in (None, "", [], False, True, 0.0, -1)
-            ),
+            *({**valid, "errors": value} for value in error_values),
             *({**valid, "heredocs": value} for value in (None, "", [None], [1])),
         ]
         for fact in invalid:
@@ -2086,12 +2101,13 @@ class SurfaceExtractionTests(unittest.TestCase):
         replaced = {**surfaces, target: "git status\n"}
         method = "test_every_shell_surface_parses_without_an_unexpected_error"
         for changed in (omitted, replaced):
+            smoke = getattr(ShellParserDependencyTests(method), method)
             with (
                 self.subTest(surface_count=len(changed)),
                 patch(__name__ + "._shell_surfaces", return_value=changed),
                 self.assertRaisesRegex(AssertionError, "surface identities"),
             ):
-                getattr(ShellParserDependencyTests(method), method)()
+                smoke()
 
     def test_corpus_guard_keeps_changed_source_applicability_explicit(self) -> None:
         """Older surface identities do not govern changed raw source bytes. The
@@ -2112,11 +2128,12 @@ class SurfaceExtractionTests(unittest.TestCase):
             with patch(__name__ + "._shell_surfaces", return_value=changed):
                 getattr(ShellParserDependencyTests(method), method)()
             malformed = {**changed, target: "if true; then\n"}
+            smoke = getattr(ShellParserDependencyTests(method), method)
             with (
                 patch(__name__ + "._shell_surfaces", return_value=malformed),
                 self.assertRaises(AssertionError) as rejected,
             ):
-                getattr(ShellParserDependencyTests(method), method)()
+                smoke()
             self.assertIn(target, str(rejected.exception))
             self.assertNotIn("surface identities", str(rejected.exception))
 
