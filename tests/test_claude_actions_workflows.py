@@ -9522,6 +9522,49 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
         self.assertRegex(args, r"--max-turns \d+")
 
+    def test_mention_reviewer_inventory_is_the_granted_read_tools(self) -> None:
+        """A permission allowlist alone leaves other built-ins visible to the model.
+
+        The measured 40-turn failure reported three denials, without their tool
+        identities. This proves the configured inventory, not what caused those
+        particular denials or whether a model will finish within the budget.
+        """
+        args = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["claude_args"])
+        for flag in ("tools", "allowedTools"):
+            with self.subTest(flag=flag):
+                values = re.findall(rf"--{flag}\s+[\"']?([^\s\"']+)", args)
+                self.assertEqual(len(values), 1, f"one explicit --{flag} is required")
+                self.assertEqual(set(values[0].split(",")), {"Read", "Grep", "Glob"})
+        self.assertRegex(args, r"--max-turns\s+40(?:\s|$)")
+
+    def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
+        """Structural review criterion: one first action, with the declared route.
+
+        The runtime reviewer cannot perform the operational route's provider or
+        implementation work. It must retain that limitation rather than trying
+        unavailable tools or silently treating a partial view as current.
+        """
+        prompt = " ".join(
+            str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"]).split()
+        )
+        self.assertIn("First read .gnostoa-review-context/request/request", prompt)
+        self.assertLess(prompt.index("First read"), prompt.index("README.md"))
+        self.assertIn("README.md, then AGENTS.md", prompt)
+        self.assertIn("only the route needed for this read-only review", prompt)
+        self.assertIn("Do not perform implementation", prompt)
+        self.assertIn("unavailable evidence is a review limit", prompt)
+
+    def test_mention_review_reserves_a_truthful_final_response(self) -> None:
+        """Prompt conformance cannot establish actual model turn-budget success."""
+        prompt = " ".join(
+            str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"]).split()
+        )
+        self.assertIn("40 agentic turns", prompt)
+        self.assertIn("Reserve the final response", prompt)
+        self.assertIn("findings, examined scope and remaining limits", prompt)
+        self.assertIn("If the budget or evidence is insufficient", prompt)
+        self.assertIn("do not claim the unexamined work was reviewed", prompt)
+
     def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
         """The publish step was gated on the action having produced an execution file,
         and Decision 0094 claimed the always() condition makes a failed reviewer

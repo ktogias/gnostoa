@@ -236,6 +236,7 @@ jobs:
             }
           claude_args: >-
             --max-turns 40
+            --tools "Read,Grep,Glob"
             --allowedTools "Read,Grep,Glob"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
@@ -248,8 +249,11 @@ jobs:
             Base: ${{ steps.admit.outputs.base_sha }}
             Head: ${{ steps.admit.outputs.head_sha }}
 
-            Start with README.md, then AGENTS.md at the working directory root and
-            follow the route they name. That checkout is the **default branch**, which
+            First read .gnostoa-review-context/request/request. Then read
+            README.md, then AGENTS.md at the working directory root, and load
+            only the route needed for this read-only review. Do not perform implementation
+            or workflow operations; unavailable evidence is a review limit, never a
+            reason to guess current state. That checkout is the **default branch**, which
             may have advanced past Base or be another branch: use it for the route and
             general context only, never for this change's state. You have no shell, no
             git and no candidate tree. The change is in .gnostoa-review-context/:
@@ -285,6 +289,12 @@ jobs:
 
             You cannot see the discussion: raise a possibly-settled point as a
             question, not an assertion.
+
+            Budget: 40 agentic turns for the entire review. Reserve the final response
+            for findings, examined scope and remaining limits; stop retrieving before
+            the cap. If the budget or evidence is insufficient, state the limits and
+            finish; do not claim the unexamined work was reviewed. No execution or
+            provider tools are available; do not attempt them.
 
             Report correctness and security findings with file:line and a concrete
             failure scenario each. State plainly what you did not examine. You supply
