@@ -22,6 +22,9 @@ x-project-knowledge:
     - team:gnostoa-maintainers
   scope:
     - gnostoa
+  relations:
+    - kind: references
+      target: /decisions/0108-read-shell-text-with-a-parser-behind-an-owned-analysis.md
 ---
 
 # Shell parser evaluation for Decision 0108
