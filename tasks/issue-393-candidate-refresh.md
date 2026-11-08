@@ -1,5 +1,16 @@
 # Change Request: refresh PR #396 on protected main
 
+## Historical snapshot
+
+This document records the original local authoring session. Its identities,
+receipt chain and staging-only scope below describe that session. For current
+state and authority, read back PR #396's head, protected `main`, the latest
+unedited `Exact review candidate:` record and the live Owner directions, including
+[#389 comment 6710351825](https://github.com/ktogias/gnostoa/issues/389#issuecomment-6710351825),
+through the fresh-provider route in `AGENTS.md`. Later authorized publication and
+review repairs are recorded by those current provider receipts; the original
+snapshot values remain preserved here.
+
 ## Change control
 
 - Class: critical

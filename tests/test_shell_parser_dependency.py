@@ -355,6 +355,8 @@ def _facts(scripts: list[str]) -> list[dict[str, object]]:
     answer = _probe(scripts)["facts"]
     if not isinstance(answer, list):
         raise AssertionError("the probe facts are not a list of mappings")
+    if len(answer) != len(scripts):
+        raise AssertionError("the probe facts must contain one fact per input script")
     facts: list[dict[str, object]] = []
     for fact in answer:
         if not isinstance(fact, dict):
@@ -1991,8 +1993,11 @@ class SurfaceExtractionTests(unittest.TestCase):
                 patch("subprocess.run", return_value=answer),
                 self.assertRaisesRegex(AssertionError, "probe facts"),
             ):
-                _facts([])
-        for facts in ([], [{"names": [], "errors": 0, "heredocs": []}]):
+                _facts(["# one\n"])
+        for scripts, facts in (
+            ([], []),
+            (["# one\n"], [{"names": [], "errors": 0, "heredocs": []}]),
+        ):
             answer = SimpleNamespace(
                 returncode=0, stdout=json.dumps({"abi": 15, "facts": facts}), stderr=""
             )
@@ -2000,7 +2005,29 @@ class SurfaceExtractionTests(unittest.TestCase):
                 self.subTest(facts=facts),
                 patch("subprocess.run", return_value=answer),
             ):
-                self.assertEqual(facts, _facts([]))
+                self.assertEqual(facts, _facts(scripts))
+
+    def test_probe_facts_match_the_input_script_count(self) -> None:
+        """A valid-looking fact cannot stand in for a missing or extra script
+        result (CodeAnt on #396)."""
+        valid = {"names": [], "errors": 0, "heredocs": []}
+        for scripts, facts in (
+            (["# one\n", "# two\n"], [valid]),
+            (["# one\n"], [valid, valid]),
+            ([], [valid]),
+            (["# one\n"], []),
+        ):
+            answer = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"abi": 15, "facts": facts}),
+                stderr="",
+            )
+            with (
+                self.subTest(scripts=len(scripts), facts=len(facts)),
+                patch("subprocess.run", return_value=answer),
+                self.assertRaisesRegex(AssertionError, "one fact per input script"),
+            ):
+                _facts(scripts)
 
     def test_probe_fact_fields_follow_the_producer_contract(self) -> None:
         """Malformed facts must fail before a falsy error value reaches the smoke
@@ -2072,7 +2099,7 @@ class SurfaceExtractionTests(unittest.TestCase):
         claim for changed files."""
         surfaces = _shell_surfaces()
         target = ".github/workflows/analyzer-readback.yml#0"
-        changed = {name: text for name, text in surfaces.items() if name != target}
+        changed = {**surfaces, target: surfaces[target] + "\n# changed source\n"}
         source = ROOT / ".github/workflows/analyzer-readback.yml"
         read_bytes = Path.read_bytes
 
@@ -2081,11 +2108,17 @@ class SurfaceExtractionTests(unittest.TestCase):
             return content + b"\n# changed source\n" if path == source else content
 
         method = "test_every_shell_surface_parses_without_an_unexpected_error"
-        with (
-            patch.object(Path, "read_bytes", after_source_edit),
-            patch(__name__ + "._shell_surfaces", return_value=changed),
-        ):
-            getattr(ShellParserDependencyTests(method), method)()
+        with patch.object(Path, "read_bytes", after_source_edit):
+            with patch(__name__ + "._shell_surfaces", return_value=changed):
+                getattr(ShellParserDependencyTests(method), method)()
+            malformed = {**changed, target: "if true; then\n"}
+            with (
+                patch(__name__ + "._shell_surfaces", return_value=malformed),
+                self.assertRaises(AssertionError) as rejected,
+            ):
+                getattr(ShellParserDependencyTests(method), method)()
+            self.assertIn(target, str(rejected.exception))
+            self.assertNotIn("surface identities", str(rejected.exception))
 
     def test_a_default_shell_in_another_language_fails_closed(self) -> None:
         """A step inherits the job's or the workflow's `defaults.run.shell`
