@@ -1544,12 +1544,15 @@ def _files(root: Path) -> list[Path]:
     """The repository's candidate files, from their owner: Git's tracked files in a
     checkout, or the runtime image's source manifest (`tools/repository_scope.py`).
     A hidden source directory is read like any other; an untracked file is not
-    (Codex on #394). A canonical symlink is refused without reading its target."""
+    (Codex on #394). A symlink in a canonical path is refused without reading
+    its target, including an ancestor component (cubic on #396)."""
     paths: list[Path] = []
     for relative in candidate_paths(root):
-        path = root / relative
-        if path.is_symlink():
-            raise _refuse(relative.as_posix(), "a candidate symlink")
+        path = root
+        for part in relative.parts:
+            path /= part
+            if path.is_symlink():
+                raise _refuse(relative.as_posix(), "a candidate symlink")
         if path.is_file():
             paths.append(path)
     return paths
@@ -2328,6 +2331,95 @@ class InterpreterAndCiShapeTests(unittest.TestCase):
                         ),
                     ):
                         _shell_surfaces(root)
+
+    def test_canonical_paths_with_symlinked_ancestors_are_refused(self) -> None:
+        """A listed child cannot make a symlinked parent canonical source, under
+        either membership owner; refusal precedes all target-byte reads."""
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("GIT_")
+        }
+        env.update(
+            GIT_CONFIG_GLOBAL="/dev/null",
+            GIT_CONFIG_SYSTEM="/dev/null",
+            GIT_CONFIG_NOSYSTEM="1",
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, env, clear=True),
+        ):
+            base = Path(directory)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "script").write_text("#!/bin/sh\ngit outside\n", "utf-8")
+            for membership in ("git", "manifest"):
+                for relative in (Path("linked/script"), Path("nested/linked/script")):
+                    root = base / f"{membership}-{len(relative.parts)}"
+                    root.mkdir()
+                    regular = root / "regular"
+                    regular.write_text("#!/bin/sh\ngit regular\n", "utf-8")
+                    internal = root / "target"
+                    internal.mkdir()
+                    (internal / "script").write_text(
+                        "#!/bin/sh\ngit internal\n", "utf-8"
+                    )
+                    link = (root / relative).parent
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    link.symlink_to(outside, target_is_directory=True)
+                    git = [
+                        trusted_executable("git"),
+                        "-c",
+                        "init.defaultBranch=main",
+                        "-C",
+                        str(root),
+                    ]
+                    if membership == "git":
+                        for argv in (["init", "-q"], ["add", "regular"]):
+                            subprocess.run([*git, *argv], check=True, timeout=60)  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
+                    else:
+                        (root / SOURCE_MANIFEST).write_bytes(b"regular\0")
+                    self.assertEqual({"regular"}, set(_shell_surfaces(root)))
+                    link.unlink()
+                    link.mkdir()
+                    child = root / relative
+                    child.write_text("#!/bin/sh\ngit tracked\n", "utf-8")
+                    if membership == "git":
+                        subprocess.run(
+                            [*git, "add", relative.as_posix()], check=True, timeout=60
+                        )  # nosec B603 B607  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit  # -- fixed Git fixture argv in a temporary repository
+                    else:
+                        (root / SOURCE_MANIFEST).write_bytes(
+                            b"regular\0" + relative.as_posix().encode() + b"\0"
+                        )
+                    child.unlink()
+                    link.rmdir()
+                    for target in (internal, outside, base / "missing", regular):
+                        link.symlink_to(
+                            target, target_is_directory=target in (internal, outside)
+                        )
+                        self.assertIn(relative, candidate_paths(root))
+                        with self.subTest(
+                            membership=membership, relative=relative, target=target.name
+                        ):
+                            with self.assertRaisesRegex(
+                                AssertionError,
+                                f"{relative.as_posix()}: a candidate symlink",
+                            ):
+                                _files(root)
+                            with (
+                                patch.object(
+                                    Path,
+                                    "open",
+                                    side_effect=AssertionError("target bytes read"),
+                                ),
+                                self.assertRaisesRegex(
+                                    AssertionError,
+                                    f"{relative.as_posix()}: a candidate symlink",
+                                ),
+                            ):
+                                _shell_surfaces(root)
+                        link.unlink()
 
     def test_checkout_fixture_does_not_write_caller_selected_git_state(self) -> None:
         """The checkout fixture cannot create Git state outside its own directory."""
