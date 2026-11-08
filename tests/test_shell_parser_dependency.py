@@ -1777,6 +1777,7 @@ class ShellParserDependencyTests(unittest.TestCase):
 
     def _assert_corpus_surface_identities(self, surfaces: dict[str, str]) -> None:
         """Keep the existing corpus and current-source identity assertions together."""
+        declared = {path.as_posix() for path in candidate_paths(ROOT)}
         # Each file of the frozen corpus that is still tracked still yields a
         # surface, so an extraction that drops one fails here (CodeAnt on #396).
         evidence = json.loads(
@@ -1785,7 +1786,9 @@ class ShellParserDependencyTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
         found = {name.split("#", 1)[0] for name in surfaces}
-        for path in sorted({script["path"] for script in evidence["scripts"]}):
+        for path in sorted(
+            {script["path"] for script in evidence["scripts"]} & declared
+        ):
             if (ROOT / path).is_file():
                 with self.subTest(corpus_file=path):
                     self.assertIn(path, found)
@@ -1812,7 +1815,8 @@ class ShellParserDependencyTests(unittest.TestCase):
         for record in coverage["files"]:
             source = ROOT / record["path"]
             if (
-                not source.is_file()
+                record["path"] not in declared
+                or not source.is_file()
                 or hashlib.sha256(source.read_bytes()).hexdigest()
                 != record["source_sha256"]
             ):
@@ -2108,6 +2112,16 @@ class SurfaceExtractionTests(unittest.TestCase):
                 self.assertRaisesRegex(AssertionError, "surface identities"),
             ):
                 smoke()
+
+        # Physical presence does not make a historical file canonical source.
+        path = ".github/workflows/analyzer-readback.yml"
+        declared = [
+            entry for entry in candidate_paths(ROOT) if entry.as_posix() != path
+        ]
+        self.assertTrue((ROOT / path).is_file())
+        smoke = getattr(ShellParserDependencyTests(method), method)
+        with patch(__name__ + ".candidate_paths", return_value=declared):
+            smoke()
 
     def test_corpus_guard_keeps_changed_source_applicability_explicit(self) -> None:
         """Older surface identities do not govern changed raw source bytes. The
