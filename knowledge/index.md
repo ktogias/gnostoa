@@ -136,6 +136,7 @@ inherited, copied or loaded by adopting projects.
 - [Resolve git on the one trusted lookup, the leaf the repository's tools share](decisions/0131-resolve-git-on-the-one-trusted-lookup.md)
 - [Read optional providers' complete reports for findings, never for coverage](decisions/0132-read-optional-providers-complete-reports-for-findings-never-for-coverage.md)
 - [Coalesce merge-admission requests by pull request, and publish each head's check one at a time](decisions/0133-coalesce-merge-admission-requests-by-pull-request.md)
+- [Read an Owner-declared frozen evidence archive whole for M13, and show its markers for the approval](decisions/0134-read-an-owner-declared-frozen-evidence-archive-whole-for-m13.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
