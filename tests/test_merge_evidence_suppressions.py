@@ -1817,6 +1817,26 @@ class FrozenArchiveCollectionTests(unittest.TestCase):
                         [_blob_url(_blob_id(data)) for data in blobs[:-1]], reads
                     )
 
+    def test_a_blob_listed_again_at_the_count_still_gets_its_content(self) -> None:
+        """Once BLOB_READS distinct blobs are counted, one of them listed again
+        still gets its content with no second read, and a new one gets none
+        (Decision 0134, item 2)."""
+
+        distinct = [bytes([n]) * 16 for n in range(BLOB_READS + 1)]
+        listed = [*distinct[:-1], distinct[0], distinct[-1]]
+        snapshot, reads = _collect_blobs(
+            [
+                _file(f"docs/r{n}.bin", "added", blob=_blob_id(data))
+                for n, data in enumerate(listed)
+            ],
+            {_blob_url(_blob_id(data)): _blob_reply(data) for data in distinct},
+        )
+        self.assertEqual(
+            [*(_content(data) for data in listed[:-1]), None],
+            [item.get("content") for item in snapshot["files"]],
+        )
+        self.assertEqual([_blob_url(_blob_id(data)) for data in distinct[:-1]], reads)
+
 
 class FrozenVerdictTests(unittest.TestCase):
     """M13 over frozen records (I6 of 6761333802): listed for the approval apart

@@ -1061,6 +1061,7 @@ guardrails:
       - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_only_a_hunkless_added_or_modified_non_empty_blob_is_read
       - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_a_blob_answer_that_does_not_verify_gives_no_content
       - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_blob_reads_are_bounded_in_count_and_in_total
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_a_blob_listed_again_at_the_count_still_gets_its_content
       - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_frozen_record_is_listed_apart_and_never_denies
       - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_record_that_is_not_frozen_still_denies
       - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_frozen_record_is_closed_and_typed
