@@ -1071,6 +1071,19 @@ def _tar(
     return tar if size is None else tar + bytes(size - len(tar))
 
 
+def _cut_in_last_member(tar: bytes, *, header: bool = False) -> bytes:
+    """`tar` cut inside its last member: within its header, or a few bytes into
+    its data, so nothing but that member is short."""
+
+    with tarfile.open(fileobj=io.BytesIO(tar), mode="r:") as archive:
+        last = archive.getmembers()[-1]
+    return tar[: last.offset + 200 if header else last.offset_data + 5]
+
+
+# A member that comes after the archive's last one.
+LATE = (("late.py", b"x\n"),)
+
+
 def _archive(tar: bytes | None = None) -> bytes:
     """One gzip member of `tar`, by default of MEMBERS."""
 
@@ -1391,6 +1404,13 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
             ("trailing bytes", _archive(tar) + b"\0"),
             ("a second gzip member", _archive(tar) + gzip.compress(b"", mtime=0)),
             ("a truncated stream", _archive(tar)[:-8]),
+            ("a member's data cut short", _archive(_cut_in_last_member(tar))),
+            ("a second tar after the end", _archive(tar + _tar(LATE))),
+            ("bytes after the end", _archive(tar + b"late")),
+            (
+                "a header cut short after the last member",
+                _archive(_cut_in_last_member(_tar((*MEMBERS, *LATE)), header=True)),
+            ),
             ("an uncompressed tar", tar),
             ("bytes that are no archive", b"plain text\n"),
             ("an empty file", b""),
@@ -1745,8 +1765,31 @@ class FrozenArchiveCollectionTests(unittest.TestCase):
                 self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
 
     def test_blob_reads_are_bounded_in_count_and_in_total(self) -> None:
-        """At most BLOB_READS reads per comparison, in its order, and at most
-        BLOB_TOTAL bytes attached in all; a file past either gets no content."""
+        """At most BLOB_READS distinct blobs read per comparison, in its order, and
+        at most BLOB_TOTAL bytes attached in all; a file past either gets no
+        content. A blob listed again is no second read (Decision 0134, item 2)."""
+
+        same, other = bytes(16), bytes([1]) * 16
+        files = [
+            _file(f"docs/s{n}.bin", "added", blob=_blob_id(same))
+            for n in range(BLOB_READS)
+        ]
+        files.append(_file("docs/other.bin", "added", blob=_blob_id(other)))
+        with self.subTest("a blob listed again"):
+            snapshot, reads = _collect_blobs(
+                files,
+                {
+                    _blob_url(_blob_id(data)): _blob_reply(data)
+                    for data in (same, other)
+                },
+            )
+            self.assertEqual(
+                [*([_content(same)] * BLOB_READS), _content(other)],
+                [item.get("content") for item in snapshot["files"]],
+            )
+            self.assertEqual(
+                [_blob_url(_blob_id(data)) for data in (same, other)], reads
+            )
 
         for name, blobs in (
             ("past the read count", [bytes([n]) * 16 for n in range(BLOB_READS + 1)]),
