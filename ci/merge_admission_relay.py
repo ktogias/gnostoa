@@ -64,6 +64,7 @@ from tools.merge_admission_checks import (
     ours,
     read_run,
     run_id,
+    within_bound,
 )
 from tools.verdict_cli import read_json_file
 
@@ -344,7 +345,9 @@ def _post(
     body = {"name": CHECK_NAME, "head_sha": head, **payload}
     try:
         posted = client.post(client.url(f"repos/{repository}/check-runs"), body)
-    except github_rest.GitHubWriteError as exc:
+    except github_rest.GitHubError as exc:
+        # A refused redirect is raised as itself, not as a write failure, and has no
+        # unknown outcome: it is a refusal like any other (Sourcery on #490).
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
         found = app_latest(client, repository, head, app_id)
@@ -369,9 +372,10 @@ def _post(
     _verified(posted, head, app_id, expected)
     try:
         written = _read_back(client, repository, head, app_id, identifier)
-    except PublicationError as exc:
-        if exc.kind == "UNKNOWN":
-            _cancel(client, repository, identifier, payload)
+    except PublicationError:
+        # No read confirmed the run, whether the reads failed or one answered with no
+        # run, so it is cancelled rather than left pending (Decision 0135, item 4).
+        _cancel(client, repository, identifier, payload)
         raise
     return _verified(written, head, app_id, expected)
 
@@ -394,33 +398,41 @@ def _read_back(
         return latest
 
 
+def _unsettled(error: github_rest.GitHubError) -> bool:
+    """Whether a cancellation may land if tried again: its outcome is unknown, or
+    the provider has not yet found the run, or limits the rate. A refusal, a refused
+    redirect and a request never sent are final (Decision 0135, item 4)."""
+
+    return error.outcome_unknown or error.status in (404, 429)
+
+
 def _cancel(
     client: Any, repository: str, identifier: int, payload: Mapping[str, Any]
 ) -> None:
     """Complete as cancelled a run the provider's answer confirmed but no read can,
     so it never stays pending. Its text keeps its correlation, so a guarded merge
-    still finds it and refuses. The reads are what failed, so the write is not read
-    back (Decision 0135, item 4)."""
+    still finds it and refuses. The same PATCH is tried again within the read's
+    bound while it may still land. The reads are what failed, so the write is not
+    read back (Decision 0135, item 4)."""
 
     output = payload.get("output")
     text = output.get("text", "") if isinstance(output, Mapping) else ""
+    url = client.url(f"repos/{repository}/check-runs/{identifier}")
+    cancelled = {
+        "status": "completed",
+        "conclusion": "cancelled",
+        "output": {
+            "title": "merge-admission: cancelled",
+            "summary": (
+                "This run was written but could not be read back, so it was "
+                "cancelled rather than left pending."
+            ),
+            "text": text,
+        },
+    }
     try:
-        client.patch(
-            client.url(f"repos/{repository}/check-runs/{identifier}"),
-            {
-                "status": "completed",
-                "conclusion": "cancelled",
-                "output": {
-                    "title": "merge-admission: cancelled",
-                    "summary": (
-                        "This run was written but could not be read back, so it was "
-                        "cancelled rather than left pending."
-                    ),
-                    "text": text,
-                },
-            },
-        )
-    except github_rest.GitHubWriteError as exc:
+        within_bound(lambda: client.patch(url, cancelled), _unsettled)
+    except github_rest.GitHubError as exc:
         raise PublicationError(
             "UNKNOWN",
             "the check run could not be read back, nor completed as cancelled",
@@ -446,7 +458,8 @@ def _complete(
     }
     try:
         client.patch(client.url(f"repos/{repository}/check-runs/{identifier}"), payload)
-    except github_rest.GitHubWriteError as exc:
+    except github_rest.GitHubError as exc:
+        # A refused redirect is a refusal here too (Sourcery on #490).
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
     written = _read_back(client, repository, head, app_id, identifier)

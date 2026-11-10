@@ -30,7 +30,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from tools import github_rest
 from tools.review_check import strict_json_loads
@@ -53,9 +53,11 @@ _CORRELATION_BLOCK = re.compile(
 )
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-# The pauses before each read of a run again (Decision 0135): fixed, since one head's
-# publication runs in one lock (Decision 0133), so the bound is exact, 5.5 s in all.
+# The pauses before each try again (Decision 0135): fixed, since one head's publication
+# runs in one lock (Decision 0133), so there are at most four tries. A rate limit waits
+# at least the client's own bounded hint instead (Decision 0100).
 READ_BACK_PAUSES_SECONDS = (0.5, 1.5, 3.5)
+_T = TypeVar("_T")
 _REFUSED_READS = (
     github_rest.NotSent,
     github_rest.DeadlineReached,
@@ -160,26 +162,40 @@ def _transient(error: github_rest.GitHubError) -> bool:
     return status is None or status in (404, 429) or status >= 500
 
 
-def read_run(client: Any, repository: str, identifier: int) -> Mapping[str, Any]:
-    """One check run, read natively by its id. A transient failure is read again
-    after each of `READ_BACK_PAUSES_SECONDS`, so at most four reads (Decision 0135)."""
+def within_bound(
+    call: Callable[[], _T], again: Callable[[github_rest.GitHubError], bool]
+) -> _T:
+    """`call`'s answer, tried again after each of `READ_BACK_PAUSES_SECONDS` while
+    `again` says its failure may pass, so at most four tries (Decision 0135). A pause
+    is at least the failure's own bounded rate-limit hint, so a rate limit is waited
+    out rather than spent inside its window (Decision 0100). The last failure is
+    raised."""
 
-    url = client.url(f"repos/{repository}/check-runs/{identifier}")
     pauses = iter(READ_BACK_PAUSES_SECONDS)
     while True:
         try:
-            run, _ = client.get(url)
+            return call()
         except github_rest.GitHubError as exc:
-            pause = next(pauses, None) if _transient(exc) else None
+            pause = next(pauses, None) if again(exc) else None
             if pause is None:
-                raise PublicationError(
-                    "UNKNOWN", "the check run could not be read back"
-                ) from exc
-            time.sleep(pause)
-            continue
-        if not isinstance(run, Mapping):
-            raise PublicationError("MISMATCH", "the check run reads back as no run")
-        return run
+                raise
+            time.sleep(max(pause, exc.retry_after or 0.0))
+
+
+def read_run(client: Any, repository: str, identifier: int) -> Mapping[str, Any]:
+    """One check run, read natively by its id, a transient failure within the bound
+    (Decision 0135)."""
+
+    url = client.url(f"repos/{repository}/check-runs/{identifier}")
+    try:
+        run, _ = within_bound(lambda: client.get(url), _transient)
+    except github_rest.GitHubError as exc:
+        raise PublicationError(
+            "UNKNOWN", "the check run could not be read back"
+        ) from exc
+    if not isinstance(run, Mapping):
+        raise PublicationError("MISMATCH", "the check run reads back as no run")
+    return run
 
 
 def correlation_text(correlation: Mapping[str, Any]) -> str:
