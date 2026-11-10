@@ -1063,6 +1063,19 @@ def _answering(post: Any, field: str, value: object) -> Any:
     return answer
 
 
+def _failing_first(call: Any, failures: list[BaseException]) -> Any:
+    """`call`, met first by the failures given, in order."""
+
+    pending = list(failures)
+
+    def failing(*args: Any) -> Any:
+        if pending:
+            raise pending.pop(0)
+        return call(*args)
+
+    return failing
+
+
 class _Flaky(_FakeClient):
     """One check run, answered after the failures given, in order."""
 
@@ -1247,9 +1260,12 @@ class ReadBackTests(unittest.TestCase):
         self.assertEqual("MISMATCH", raised.exception.kind)
         self.assertEqual((1, []), (len(provider.posts), provider.patches))
 
-    def test_a_run_that_reads_back_as_no_run_is_never_looked_up(self) -> None:
-        """The latest view stands in only for a read that failed, never for one
-        that answered with no run."""
+    def test_a_run_that_reads_back_as_no_run_is_cancelled_never_looked_up(
+        self,
+    ) -> None:
+        """A read that answers with no run confirms nothing, so the run the answer
+        confirmed is cancelled (Sourcery on #490). The latest view stands in only for
+        a read that failed, never for one that answered."""
         relay = _relay()
         provider = _Provider([_run(90)])
         original = provider.get
@@ -1268,21 +1284,32 @@ class ReadBackTests(unittest.TestCase):
         self.assertEqual("MISMATCH", raised.exception.kind)
         written = provider.runs[-1]
         self.assertEqual([LATEST, f"{CHECK_RUNS}/{written['id']}"], provider.reads)
-        self.assertEqual([], provider.patches)
+        self.assertEqual(
+            [f"{CHECK_RUNS}/{written['id']}"], [url for url, _ in provider.patches]
+        )
+        self.assertEqual(
+            ("completed", "cancelled"), (written["status"], written["conclusion"])
+        )
 
     def test_a_cancellation_that_fails_still_fails_unknown(self) -> None:
+        """A refusal is final; a cancellation whose outcome stays unknown is tried
+        within the read's bound, at most four times (Sourcery on #490). A refused
+        redirect is a refusal, and still fails as a publication (Sourcery on #490)."""
         relay = _relay()
-        for name, error in (
+        for name, error, attempts in (
             (
                 "refused",
                 github_rest.GitHubWriteError("GitHub API HTTP 403", status=403),
+                1,
             ),
             (
                 "unknown",
                 github_rest.GitHubWriteError(
                     "GitHub API HTTP 502", status=502, outcome_unknown=True
                 ),
+                4,
             ),
+            ("redirect refused", github_rest.UnsafeRedirect("redirect refused"), 1),
         ):
             with self.subTest(name):
                 provider = _Provider([_run(90)])
@@ -1302,7 +1329,89 @@ class ReadBackTests(unittest.TestCase):
                     self._invalidate(provider)
                 self.assertEqual("UNKNOWN", raised.exception.kind)
                 self.assertIn("nor completed as cancelled", str(raised.exception))
-                self.assertEqual(1, patch.call_count)
+                self.assertEqual(attempts, patch.call_count)
+
+    def test_a_cancellation_failing_for_a_while_is_retried(self) -> None:
+        """A cancellation not yet found, rate-limited, or of unknown outcome is tried
+        again after the read's pauses; the run is then cancelled (Sourcery on #490)."""
+        relay = _relay()
+        for name, error in (
+            ("not yet found", github_rest.GitHubWriteError("HTTP 404", status=404)),
+            ("rate-limited", github_rest.GitHubWriteError("HTTP 429", status=429)),
+            (
+                "unknown",
+                github_rest.GitHubWriteError(
+                    "HTTP 502", status=502, outcome_unknown=True
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                self.sleep.reset_mock()
+                provider = _Provider([_run(90)])
+                cancel = _failing_first(provider.patch, [error])
+                with (
+                    mock.patch.object(
+                        provider,
+                        "get",
+                        side_effect=_lagging(
+                            provider,
+                            by_id=[_status(502)] * 4,
+                            listed=[None, _status(502)],
+                        ),
+                    ),
+                    mock.patch.object(provider, "patch", side_effect=cancel) as patch,
+                    self.assertRaises(relay.PublicationError) as raised,
+                ):
+                    self._invalidate(provider)
+                self.assertEqual("UNKNOWN", raised.exception.kind)
+                self.assertNotIn("nor completed as cancelled", str(raised.exception))
+                self.assertEqual(2, patch.call_count)
+                written = provider.runs[-1]
+                self.assertEqual(
+                    ("completed", "cancelled"),
+                    (written["status"], written["conclusion"]),
+                )
+                self.assertEqual([0.5, 1.5, 3.5, 0.5], self._slept())
+
+    def test_a_rate_limited_read_waits_for_the_clients_hint(self) -> None:
+        """A rate limit is waited out by the client's own bounded hint (Decision 0100),
+        not spent inside its window (Sourcery on #490); a shorter hint keeps the
+        read's own pause."""
+        checks = _checks()
+        run = _run(501, conclusion=None)
+        for hint, slept in ((60.0, [60.0]), (0.2, [0.5])):
+            with self.subTest(hint=hint):
+                self.sleep.reset_mock()
+                limited = github_rest.GitHubReadError(
+                    "GitHub API HTTP 429", status=429, retry_after=hint
+                )
+                client = _Flaky([limited], run)
+                self.assertEqual(run, checks.read_run(client, REPOSITORY, 501))
+                self.assertEqual(slept, self._slept())
+
+    def test_a_refused_redirect_on_a_write_fails_as_a_publication(self) -> None:
+        """`github_rest` raises a refused redirect as itself, not as a write failure,
+        so a write that meets one must still fail as a refused publication, never
+        escape the job's record (Sourcery on #490)."""
+        relay = _relay()
+        redirect = github_rest.UnsafeRedirect("redirect refused")
+        with self.subTest("post"):
+            provider = _Provider([_run(90)])
+            with (
+                mock.patch.object(provider, "post", side_effect=redirect),
+                self.assertRaises(relay.PublicationError) as raised,
+            ):
+                self._invalidate(provider)
+            self.assertEqual("REFUSED", raised.exception.kind)
+        with self.subTest("completion"):
+            provider = _Provider([_run(90)])
+            record = self._invalidate(provider)
+            with (
+                mock.patch.object(provider, "patch", side_effect=redirect),
+                self.assertRaises(relay.PublicationError) as raised,
+            ):
+                _publish(provider, _planned(), record)
+            self.assertEqual("REFUSED", raised.exception.kind)
 
     def test_an_unknown_write_its_id_cannot_read_is_found_in_the_latest_view(
         self,
