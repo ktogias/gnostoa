@@ -1054,6 +1054,15 @@ def _lagging(
     return get
 
 
+def _answering(post: Any, field: str, value: object) -> Any:
+    """The provider's own answer to a write, with one field naming otherwise."""
+
+    def answer(url: str, payload: dict[str, Any]) -> Any:
+        return {**post(url, payload), field: value}
+
+    return answer
+
+
 class _Flaky(_FakeClient):
     """One check run, answered after the failures given, in order."""
 
@@ -1160,17 +1169,7 @@ class ReadBackTests(unittest.TestCase):
         ):
             with self.subTest(field):
                 provider = _Provider([_run(90)])
-                original = provider.post
-
-                def answer(
-                    url: str,
-                    payload: dict[str, Any],
-                    original: Any = original,
-                    field: str = field,
-                    value: object = value,
-                ) -> Any:
-                    return {**original(url, payload), field: value}
-
+                answer = _answering(provider.post, field, value)
                 with (
                     mock.patch.object(provider, "post", side_effect=answer),
                     self.assertRaises(relay.PublicationError) as raised,

@@ -55,7 +55,7 @@ _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 # The pauses before each read of a run again (Decision 0135): fixed, since one head's
 # publication runs in one lock (Decision 0133), so the bound is exact, 5.5 s in all.
-READ_BACK_PAUSES = (0.5, 1.5, 3.5)
+READ_BACK_PAUSES_SECONDS = (0.5, 1.5, 3.5)
 _REFUSED_READS = (
     github_rest.NotSent,
     github_rest.DeadlineReached,
@@ -162,10 +162,10 @@ def _transient(error: github_rest.GitHubError) -> bool:
 
 def read_run(client: Any, repository: str, identifier: int) -> Mapping[str, Any]:
     """One check run, read natively by its id. A transient failure is read again
-    after each of `READ_BACK_PAUSES`, so at most four reads (Decision 0135)."""
+    after each of `READ_BACK_PAUSES_SECONDS`, so at most four reads (Decision 0135)."""
 
     url = client.url(f"repos/{repository}/check-runs/{identifier}")
-    pauses = iter(READ_BACK_PAUSES)
+    pauses = iter(READ_BACK_PAUSES_SECONDS)
     while True:
         try:
             run, _ = client.get(url)
