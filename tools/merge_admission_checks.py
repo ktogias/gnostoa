@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,15 @@ _CORRELATION_BLOCK = re.compile(
 )
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+# The pauses before each read of a run again (Decision 0135): fixed, since one head's
+# publication runs in one lock (Decision 0133), so the bound is exact, 5.5 s in all.
+READ_BACK_PAUSES = (0.5, 1.5, 3.5)
+_REFUSED_READS = (
+    github_rest.NotSent,
+    github_rest.DeadlineReached,
+    github_rest.UnsafeRedirect,
+    github_rest.OutsideOrigin,
+)
 
 
 class PublicationError(RuntimeError):
@@ -138,18 +148,38 @@ def app_latest(
     return mine[0] if mine else None
 
 
-def read_run(client: Any, repository: str, identifier: int) -> Mapping[str, Any]:
-    """One check run, read natively by its id."""
+def _transient(error: github_rest.GitHubError) -> bool:
+    """Whether a read may answer otherwise in a moment: no status (the transport, a
+    bound, an unusable body), 404 while the provider's index lags its write, 429 or a
+    server error. A refusal, a request never sent, the caller's spent deadline and a
+    refused redirect or origin answer the same again (Decision 0135)."""
 
-    try:
-        run, _ = client.get(client.url(f"repos/{repository}/check-runs/{identifier}"))
-    except github_rest.GitHubError as exc:
-        raise PublicationError(
-            "UNKNOWN", "the check run could not be read back"
-        ) from exc
-    if not isinstance(run, Mapping):
-        raise PublicationError("MISMATCH", "the check run reads back as no run")
-    return run
+    if isinstance(error, _REFUSED_READS):
+        return False
+    status = error.status
+    return status is None or status in (404, 429) or status >= 500
+
+
+def read_run(client: Any, repository: str, identifier: int) -> Mapping[str, Any]:
+    """One check run, read natively by its id. A transient failure is read again
+    after each of `READ_BACK_PAUSES`, so at most four reads (Decision 0135)."""
+
+    url = client.url(f"repos/{repository}/check-runs/{identifier}")
+    pauses = iter(READ_BACK_PAUSES)
+    while True:
+        try:
+            run, _ = client.get(url)
+        except github_rest.GitHubError as exc:
+            pause = next(pauses, None) if _transient(exc) else None
+            if pause is None:
+                raise PublicationError(
+                    "UNKNOWN", "the check run could not be read back"
+                ) from exc
+            time.sleep(pause)
+            continue
+        if not isinstance(run, Mapping):
+            raise PublicationError("MISMATCH", "the check run reads back as no run")
+        return run
 
 
 def correlation_text(correlation: Mapping[str, Any]) -> str:

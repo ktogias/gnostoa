@@ -355,7 +355,7 @@ def _post(
         # Unchanged evidence gives an older run the same external id, so the run
         # listed is this one only if it carries this run's correlation too, read
         # natively by its id (CodeAnt on #426).
-        listed = read_run(client, repository, int(run_id(found) or 0))
+        listed = _read_back(client, repository, head, app_id, int(run_id(found) or 0))
         if correlation_of(listed) != correlation_of({"output": payload.get("output")}):
             raise PublicationError(
                 "UNKNOWN",
@@ -365,7 +365,66 @@ def _post(
     identifier = run_id(posted)
     if identifier is None:
         raise PublicationError("MISMATCH", "the provider's answer names no check run")
-    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+    # The answer is the run this write created (Decision 0135, item 1).
+    _verified(posted, head, app_id, expected)
+    try:
+        written = _read_back(client, repository, head, app_id, identifier)
+    except PublicationError as exc:
+        if exc.kind == "UNKNOWN":
+            _cancel(client, repository, identifier, payload)
+        raise
+    return _verified(written, head, app_id, expected)
+
+
+def _read_back(
+    client: Any, repository: str, head: str, app_id: int, identifier: int
+) -> Mapping[str, Any]:
+    """A run of the App, read by its id; or, when no read by its id succeeds within
+    the bound, the App's latest run on the head if it is that run (Decision 0135,
+    item 3)."""
+
+    try:
+        return read_run(client, repository, identifier)
+    except PublicationError as exc:
+        if exc.kind != "UNKNOWN":
+            raise
+        latest = app_latest(client, repository, head, app_id)
+        if latest is None or run_id(latest) != identifier:
+            raise
+        return latest
+
+
+def _cancel(
+    client: Any, repository: str, identifier: int, payload: Mapping[str, Any]
+) -> None:
+    """Complete as cancelled a run the provider's answer confirmed but no read can,
+    so it never stays pending. Its text keeps its correlation, so a guarded merge
+    still finds it and refuses. The reads are what failed, so the write is not read
+    back (Decision 0135, item 4)."""
+
+    output = payload.get("output")
+    text = output.get("text", "") if isinstance(output, Mapping) else ""
+    try:
+        client.patch(
+            client.url(f"repos/{repository}/check-runs/{identifier}"),
+            {
+                "status": "completed",
+                "conclusion": "cancelled",
+                "output": {
+                    "title": "merge-admission: cancelled",
+                    "summary": (
+                        "This run was written but could not be read back, so it was "
+                        "cancelled rather than left pending."
+                    ),
+                    "text": text,
+                },
+            },
+        )
+    except github_rest.GitHubWriteError as exc:
+        raise PublicationError(
+            "UNKNOWN",
+            "the check run could not be read back, nor completed as cancelled",
+        ) from exc
 
 
 def _complete(
@@ -390,7 +449,8 @@ def _complete(
     except github_rest.GitHubWriteError as exc:
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
-    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+    written = _read_back(client, repository, head, app_id, identifier)
+    return _verified(written, head, app_id, expected)
 
 
 def invalidate(
