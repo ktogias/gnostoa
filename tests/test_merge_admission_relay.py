@@ -1136,6 +1136,9 @@ class ReadBackTests(unittest.TestCase):
             ("403", _status(403)),
             ("422", _status(422)),
             ("never sent", github_rest.NotSent("refused before it was sent")),
+            ("deadline", github_rest.DeadlineReached("deadline reached")),
+            ("redirect", github_rest.UnsafeRedirect("redirect refused")),
+            ("origin", github_rest.OutsideOrigin("outside the origin")),
         ):
             with self.subTest(name):
                 self.sleep.reset_mock()
@@ -1233,6 +1236,112 @@ class ReadBackTests(unittest.TestCase):
                     {**CORRELATION, "unbundled_evidence_sha256": None},
                     _checks().correlation_of(written),
                 )
+
+    def test_a_run_that_reads_back_otherwise_is_never_cancelled(self) -> None:
+        """Only a run no read confirms is cancelled: one read back otherwise is not
+        this write's state to change."""
+        relay = _relay()
+        provider = _Provider([_run(90)])
+        provider.reads_as[501] = {"status": "completed"}
+        with self.assertRaises(relay.PublicationError) as raised:
+            self._invalidate(provider)
+        self.assertEqual("MISMATCH", raised.exception.kind)
+        self.assertEqual((1, []), (len(provider.posts), provider.patches))
+
+    def test_a_run_that_reads_back_as_no_run_is_never_looked_up(self) -> None:
+        """The latest view stands in only for a read that failed, never for one
+        that answered with no run."""
+        relay = _relay()
+        provider = _Provider([_run(90)])
+        original = provider.get
+
+        def get(url: str) -> tuple[Any, dict[str, str]]:
+            if url.startswith(f"{CHECK_RUNS}/"):
+                provider.reads.append(url)
+                return [], {}
+            return original(url)
+
+        with (
+            mock.patch.object(provider, "get", side_effect=get),
+            self.assertRaises(relay.PublicationError) as raised,
+        ):
+            self._invalidate(provider)
+        self.assertEqual("MISMATCH", raised.exception.kind)
+        written = provider.runs[-1]
+        self.assertEqual([LATEST, f"{CHECK_RUNS}/{written['id']}"], provider.reads)
+        self.assertEqual([], provider.patches)
+
+    def test_a_cancellation_that_fails_still_fails_unknown(self) -> None:
+        relay = _relay()
+        for name, error in (
+            (
+                "refused",
+                github_rest.GitHubWriteError("GitHub API HTTP 403", status=403),
+            ),
+            (
+                "unknown",
+                github_rest.GitHubWriteError(
+                    "GitHub API HTTP 502", status=502, outcome_unknown=True
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                provider = _Provider([_run(90)])
+                with (
+                    mock.patch.object(
+                        provider,
+                        "get",
+                        side_effect=_lagging(
+                            provider,
+                            by_id=[_status(502)] * 4,
+                            listed=[None, _status(502)],
+                        ),
+                    ),
+                    mock.patch.object(provider, "patch", side_effect=error) as patch,
+                    self.assertRaises(relay.PublicationError) as raised,
+                ):
+                    self._invalidate(provider)
+                self.assertEqual("UNKNOWN", raised.exception.kind)
+                self.assertIn("nor completed as cancelled", str(raised.exception))
+                self.assertEqual(1, patch.call_count)
+
+    def test_an_unknown_write_its_id_cannot_read_is_found_in_the_latest_view(
+        self,
+    ) -> None:
+        provider = _Provider([_run(90)])
+        provider.lose_write = True
+        with mock.patch.object(
+            provider, "get", side_effect=_lagging(provider, by_id=[_status(502)] * 4)
+        ):
+            record = self._invalidate(provider)
+        written = provider.runs[-1]
+        self.assertEqual(
+            ("PENDING", written["id"]), (record["result"], record["pending"])
+        )
+        self.assertEqual(
+            [LATEST, LATEST, *[f"{CHECK_RUNS}/{written['id']}"] * 4, LATEST],
+            provider.reads,
+        )
+        self.assertEqual((1, []), (len(provider.posts), provider.patches))
+
+    def test_a_completion_its_id_cannot_read_is_found_in_the_latest_view(
+        self,
+    ) -> None:
+        provider = _Provider([_run(90)])
+        record = self._invalidate(provider)
+        provider.reads.clear()
+        with mock.patch.object(
+            provider, "get", side_effect=_lagging(provider, by_id=[_status(502)] * 4)
+        ):
+            result = _publish(provider, _planned(), record)
+        self.assertEqual(
+            ("COMPLETED", record["pending"]), (result["result"], result["check_run_id"])
+        )
+        self.assertEqual(
+            [LATEST, *[f"{CHECK_RUNS}/{record['pending']}"] * 4, LATEST],
+            provider.reads,
+        )
+        self.assertEqual(1, len(provider.patches))
 
     def test_a_completion_lagging_its_write_is_retried(self) -> None:
         provider = _Provider([_run(90)])
