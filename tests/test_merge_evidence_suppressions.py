@@ -1158,14 +1158,21 @@ class _ProtectedArchiveTarget(unittest.TestCase):
         contents: Mapping[str, bytes | str],
         *,
         declared: dict[str, Any] | None,
+        listed: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """The producer's evidence for L1's snapshot of `files`, with `contents`
+        attached and the last file's `listed` fields, which L1 never gives but the
+        producer reads as given."""
+
         target = self.project / FROZEN_ARCHIVES
         if declared is None:
             target.unlink(missing_ok=True)
         else:
             target.write_text(yaml.safe_dump(declared), encoding="utf-8")
+        snapshot = _attached(files, contents)
+        snapshot["files"][-1].update(listed or {})
         evidence: dict[str, Any] = merge_evidence_github.evidence_for(
-            _attached(files, contents), project_root=self.project
+            snapshot, project_root=self.project
         )
         return evidence
 
@@ -1287,9 +1294,21 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
                 _archives(data, sha256="0" * 64),
             ),
             (
+                "a listed and declared blob that is not the content's",
+                _file(ARCHIVE, "added", blob="0" * 40),
+                data,
+                _archives(data, blob="0" * 40),
+            ),
+            (
                 "content that is not base64",
                 _archive_file(data),
                 "not base64!",
+                _archives(data),
+            ),
+            (
+                "base64 with a character outside its alphabet",
+                _archive_file(data),
+                "*" + _content(data),
                 _archives(data),
             ),
             ("no content", _archive_file(data), None, _archives(data)),
@@ -1312,6 +1331,10 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
         self._assert_read(data, FROZEN)
         for name, entry in (
             ("a patch", _archive_file(data, patch="@@ -0,0 +1 @@\n+a  # noqa")),
+            (
+                "a patch that only removes",
+                _archive_file(data, "modified", patch="@@ -1 +0,0 @@\n-a", additions=0),
+            ),
             ("additions without a patch", _archive_file(data, additions=2)),
             (
                 "a truncated patch",
@@ -1328,6 +1351,28 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
                 )
                 self.assertEqual(today, declared)
                 self.assertFalse(any("frozen" in r for r in declared["found"]))
+
+    def test_a_listing_l1_never_gives_is_not_read_as_an_archive(self) -> None:
+        """I3, on the producer's own input: a cut listing without a patch, or an
+        addition count that is not a whole number, is not hunkless, so the declared
+        archive is not read and the file stays PARTIAL as today."""
+
+        data = _archive()
+        self._assert_read(data, FROZEN)
+        for name, listed in (
+            ("a cut listing without a patch", {"patch_truncated": True}),
+            ("a count that is a boolean", {"additions": False}),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {"coverage": "PARTIAL", "found": []},
+                    self._evidence(
+                        [_archive_file(data)],
+                        {ARCHIVE: data},
+                        declared=_archives(data),
+                        listed=listed,
+                    )["suppressions"],
+                )
 
     def test_each_archive_bound_leaves_it_partial_without_a_record(self) -> None:
         """I4: the whole archive is checked before any record is built, so one
@@ -1348,6 +1393,7 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
             ("a truncated stream", _archive(tar)[:-8]),
             ("an uncompressed tar", tar),
             ("bytes that are no archive", b"plain text\n"),
+            ("an empty file", b""),
             ("past the member count", _archive(_tar(many))),
             ("a directory", _archive(_tar(extra=_directory))),
             ("a symbolic link", _archive(_tar(extra=_symbolic_link))),
@@ -1604,12 +1650,20 @@ class FrozenArchiveCollectionTests(unittest.TestCase):
         self.assertEqual(_content(data), snapshot["files"][0].get("content"))
         for name, entry in (
             ("a patch", _archive_file(data, patch="@@ -0,0 +1 @@\n+a")),
+            (
+                "a patch that only removes",
+                _archive_file(data, "modified", patch="@@ -1 +0,0 @@\n-a", additions=0),
+            ),
             ("additions without a patch", _archive_file(data, additions=1)),
             ("a removal", _archive_file(data, "removed")),
             ("a rename", _archive_file(data, "renamed", previous="docs/old.tar.gz")),
             ("a mode change", _archive_file(data, "changed")),
             ("an empty blob", _file(ARCHIVE, "added", blob=EMPTY_BLOB)),
             ("no blob", _file(ARCHIVE, "added", blob=None)),
+            (
+                "a blob that is not an id",
+                _file(ARCHIVE, "added", blob="../" + "0" * 37),
+            ),
         ):
             with self.subTest(name):
                 snapshot, reads = _collect_blobs([entry], blobs)
@@ -1654,6 +1708,12 @@ class FrozenArchiveCollectionTests(unittest.TestCase):
                 "content that is not base64",
                 _archive_file(data),
                 _blob_reply(data, content="not base64!"),
+                None,
+            ),
+            (
+                "base64 with a character outside its alphabet",
+                _archive_file(data),
+                _blob_reply(data, content="*" + _content(data)),
                 None,
             ),
             (
