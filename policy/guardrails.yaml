@@ -854,8 +854,11 @@ guardrails:
       - policy/merge-suppression-markers.yaml
       - policy/merge-trust-roots.yaml
       - policy/analyzer-debt-ledger.yaml
+      - policy/merge-frozen-archives.yaml
+      - tools/archive_members.py
       - knowledge/decisions/0129-match-inherited-analyzer-debt-against-a-protected-ledger.md
       - knowledge/decisions/0132-read-optional-providers-complete-reports-for-findings-never-for-coverage.md
+      - knowledge/decisions/0134-read-an-owner-declared-frozen-evidence-archive-whole-for-m13.md
       - tools/cli.py
       - ci/review_github_current_state.py
       - tools/github_rest.py

@@ -21,20 +21,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
-import io
-import lzma
 import os
 import platform
 import sys
-import tarfile
 import urllib.parse
 import urllib.request
-import zlib
 from collections.abc import Callable, Mapping
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-from tools import github_rest, quality_evidence, security_scan
+from tools import archive_members, github_rest, quality_evidence, security_scan
 
 SOURCE_HOST = "github.com"
 # Where GitHub serves a release download after one redirect (measured for the pinned assets, #389 6530146486).
@@ -42,9 +38,7 @@ ASSET_HOST = "release-assets.githubusercontent.com"
 # The largest pinned asset is Hadolint's aarch64 executable, 60,491,096 bytes.
 MAX_ASSET_BYTES = 96 * 1024 * 1024
 FETCH_SECONDS = 300.0
-_XZ_MAGIC = b"\xfd7zXZ\x00"
 _CREDENTIAL_HEADERS = ("Authorization", "Cookie", "Proxy-authorization")
-_GZIP_MAGIC = b"\x1f\x8b"
 
 
 class AcquisitionError(RuntimeError):
@@ -129,56 +123,13 @@ def fetch(
     return raw
 
 
-def _checked_member_name(name: str) -> str:
-    parts = PurePosixPath(name).parts
-    if (
-        name.startswith("/")
-        or "//" in name
-        or not parts
-        or any(part in (".", "..") for part in parts)
-    ):
-        raise AcquisitionError(
-            f"member name {name!r} is not a plain path inside the archive"
-        )
-    return name
-
-
 def member_bytes(raw: bytes, name: str, max_bytes: int) -> bytes:
-    """The bytes of the one regular member `name` of an xz or gzip tar archive, decompressed under `max_bytes`."""
-    _checked_member_name(name)
-    decompressor: Any
-    if raw.startswith(_XZ_MAGIC):
-        decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
-    elif raw.startswith(_GZIP_MAGIC):
-        decompressor = zlib.decompressobj(wbits=31)
-    else:
-        raise AcquisitionError("the asset is not an xz or gzip archive")
+    """The bytes of the one regular member `name` of an xz or gzip tar archive, decompressed under `max_bytes`, read
+    by the bounded reader merge evidence shares (Decision 0134, item 4)."""
     try:
-        data = decompressor.decompress(raw, max_bytes + 1)
-    except (lzma.LZMAError, zlib.error) as exc:
-        raise AcquisitionError(f"the archive does not decompress: {exc}") from exc
-    if len(data) > max_bytes:
-        raise AcquisitionError(f"the archive decompresses past {max_bytes} bytes")
-    if not decompressor.eof:
-        raise AcquisitionError("the archive is truncated")
-    try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
-            members = [member for member in archive.getmembers() if member.name == name]
-            # A sparse member is "regular" to tarfile, and reading it expands its holes past what was decompressed
-            # (Cubic on #471): it is refused, and the read is bounded whatever the member claims.
-            if len(members) != 1 or not members[0].isreg() or members[0].issparse():
-                raise AcquisitionError(
-                    f"member {name} is not exactly one regular, non-sparse file in the archive"
-                )
-            stream = archive.extractfile(members[0])
-            if stream is None:
-                raise AcquisitionError(f"member {name} cannot be read")
-            member = stream.read(max_bytes + 1)
-    except tarfile.TarError as exc:
-        raise AcquisitionError(f"the archive is not a readable tar: {exc}") from exc
-    if len(member) > max_bytes:
-        raise AcquisitionError(f"member {name} is past {max_bytes} bytes")
-    return member
+        return archive_members.member_bytes(raw, name, max_bytes)
+    except archive_members.ArchiveError as exc:
+        raise AcquisitionError(str(exc)) from exc
 
 
 def _install(root: Path, name: str, data: bytes, digest: str) -> None:

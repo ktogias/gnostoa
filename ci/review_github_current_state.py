@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from tools import github_events, github_rest
+from tools.agent_review_base import blob_id
 from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
@@ -1181,6 +1183,86 @@ def _normalize_file(value: Any) -> dict[str, Any]:
     }
 
 
+# A hunkless file's content, which the producer reads when the protected target
+# declares the file a frozen archive (Decision 0134, item 2): at most this many
+# blob reads per comparison, each blob at most this many bytes, and at most this
+# many bytes attached in all.
+_MAX_BLOB_READS = 8
+_MAX_BLOB_BYTES = 1_048_576
+_MAX_BLOB_TOTAL = 4_194_304
+_BLOB_ID = re.compile(r"[0-9a-f]{40}", re.ASCII)
+_EMPTY_BLOB = blob_id(b"")
+_BLOB_STATUSES = frozenset({"added", "modified"})
+
+
+def _blob_bytes(client: JsonReader, root: str, blob: str) -> bytes | None:
+    """One blob's bytes, or None unless GitHub's answer is that blob in base64, of
+    the size it states, at most `_MAX_BLOB_BYTES`, and the bytes' blob id is it."""
+
+    try:
+        payload, _ = client.get(f"{root}/git/blobs/{blob}")
+    except ProviderReadError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    size, content = payload.get("size"), payload.get("content")
+    if (
+        payload.get("sha") != blob
+        or payload.get("encoding") != "base64"
+        or type(size) is not int
+        or size > _MAX_BLOB_BYTES
+        or not isinstance(content, str)
+    ):
+        return None
+    try:
+        # GitHub breaks the base64 into lines; nothing else is accepted.
+        data = base64.b64decode("".join(content.split()), validate=True)
+    except ValueError:
+        return None
+    return data if len(data) == size and blob_id(data) == blob else None
+
+
+def _attach_blob_contents(
+    client: JsonReader,
+    root: str,
+    files: list[dict[str, Any]],
+    blobs: dict[str, bytes | None],
+) -> None:
+    """Attach, as `content` in base64 on one line, the verified bytes of each
+    changed file the comparison lists as it lists a binary: added or modified, with
+    no patch and 0 additions, and a blob that is not empty. L1 reads no
+    declaration; what it does not attach leaves the file as it was, and the file
+    list's coverage is unchanged. Past either the read count or the total, a later
+    file gets no content. A blob's bytes are a function of its id, so each blob is
+    read once per collection: `blobs` keeps every read's result, a refusal
+    included, for the confirming pass."""
+
+    reads = total = 0
+    for item in files:
+        blob = item["blob"]
+        if not (
+            item["status"] in _BLOB_STATUSES
+            and item["patch"] is None
+            and item["additions"] == 0
+            and isinstance(blob, str)
+            and blob != _EMPTY_BLOB
+            and _BLOB_ID.fullmatch(blob)
+        ):
+            continue
+        if reads == _MAX_BLOB_READS:
+            return
+        reads += 1
+        if blob not in blobs:
+            blobs[blob] = _blob_bytes(client, root, blob)
+        data = blobs[blob]
+        if data is None:
+            continue
+        if total + len(data) > _MAX_BLOB_TOTAL:
+            return
+        total += len(data)
+        item["content"] = base64.b64encode(data).decode("ascii")
+
+
 def _capped(coverage: dict[str, Any], cap: int, reason: str) -> dict[str, Any]:
     if coverage.get("status") == "COMPLETE" and coverage.get("count", 0) >= cap:
         return {**coverage, "status": "PARTIAL", "reason": reason}
@@ -1188,12 +1270,15 @@ def _capped(coverage: dict[str, Any], cap: int, reason: str) -> dict[str, Any]:
 
 
 def _comparison_sources(
-    client: JsonReader, root: str, subject: dict[str, Any]
+    client: JsonReader,
+    root: str,
+    subject: dict[str, Any],
+    blobs: dict[str, bytes | None],
 ) -> dict[str, tuple[list[dict[str, Any]], dict[str, Any]]]:
     """The commits and changed files of the comparison of the subject's exact base
     and head, which L1 already reads for the merge base. Both lists are a function
     of the two commits, so neither can be another head's (cubic and Claude on
-    #413)."""
+    #413). A hunkless file carries its blob's verified content (Decision 0134)."""
 
     url = f"{root}/compare/{subject['base_commit']}...{subject['head_commit']}"
     try:
@@ -1232,6 +1317,7 @@ def _comparison_sources(
         _COMPARE_FILE_CAP,
         "file_list_cap",
     )
+    _attach_blob_contents(client, root, files, blobs)
     return {"commits": (commits, commit_coverage), "files": (files, file_coverage)}
 
 
@@ -1366,11 +1452,13 @@ def _collect_merge_evidence_once(
     pull_number: int,
     observed_at: str | None,
     merge_evidence: bool,
+    blobs: dict[str, bytes | None],
 ) -> dict[str, Any]:
     """One pass of L1's collector, and, when asked, what the merge-evidence
     adapter reads (#407, slice 1b.3a). The collector itself is unchanged; the pull
     request is read again here, and a head that moved in between is refused, as
-    the collector refuses a changed identity."""
+    the collector refuses a changed identity. `blobs` holds the collection's blob
+    reads, shared by its passes."""
 
     snapshot = _collect_snapshot_once(
         client,
@@ -1402,7 +1490,8 @@ def _collect_merge_evidence_once(
     ):
         raise ProviderReadError("Pull Request changed during collection")
     snapshot["subject"].update(_merge_evidence_subject(pull_payload))
-    for name, (items, coverage) in _comparison_sources(client, root, subject).items():
+    comparison = _comparison_sources(client, root, subject, blobs)
+    for name, (items, coverage) in comparison.items():
         snapshot[name] = items
         snapshot["coverage"][name] = coverage
     _mark_edits(client, snapshot, repository, pull_number)
@@ -1444,6 +1533,7 @@ def collect_snapshot(
     previous: dict[str, Any] | None = None
     previous_cut: str | None = None
     snapshot: dict[str, Any] = {}
+    blobs: dict[str, bytes | None] = {}
     for attempt in range(1, _MAX_COLLECTION_PASSES + 1):
         read_started_at = _now()
         snapshot = _collect_merge_evidence_once(
@@ -1452,6 +1542,7 @@ def collect_snapshot(
             pull_number=pull_number,
             observed_at=observed_at,
             merge_evidence=merge_evidence,
+            blobs=blobs,
         )
         read_completed_at = _now()
         if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):
