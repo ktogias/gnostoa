@@ -115,9 +115,16 @@ routed the repair before #489's guarded merge is retried (source `route`).
 - `tests/test_merge_admission_relay.py::ReadBackTests` was RED on `main` `1a79ef0d` (source
   `red`): its 7 tests gave 6 failures and 9 errors, each failing for the defect, and the
   refusal characterization passed. All 7 pass after this change.
-- The relay, guard, queue, workflow and REST suites stay green.
-- A mutation kill-check of `read_run`, `_read_back`, `_post` and `_cancel` runs with the
-  existing runner.
+- A kill-check of the implementation added 5 tests for what its mutants showed unbound:
+  - a spent deadline, a refused redirect and an origin refusal are never retried;
+  - a run that reads back otherwise is never cancelled;
+  - a run that reads back as no run is never looked up in the latest view;
+  - the fallback serves `_complete` and `_post`'s unknown-outcome path;
+  - a cancellation that fails still fails `UNKNOWN`.
+
+  All 30 mutants of the classification, the bound, the pauses, the answer's check, the
+  fallback and the cancellation then fail a test in `ReadBackTests`.
+- The relay, guard and queue suites stay green.
 
 ## Consequences
 
