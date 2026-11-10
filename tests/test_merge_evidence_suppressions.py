@@ -1004,9 +1004,10 @@ SHIPPED_ARCHIVE = {
 
 
 def _blob_id(data: bytes) -> str:
-    """Git's object id for `data` as a blob, which a comparison's `sha` holds."""
+    """Git's object id for `data` as a blob, which a comparison's `sha` holds,
+    computed apart from both implementations under test."""
 
-    return hashlib.sha1(
+    return hashlib.sha1(  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- test-only: Git's blob id is SHA-1 by definition
         b"blob %d\0" % len(data) + data, usedforsecurity=False
     ).hexdigest()
 
@@ -1055,18 +1056,19 @@ def _sparse(archive: tarfile.TarFile) -> None:
 def _tar(
     members: Sequence[tuple[str, bytes]] = MEMBERS,
     *,
-    extra: Callable[[tarfile.TarFile], None] | None = None,
+    then: Callable[[tarfile.TarFile], None] | None = None,
     size: int | None = None,
 ) -> bytes:
-    """A tar of regular members, built natively, with `extra` added after them, and
-    zero bytes past its end to make it `size` bytes, which a tar reader ignores."""
+    """A tar of regular members, built natively, with what `then` adds after them,
+    and zero bytes past its end to make it `size` bytes, which a tar reader
+    ignores."""
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
         for name, data in members:
             _regular(archive, name, data)
-        if extra is not None:
-            extra(archive)
+        if then is not None:
+            then(archive)
     tar = buffer.getvalue()
     return tar if size is None else tar + bytes(size - len(tar))
 
@@ -1138,14 +1140,19 @@ def _frozen(
 
 # MEMBERS' markers, in member order and then in line order.
 FROZEN = [
-    _frozen("spike.py", 1, "noqa"),
-    _frozen("spike.py", 3, "# type: ignore", " stub"),
-    _frozen("eval.py", 1, "noqa", " kept"),
+    _frozen("spike.py", 1, "noqa"),  # not a suppression -- an expected record
+    _frozen("spike.py", 3, "# type: ignore", " stub"),  # not one -- the same
+    _frozen("eval.py", 1, "noqa", " kept"),  # not a suppression -- the same
 ]
 
 
-class _ProtectedArchiveTarget(unittest.TestCase):
-    """A protected target with the M13 and M15 declarations. Each case writes, or
+class FrozenArchiveTests(unittest.TestCase):
+    """M13 over a declared frozen archive (I1-I5 and I7 of 6761333802): read whole
+    within bounds, each marker of its members listed as frozen; anything else as
+    today. Where today's outcome is already PARTIAL, a case's control first reads
+    the same archive, so the case fails before the change for the missing read.
+
+    The protected target has the M13 and M15 declarations. Each case writes, or
     removes, its frozen-archive declaration before it reads the evidence through
     `evidence_for`, the function the command and the guarded merge both call."""
 
@@ -1211,25 +1218,16 @@ class _ProtectedArchiveTarget(unittest.TestCase):
             ),
         )
 
-
-class FrozenArchiveTests(_ProtectedArchiveTarget):
-    """M13 over a declared frozen archive (I1-I5 and I7 of 6761333802): read whole
-    within bounds, each marker of its members listed as frozen; anything else as
-    today. Where today's outcome is already PARTIAL, a case's control first reads
-    the same archive, so the case fails before the change for the missing read."""
-
     def test_a_declared_archive_is_read_whole_and_its_markers_are_frozen(
         self,
     ) -> None:
         data = _archive()
         ordinary = _file("tools/x.py", "added", patch="@@ -0,0 +1 @@\n+a  # noqa -- r")
+        found = [_found("tools/x.py", 1, "noqa", " r"), *FROZEN]  # not one -- expected
         for status in ("added", "modified"):
             with self.subTest(status):
                 self.assertEqual(
-                    {
-                        "coverage": "COMPLETE",
-                        "found": [_found("tools/x.py", 1, "noqa", " r"), *FROZEN],
-                    },
+                    {"coverage": "COMPLETE", "found": found},
                     self._suppressions_of(
                         [ordinary, _archive_file(data, status)],
                         {ARCHIVE: data},
@@ -1342,8 +1340,9 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
 
         data = _archive()
         self._assert_read(data, FROZEN)
+        added = "@@ -0,0 +1 @@\n+a  # noqa"  # not one -- a fixture's added line
         for name, entry in (
-            ("a patch", _archive_file(data, patch="@@ -0,0 +1 @@\n+a  # noqa")),
+            ("a patch", _archive_file(data, patch=added)),
             (
                 "a patch that only removes",
                 _archive_file(data, "modified", patch="@@ -1 +0,0 @@\n-a", additions=0),
@@ -1407,6 +1406,7 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
             ("a member's data cut short", _archive(_cut_in_last_member(tar))),
             ("a second tar after the end", _archive(tar + _tar(LATE))),
             ("bytes after the end", _archive(tar + b"late")),
+            ("a zero block before the first member", _archive(bytes(512) + tar)),
             (
                 "a header cut short after the last member",
                 _archive(_cut_in_last_member(_tar((*MEMBERS, *LATE)), header=True)),
@@ -1415,10 +1415,10 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
             ("bytes that are no archive", b"plain text\n"),
             ("an empty file", b""),
             ("past the member count", _archive(_tar(many))),
-            ("a directory", _archive(_tar(extra=_directory))),
-            ("a symbolic link", _archive(_tar(extra=_symbolic_link))),
-            ("a hard link", _archive(_tar(extra=_hard_link))),
-            ("a sparse member", _archive(_tar(extra=_sparse))),
+            ("a directory", _archive(_tar(then=_directory))),
+            ("a symbolic link", _archive(_tar(then=_symbolic_link))),
+            ("a hard link", _archive(_tar(then=_hard_link))),
+            ("a sparse member", _archive(_tar(then=_sparse))),
             ("an absolute name", _archive(_tar((*MEMBERS, ("/abs.py", b"x\n"))))),
             ("a parent segment", _archive(_tar((*MEMBERS, ("a/../b.py", b"x\n"))))),
             ("a current segment", _archive(_tar((*MEMBERS, ("./c.py", b"x\n"))))),
@@ -1471,7 +1471,7 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
         def charged(size: int) -> tuple[dict[str, Any], int]:
             reason = "r" * size
             cost = merge_evidence_github.suppression_record_bytes(
-                _found("tools/t.py", 1, "noqa", reason)
+                _found("tools/t.py", 1, "noqa", reason)  # not a suppression -- a record
             )
             patch = f"@@ -0,0 +1 @@\n+a  # noqa --{reason}"
             return _file("tools/t.py", "added", patch=patch), cost
@@ -1536,10 +1536,11 @@ class FrozenArchiveTests(_ProtectedArchiveTarget):
         ):
             cases.append((name, _archives(data, **change)))
         for name, document in cases:
+            # The listing is built before its block, so only the read can raise
+            # (Sonar S5778 on #489).
+            files = [_archive_file(data)]
             with self.subTest(name), self.assertRaises(INPUT_ERRORS):
-                self._evidence(
-                    [_archive_file(data)], {ARCHIVE: data}, declared=document
-                )
+                self._evidence(files, {ARCHIVE: data}, declared=document)
 
     def test_the_declaration_is_read_from_the_project_root_only(self) -> None:
         """I7: the candidate's own declaration in its diff declares nothing; without
@@ -1839,16 +1840,16 @@ class FrozenVerdictTests(unittest.TestCase):
         )
 
     def test_a_record_that_is_not_frozen_still_denies(self) -> None:
-        justified = _found("tools/z.py", 1, "noqa", "why")
+        justified = _found("tools/z.py", 1, "noqa", "why")  # not one -- a record
         evidence = _verdict_evidence()
         evidence["suppressions"]["found"] = [
             *copy.deepcopy(FROZEN),
-            _found("tools/y.py", 12, "noqa"),
+            _found("tools/y.py", 12, "noqa"),  # not a suppression -- a record
             justified,
         ]
         verdict = _verdict(evidence)
         self.assertEqual(
-            ["noqa in tools/y.py:12 has no justification"],
+            ["noqa in tools/y.py:12 has no justification"],  # not one -- a reason
             _verdict_failed(verdict)["M13"],
         )
         self.assertEqual([justified], verdict["for_approval"]["suppressions"])

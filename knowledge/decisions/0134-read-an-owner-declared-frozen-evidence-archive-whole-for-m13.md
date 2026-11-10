@@ -67,7 +67,7 @@ evaluation. The packet read it from its exact blob (source `packet`):
 - blob `585d4608efc744818e06d773840ace0806b693a0`, SHA-256
   `f682e3bcc1fc12fc843f1bcaaa64905867d5f4782d9f038130d822f7800c3ea3`;
 - 8,775 bytes of gzip, 40,960 bytes of tar, 13 regular members with flat, unique names;
-- 10 marker occurrences, none with a reason: 6 `noqa` and 4 `# type: ignore`.
+- 10 marker occurrences, none with a reason: 6 of Ruff's inline marker and 4 of mypy's.
 
 It was #396's only remaining M13 cause. The plan offered three options (source `plan`).
 The Owner chose (c), a Decision 0112 amendment in its own protected change (source
@@ -112,9 +112,9 @@ The Owner chose (c), a Decision 0112 amendment in its own protected change (sour
    - the blob id recomputed from the decoded bytes is the listed one.
 
    A refused read attaches nothing too, and the file list's coverage stays as it was. At
-   most 8 blobs are read per comparison, in its order, and at most 4 MiB attached in all;
-   a later file gets no content. L1 reads no declaration: an attached file that no entry
-   names is `PARTIAL`, as today.
+   most 8 distinct blobs are read per comparison, in its order, and at most 4 MiB attached
+   in all; a blob listed again is no second read, and a later file gets no content. L1
+   reads no declaration: an attached file that no entry names is `PARTIAL`, as today.
 3. **The producer's read.** A hunkless file is read as a frozen archive only when one entry
    names its path, and:
    - its listed blob, the blob id recomputed from its `content` and that content's SHA-256
@@ -128,7 +128,8 @@ The Owner chose (c), a Decision 0112 amendment in its own protected change (sour
    - **gzip:** one member, at most 8 MiB decompressed. The stream ends, with nothing after
      it.
    - **tar:** at most 256 members. Each is a regular, non-sparse file with a plain relative
-     name, and no name repeats.
+     name, and no name repeats. Only zero bytes follow the last member's data, so a second
+     tar, or a header cut short, after it is refused rather than left unread.
    - **text:** each member is strict UTF-8. Its lines are split at line feeds, as a
      patch's are.
 

@@ -1185,8 +1185,8 @@ def _normalize_file(value: Any) -> dict[str, Any]:
 
 # A hunkless file's content, which the producer reads when the protected target
 # declares the file a frozen archive (Decision 0134, item 2): at most this many
-# blob reads per comparison, each blob at most this many bytes, and at most this
-# many bytes attached in all.
+# distinct blobs read per comparison, each blob at most this many bytes, and at
+# most this many bytes attached in all.
 _MAX_BLOB_READS = 8
 _MAX_BLOB_BYTES = 1_048_576
 _MAX_BLOB_TOTAL = 4_194_304
@@ -1232,12 +1232,14 @@ def _attach_blob_contents(
     changed file the comparison lists as it lists a binary: added or modified, with
     no patch and 0 additions, and a blob that is not empty. L1 reads no
     declaration; what it does not attach leaves the file as it was, and the file
-    list's coverage is unchanged. Past either the read count or the total, a later
-    file gets no content. A blob's bytes are a function of its id, so each blob is
-    read once per collection: `blobs` keeps every read's result, a refusal
-    included, for the confirming pass."""
+    list's coverage is unchanged. Past either the count of distinct blobs or the
+    total, a later file gets no content. A blob's bytes are a function of its id,
+    so each blob is read once per collection: `blobs` keeps every read's result, a
+    refusal included, for the confirming pass. Each pass counts the distinct blobs
+    it meets, read or kept, so both passes stop at the same file."""
 
-    reads = total = 0
+    counted: set[str] = set()
+    total = 0
     for item in files:
         blob = item["blob"]
         if not (
@@ -1249,9 +1251,9 @@ def _attach_blob_contents(
             and _BLOB_ID.fullmatch(blob)
         ):
             continue
-        if reads == _MAX_BLOB_READS:
+        if blob not in counted and len(counted) == _MAX_BLOB_READS:
             return
-        reads += 1
+        counted.add(blob)
         if blob not in blobs:
             blobs[blob] = _blob_bytes(client, root, blob)
         data = blobs[blob]

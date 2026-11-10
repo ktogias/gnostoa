@@ -1127,7 +1127,9 @@ def git_blob_id(data: bytes) -> str:
     what the id is; it is compared, never trusted to authenticate."""
 
     header = b"blob %d\0" % len(data)
-    return hashlib.sha1(header + data, usedforsecurity=False).hexdigest()
+    return hashlib.sha1(  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- Git's blob id is SHA-1 by definition; compared, never trusted
+        header + data, usedforsecurity=False
+    ).hexdigest()
 
 
 # A declared archive's bounds (Decision 0134, item 3): those of its gzip stream,

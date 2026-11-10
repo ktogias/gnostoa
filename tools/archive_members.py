@@ -5,7 +5,8 @@ tar; merge evidence takes every member of an Owner-declared gzip tar (Decision 0
 `ArchiveError` that names why, when:
 - the archive is not one compressed stream of an accepted format, does not decompress, decompresses past its bound,
   is truncated, or has any data after the stream;
-- a member read has a name that is not a plain relative path, or is not a regular, non-sparse file.
+- a member read has a name that is not a plain relative path, or is not a regular, non-sparse file;
+- read whole, the tar has anything but zero bytes after the end of its members.
 
 Only the standard library is imported: merge evidence is a supported entrypoint, and its whole import closure is
 bound into the candidate's source digest (SB2)."""
@@ -101,11 +102,12 @@ def gzip_tar_members(
 ) -> list[tuple[str, bytes]]:
     """Every member of a gzip tar archive, in its order, with its bytes. The archive is one gzip stream, decompressed
     under `max_bytes`, with nothing after it; it has at most `max_members` members, each a regular, non-sparse file
-    with a plain relative name that no other member has. Any refusal reads none of them. Anything but gzip does not
-    decompress."""
+    with a plain relative name that no other member has, and only zero bytes after the last one's data. Any refusal
+    reads none of them. Anything but gzip does not decompress."""
 
     data = _decompressed(raw, zlib.decompressobj(wbits=_GZIP_WBITS), max_bytes)
     members: dict[str, bytes] = {}
+    end = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
             # Read one header at a time, so the count is refused before the member past it is read.
@@ -122,6 +124,11 @@ def gzip_tar_members(
                 if name in members:
                     raise ArchiveError(f"member {name} is in the archive twice")
                 members[name] = _read(archive, info, max_bytes)
+                end = info.offset_data + len(members[name])
     except tarfile.TarError as exc:
         raise ArchiveError(f"the archive is not a readable tar: {exc}") from exc
+    # tarfile stops at the first zero block, or at a header cut short: what follows would never be read (Sourcery on
+    # #489). Only the end-of-archive blocks and the record's padding, all zero, may follow the last member.
+    if data[end:].strip(b"\0"):
+        raise ArchiveError("the archive has data after the end of its members")
     return list(members.items())

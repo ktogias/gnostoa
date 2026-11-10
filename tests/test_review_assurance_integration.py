@@ -288,7 +288,7 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertEqual("INCOMPLETE", payload["outcome"])
         self.assertEqual("BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE", payload["reason"])
-        self.assertIs(payload["binding"], False)
+        self.assertIs(False, payload["binding"])
 
     def test_exact_duplicate_observation_is_idempotent(self) -> None:
         fixture = _fixture()
