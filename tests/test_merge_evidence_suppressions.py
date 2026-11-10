@@ -7,14 +7,26 @@ suppression markers and the trust-root patterns. A marker in an added line is
 reported with its head line and its same-line reason; a changed trust root is
 reported with every name it has. Anything the comparison does not show
 completely leaves the observation incomplete, never an empty complete list.
+
+A hunkless file that the protected target's frozen-archive declaration names by
+path, blob and SHA-256 is read whole from the content L1 attaches, and every
+marker in its members is listed as frozen evidence, shown for the approval and
+denying nothing (Decision 0112's amendment, option (c): the admission packet
+#389 6761333802 and the PAO's assessment 6761351016).
 """
 
 from __future__ import annotations
 
+import base64
 import copy
+import gzip
+import hashlib
+import io
 import json
+import tarfile
 import tempfile
 import unittest
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -25,6 +37,7 @@ from tests.merge_admission_support import _evidence as _verdict_evidence
 from tests.merge_admission_support import _failed as _verdict_failed
 from tests.merge_admission_support import _verdict
 from tests.merge_evidence_github_support import (
+    API,
     COMPARE,
     HEAD,
     REQUIRED_CHECKS,
@@ -32,6 +45,7 @@ from tests.merge_evidence_github_support import (
     _authorities,
     _commit,
     _comparison,
+    _merge_evidence_guardrail,
     _policy,
     _project,
     _replies,
@@ -40,7 +54,7 @@ from tests.merge_evidence_github_support import (
     unregistered_tests,
 )
 from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
-from tools import assurance_completeness, merge_evidence_github
+from tools import assurance_completeness, merge_admission, merge_evidence_github
 
 # What `knowledge merge-evidence` reports as an input error.
 INPUT_ERRORS = (
@@ -134,11 +148,10 @@ def _file(
 
 
 def _collected(files: list[dict[str, Any]]) -> dict[str, Any]:
-    replies = _replies()
-    replies[COMPARE] = _comparison(
-        [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], files
-    )
-    return _snapshot(replies)
+    """L1's merge-evidence snapshot of `files`. A blob read, which a hunkless file
+    may cause, is refused as the client refuses one (see _collect_blobs)."""
+
+    return _collect_blobs(files, {})[0]
 
 
 def _markers(document: dict[str, Any] | None = None) -> Any:
@@ -959,6 +972,814 @@ class VerdictTests(unittest.TestCase):
         failed = _verdict_failed(_verdict(evidence))
         self.assertNotIn("M13", failed)
         self.assertIn("M17", failed)
+
+
+# The frozen-archive declaration on the protected target, its one format, and the
+# Decision that admits the entry the repository ships (6761333802 sections 3.1, 3.5).
+FROZEN_ARCHIVES = Path("policy") / "merge-frozen-archives.yaml"
+ARCHIVE = "knowledge/assessments/x-evidence/scripts.tar.gz"
+ARCHIVE_DECISION = "0134"
+# Each member's markers, as MARKERS_DOCUMENT declares them: one unjustified, two
+# justified, and a member with none.
+MEMBERS: tuple[tuple[str, bytes], ...] = (
+    ("spike.py", b"import os  # noqa\nx = 1\ny = f()  # type: ignore -- stub\n"),
+    ("notes.txt", b"plain\n"),
+    ("eval.py", b"z = 2  # noqa -- kept"),
+)
+# The packet's bounds (6761333802 section 5).
+EXPANDED_BOUND = 8 * 1024 * 1024
+MEMBER_BOUND = 256
+BLOB_BOUND = 1024 * 1024
+BLOB_TOTAL = 4 * 1024 * 1024
+BLOB_READS = 8
+# The archive of #396 that the owner chose under (c), read from its exact blob
+# (6761333802 section 2), as the protected declaration ships it (PAO Q3).
+SHIPPED_ARCHIVE = {
+    "path": "knowledge/assessments/0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz",
+    "blob": "585d4608efc744818e06d773840ace0806b693a0",  # pragma: allowlist secret -- public Git blob id
+    "sha256": "f682e3bcc1fc12fc843f1bcaaa64905867d5f4782d9f038130d822f7800c3ea3",  # pragma: allowlist secret -- public archive digest
+    "format": "tar+gzip",
+    "decision": ARCHIVE_DECISION,
+}
+
+
+def _blob_id(data: bytes) -> str:
+    """Git's object id for `data` as a blob, which a comparison's `sha` holds."""
+
+    return hashlib.sha1(
+        b"blob %d\0" % len(data) + data, usedforsecurity=False
+    ).hexdigest()
+
+
+def _content(data: bytes) -> str:
+    """The content L1 attaches: the blob's bytes in base64, on one line."""
+
+    return base64.b64encode(data).decode("ascii")
+
+
+def _regular(archive: tarfile.TarFile, name: str, data: bytes) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    archive.addfile(info, io.BytesIO(data))
+
+
+def _directory(archive: tarfile.TarFile) -> None:
+    info = tarfile.TarInfo("sub")
+    info.type = tarfile.DIRTYPE
+    archive.addfile(info)
+
+
+def _symbolic_link(archive: tarfile.TarFile) -> None:
+    info = tarfile.TarInfo("link.py")
+    info.type = tarfile.SYMTYPE
+    info.linkname = "spike.py"
+    archive.addfile(info)
+
+
+def _hard_link(archive: tarfile.TarFile) -> None:
+    info = tarfile.TarInfo("again.py")
+    info.type = tarfile.LNKTYPE
+    info.linkname = "spike.py"
+    archive.addfile(info)
+
+
+def _sparse(archive: tarfile.TarFile) -> None:
+    """A PAX sparse member: 4 stored bytes and a mebibyte of logical ones."""
+
+    info = tarfile.TarInfo("holes.py")
+    info.size = 4
+    info.pax_headers = {"GNU.sparse.map": "0,4", "GNU.sparse.realsize": str(1 << 20)}
+    archive.addfile(info, io.BytesIO(b"abcd"))
+
+
+def _tar(
+    members: Sequence[tuple[str, bytes]] = MEMBERS,
+    *,
+    extra: Callable[[tarfile.TarFile], None] | None = None,
+    size: int | None = None,
+) -> bytes:
+    """A tar of regular members, built natively, with `extra` added after them, and
+    zero bytes past its end to make it `size` bytes, which a tar reader ignores."""
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for name, data in members:
+            _regular(archive, name, data)
+        if extra is not None:
+            extra(archive)
+    tar = buffer.getvalue()
+    return tar if size is None else tar + bytes(size - len(tar))
+
+
+def _archive(tar: bytes | None = None) -> bytes:
+    """One gzip member of `tar`, by default of MEMBERS."""
+
+    return gzip.compress(_tar() if tar is None else tar, mtime=0)
+
+
+def _archives(data: bytes, **changes: Any) -> dict[str, Any]:
+    """A frozen-archive declaration whose one entry names `data` at ARCHIVE."""
+
+    entry = {
+        "path": ARCHIVE,
+        "blob": _blob_id(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "format": "tar+gzip",
+        "decision": ARCHIVE_DECISION,
+        **changes,
+    }
+    return {
+        "schema_version": "1.0",
+        "id": "example.merge-frozen-archives",
+        "version": "0.1.0",
+        "archives": [entry],
+    }
+
+
+def _archive_file(data: bytes, status: str = "added", **changes: Any) -> dict[str, Any]:
+    """The comparison's entry for `data` at ARCHIVE: by default no patch and no
+    additions, as GitHub lists a binary."""
+
+    return _file(ARCHIVE, status, blob=_blob_id(data), **changes)
+
+
+def _attached(
+    files: list[dict[str, Any]], contents: Mapping[str, bytes | str]
+) -> dict[str, Any]:
+    """L1's snapshot of `files`, with the content L1 would attach to each named file:
+    bytes as L1 encodes them, text as given."""
+
+    snapshot = _collected(files)
+    for item in snapshot["files"]:
+        value = contents.get(item["path"])
+        if value is not None:
+            item["content"] = value if isinstance(value, str) else _content(value)
+    return snapshot
+
+
+def _frozen(
+    member: str, line: int, marker: str, reason: str = "", path: str = ARCHIVE
+) -> dict[str, Any]:
+    return {**_found(path, line, marker, reason), "member": member, "frozen": True}
+
+
+# MEMBERS' markers, in member order and then in line order.
+FROZEN = [
+    _frozen("spike.py", 1, "noqa"),
+    _frozen("spike.py", 3, "# type: ignore", " stub"),
+    _frozen("eval.py", 1, "noqa", " kept"),
+]
+
+
+class _ProtectedArchiveTarget(unittest.TestCase):
+    """A protected target with the M13 and M15 declarations. Each case writes, or
+    removes, its frozen-archive declaration before it reads the evidence through
+    `evidence_for`, the function the command and the guarded merge both call."""
+
+    project: Path
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        cls.project = _project(Path(directory.name))
+        for name, document in (
+            ("merge-suppression-markers.yaml", MARKERS_DOCUMENT),
+            ("merge-trust-roots.yaml", ROOTS_DOCUMENT),
+        ):
+            (cls.project / "policy" / name).write_text(
+                yaml.safe_dump(document), encoding="utf-8"
+            )
+
+    def _evidence(
+        self,
+        files: list[dict[str, Any]],
+        contents: Mapping[str, bytes | str],
+        *,
+        declared: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        target = self.project / FROZEN_ARCHIVES
+        if declared is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_text(yaml.safe_dump(declared), encoding="utf-8")
+        evidence: dict[str, Any] = merge_evidence_github.evidence_for(
+            _attached(files, contents), project_root=self.project
+        )
+        return evidence
+
+    def _suppressions_of(
+        self,
+        files: list[dict[str, Any]],
+        contents: Mapping[str, bytes | str],
+        *,
+        declared: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        record: dict[str, Any] = self._evidence(files, contents, declared=declared)[
+            "suppressions"
+        ]
+        return record
+
+    def _assert_read(self, data: bytes, found: list[dict[str, Any]]) -> None:
+        """The control: `data`, declared and attached, is read with `found`."""
+
+        self.assertEqual(
+            {"coverage": "COMPLETE", "found": found},
+            self._suppressions_of(
+                [_archive_file(data)], {ARCHIVE: data}, declared=_archives(data)
+            ),
+        )
+
+
+class FrozenArchiveTests(_ProtectedArchiveTarget):
+    """M13 over a declared frozen archive (I1-I5 and I7 of 6761333802): read whole
+    within bounds, each marker of its members listed as frozen; anything else as
+    today. Where today's outcome is already PARTIAL, a case's control first reads
+    the same archive, so the case fails before the change for the missing read."""
+
+    def test_a_declared_archive_is_read_whole_and_its_markers_are_frozen(
+        self,
+    ) -> None:
+        data = _archive()
+        ordinary = _file("tools/x.py", "added", patch="@@ -0,0 +1 @@\n+a  # noqa -- r")
+        for status in ("added", "modified"):
+            with self.subTest(status):
+                self.assertEqual(
+                    {
+                        "coverage": "COMPLETE",
+                        "found": [_found("tools/x.py", 1, "noqa", " r"), *FROZEN],
+                    },
+                    self._suppressions_of(
+                        [ordinary, _archive_file(data, status)],
+                        {ARCHIVE: data},
+                        declared=_archives(data),
+                    ),
+                )
+
+    def test_a_declared_archive_meets_m13_and_is_shown_for_the_approval(
+        self,
+    ) -> None:
+        """The packet's acceptance C3, from evidence to verdict."""
+
+        data = _archive()
+        evidence = self._evidence(
+            [_archive_file(data)], {ARCHIVE: data}, declared=_archives(data)
+        )
+        verdict = merge_admission.evaluate(
+            evidence,
+            declaration=assurance_completeness.load_declaration(
+                ROOT / "policy" / "assurance-evidence.yaml", project_root=ROOT
+            ),
+            change_policy=_policy(),
+        )
+        self.assertNotIn("M13", _verdict_failed(verdict))
+        self.assertEqual([], verdict["for_approval"]["suppressions"])
+        self.assertEqual(FROZEN, verdict["for_approval"]["frozen_suppressions"])
+
+    def test_an_undeclared_binary_stays_partial(self) -> None:
+        """I1, characterization: without an entry for its path the archive is
+        PARTIAL with no record, as today, its content attached or not."""
+
+        data = _archive()
+        for name, contents, declared in (
+            ("no declaration", {ARCHIVE: data}, None),
+            ("no declaration and no content", {}, None),
+            (
+                "another path declared",
+                {ARCHIVE: data},
+                _archives(data, path="docs/other.tar.gz"),
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {"coverage": "PARTIAL", "found": []},
+                    self._suppressions_of(
+                        [_archive_file(data)], contents, declared=declared
+                    ),
+                )
+
+    def test_an_identity_mismatch_leaves_the_archive_partial(self) -> None:
+        """I2: the listed blob, the blob recomputed from the content and its SHA-256
+        must all be the entry's."""
+
+        data = _archive()
+        other = _archive(_tar((("other.py", b"x\n"),)))
+        self._assert_read(data, FROZEN)
+        for name, entry, content, declared in (
+            (
+                "another listed blob",
+                _file(ARCHIVE, "added", blob=_blob_id(other)),
+                data,
+                _archives(data),
+            ),
+            ("content of other bytes", _archive_file(data), other, _archives(data)),
+            (
+                "another declared blob",
+                _archive_file(data),
+                data,
+                _archives(data, blob="0" * 40),
+            ),
+            (
+                "another declared SHA-256",
+                _archive_file(data),
+                data,
+                _archives(data, sha256="0" * 64),
+            ),
+            (
+                "content that is not base64",
+                _archive_file(data),
+                "not base64!",
+                _archives(data),
+            ),
+            ("no content", _archive_file(data), None, _archives(data)),
+        ):
+            with self.subTest(name):
+                contents = {} if content is None else {ARCHIVE: content}
+                self.assertEqual(
+                    {"coverage": "PARTIAL", "found": []},
+                    self._suppressions_of([entry], contents, declared=declared),
+                )
+
+    def test_a_declared_path_with_hunks_or_another_status_is_read_as_today(
+        self,
+    ) -> None:
+        """I3: a patch, a count of additions, a cut patch, a removal, a rename or a
+        mode change is never read as an archive, whatever is declared and
+        attached."""
+
+        data = _archive()
+        self._assert_read(data, FROZEN)
+        for name, entry in (
+            ("a patch", _archive_file(data, patch="@@ -0,0 +1 @@\n+a  # noqa")),
+            ("additions without a patch", _archive_file(data, additions=2)),
+            (
+                "a truncated patch",
+                _archive_file(data, patch="@@ -0,0 +1,1 @@\n+" + "x" * RESPONSE_BUDGET),
+            ),
+            ("a removal", _archive_file(data, "removed")),
+            ("a rename", _archive_file(data, "renamed", previous="docs/old.tar.gz")),
+            ("a mode change", _archive_file(data, "changed")),
+        ):
+            with self.subTest(name):
+                today = self._suppressions_of([entry], {ARCHIVE: data}, declared=None)
+                declared = self._suppressions_of(
+                    [entry], {ARCHIVE: data}, declared=_archives(data)
+                )
+                self.assertEqual(today, declared)
+                self.assertFalse(any("frozen" in r for r in declared["found"]))
+
+    def test_each_archive_bound_leaves_it_partial_without_a_record(self) -> None:
+        """I4: the whole archive is checked before any record is built, so one
+        refusal lists none of its markers. At a bound it is still read."""
+
+        tar = _tar()
+        many = tuple((f"m{n:03d}.txt", b"x\n") for n in range(MEMBER_BOUND + 1))
+        for name, data, found in (
+            ("at the expanded bound", _archive(_tar(size=EXPANDED_BOUND)), FROZEN),
+            ("at the member count", _archive(_tar(many[:MEMBER_BOUND])), []),
+        ):
+            with self.subTest(name):
+                self._assert_read(data, found)
+        for name, data in (
+            ("past the expanded bound", _archive(_tar(size=EXPANDED_BOUND + 1))),
+            ("trailing bytes", _archive(tar) + b"\0"),
+            ("a second gzip member", _archive(tar) + gzip.compress(b"", mtime=0)),
+            ("a truncated stream", _archive(tar)[:-8]),
+            ("an uncompressed tar", tar),
+            ("bytes that are no archive", b"plain text\n"),
+            ("past the member count", _archive(_tar(many))),
+            ("a directory", _archive(_tar(extra=_directory))),
+            ("a symbolic link", _archive(_tar(extra=_symbolic_link))),
+            ("a hard link", _archive(_tar(extra=_hard_link))),
+            ("a sparse member", _archive(_tar(extra=_sparse))),
+            ("an absolute name", _archive(_tar((*MEMBERS, ("/abs.py", b"x\n"))))),
+            ("a parent segment", _archive(_tar((*MEMBERS, ("a/../b.py", b"x\n"))))),
+            ("a current segment", _archive(_tar((*MEMBERS, ("./c.py", b"x\n"))))),
+            ("an empty segment", _archive(_tar((*MEMBERS, ("a//d.py", b"x\n"))))),
+            ("a repeated name", _archive(_tar((*MEMBERS, ("spike.py", b"x\n"))))),
+            (
+                "a member that is not UTF-8",
+                _archive(_tar((*MEMBERS, ("bad.py", b"\xff\n")))),
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    {"coverage": "PARTIAL", "found": []},
+                    self._suppressions_of(
+                        [_archive_file(data)], {ARCHIVE: data}, declared=_archives(data)
+                    ),
+                )
+
+    def test_frozen_records_share_the_comparison_s_budgets(self) -> None:
+        """I5: a frozen record is charged as the command writes it, its member and
+        flag included, against the one count and byte budget of the comparison.
+        Past either, the list keeps its prefix and is PARTIAL."""
+
+        data = _archive()
+        declared = _archives(data)
+        cap = merge_evidence_github.MAX_SUPPRESSIONS
+
+        def lines(count: int) -> dict[str, Any]:
+            body = "\n".join("+a  # noqa -- r" for _ in range(count))
+            return _file("t.py", "added", patch=f"@@ -0,0 +1,{count} @@\n{body}")
+
+        fits = self._suppressions_of(
+            [lines(cap - len(FROZEN)), _archive_file(data)],
+            {ARCHIVE: data},
+            declared=declared,
+        )
+        self.assertEqual(("COMPLETE", cap), (fits["coverage"], len(fits["found"])))
+        self.assertEqual(FROZEN, fits["found"][-len(FROZEN) :])
+        over = self._suppressions_of(
+            [lines(cap - len(FROZEN) + 1), _archive_file(data)],
+            {ARCHIVE: data},
+            declared=declared,
+        )
+        self.assertEqual(("PARTIAL", cap), (over["coverage"], len(over["found"])))
+        self.assertEqual(FROZEN[:-1], over["found"][1 - len(FROZEN) :])
+
+        budget = merge_evidence_github.MAX_SUPPRESSION_BYTES
+        frozen = sum(merge_evidence_github.suppression_record_bytes(r) for r in FROZEN)
+
+        def charged(size: int) -> tuple[dict[str, Any], int]:
+            reason = "r" * size
+            cost = merge_evidence_github.suppression_record_bytes(
+                _found("tools/t.py", 1, "noqa", reason)
+            )
+            patch = f"@@ -0,0 +1 @@\n+a  # noqa --{reason}"
+            return _file("tools/t.py", "added", patch=patch), cost
+
+        # From a one-character reason, each more character costs one byte.
+        size = budget - frozen - (charged(1)[1] - 1)
+        exact, cost = charged(size)
+        self.assertEqual(budget, cost + frozen)
+        at = self._suppressions_of(
+            [exact, _archive_file(data)], {ARCHIVE: data}, declared=declared
+        )
+        self.assertEqual(
+            ("COMPLETE", 1 + len(FROZEN)), (at["coverage"], len(at["found"]))
+        )
+        past = self._suppressions_of(
+            [charged(size + 1)[0], _archive_file(data)],
+            {ARCHIVE: data},
+            declared=declared,
+        )
+        self.assertEqual(
+            ("PARTIAL", len(FROZEN)), (past["coverage"], len(past["found"]))
+        )
+
+    def test_the_declaration_is_closed_and_versioned(self) -> None:
+        """I7: in the convention of the other declarations, each entry closed and
+        typed; a declaration that is not is an input error."""
+
+        data = _archive()
+        entry = _archives(data)["archives"][0]
+        cases: list[tuple[str, dict[str, Any]]] = [
+            ("another schema", {**_archives(data), "schema_version": "2.0"}),
+            ("an unknown key", {**_archives(data), "extra": 1}),
+            ("no id", {**_archives(data), "id": ""}),
+            ("an empty list", {**_archives(data), "archives": []}),
+            ("not a list", {**_archives(data), "archives": entry}),
+            (
+                "an entry that is not a mapping",
+                {**_archives(data), "archives": [ARCHIVE]},
+            ),
+            ("a repeated path", {**_archives(data), "archives": [entry, entry]}),
+        ]
+        missing = _archives(data)
+        del missing["archives"]
+        cases.append(("no archives", missing))
+        for key in entry:
+            without = _archives(data)
+            del without["archives"][0][key]
+            cases.append((f"an entry without its {key}", without))
+        for name, change in (
+            ("an unknown entry key", {"owner": "ktogias"}),
+            ("a blob in capitals", {"blob": entry["blob"].upper()}),
+            ("a short blob", {"blob": entry["blob"][:39]}),
+            ("a SHA-256 in capitals", {"sha256": entry["sha256"].upper()}),
+            ("a short SHA-256", {"sha256": entry["sha256"][:63]}),
+            ("another format", {"format": "tar+xz"}),
+            ("a decision that is a number", {"decision": 134}),
+            ("a decision of three digits", {"decision": "134"}),
+            ("a blank path", {"path": " "}),
+            ("an absolute path", {"path": "/" + ARCHIVE}),
+            ("a parent segment in the path", {"path": "docs/../" + ARCHIVE}),
+            ("a path that is not text", {"path": 7}),
+        ):
+            cases.append((name, _archives(data, **change)))
+        for name, document in cases:
+            with self.subTest(name), self.assertRaises(INPUT_ERRORS):
+                self._evidence(
+                    [_archive_file(data)], {ARCHIVE: data}, declared=document
+                )
+
+    def test_the_declaration_is_read_from_the_project_root_only(self) -> None:
+        """I7: the candidate's own declaration in its diff declares nothing; without
+        one on the protected target, no archive is declared."""
+
+        data = _archive()
+        text = yaml.safe_dump(_archives(data)).splitlines()
+        patch = f"@@ -0,0 +1,{len(text)} @@\n" + "\n".join(f"+{line}" for line in text)
+        files = [
+            _file(str(FROZEN_ARCHIVES), "added", patch=patch),
+            _archive_file(data),
+        ]
+        self.assertEqual(
+            {"coverage": "PARTIAL", "found": []},
+            self._suppressions_of(files, {ARCHIVE: data}, declared=None),
+        )
+        self.assertEqual(
+            {"coverage": "COMPLETE", "found": FROZEN},
+            self._suppressions_of(files, {ARCHIVE: data}, declared=_archives(data)),
+        )
+
+    def test_the_repository_declaration_ships_the_owner_chosen_archive(self) -> None:
+        """Q3 (PAO 6761351016): the protected declaration names exactly the archive
+        the owner chose under (c), under the Decision that admits it, and the
+        guardrail lists it."""
+
+        path = ROOT / FROZEN_ARCHIVES
+        self.assertTrue(path.is_file(), f"{FROZEN_ARCHIVES} is missing")
+        self.assertEqual(
+            {
+                "schema_version": "1.0",
+                "id": "gnostoa.merge-frozen-archives",
+                "version": "0.1.0",
+                "archives": [SHIPPED_ARCHIVE],
+            },
+            yaml.safe_load(path.read_text(encoding="utf-8")),
+        )
+        self.assertIn(ARCHIVE_DECISION, merge_evidence_github.load_decisions(ROOT))
+        self.assertIn(
+            str(FROZEN_ARCHIVES), _merge_evidence_guardrail()["implementation"]
+        )
+
+
+def _blob_url(blob: str) -> str:
+    return f"{API}/git/blobs/{blob}"
+
+
+def _blob_reply(data: bytes, **changes: Any) -> tuple[Any, dict[str, str]]:
+    """GitHub's answer for one blob: its base64 in lines of 60, as the API sends
+    it."""
+
+    encoded = _content(data)
+    blob = _blob_id(data)
+    payload = {
+        "sha": blob,
+        "node_id": "B_kwDOtest",
+        "size": len(data),
+        "url": _blob_url(blob),
+        "content": "".join(
+            encoded[i : i + 60] + "\n" for i in range(0, len(encoded), 60)
+        ),
+        "encoding": "base64",
+        **changes,
+    }
+    return payload, {}
+
+
+def _collect_blobs(
+    files: list[dict[str, Any]],
+    blobs: Mapping[str, tuple[Any, dict[str, str]]],
+    *,
+    refused: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """L1's merge-evidence snapshot of `files`, with `blobs` answered by their URL;
+    `refused`, and any other blob, refused as the client refuses a read (an
+    unknown blob is GitHub's 404); and every blob read attempted, in order."""
+
+    replies = _replies()
+    replies[COMPARE] = _comparison(
+        [_commit(HEAD, "Admit or deny one merge\n\nRefs #407")], files
+    )
+    replies.update(blobs)
+    adapter = adapter_fixture()
+    fake = paged_fake_fixture(replies)
+    answer: Callable[[str], tuple[Any, dict[str, str]]] = fake.get
+
+    def get(url: str) -> tuple[Any, dict[str, str]]:
+        if url == refused or ("/git/blobs/" in url and url not in blobs):
+            raise adapter.ProviderReadError(f"provider refused {url!r}")
+        return answer(url)
+
+    with mock.patch.object(fake, "get", side_effect=get) as reads:
+        snapshot: dict[str, Any] = adapter.collect_snapshot(
+            fake,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+            merge_evidence=True,
+        )
+    urls = [call.args[0] for call in reads.call_args_list]
+    return snapshot, [url for url in urls if "/git/blobs/" in url]
+
+
+class FrozenArchiveCollectionTests(unittest.TestCase):
+    """L1 attaches a hunkless file's content for the producer, verified and
+    bounded, and reads no declaration (PAO Q1-A; I8 of 6761333802). Whatever it
+    does not attach leaves the file exactly as today."""
+
+    def test_a_hunkless_file_s_blob_is_read_once_and_attached(self) -> None:
+        data = _archive()
+        ordinary = _file("tools/x.py", patch="@@ -1 +1 @@\n-a\n+b")
+        url = _blob_url(_blob_id(data))
+        for status in ("added", "modified"):
+            with self.subTest(status):
+                snapshot, reads = _collect_blobs(
+                    [ordinary, _archive_file(data, status)], {url: _blob_reply(data)}
+                )
+                self.assertEqual([url], reads)
+                kept, archived = snapshot["files"]
+                self.assertNotIn("content", kept)
+                self.assertEqual(_content(data), archived.get("content"))
+                self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+
+    def test_only_a_hunkless_added_or_modified_non_empty_blob_is_read(self) -> None:
+        data = _archive()
+        blobs = {_blob_url(_blob_id(data)): _blob_reply(data)}
+        snapshot, _ = _collect_blobs([_archive_file(data)], blobs)
+        self.assertEqual(_content(data), snapshot["files"][0].get("content"))
+        for name, entry in (
+            ("a patch", _archive_file(data, patch="@@ -0,0 +1 @@\n+a")),
+            ("additions without a patch", _archive_file(data, additions=1)),
+            ("a removal", _archive_file(data, "removed")),
+            ("a rename", _archive_file(data, "renamed", previous="docs/old.tar.gz")),
+            ("a mode change", _archive_file(data, "changed")),
+            ("an empty blob", _file(ARCHIVE, "added", blob=EMPTY_BLOB)),
+            ("no blob", _file(ARCHIVE, "added", blob=None)),
+        ):
+            with self.subTest(name):
+                snapshot, reads = _collect_blobs([entry], blobs)
+                self.assertEqual([], reads)
+                self.assertNotIn("content", snapshot["files"][0])
+
+    def test_a_blob_answer_that_does_not_verify_gives_no_content(self) -> None:
+        """The blob id recomputed from strict base64 must be the listed one, and
+        each blob is at most BLOB_BOUND bytes by its answer's size. A refused read
+        gives no content and leaves the file list COMPLETE."""
+
+        data = _archive()
+        other = _archive(_tar((("other.py", b"x\n"),)))
+        at_bound, past_bound = bytes(BLOB_BOUND), bytes(BLOB_BOUND + 1)
+        for control in (data, at_bound):
+            snapshot, _ = _collect_blobs(
+                [_archive_file(control)],
+                {_blob_url(_blob_id(control)): _blob_reply(control)},
+            )
+            self.assertEqual(_content(control), snapshot["files"][0].get("content"))
+        url = _blob_url(_blob_id(data))
+        for name, entry, answer, refused in (
+            (
+                "another sha",
+                _archive_file(data),
+                _blob_reply(data, sha=_blob_id(other)),
+                None,
+            ),
+            (
+                "other bytes",
+                _archive_file(data),
+                _blob_reply(other, sha=_blob_id(data), url=url),
+                None,
+            ),
+            (
+                "another encoding",
+                _archive_file(data),
+                _blob_reply(data, encoding="utf-8"),
+                None,
+            ),
+            (
+                "content that is not base64",
+                _archive_file(data),
+                _blob_reply(data, content="not base64!"),
+                None,
+            ),
+            (
+                "a size that is not the content's",
+                _archive_file(data),
+                _blob_reply(data, size=len(data) + 1),
+                None,
+            ),
+            (
+                "a size that is text",
+                _archive_file(data),
+                _blob_reply(data, size="1"),
+                None,
+            ),
+            (
+                "past the blob bound",
+                _archive_file(past_bound),
+                _blob_reply(past_bound),
+                None,
+            ),
+            ("an answer that is not an object", _archive_file(data), ([], {}), None),
+            ("a refused read", _archive_file(data), _blob_reply(data), url),
+        ):
+            with self.subTest(name):
+                snapshot, _ = _collect_blobs(
+                    [entry], {_blob_url(entry["sha"]): answer}, refused=refused
+                )
+                self.assertNotIn("content", snapshot["files"][0])
+                self.assertEqual("COMPLETE", snapshot["coverage"]["files"]["status"])
+
+    def test_blob_reads_are_bounded_in_count_and_in_total(self) -> None:
+        """At most BLOB_READS reads per comparison, in its order, and at most
+        BLOB_TOTAL bytes attached in all; a file past either gets no content."""
+
+        for name, blobs in (
+            ("past the read count", [bytes([n]) * 16 for n in range(BLOB_READS + 1)]),
+            (
+                "past the total",
+                [bytes([n]) * BLOB_BOUND for n in range(BLOB_TOTAL // BLOB_BOUND + 1)],
+            ),
+        ):
+            with self.subTest(name):
+                files = [
+                    _file(f"docs/b{n}.bin", "added", blob=_blob_id(data))
+                    for n, data in enumerate(blobs)
+                ]
+                snapshot, reads = _collect_blobs(
+                    files,
+                    {_blob_url(_blob_id(data)): _blob_reply(data) for data in blobs},
+                )
+                self.assertEqual(
+                    [*(_content(data) for data in blobs[:-1]), None],
+                    [item.get("content") for item in snapshot["files"]],
+                )
+                if name == "past the read count":
+                    self.assertEqual(
+                        [_blob_url(_blob_id(data)) for data in blobs[:-1]], reads
+                    )
+
+
+class FrozenVerdictTests(unittest.TestCase):
+    """M13 over frozen records (I6 of 6761333802): listed for the approval apart
+    from the justified ones, never denying, and closed and typed."""
+
+    def test_a_frozen_record_is_listed_apart_and_never_denies(self) -> None:
+        evidence = _verdict_evidence()
+        evidence["suppressions"]["found"] = copy.deepcopy(FROZEN)
+        verdict = _verdict(evidence)
+        self.assertEqual("ALLOW", verdict["status"])
+        self.assertEqual([], verdict["for_approval"]["suppressions"])
+        self.assertEqual(FROZEN, verdict["for_approval"]["frozen_suppressions"])
+        partial = _verdict_evidence()
+        partial["suppressions"] = {
+            "coverage": "PARTIAL",
+            "found": copy.deepcopy(FROZEN),
+        }
+        self.assertEqual(
+            ["suppression coverage is PARTIAL"],
+            _verdict_failed(_verdict(partial))["M13"],
+        )
+
+    def test_a_record_that_is_not_frozen_still_denies(self) -> None:
+        justified = _found("tools/z.py", 1, "noqa", "why")
+        evidence = _verdict_evidence()
+        evidence["suppressions"]["found"] = [
+            *copy.deepcopy(FROZEN),
+            _found("tools/y.py", 12, "noqa"),
+            justified,
+        ]
+        verdict = _verdict(evidence)
+        self.assertEqual(
+            ["noqa in tools/y.py:12 has no justification"],
+            _verdict_failed(verdict)["M13"],
+        )
+        self.assertEqual([justified], verdict["for_approval"]["suppressions"])
+        self.assertEqual(FROZEN, verdict["for_approval"]["frozen_suppressions"])
+        self.assertEqual(
+            [], _verdict(_verdict_evidence())["for_approval"]["frozen_suppressions"]
+        )
+
+    def test_a_frozen_record_is_closed_and_typed(self) -> None:
+        """A member only with the flag, the flag only true, and both only with a
+        line; anything else is malformed evidence."""
+
+        record = FROZEN[0]
+        accepted = _verdict_evidence()
+        accepted["suppressions"]["found"] = [dict(record)]
+        self.assertEqual("ALLOW", _verdict(accepted)["status"])
+        for name, broken in (
+            ("no member", {k: v for k, v in record.items() if k != "member"}),
+            ("no line", {k: v for k, v in record.items() if k != "line"}),
+            (
+                "a member without the flag",
+                {k: v for k, v in record.items() if k != "frozen"},
+            ),
+            ("a member that is not text", {**record, "member": 7}),
+            ("a blank member", {**record, "member": " "}),
+            ("a flag that is text", {**record, "frozen": "true"}),
+            ("a flag of one", {**record, "frozen": 1}),
+            ("a false flag", {**record, "frozen": False}),
+        ):
+            with self.subTest(name):
+                evidence = _verdict_evidence()
+                evidence["suppressions"]["found"] = [broken]
+                with self.assertRaises(INPUT_ERRORS):
+                    _verdict(evidence)
 
 
 class GuardrailRegistrationTests(unittest.TestCase):

@@ -1043,6 +1043,23 @@ guardrails:
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_line_and_reason_are_carried_and_typed
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_an_unjustified_suppression_is_denied_at_its_line
       - tests/test_merge_evidence_suppressions.py::VerdictTests.test_a_justified_suppression_does_not_discharge_a_finding
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_a_declared_archive_is_read_whole_and_its_markers_are_frozen
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_a_declared_archive_meets_m13_and_is_shown_for_the_approval
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_an_undeclared_binary_stays_partial
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_an_identity_mismatch_leaves_the_archive_partial
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_a_declared_path_with_hunks_or_another_status_is_read_as_today
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_each_archive_bound_leaves_it_partial_without_a_record
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_frozen_records_share_the_comparison_s_budgets
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_the_declaration_is_closed_and_versioned
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_the_declaration_is_read_from_the_project_root_only
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveTests.test_the_repository_declaration_ships_the_owner_chosen_archive
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_a_hunkless_file_s_blob_is_read_once_and_attached
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_only_a_hunkless_added_or_modified_non_empty_blob_is_read
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_a_blob_answer_that_does_not_verify_gives_no_content
+      - tests/test_merge_evidence_suppressions.py::FrozenArchiveCollectionTests.test_blob_reads_are_bounded_in_count_and_in_total
+      - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_frozen_record_is_listed_apart_and_never_denies
+      - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_record_that_is_not_frozen_still_denies
+      - tests/test_merge_evidence_suppressions.py::FrozenVerdictTests.test_a_frozen_record_is_closed_and_typed
       - tests/test_merge_evidence_github.py::DebtLedgerTests.test_the_ledger_is_a_closed_versioned_declaration
       - tests/test_merge_evidence_github.py::DebtLedgerTests.test_a_missing_ledger_is_none_and_the_repository_s_ships_empty
       - tests/test_merge_evidence_github.py::DebtLedgerTests.test_the_command_reads_the_ledger_from_the_project_root_only
