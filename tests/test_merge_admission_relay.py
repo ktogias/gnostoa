@@ -1099,8 +1099,11 @@ class ReadBackTests(unittest.TestCase):
     can is completed as cancelled, never left pending; a refusal is never retried."""
 
     def setUp(self) -> None:
-        patcher = mock.patch("time.sleep")
-        self.sleep = patcher.start()
+        # Only the bound's own pauses: a patched `time.sleep` would also record any other
+        # thread's, such as a slow test server another module left running, which the
+        # runtime self-check on #490 met (run 42922090601).
+        patcher = mock.patch.object(_checks(), "time")
+        self.sleep = patcher.start().sleep
         self.addCleanup(patcher.stop)
 
     def _slept(self) -> list[float]:
