@@ -62,7 +62,7 @@ routed the repair before #489's guarded merge is retried (source `route`).
    may change. The read back by id stays. It checks what the provider stores, and an existing
    test holds it (`test_a_post_that_reads_back_otherwise_fails_once`). PAO's text would read
    back only where policy requires it (source `red`, difference 1).
-2. **A transient read is retried, within a fixed bound.** `read_run`, which the relay and the
+2. **A transient read is retried, within a bound.** `read_run`, which the relay and the
    guard share, reads the run again after these failures:
    - no HTTP status (a broken transport, a timeout or an unusable body);
    - 404, while the provider's index lags its write;
@@ -108,8 +108,9 @@ routed the repair before #489's guarded merge is retried (source `route`).
 
    `tools/github_rest.py` raises a refused redirect as itself, not as a write failure. Every
    relay write, the POST, the completion and the cancellation, therefore catches any GitHub
-   error. A refused redirect, whose outcome is never unknown, fails as a refused
-   publication instead of escaping the job's record (Sourcery on #490).
+   error. A refused redirect never has an unknown outcome. It fails the POST and the
+   completion as `REFUSED`, and the cancellation as `UNKNOWN`, "nor completed as
+   cancelled". It never escapes the job's record (Sourcery on #490).
 
 ## Limits
 
