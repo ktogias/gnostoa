@@ -464,7 +464,7 @@ class OrientationTests(unittest.TestCase):
         manifest = orientation.build_manifest(snapshot, ROOT, "2026-09-11T10:55:00Z")
         markdown = orientation.render_markdown(manifest)
         self.assertIn("Open questions and task-specific blockers", markdown)
-        self.assertIn("Neither is a prerequisite for D14\\-O1", markdown)
+        self.assertIn("Neither is a prerequisite for D14\\-O2", markdown)
         self.assertIn("selected future task determines", markdown)
 
 
