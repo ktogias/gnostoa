@@ -402,7 +402,7 @@ class OrientationTests(unittest.TestCase):
                     "--repository-root",
                     str(live_root),
                     "--evaluated-at",
-                    NOW,
+                    snapshot["projection"]["observed_at"],
                     "--format",
                     "json",
                 ]
