@@ -1295,9 +1295,10 @@ class ReadBackTests(unittest.TestCase):
         )
 
     def test_a_cancellation_that_fails_still_fails_unknown(self) -> None:
-        """A refusal is final; a cancellation whose outcome stays unknown is tried
-        within the read's bound, at most four times (Sourcery on #490). A refused
-        redirect is a refusal, and still fails as a publication (Sourcery on #490)."""
+        """A refusal is final. So is a cancellation whose outcome is unknown: it may
+        have landed, and a write is made once (Decision 0100; Revix on #490), whatever
+        status it failed with. A refused redirect is a refusal, and still fails as a
+        publication (Sourcery on #490)."""
         relay = _relay()
         for name, error, attempts in (
             (
@@ -1310,7 +1311,14 @@ class ReadBackTests(unittest.TestCase):
                 github_rest.GitHubWriteError(
                     "GitHub API HTTP 502", status=502, outcome_unknown=True
                 ),
-                4,
+                1,
+            ),
+            (
+                "unknown, though not found",
+                github_rest.GitHubWriteError(
+                    "GitHub API HTTP 404", status=404, outcome_unknown=True
+                ),
+                1,
             ),
             ("redirect refused", github_rest.UnsafeRedirect("redirect refused"), 1),
         ):
@@ -1335,18 +1343,13 @@ class ReadBackTests(unittest.TestCase):
                 self.assertEqual(attempts, patch.call_count)
 
     def test_a_cancellation_failing_for_a_while_is_retried(self) -> None:
-        """A cancellation not yet found, rate-limited, or of unknown outcome is tried
-        again after the read's pauses; the run is then cancelled (Sourcery on #490)."""
+        """A cancellation not yet found or rate-limited is known not to have landed,
+        so it is tried again after the read's pauses; the run is then cancelled
+        (Sourcery and Revix on #490)."""
         relay = _relay()
         for name, error in (
             ("not yet found", github_rest.GitHubWriteError("HTTP 404", status=404)),
             ("rate-limited", github_rest.GitHubWriteError("HTTP 429", status=429)),
-            (
-                "unknown",
-                github_rest.GitHubWriteError(
-                    "HTTP 502", status=502, outcome_unknown=True
-                ),
-            ),
         ):
             with self.subTest(name):
                 self.sleep.reset_mock()
