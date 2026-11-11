@@ -9533,8 +9533,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for flag in ("tools", "allowedTools"):
             with self.subTest(flag=flag):
                 values = re.findall(rf"--{flag}\s+[\"']?([^\s\"']+)", args)
-                self.assertEqual(len(values), 1, f"one explicit --{flag} is required")
-                self.assertEqual(set(values[0].split(",")), {"Read", "Grep", "Glob"})
+                self.assertEqual(1, len(values), f"one explicit --{flag} is required")
+                self.assertEqual({"Read", "Grep", "Glob"}, set(values[0].split(",")))
         self.assertRegex(args, r"--max-turns\s+40(?:\s|$)")
 
     def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
