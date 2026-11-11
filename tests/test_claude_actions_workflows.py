@@ -9537,16 +9537,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 self.assertEqual({"Read", "Grep", "Glob"}, set(values[0].split(",")))
         self.assertRegex(args, r"--max-turns\s+40(?:\s|$)")
 
-    def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
-        """Structural review criterion: one first action, with the declared route.
-
-        The runtime reviewer cannot perform the operational route's provider or
-        implementation work. It must retain that limitation rather than trying
-        unavailable tools or silently treating a partial view as current.
-        """
-        prompt = " ".join(
-            str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"]).split()
-        )
+    def _assert_request_first(self, prompt: str) -> None:
+        prompt = " ".join(prompt.split())
         self.assertIn("First read .gnostoa-review-context/request/request", prompt)
         self.assertLess(prompt.index("First read"), prompt.index("README.md"))
         self.assertIn("README.md, then AGENTS.md", prompt)
@@ -9554,16 +9546,56 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("Do not perform implementation", prompt)
         self.assertIn("unavailable evidence is a review limit", prompt)
 
-    def test_mention_review_reserves_a_truthful_final_response(self) -> None:
-        """Prompt conformance cannot establish actual model turn-budget success."""
-        prompt = " ".join(
-            str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"]).split()
-        )
+    def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
+        """Structural review criterion: one first action, with the declared route.
+
+        The runtime reviewer cannot perform the operational route's provider or
+        implementation work. It must retain that limitation rather than trying
+        unavailable tools or silently treating a partial view as current. A second
+        reading order, before the request or after it, contradicts the first action.
+        """
+        prompt = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"])
+        self._assert_request_first(prompt)
+        for before, conflict in (
+            ("First read", "Start with AGENTS.md and follow the route it names. "),
+            ("First read", "Read docs/ROUTE.md before anything else. "),
+            ("Report correctness", "Start with README.md before the request. "),
+        ):
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_request_first(
+                    prompt.replace(before, conflict + before, 1)
+                )
+
+    def _assert_truthful_completion(self, prompt: str, args: str) -> None:
+        del args  # Today's checks never compare the session's --max-turns.
+        prompt = " ".join(prompt.split())
         self.assertIn("40 agentic turns", prompt)
         self.assertIn("Reserve the final response", prompt)
         self.assertIn("findings, examined scope and remaining limits", prompt)
         self.assertIn("If the budget or evidence is insufficient", prompt)
         self.assertIn("do not claim the unexamined work was reviewed", prompt)
+
+    def test_mention_review_reserves_a_truthful_final_response(self) -> None:
+        """Prompt conformance cannot establish actual model turn-budget success.
+
+        Guidance that keeps the reviewer retrieving, hides its limits or states
+        another budget contradicts the reserved final response.
+        """
+        claude = _claude_step(load_yaml(MENTION_WORKFLOW))
+        prompt, args = str(claude["with"]["prompt"]), str(claude["with"]["claude_args"])
+        self._assert_truthful_completion(prompt, args)
+        for conflict in (
+            "Keep retrieving until every changed file is read. ",
+            "Omit the limits from the final response. ",
+            "Budget: 60 agentic turns for the entire review. ",
+        ):
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_truthful_completion(
+                    prompt.replace(
+                        "Report correctness", conflict + "Report correctness", 1
+                    ),
+                    args,
+                )
 
     def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
         """The publish step was gated on the action having produced an execution file,
